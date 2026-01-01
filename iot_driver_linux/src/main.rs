@@ -1139,6 +1139,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 return Ok(());
             }
+            "set-color-all" | "color-all" | "sc" => {
+                if args.len() < 5 {
+                    eprintln!("Usage: iot_driver set-color-all <r> <g> <b>");
+                    eprintln!("  Sets all keys to the same RGB color (per-key mode 25)");
+                    eprintln!("  Example: iot_driver set-color-all 255 0 128   # Pink");
+                    return Ok(());
+                }
+                let r: u8 = args[2].parse().unwrap_or(255);
+                let g: u8 = args[3].parse().unwrap_or(255);
+                let b: u8 = args[4].parse().unwrap_or(255);
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    println!("Setting all keys to color #{:02X}{:02X}{:02X}...", r, g, b);
+                    if device.set_all_keys_color(r, g, b) {
+                        println!("All keys set to #{:02X}{:02X}{:02X}", r, g, b);
+                    } else {
+                        eprintln!("Failed to set per-key colors");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+                return Ok(());
+            }
 
             // Utility commands
             "list" | "ls" => {
@@ -1153,6 +1175,191 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let cmd_byte = u8::from_str_radix(&args[2], 16)?;
                 cli_test(&hidapi, cmd_byte)?;
+                return Ok(());
+            }
+            "remap" | "set-key" => {
+                if args.len() < 4 {
+                    eprintln!("Usage: iot_driver remap <key_index> <hid_code>");
+                    eprintln!("  key_index: Key position in matrix (0-97 for 98-key keyboard)");
+                    eprintln!("  hid_code: HID usage code (hex, e.g., 04=A, 29=Escape)");
+                    eprintln!("  Common HID codes:");
+                    eprintln!("    A-Z: 04-1D, 1-9: 1E-26, 0: 27");
+                    eprintln!("    Escape: 29, Tab: 2B, Space: 2C, Enter: 28");
+                    eprintln!("    F1-F12: 3A-45, PrintScr: 46, Delete: 4C");
+                    eprintln!("    Arrows: Left=50, Right=4F, Up=52, Down=51");
+                    eprintln!("  Example: iot_driver remap 0 2c  (remap key 0 to Space)");
+                    return Ok(());
+                }
+                let key_index: u8 = args[2].parse().unwrap_or(0);
+                let hid_code = u8::from_str_radix(&args[3], 16).unwrap_or(0);
+                let profile: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                    println!("Remapping key {} to {} (0x{:02x}) on profile {}...",
+                        key_index, key_name, hid_code, profile);
+                    if device.set_keymatrix(profile, key_index, hid_code, true, 0) {
+                        println!("Key {} remapped to {}", key_index, key_name);
+                    } else {
+                        eprintln!("Failed to remap key");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+                return Ok(());
+            }
+            "reset-key" | "rk" => {
+                if args.len() < 3 {
+                    eprintln!("Usage: iot_driver reset-key <key_index> [profile]");
+                    eprintln!("  Resets a key to its default mapping");
+                    return Ok(());
+                }
+                let key_index: u8 = args[2].parse().unwrap_or(0);
+                let profile: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    println!("Resetting key {} on profile {}...", key_index, profile);
+                    if device.reset_key(profile, key_index) {
+                        println!("Key {} reset to default", key_index);
+                    } else {
+                        eprintln!("Failed to reset key");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+                return Ok(());
+            }
+            "swap-keys" | "swap" => {
+                if args.len() < 5 {
+                    eprintln!("Usage: iot_driver swap <key_a_index> <key_b_index>");
+                    eprintln!("  Swaps two keys (requires reading current mappings first)");
+                    eprintln!("  Use 'keymatrix' command to find key indices and HID codes");
+                    return Ok(());
+                }
+                let key_a: u8 = args[2].parse().unwrap_or(0);
+                let key_b: u8 = args[3].parse().unwrap_or(0);
+                let profile: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    // Read current key mappings to get the HID codes
+                    if let Some(data) = device.get_keymatrix(profile, 2) {
+                        let code_a = if (key_a as usize) * 4 + 2 < data.len() {
+                            data[(key_a as usize) * 4 + 2]
+                        } else { 0 };
+                        let code_b = if (key_b as usize) * 4 + 2 < data.len() {
+                            data[(key_b as usize) * 4 + 2]
+                        } else { 0 };
+
+                        let name_a = iot_driver::protocol::hid::key_name(code_a);
+                        let name_b = iot_driver::protocol::hid::key_name(code_b);
+                        println!("Swapping key {} ({}) <-> key {} ({})...",
+                            key_a, name_a, key_b, name_b);
+
+                        if device.swap_keys(profile, key_a, code_a, key_b, code_b) {
+                            println!("Keys swapped successfully");
+                        } else {
+                            eprintln!("Failed to swap keys");
+                        }
+                    } else {
+                        eprintln!("Failed to read current key mappings");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+                return Ok(());
+            }
+            "macro" | "get-macro" => {
+                let macro_index: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    println!("Reading macro {}...", macro_index);
+                    if let Some(data) = device.get_macro(macro_index) {
+                        if data.len() >= 2 {
+                            let length = u16::from_le_bytes([data[0], data[1]]) as usize;
+                            println!("Macro length: {} bytes", length);
+
+                            if length > 0 && data.len() > 2 {
+                                println!("\nMacro events (2 bytes each: [keycode, flags]):");
+                                // Parse macro events starting after the 2-byte length
+                                // Format appears to be: [keycode, flags] where 0x9e = down, 0x1e = up
+                                let events = &data[2..];
+                                for (i, chunk) in events.chunks(2).enumerate() {
+                                    if chunk.len() < 2 || chunk.iter().all(|&b| b == 0) {
+                                        break;
+                                    }
+                                    let keycode = chunk[0];
+                                    let flags = chunk[1];
+
+                                    let event_type = if flags & 0x80 != 0 { "Down" } else { "Up" };
+                                    let key_name = iot_driver::protocol::hid::key_name(keycode);
+                                    println!("  Event {:2}: {} {} (0x{:02x}, flags={:02x})",
+                                        i, event_type, key_name, keycode, flags);
+                                }
+                            } else {
+                                println!("Macro is empty");
+                            }
+                        } else {
+                            println!("Invalid macro data");
+                        }
+
+                        // Also show raw hex for debugging
+                        println!("\nRaw data ({} bytes):", data.len().min(64));
+                        for chunk in data.chunks(16).take(4) {
+                            for b in chunk {
+                                print!("{:02x} ", b);
+                            }
+                            println!();
+                        }
+                    } else {
+                        eprintln!("Failed to read macro (may be empty)");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+                return Ok(());
+            }
+            "keymatrix" | "km" => {
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    let profile: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let pages: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3);
+                    println!("Reading key matrix for profile {} ({} pages)...", profile, pages);
+
+                    if let Some(data) = device.get_keymatrix(profile, pages) {
+                        println!("\nKey matrix data ({} bytes):", data.len());
+                        for (i, chunk) in data.chunks(16).enumerate() {
+                            print!("{:04x}: ", i * 16);
+                            for b in chunk {
+                                print!("{:02x} ", b);
+                            }
+                            // Print ASCII
+                            print!("  |");
+                            for b in chunk {
+                                if *b >= 0x20 && *b < 0x7f {
+                                    print!("{}", *b as char);
+                                } else {
+                                    print!(".");
+                                }
+                            }
+                            println!("|");
+                        }
+
+                        // Parse as key codes (4 bytes each: type, flags, hid_code, layer)
+                        println!("\nKey mappings (format: [type, flags, code, layer]):");
+                        let key_count = device.key_count() as usize;
+                        for i in 0..key_count.min(20) {
+                            if i * 4 + 3 < data.len() {
+                                let k = &data[i * 4..(i + 1) * 4];
+                                let hid_code = k[2];
+                                let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                                println!("  Key {:2}: {:02x} {:02x} {:02x} {:02x}  -> {} (0x{:02x})",
+                                    i, k[0], k[1], k[2], k[3], key_name, hid_code);
+                            }
+                        }
+                    } else {
+                        eprintln!("Failed to read key matrix");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
                 return Ok(());
             }
             "serve" | "server" => {

@@ -349,6 +349,69 @@ impl MonsGeekDevice {
         self.send(cmd::SET_MAGNETISM_REPORT, &[if enable { 1 } else { 0 }], ChecksumType::Bit7)
     }
 
+    /// Set per-key RGB colors (mode 25 = LightUserColor)
+    /// colors: slice of (R, G, B) tuples, one per key
+    pub fn set_per_key_colors(&self, colors: &[(u8, u8, u8)]) -> bool {
+        let key_count = self.key_count() as usize;
+
+        // Build RGB byte array (3 bytes per key)
+        let mut rgb_data: Vec<u8> = Vec::with_capacity(key_count * 3);
+        for i in 0..key_count {
+            let (r, g, b) = colors.get(i).copied().unwrap_or((0, 0, 0));
+            rgb_data.push(r);
+            rgb_data.push(g);
+            rgb_data.push(b);
+        }
+
+        // Send in pages of 56 bytes each
+        // Format: [cmd, profile, 255, page, len, is_last, ...data]
+        let page_size = 56;
+        let num_pages = (rgb_data.len() + page_size - 1) / page_size;
+
+        for page in 0..num_pages {
+            let start = page * page_size;
+            let end = (start + page_size).min(rgb_data.len());
+            let chunk = &rgb_data[start..end];
+            let is_last = page == num_pages - 1;
+
+            let mut data = vec![
+                0,                              // profile (0 = current)
+                255,                            // magic value
+                page as u8,                     // page number
+                chunk.len() as u8,              // bytes in this page
+                if is_last { 1 } else { 0 },    // is_last flag
+            ];
+            data.extend_from_slice(chunk);
+
+            // Pad to 56 bytes of RGB data
+            while data.len() < 5 + page_size {
+                data.push(0);
+            }
+
+            if !self.send(cmd::SET_USERPIC, &data, ChecksumType::Bit7) {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        true
+    }
+
+    /// Set all keys to the same RGB color (convenience function)
+    pub fn set_all_keys_color(&self, r: u8, g: u8, b: u8) -> bool {
+        let key_count = self.key_count() as usize;
+        let colors: Vec<(u8, u8, u8)> = vec![(r, g, b); key_count];
+
+        // First, set LED mode to 25 (LightUserColor / Per-Key Color)
+        if !self.set_led(25, 4, 0, r, g, b, false) {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Then set the per-key colors
+        self.set_per_key_colors(&colors)
+    }
+
     /// Set active profile (0-3)
     pub fn set_profile(&self, profile: u8) -> bool {
         self.send(cmd::SET_PROFILE, &[profile.min(3)], ChecksumType::Bit7)
@@ -420,6 +483,147 @@ impl MonsGeekDevice {
             Some((os_mode, fn_layer, anti_mistouch, rt_stability, wasd_swap))
         } else {
             None
+        }
+    }
+
+    /// Get key matrix (key remappings) for a profile
+    /// profile: profile index (0-3, or combined profile*4+sonProfile for magnetism devices)
+    /// num_pages: how many pages to read (based on key count)
+    /// Returns raw key matrix data (4 bytes per key: type, enabled, layer, keycode)
+    pub fn get_keymatrix(&self, profile: u8, num_pages: usize) -> Option<Vec<u8>> {
+        let mut all_data = Vec::new();
+
+        for page in 0..num_pages {
+            // Request format: [cmd, profile, 255 (magic), 0, page]
+            let mut buf = vec![0u8; protocol::REPORT_SIZE];
+            buf[0] = 0; // Report ID
+            buf[1] = cmd::GET_KEYMATRIX;
+            buf[2] = profile;
+            buf[3] = 255;  // magic value
+            buf[4] = 0;
+            buf[5] = page as u8;
+
+            // Apply checksum
+            let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+            buf[8] = (255 - (sum & 0xFF)) as u8;
+
+            for _ in 0..3 {
+                if self.device.send_feature_report(&buf).is_err() {
+                    continue;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+
+                let mut resp = vec![0u8; protocol::REPORT_SIZE];
+                resp[0] = 0;
+                if self.device.get_feature_report(&mut resp).is_ok() {
+                    // Check if response echoes command
+                    if resp[1] == cmd::GET_KEYMATRIX {
+                        // Response format: [0, cmd, data...]
+                        all_data.extend_from_slice(&resp[2..]);
+                        break;
+                    } else {
+                        // Some responses may not echo command
+                        all_data.extend_from_slice(&resp[1..]);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if all_data.is_empty() {
+            None
+        } else {
+            Some(all_data)
+        }
+    }
+
+    /// Set a single key's mapping
+    /// profile: profile index (0-3)
+    /// key_index: key position in the matrix (0-based)
+    /// hid_code: HID usage code for the new key
+    /// enabled: whether the key is enabled (true = normal, false = disabled)
+    /// layer: Fn layer (0 = base layer)
+    ///
+    /// Format: [cmd, profile, key_index, 0, 0, enabled, layer, checksum, code[0], code[1], code[2], code[3]]
+    pub fn set_keymatrix(&self, profile: u8, key_index: u8, hid_code: u8, enabled: bool, layer: u8) -> bool {
+        // Key code format for simple key: [0, 0, hid_code, 0]
+        let key_data = [0u8, 0, hid_code, 0];
+
+        let data = [
+            profile,                        // byte 1: profile
+            key_index,                      // byte 2: key index in matrix
+            0, 0,                           // bytes 3-4: unused
+            if enabled { 1 } else { 0 },    // byte 5: enabled flag
+            layer,                          // byte 6: layer
+            0,                              // byte 7: padding (checksum will be at byte 8)
+            key_data[0], key_data[1], key_data[2], key_data[3], // bytes 8-11: key code
+        ];
+
+        self.send(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
+    }
+
+    /// Reset a key to its default mapping
+    /// This sets the key to "disabled" which causes the firmware to use the default
+    pub fn reset_key(&self, profile: u8, key_index: u8) -> bool {
+        self.set_keymatrix(profile, key_index, 0, false, 0)
+    }
+
+    /// Swap two keys
+    pub fn swap_keys(&self, profile: u8, key_a: u8, code_a: u8, key_b: u8, code_b: u8) -> bool {
+        // Set key_a to code_b
+        if !self.set_keymatrix(profile, key_a, code_b, true, 0) {
+            return false;
+        }
+        // Set key_b to code_a
+        self.set_keymatrix(profile, key_b, code_a, true, 0)
+    }
+
+    /// Get macro data for a macro slot
+    /// macro_index: macro slot number (0-based)
+    /// Returns raw macro data (up to 256 bytes, paginated)
+    ///
+    /// Format: [2-byte length (LE), then macro events (4 bytes each)]
+    /// Macro event: [type, delay_low, delay_high/keycode, modifier]
+    pub fn get_macro(&self, macro_index: u8) -> Option<Vec<u8>> {
+        let mut all_data = Vec::new();
+
+        for page in 0..4 {
+            let mut buf = vec![0u8; protocol::REPORT_SIZE];
+            buf[0] = 0; // Report ID
+            buf[1] = cmd::GET_MACRO;
+            buf[2] = macro_index;
+            buf[3] = page;
+
+            // Apply checksum
+            let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+            buf[8] = (255 - (sum & 0xFF)) as u8;
+
+            for _ in 0..3 {
+                if self.device.send_feature_report(&buf).is_err() {
+                    continue;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+
+                let mut resp = vec![0u8; protocol::REPORT_SIZE];
+                resp[0] = 0;
+                if self.device.get_feature_report(&mut resp).is_ok() {
+                    // Skip report ID and command echo
+                    let data = if resp[1] == cmd::GET_MACRO { &resp[2..] } else { &resp[1..] };
+                    all_data.extend_from_slice(data);
+
+                    // Check for 4 consecutive zeros (end marker)
+                    if data.windows(4).any(|w| w == [0, 0, 0, 0]) {
+                        return Some(all_data);
+                    }
+                    break;
+                }
+            }
+        }
+
+        if all_data.is_empty() {
+            None
+        } else {
+            Some(all_data)
         }
     }
 

@@ -322,6 +322,19 @@ impl App {
         }
     }
 
+    fn apply_per_key_color(&mut self) {
+        if let Some(ref device) = self.device {
+            let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
+            self.status_msg = format!("Applying #{:02X}{:02X}{:02X} to all keys...", r, g, b);
+            if device.set_all_keys_color(r, g, b) {
+                self.info.led_mode = 25; // Update to Per-Key Color mode
+                self.status_msg = format!("Per-key color set: #{:02X}{:02X}{:02X}", r, g, b);
+            } else {
+                self.status_msg = "Failed to set per-key colors".to_string();
+            }
+        }
+    }
+
     fn refresh_options(&mut self) {
         if let Some(ref device) = self.device {
             if let Some((os_mode, fn_layer, anti_mistouch, rt_stability, wasd_swap)) = device.get_options() {
@@ -655,6 +668,10 @@ fn main() -> io::Result<()> {
                         KeyCode::Char('s') if app.tab == 3 => {
                             app.set_all_key_modes(magnetism::MODE_SNAPTAP);
                         }
+                        // Per-key color mode in LED Settings tab
+                        KeyCode::Char('p') if app.tab == 1 => {
+                            app.apply_per_key_color();
+                        }
                         _ => {}
                     }
                 }
@@ -936,7 +953,7 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("LED Settings [←/→ adjust, ↑/↓ select, ±10 with Shift]"))
+        .block(Block::default().borders(Borders::ALL).title("LED Settings [←/→ adjust, ↑/↓ select, p=per-key mode]"))
         .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
         .highlight_symbol("> ");
 
