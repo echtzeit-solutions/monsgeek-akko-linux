@@ -1,0 +1,256 @@
+syntax = "proto3";
+
+package driver;
+
+// The main driver service - extracted from Akko Cloud Driver JS
+service DriverGrpc {
+    // Device list streaming
+    rpc watchDevList(Empty) returns (stream DeviceList);
+
+    // System info streaming
+    rpc watchSystemInfo(Empty) returns (stream SystemInfo);
+
+    // Raw HID feature report send/receive
+    rpc sendRawFeature(SendMsg) returns (ResSend);
+    rpc readRawFeature(ReadMsg) returns (ResRead);
+
+    // Higher-level message send/receive (with checksum handling)
+    rpc sendMsg(SendMsg) returns (ResSend);
+    rpc readMsg(ReadMsg) returns (ResRead);
+
+    // Database operations
+    rpc getItemFromDb(GetItem) returns (Item);
+    rpc insertDb(InsertDb) returns (ResSend);
+    rpc deleteItemFromDb(DeleteItem) returns (ResSend);
+    rpc getAllKeysFromDb(GetAll) returns (AllList);
+    rpc getAllValuesFromDb(GetAll) returns (AllList);
+
+    // Version info
+    rpc getVersion(Empty) returns (Version);
+
+    // Firmware update
+    rpc upgradeOTAGATT(OTAUpgrade) returns (stream Progress);
+
+    // Microphone control (for keyboards with mic)
+    rpc muteMicrophone(MuteMicrophone) returns (ResSend);
+    rpc toggleMicrophoneMute(Empty) returns (MicrophoneMuteStatus);
+    rpc getMicrophoneMute(Empty) returns (MicrophoneMuteStatus);
+
+    // Wireless
+    rpc changeWirelessLoopStatus(WirelessLoopStatus) returns (ResSend);
+
+    // LED control
+    rpc setLightType(SetLight) returns (Empty);
+
+    // Vendor events
+    rpc watchVender(Empty) returns (stream VenderMsg);  // Note: typo matches original Windows driver
+
+    // Weather (for OLED displays)
+    rpc getWeather(WeatherReq) returns (WeatherRes);
+}
+
+// Empty message for RPCs with no input
+message Empty {}
+
+// Checksum type for HID messages
+enum CheckSumType {
+    Bit7 = 0;   // Checksum at byte 7: 255 - (sum(bytes[0:7]) & 0xFF)
+    Bit8 = 1;   // Checksum at byte 8: 255 - (sum(bytes[0:8]) & 0xFF)
+    None = 2;   // No checksum
+}
+
+// Device type for dongles
+enum DangleDevType {
+    DangleDevTypeNone = 0;
+    Keyboard = 1;
+    Mouse = 2;
+}
+
+// Device type enum (matches webapp's DeviceType)
+enum DeviceType {
+    YZWKeyboard = 0;
+    YZWBoot = 1;
+    YZWVender = 2;
+}
+
+// Device list change type (for watchDevList streaming)
+enum DeviceListChangeType {
+    Init = 0;
+    Add = 1;
+    Remove = 2;
+    Change = 3;
+}
+
+// Light type enum for LED control
+enum LightTypeEnum {
+    Music2 = 0;
+    Screen = 1;
+    Other = 2;
+}
+
+// Send a HID message
+message SendMsg {
+    string devicePath = 1;          // HID device path (e.g., "3151-5030-65282-2")
+    bytes msg = 2;                  // Message data (64 bytes for feature reports)
+    CheckSumType checkSumType = 3;  // Checksum type
+    DangleDevType dangleDevType = 4; // Device type (for wireless dongles)
+}
+
+// Read HID message request
+message ReadMsg {
+    string devicePath = 1;          // HID device path
+}
+
+// Response for send operations
+message ResSend {
+    string err = 1;                 // Error message (empty = success)
+}
+
+// Response for read operations
+message ResRead {
+    string err = 1;                 // Error message (empty = success)
+    bytes msg = 2;                  // Response data
+}
+
+// Device information (matches webapp's Device proto)
+message Device {
+    DeviceType devType = 1;         // Device type enum
+    bool is24 = 2;                  // Is 2.4GHz wireless
+    string path = 3;                // Device path (e.g., "12625-20528-65535-2")
+    int32 id = 4;                   // Device ID (from GET_DEVICE_ID 0x8F query)
+    uint32 battery = 5;             // Battery level (0-100)
+    bool isOnline = 6;              // Is device online
+    uint32 vid = 7;                 // Vendor ID
+    uint32 pid = 8;                 // Product ID
+}
+
+// Status for 2.4GHz wireless device
+message Status24 {
+    uint32 battery = 1;
+    bool is_online = 2;
+}
+
+// Status wrapper for dongle devices
+message DangleStatus {
+    oneof dangleDev {
+        Empty empty = 1;
+        Status24 status = 2;
+    }
+}
+
+// Dongle common device info (field numbers must match app)
+message DangleCommon {
+    DangleStatus keyboard = 1;
+    DangleStatus mouse = 2;
+    string path = 3;
+    // field 4 reserved
+    uint32 keyboard_id = 5;
+    uint32 mouse_id = 6;
+    uint32 vid = 7;
+    uint32 pid = 8;
+}
+
+// Device wrapper (oneof for different device types)
+message DJDev {
+    oneof oneofDev {
+        Device dev = 1;
+        DangleCommon dangleCommonDev = 2;
+    }
+}
+
+// List of devices (used by watchDevList)
+message DeviceList {
+    repeated DJDev devList = 1;  // camelCase to match Electron app
+    DeviceListChangeType type = 2;  // Type of device list update
+}
+
+// System information
+message SystemInfo {
+    string info = 1;
+}
+
+// Version information
+message Version {
+    string baseVersion = 1;
+    string timeStamp = 2;
+}
+
+// Database operations
+message GetItem {
+    string dbPath = 1;
+    bytes key = 2;
+}
+
+message Item {
+    bytes value = 1;
+    string err_str = 2;
+}
+
+message InsertDb {
+    string dbPath = 1;
+    bytes key = 2;
+    bytes value = 3;
+}
+
+message DeleteItem {
+    string dbPath = 1;
+    bytes key = 2;
+}
+
+message GetAll {
+    string dbPath = 1;
+}
+
+message AllList {
+    repeated bytes data = 1;
+    string err_str = 2;
+}
+
+// OTA firmware update
+message OTAUpgrade {
+    string devPath = 1;
+    bytes file_buf = 2;
+}
+
+message Progress {
+    float progress = 1;
+    string err = 2;
+}
+
+// Microphone control
+message MuteMicrophone {
+    bool need_mute = 1;
+}
+
+message MicrophoneMuteStatus {
+    bool is_mute = 1;
+    string err = 2;
+}
+
+// Wireless control
+message WirelessLoopStatus {
+    bool lock = 1;
+}
+
+// LED control
+message SetLight {
+    string devicePath = 1;
+    LightTypeEnum lightType = 2;
+    uint32 screenId = 3;
+    DangleDevType dangleDevType = 4;
+}
+
+// Vendor events (keyboard state changes) - named VenderMsg to match original typo
+message VenderMsg {
+    bytes msg = 1;
+}
+
+// Weather for OLED
+message WeatherReq {
+    string language = 1;
+    string address = 2;
+}
+
+message WeatherRes {
+    string res = 1;
+}
