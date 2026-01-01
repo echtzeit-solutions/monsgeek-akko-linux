@@ -1235,4 +1235,28 @@ impl MonsGeekDevice {
             _ => "unknown",
         }
     }
+
+    /// Send audio visualizer frequency band data
+    /// Uses the keyboard's built-in music reactive mode (0x0D command)
+    /// `bands` must be 16 values, each 0-6 representing frequency intensity
+    pub fn set_audio_viz_bands(&self, bands: &[u8; 16]) -> bool {
+        use crate::protocol::{cmd, audio_viz, ChecksumType};
+        // Build data: 6 bytes padding + 16 bytes band levels
+        let mut data = [0u8; 22];
+        // Bytes 0-5 are padding (zeros)
+        // Bytes 6-21 are the 16 frequency bands (after checksum at position 7)
+        for (i, &level) in bands.iter().enumerate() {
+            data[6 + i] = level.min(audio_viz::MAX_LEVEL);
+        }
+        // Use Bit7 checksum (checksum at byte 7 of message = byte 8 with report ID)
+        self.send_with_delay(cmd::SET_AUDIO_VIZ, &data, ChecksumType::Bit7, 5)
+    }
+
+    /// Send audio visualizer data from FFT magnitudes
+    /// `magnitudes` should be normalized 0.0-1.0 floats
+    pub fn set_audio_viz_fft(&self, magnitudes: &[f32]) -> bool {
+        use crate::protocol::audio_viz;
+        let bands = audio_viz::magnitudes_to_bands(magnitudes);
+        self.set_audio_viz_bands(&bands)
+    }
 }

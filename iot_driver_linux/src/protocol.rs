@@ -14,6 +14,7 @@ pub mod cmd {
     pub const SET_KEYMATRIX: u8 = 0x0A;
     pub const SET_MACRO: u8 = 0x0B;
     pub const SET_USERPIC: u8 = 0x0C;  // Per-key RGB colors (static)
+    pub const SET_AUDIO_VIZ: u8 = 0x0D;  // Audio visualizer frequency bands (16 bands, values 0-6)
     pub const SET_USERGIF: u8 = 0x12;  // Per-key RGB animation (dynamic)
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
@@ -508,5 +509,63 @@ pub mod hid {
             '?' => Some((0x38, true)),  // Shift+/
             _ => None,
         }
+    }
+}
+
+/// Audio visualizer protocol (command 0x0D)
+/// Sends 16 frequency band levels to the keyboard's built-in audio reactive mode
+pub mod audio_viz {
+    /// Number of frequency bands
+    pub const NUM_BANDS: usize = 16;
+    /// Maximum value per band (0-6)
+    pub const MAX_LEVEL: u8 = 6;
+    /// Update rate in Hz
+    pub const UPDATE_RATE_HZ: u32 = 50;
+    /// Update interval in milliseconds
+    pub const UPDATE_INTERVAL_MS: u64 = 20;
+
+    /// Band frequency ranges (approximate)
+    pub const BAND_BASS_START: usize = 0;      // Bands 0-3: Bass (20-250 Hz)
+    pub const BAND_BASS_END: usize = 3;
+    pub const BAND_LOWMID_START: usize = 4;    // Bands 4-7: Low-mid (250-1000 Hz)
+    pub const BAND_LOWMID_END: usize = 7;
+    pub const BAND_HIGHMID_START: usize = 8;   // Bands 8-11: High-mid (1-4 kHz)
+    pub const BAND_HIGHMID_END: usize = 11;
+    pub const BAND_TREBLE_START: usize = 12;   // Bands 12-15: Treble (4-20 kHz)
+    pub const BAND_TREBLE_END: usize = 15;
+
+    /// Build an audio visualizer HID report
+    /// `bands` must be 16 values, each 0-6
+    pub fn build_report(bands: &[u8; NUM_BANDS]) -> [u8; 64] {
+        let mut buf = [0u8; 64];
+        buf[0] = super::cmd::SET_AUDIO_VIZ;  // 0x0D
+        // Bytes 1-6 are padding (zeros)
+        // Byte 7 is checksum
+        let sum: u32 = buf[0..7].iter().map(|&b| b as u32).sum();
+        buf[7] = (255 - (sum & 0xFF)) as u8;
+        // Bytes 8-23 are the 16 frequency bands
+        for (i, &level) in bands.iter().enumerate() {
+            buf[8 + i] = level.min(MAX_LEVEL);
+        }
+        buf
+    }
+
+    /// Convert FFT magnitudes to band levels (0-6)
+    /// `magnitudes` should be normalized 0.0-1.0
+    pub fn magnitudes_to_bands(magnitudes: &[f32]) -> [u8; NUM_BANDS] {
+        let mut bands = [0u8; NUM_BANDS];
+        let step = magnitudes.len() / NUM_BANDS;
+
+        for (i, band) in bands.iter_mut().enumerate() {
+            // Average magnitudes for this band
+            let start = i * step;
+            let end = (start + step).min(magnitudes.len());
+            if start < end {
+                let avg: f32 = magnitudes[start..end].iter().sum::<f32>() / (end - start) as f32;
+                // Map 0.0-1.0 to 0-6
+                *band = (avg * MAX_LEVEL as f32).round().min(MAX_LEVEL as f32) as u8;
+            }
+        }
+        bands
     }
 }
