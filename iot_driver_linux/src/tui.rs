@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 // Use shared library
-use iot_driver::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism};
+use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism};
 
 /// Application state
 struct App {
@@ -35,6 +35,27 @@ struct App {
     precision_factor: f32,
     // Keyboard options
     options: Option<KeyboardOptions>,
+    // Macro editor state
+    macros: Vec<MacroSlot>,
+    macro_selected: usize,
+    macro_editing: bool,
+    macro_edit_text: String,
+}
+
+/// Macro slot data
+#[derive(Debug, Clone, Default)]
+struct MacroSlot {
+    events: Vec<MacroEvent>,
+    repeat_count: u16,
+    text_preview: String,
+}
+
+/// Single macro event
+#[derive(Debug, Clone)]
+struct MacroEvent {
+    keycode: u8,
+    is_down: bool,
+    delay_ms: u8,
 }
 
 /// Keyboard options state
@@ -65,6 +86,10 @@ impl App {
             trigger_scroll: 0,
             precision_factor: 100.0, // Default 0.01mm precision
             options: None,
+            macros: Vec::new(),
+            macro_selected: 0,
+            macro_editing: false,
+            macro_edit_text: String::new(),
         }
     }
 
@@ -149,7 +174,7 @@ impl App {
                 self.info.led_dazzle,
             ) {
                 self.info.led_brightness = brightness;
-                self.status_msg = format!("Brightness: {}/4", brightness);
+                self.status_msg = format!("Brightness: {brightness}/4");
             }
         }
     }
@@ -167,7 +192,7 @@ impl App {
                 self.info.led_dazzle,
             ) {
                 self.info.led_speed = 4 - speed;
-                self.status_msg = format!("Speed: {}/4", speed);
+                self.status_msg = format!("Speed: {speed}/4");
             }
         }
     }
@@ -197,7 +222,7 @@ impl App {
                 self.info.led_r = r;
                 self.info.led_g = g;
                 self.info.led_b = b;
-                self.status_msg = format!("Color: #{:02X}{:02X}{:02X}", r, g, b);
+                self.status_msg = format!("Color: #{r:02X}{g:02X}{b:02X}");
             }
         }
     }
@@ -251,7 +276,7 @@ impl App {
                 self.info.side_dazzle,
             ) {
                 self.info.side_brightness = brightness;
-                self.status_msg = format!("Side brightness: {}/4", brightness);
+                self.status_msg = format!("Side brightness: {brightness}/4");
             }
         }
     }
@@ -269,7 +294,7 @@ impl App {
                 self.info.side_dazzle,
             ) {
                 self.info.side_speed = 4 - speed;
-                self.status_msg = format!("Side speed: {}/4", speed);
+                self.status_msg = format!("Side speed: {speed}/4");
             }
         }
     }
@@ -286,7 +311,7 @@ impl App {
                 self.info.side_r = r;
                 self.info.side_g = g;
                 self.info.side_b = b;
-                self.status_msg = format!("Side color: #{:02X}{:02X}{:02X}", r, g, b);
+                self.status_msg = format!("Side color: #{r:02X}{g:02X}{b:02X}");
             }
         }
     }
@@ -325,10 +350,10 @@ impl App {
     fn apply_per_key_color(&mut self) {
         if let Some(ref device) = self.device {
             let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
-            self.status_msg = format!("Applying #{:02X}{:02X}{:02X} to all keys...", r, g, b);
+            self.status_msg = format!("Applying #{r:02X}{g:02X}{b:02X} to all keys...");
             if device.set_all_keys_color(r, g, b) {
                 self.info.led_mode = 25; // Update to Per-Key Color mode
-                self.status_msg = format!("Per-key color set: #{:02X}{:02X}{:02X}", r, g, b);
+                self.status_msg = format!("Per-key color set: #{r:02X}{g:02X}{b:02X}");
             } else {
                 self.status_msg = "Failed to set per-key colors".to_string();
             }
@@ -368,7 +393,7 @@ impl App {
             opts.fn_layer = layer;
         }
         self.save_options();
-        self.status_msg = format!("Fn layer: {}", layer);
+        self.status_msg = format!("Fn layer: {layer}");
     }
 
     fn toggle_wasd_swap(&mut self) {
@@ -395,7 +420,86 @@ impl App {
             opts.rt_stability = value;
         }
         self.save_options();
-        self.status_msg = format!("RT stability: {}ms", value);
+        self.status_msg = format!("RT stability: {value}ms");
+    }
+
+    fn refresh_macros(&mut self) {
+        use crate::protocol::hid::key_name;
+
+        if let Some(ref device) = self.device {
+            self.macros.clear();
+
+            // Load first 8 macro slots
+            for i in 0..8 {
+                if let Some(data) = device.get_macro(i) {
+                    let mut slot = MacroSlot::default();
+
+                    if data.len() >= 2 {
+                        slot.repeat_count = u16::from_le_bytes([data[0], data[1]]);
+
+                        // Parse events
+                        let events = &data[2..];
+                        let mut text = String::new();
+
+                        for chunk in events.chunks(2) {
+                            if chunk.len() < 2 || (chunk[0] == 0 && chunk[1] == 0) {
+                                break;
+                            }
+                            let keycode = chunk[0];
+                            let flags = chunk[1];
+                            let is_down = flags & 0x80 != 0;
+                            let delay_ms = flags & 0x7F;
+
+                            slot.events.push(MacroEvent { keycode, is_down, delay_ms });
+
+                            // Build text preview (only on key down, skip modifiers)
+                            if is_down && keycode < 0xE0 {
+                                let name = key_name(keycode);
+                                if name.len() == 1 {
+                                    text.push_str(name);
+                                } else if name == "Space" {
+                                    text.push(' ');
+                                } else if name == "Enter" {
+                                    text.push('↵');
+                                }
+                            }
+                        }
+                        slot.text_preview = if text.is_empty() {
+                            format!("{} events", slot.events.len())
+                        } else {
+                            text.chars().take(20).collect()
+                        };
+                    }
+                    self.macros.push(slot);
+                } else {
+                    self.macros.push(MacroSlot::default());
+                }
+            }
+            self.status_msg = format!("Loaded {} macro slots", self.macros.len());
+        }
+    }
+
+    fn set_macro_text(&mut self, index: usize, text: &str, delay_ms: u8, repeat: u16) {
+        if let Some(ref device) = self.device {
+            if device.set_text_macro(index as u8, text, delay_ms, repeat) {
+                self.status_msg = format!("Macro {index} set to: {text}");
+                // Refresh to show updated macro
+                self.refresh_macros();
+            } else {
+                self.status_msg = format!("Failed to set macro {index}");
+            }
+        }
+    }
+
+    fn clear_macro(&mut self, index: usize) {
+        if let Some(ref device) = self.device {
+            if device.set_macro(index as u8, &[], 1) {
+                self.status_msg = format!("Macro {index} cleared");
+                self.refresh_macros();
+            } else {
+                self.status_msg = format!("Failed to clear macro {index}");
+            }
+        }
     }
 
     fn read_input_reports(&mut self) {
@@ -418,7 +522,8 @@ impl App {
     }
 }
 
-fn main() -> io::Result<()> {
+/// Run the TUI - called via 'iot_driver tui' command
+pub fn run() -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -443,28 +548,61 @@ fn main() -> io::Result<()> {
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    // Handle macro editing mode first
+                    if app.macro_editing {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.macro_editing = false;
+                                app.macro_edit_text.clear();
+                                app.status_msg = "Edit cancelled".to_string();
+                            }
+                            KeyCode::Enter => {
+                                if !app.macro_edit_text.is_empty() {
+                                    let text = app.macro_edit_text.clone();
+                                    app.set_macro_text(app.macro_selected, &text, 10, 1);
+                                }
+                                app.macro_editing = false;
+                                app.macro_edit_text.clear();
+                            }
+                            KeyCode::Backspace => {
+                                app.macro_edit_text.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                if app.macro_edit_text.len() < 50 {
+                                    app.macro_edit_text.push(c);
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Tab => {
-                            app.tab = (app.tab + 1) % 5;
+                            app.tab = (app.tab + 1) % 6;
                             app.selected = 0;
                             app.trigger_scroll = 0;
-                            // Auto-refresh when entering Options or Triggers tab
+                            // Auto-refresh when entering tabs
                             if app.tab == 3 && app.triggers.is_none() {
                                 app.refresh_triggers();
                             } else if app.tab == 4 && app.options.is_none() {
                                 app.refresh_options();
+                            } else if app.tab == 5 && app.macros.is_empty() {
+                                app.refresh_macros();
                             }
                         }
                         KeyCode::BackTab => {
-                            app.tab = if app.tab == 0 { 4 } else { app.tab - 1 };
+                            app.tab = if app.tab == 0 { 5 } else { app.tab - 1 };
                             app.selected = 0;
                             app.trigger_scroll = 0;
-                            // Auto-refresh when entering Options or Triggers tab
+                            // Auto-refresh when entering tabs
                             if app.tab == 3 && app.triggers.is_none() {
                                 app.refresh_triggers();
                             } else if app.tab == 4 && app.options.is_none() {
                                 app.refresh_options();
+                            } else if app.tab == 5 && app.macros.is_empty() {
+                                app.refresh_macros();
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
@@ -472,6 +610,11 @@ fn main() -> io::Result<()> {
                                 // Scroll trigger list
                                 if app.trigger_scroll > 0 {
                                     app.trigger_scroll -= 1;
+                                }
+                            } else if app.tab == 5 {
+                                // Select macro
+                                if app.macro_selected > 0 {
+                                    app.macro_selected -= 1;
                                 }
                             } else if app.selected > 0 {
                                 app.selected -= 1;
@@ -485,6 +628,11 @@ fn main() -> io::Result<()> {
                                     .unwrap_or(0);
                                 if app.trigger_scroll < max_scroll {
                                     app.trigger_scroll += 1;
+                                }
+                            } else if app.tab == 5 {
+                                // Select macro
+                                if app.macro_selected < app.macros.len().saturating_sub(1) {
+                                    app.macro_selected += 1;
                                 }
                             } else {
                                 app.selected += 1;
@@ -622,8 +770,29 @@ fn main() -> io::Result<()> {
                                 app.refresh_triggers();
                             } else if app.tab == 4 {
                                 app.refresh_options();
+                            } else if app.tab == 5 {
+                                app.refresh_macros();
                             } else {
                                 app.status_msg = "Refreshed device info".to_string();
+                            }
+                        }
+                        KeyCode::Char('e') if app.tab == 5 => {
+                            // Edit selected macro
+                            if !app.macros.is_empty() {
+                                app.macro_editing = true;
+                                app.macro_edit_text.clear();
+                                // Pre-fill with existing text preview if available
+                                let m = &app.macros[app.macro_selected];
+                                if !m.text_preview.is_empty() && !m.text_preview.contains("events") {
+                                    app.macro_edit_text = m.text_preview.clone();
+                                }
+                                app.status_msg = format!("Editing macro {} - type text and press Enter", app.macro_selected);
+                            }
+                        }
+                        KeyCode::Char('c') if app.tab == 5 => {
+                            // Clear selected macro
+                            if !app.macros.is_empty() {
+                                app.clear_macro(app.macro_selected);
                             }
                         }
                         KeyCode::Char('m') => {
@@ -719,7 +888,7 @@ fn ui(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     // Tabs
-    let tabs = Tabs::new(vec!["Device Info", "LED Settings", "Key Depth", "Triggers", "Options"])
+    let tabs = Tabs::new(vec!["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Macros"])
         .select(app.tab)
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
@@ -733,6 +902,7 @@ fn ui(f: &mut Frame, app: &App) {
         2 => render_depth_monitor(f, app, chunks[2]),
         3 => render_trigger_settings(f, app, chunks[2]),
         4 => render_options(f, app, chunks[2]),
+        5 => render_macros(f, app, chunks[2]),
         _ => {}
     }
 
@@ -776,7 +946,7 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(vec![
             Span::raw("Profile:        "),
-            Span::styled(format!("{}", info.profile), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{} (1-4)", info.profile + 1), Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
             Span::raw("Debounce:       "),
@@ -1053,7 +1223,7 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(precision_str, Style::default().fg(Color::Green)),
                 Span::raw("  |  "),
                 Span::styled("Keys: ", Style::default().fg(Color::Gray)),
-                Span::styled(format!("{}", num_keys), Style::default().fg(Color::Green)),
+                Span::styled(format!("{num_keys}"), Style::default().fg(Color::Green)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -1112,7 +1282,7 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
                 let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
 
                 Row::new(vec![
-                    Cell::from(format!("{:3}", i)),
+                    Cell::from(format!("{i:3}")),
                     Cell::from(format!("{:.2}", press as f32 / factor)),
                     Cell::from(format!("{:.2}", lift as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_p as f32 / factor)),
@@ -1229,4 +1399,154 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title("Keyboard Options"));
         f.render_widget(help, area);
     }
+}
+
+fn render_macros(f: &mut Frame, app: &App, area: Rect) {
+    use crate::protocol::hid::key_name;
+
+    // Split into macro list (left) and detail/edit area (right)
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(area);
+
+    // Left panel: Macro list
+    if app.macros.is_empty() {
+        let help = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("No macros loaded", Style::default().fg(Color::Yellow))),
+            Line::from(""),
+            Line::from("Press 'r' to load macros from device"),
+        ])
+        .block(Block::default().borders(Borders::ALL).title("Macros"));
+        f.render_widget(help, chunks[0]);
+    } else {
+        let items: Vec<ListItem> = app.macros.iter().enumerate().map(|(i, m)| {
+            let status = if m.events.is_empty() {
+                Span::styled("(empty)", Style::default().fg(Color::DarkGray))
+            } else {
+                Span::styled(
+                    format!("{} (x{})", &m.text_preview, m.repeat_count),
+                    Style::default().fg(Color::Green)
+                )
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("M{i}: "), Style::default().fg(Color::Cyan)),
+                status,
+            ]))
+        }).collect();
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Macros [↑/↓ select]"))
+            .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+            .highlight_symbol("> ");
+
+        let mut state = ListState::default();
+        state.select(Some(app.macro_selected.min(app.macros.len().saturating_sub(1))));
+        f.render_stateful_widget(list, chunks[0], &mut state);
+    }
+
+    // Right panel: Detail view or edit mode
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(7)])
+        .split(chunks[1]);
+
+    if app.macro_editing {
+        // Edit mode
+        let edit_text = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Text: "),
+                Span::styled(&app.macro_edit_text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("█", Style::default().fg(Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("Type your macro text, then press Enter to save", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("Press Escape to cancel", Style::default().fg(Color::DarkGray))),
+        ])
+        .block(Block::default().borders(Borders::ALL).title("Edit Macro (typing mode)"));
+        f.render_widget(edit_text, right_chunks[0]);
+    } else if !app.macros.is_empty() && app.macro_selected < app.macros.len() {
+        // Detail view
+        let m = &app.macros[app.macro_selected];
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(format!("Macro {}", app.macro_selected), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Repeat: "),
+                Span::styled(format!("{}", m.repeat_count), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::raw("Events: "),
+                Span::styled(format!("{}", m.events.len()), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(""),
+        ];
+
+        // Show events (up to 10)
+        if !m.events.is_empty() {
+            lines.push(Line::from(Span::styled("Events:", Style::default().add_modifier(Modifier::BOLD))));
+            for (i, evt) in m.events.iter().take(12).enumerate() {
+                let arrow = if evt.is_down { "↓" } else { "↑" };
+                let delay_str = if evt.delay_ms > 0 {
+                    format!(" +{}ms", evt.delay_ms)
+                } else {
+                    String::new()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{i:2}: "), Style::default().fg(Color::DarkGray)),
+                    Span::styled(arrow, Style::default().fg(if evt.is_down { Color::Green } else { Color::Red })),
+                    Span::raw(" "),
+                    Span::styled(key_name(evt.keycode), Style::default().fg(Color::Yellow)),
+                    Span::styled(delay_str, Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+            if m.events.len() > 12 {
+                lines.push(Line::from(Span::styled(
+                    format!("... and {} more", m.events.len() - 12),
+                    Style::default().fg(Color::DarkGray)
+                )));
+            }
+        } else {
+            lines.push(Line::from(Span::styled("(empty)", Style::default().fg(Color::DarkGray))));
+        }
+
+        let detail = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Macro Details"));
+        f.render_widget(detail, right_chunks[0]);
+    } else {
+        let empty = Paragraph::new("Select a macro")
+            .block(Block::default().borders(Borders::ALL).title("Macro Details"));
+        f.render_widget(empty, right_chunks[0]);
+    }
+
+    // Help text at bottom
+    let help_lines = if app.macro_editing {
+        vec![
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::raw(" Save  "),
+                Span::styled("Escape", Style::default().fg(Color::Yellow)),
+                Span::raw(" Cancel"),
+            ]),
+        ]
+    } else {
+        vec![
+            Line::from(vec![
+                Span::styled("e", Style::default().fg(Color::Yellow)),
+                Span::raw(" Edit macro  "),
+                Span::styled("c", Style::default().fg(Color::Yellow)),
+                Span::raw(" Clear macro  "),
+                Span::styled("r", Style::default().fg(Color::Yellow)),
+                Span::raw(" Refresh"),
+            ]),
+        ]
+    };
+    let help = Paragraph::new(help_lines)
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Keys"));
+    f.render_widget(help, right_chunks[1]);
 }

@@ -51,14 +51,14 @@ impl DeviceDatabase {
     /// Load devices from JSON file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
         let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| format!("Failed to read file: {e}"))?;
         Self::load_from_json(&content)
     }
 
     /// Load devices from JSON string
     pub fn load_from_json(json: &str) -> Result<Self, String> {
         let devices: Vec<JsonDeviceDefinition> = serde_json::from_str(json)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+            .map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
         let mut db = Self::new();
         for device in devices {
@@ -76,13 +76,13 @@ impl DeviceDatabase {
         // Index by VID/PID
         self.devices_by_vid_pid
             .entry(vid_pid)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id);
 
         // Index by company
         self.devices_by_company
             .entry(company)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id);
 
         // Store device

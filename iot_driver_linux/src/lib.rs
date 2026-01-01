@@ -5,6 +5,10 @@ pub mod protocol;
 pub mod devices;
 pub mod hid;
 pub mod device_loader;
+pub mod tui;
+pub mod audio_reactive;
+pub mod gif;
+pub mod color;
 
 pub use protocol::cmd;
 pub use protocol::magnetism;

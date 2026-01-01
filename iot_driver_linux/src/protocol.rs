@@ -13,7 +13,8 @@ pub mod cmd {
     pub const SET_KBOPTION: u8 = 0x09;
     pub const SET_KEYMATRIX: u8 = 0x0A;
     pub const SET_MACRO: u8 = 0x0B;
-    pub const SET_USERPIC: u8 = 0x0C;  // Per-key RGB colors (mode 25)
+    pub const SET_USERPIC: u8 = 0x0C;  // Per-key RGB colors (static)
+    pub const SET_USERGIF: u8 = 0x12;  // Per-key RGB animation (dynamic)
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
     pub const SET_AUTOOS_EN: u8 = 0x17;
@@ -31,6 +32,7 @@ pub mod cmd {
     pub const GET_LEDPARAM: u8 = 0x87;      // Get LED parameters
     pub const GET_SLEDPARAM: u8 = 0x88;     // Get secondary LED params
     pub const GET_KBOPTION: u8 = 0x89;      // Get keyboard options
+    pub const GET_USERPIC: u8 = 0x8C;       // Get per-key RGB colors
     pub const GET_KEYMATRIX: u8 = 0x8A;     // Get key mappings
     pub const GET_MACRO: u8 = 0x8B;         // Get macros
     pub const GET_USB_VERSION: u8 = 0x8F;   // Get USB version
@@ -80,6 +82,137 @@ pub mod cmd {
 
     /// Maximum LED mode index
     pub const LED_MODE_MAX: u8 = (LED_MODES.len() - 1) as u8;
+
+    /// LED mode enum for type-safe mode selection
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum LedMode {
+        Off = 0,
+        Constant = 1,
+        Breathing = 2,
+        Neon = 3,
+        Wave = 4,
+        Ripple = 5,
+        Raindrop = 6,
+        Snake = 7,
+        Reactive = 8,
+        Converge = 9,
+        SineWave = 10,
+        Kaleidoscope = 11,
+        LineWave = 12,
+        UserPicture = 13,   // Static per-key colors (4 layers)
+        Laser = 14,
+        CircleWave = 15,
+        Rainbow = 16,
+        RainDown = 17,
+        Meteor = 18,
+        ReactiveOff = 19,
+        Music3 = 20,
+        ScreenColor = 21,
+        Music2 = 22,
+        Train = 23,
+        Fireworks = 24,
+        UserColor = 25,     // Dynamic per-key animation (GIF)
+    }
+
+    impl LedMode {
+        /// Convert from u8, returns None if invalid
+        pub fn from_u8(value: u8) -> Option<Self> {
+            match value {
+                0 => Some(Self::Off),
+                1 => Some(Self::Constant),
+                2 => Some(Self::Breathing),
+                3 => Some(Self::Neon),
+                4 => Some(Self::Wave),
+                5 => Some(Self::Ripple),
+                6 => Some(Self::Raindrop),
+                7 => Some(Self::Snake),
+                8 => Some(Self::Reactive),
+                9 => Some(Self::Converge),
+                10 => Some(Self::SineWave),
+                11 => Some(Self::Kaleidoscope),
+                12 => Some(Self::LineWave),
+                13 => Some(Self::UserPicture),
+                14 => Some(Self::Laser),
+                15 => Some(Self::CircleWave),
+                16 => Some(Self::Rainbow),
+                17 => Some(Self::RainDown),
+                18 => Some(Self::Meteor),
+                19 => Some(Self::ReactiveOff),
+                20 => Some(Self::Music3),
+                21 => Some(Self::ScreenColor),
+                22 => Some(Self::Music2),
+                23 => Some(Self::Train),
+                24 => Some(Self::Fireworks),
+                25 => Some(Self::UserColor),
+                _ => None,
+            }
+        }
+
+        /// Parse from string (case-insensitive, supports names and numbers)
+        pub fn parse(s: &str) -> Option<Self> {
+            // Try parsing as number first
+            if let Ok(n) = s.parse::<u8>() {
+                return Self::from_u8(n);
+            }
+
+            // Try matching name (case-insensitive)
+            match s.to_lowercase().as_str() {
+                "off" => Some(Self::Off),
+                "constant" | "solid" => Some(Self::Constant),
+                "breathing" | "breath" => Some(Self::Breathing),
+                "neon" => Some(Self::Neon),
+                "wave" => Some(Self::Wave),
+                "ripple" => Some(Self::Ripple),
+                "raindrop" | "rain" => Some(Self::Raindrop),
+                "snake" => Some(Self::Snake),
+                "reactive" => Some(Self::Reactive),
+                "converge" => Some(Self::Converge),
+                "sinewave" | "sine" => Some(Self::SineWave),
+                "kaleidoscope" | "kaleid" => Some(Self::Kaleidoscope),
+                "linewave" | "line" => Some(Self::LineWave),
+                "userpicture" | "picture" | "static" => Some(Self::UserPicture),
+                "laser" => Some(Self::Laser),
+                "circlewave" | "circle" => Some(Self::CircleWave),
+                "rainbow" => Some(Self::Rainbow),
+                "raindown" => Some(Self::RainDown),
+                "meteor" => Some(Self::Meteor),
+                "reactiveoff" => Some(Self::ReactiveOff),
+                "music3" => Some(Self::Music3),
+                "screencolor" | "screen" => Some(Self::ScreenColor),
+                "music2" => Some(Self::Music2),
+                "train" => Some(Self::Train),
+                "fireworks" => Some(Self::Fireworks),
+                "usercolor" | "color" | "gif" | "animation" => Some(Self::UserColor),
+                _ => None,
+            }
+        }
+
+        /// Get the display name
+        pub fn name(&self) -> &'static str {
+            LED_MODES[*self as usize]
+        }
+
+        /// Get the numeric value
+        pub fn as_u8(&self) -> u8 {
+            *self as u8
+        }
+
+        /// List all modes with their names
+        pub fn list_all() -> impl Iterator<Item = (u8, &'static str)> {
+            LED_MODES.iter().enumerate().map(|(i, name)| (i as u8, *name))
+        }
+    }
+
+    impl std::fmt::Display for LedMode {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.name())
+        }
+    }
+
+    // Keep constants for backward compatibility
+    pub const LED_MODE_USER_PICTURE: u8 = LedMode::UserPicture as u8;
+    pub const LED_MODE_USER_COLOR: u8 = LedMode::UserColor as u8;
 
     pub fn name(cmd: u8) -> &'static str {
         match cmd {
@@ -179,6 +312,52 @@ pub const PRODUCT_ID_DONGLE_2: u16 = 0x5040;
 pub const REPORT_SIZE: usize = 65;       // Feature report size (with report ID)
 pub const INPUT_REPORT_SIZE: usize = 64; // Input report size
 
+/// HID communication timing constants
+pub mod timing {
+    /// Number of retries for query operations
+    pub const QUERY_RETRIES: usize = 5;
+    /// Number of retries for send operations
+    pub const SEND_RETRIES: usize = 3;
+    /// Default delay after HID command (ms)
+    pub const DEFAULT_DELAY_MS: u64 = 100;
+    /// Short delay for fast operations (ms)
+    pub const SHORT_DELAY_MS: u64 = 50;
+    /// Minimum delay for streaming (ms)
+    pub const MIN_DELAY_MS: u64 = 5;
+    /// Delay after animation start (ms)
+    pub const ANIMATION_START_DELAY_MS: u64 = 500;
+}
+
+/// Per-key RGB animation constants
+pub mod rgb {
+    /// Total RGB data size (126 keys * 3 bytes)
+    pub const TOTAL_RGB_SIZE: usize = 378;
+    /// Number of pages per frame
+    pub const NUM_PAGES: usize = 7;
+    /// RGB data per full page
+    pub const PAGE_SIZE: usize = 56;
+    /// RGB data in last page
+    pub const LAST_PAGE_SIZE: usize = 42;
+    /// LED matrix positions (keys)
+    pub const MATRIX_SIZE: usize = 126;
+    /// Magic value for per-key color commands
+    pub const MAGIC_VALUE: u8 = 255;
+}
+
+/// Firmware version thresholds for precision
+pub mod firmware {
+    /// Version threshold for 0.005mm precision
+    pub const PRECISION_HIGH_VERSION: u16 = 1280;
+    /// Version threshold for 0.01mm precision
+    pub const PRECISION_MID_VERSION: u16 = 768;
+    /// Precision factor for 0.005mm
+    pub const PRECISION_HIGH_FACTOR: f32 = 200.0;
+    /// Precision factor for 0.01mm
+    pub const PRECISION_MID_FACTOR: f32 = 100.0;
+    /// Precision factor for 0.1mm (legacy)
+    pub const PRECISION_LOW_FACTOR: f32 = 10.0;
+}
+
 /// LED dazzle (rainbow color cycle) option values
 pub const LED_DAZZLE_OFF: u8 = 7;
 pub const LED_DAZZLE_ON: u8 = 8;
@@ -277,6 +456,57 @@ pub mod hid {
             0xE0 => "LCtrl", 0xE1 => "LShift", 0xE2 => "LAlt", 0xE3 => "LGUI",
             0xE4 => "RCtrl", 0xE5 => "RShift", 0xE6 => "RAlt", 0xE7 => "RGUI",
             _ => "?",
+        }
+    }
+
+    /// Convert a character to HID keycode
+    /// Returns (keycode, needs_shift) or None if unsupported
+    pub fn char_to_hid(ch: char) -> Option<(u8, bool)> {
+        match ch {
+            // Letters (a-z lowercase, A-Z needs shift)
+            'a'..='z' => Some((0x04 + (ch as u8 - b'a'), false)),
+            'A'..='Z' => Some((0x04 + (ch as u8 - b'A'), true)),
+            // Numbers
+            '1'..='9' => Some((0x1E + (ch as u8 - b'1'), false)),
+            '0' => Some((0x27, false)),
+            // Special characters (unshifted)
+            ' ' => Some((0x2C, false)),  // Space
+            '-' => Some((0x2D, false)),
+            '=' => Some((0x2E, false)),
+            '[' => Some((0x2F, false)),
+            ']' => Some((0x30, false)),
+            '\\' => Some((0x31, false)),
+            ';' => Some((0x33, false)),
+            '\'' => Some((0x34, false)),
+            '`' => Some((0x35, false)),
+            ',' => Some((0x36, false)),
+            '.' => Some((0x37, false)),
+            '/' => Some((0x38, false)),
+            '\n' => Some((0x28, false)), // Enter
+            '\t' => Some((0x2B, false)), // Tab
+            // Shifted characters
+            '!' => Some((0x1E, true)),  // Shift+1
+            '@' => Some((0x1F, true)),  // Shift+2
+            '#' => Some((0x20, true)),  // Shift+3
+            '$' => Some((0x21, true)),  // Shift+4
+            '%' => Some((0x22, true)),  // Shift+5
+            '^' => Some((0x23, true)),  // Shift+6
+            '&' => Some((0x24, true)),  // Shift+7
+            '*' => Some((0x25, true)),  // Shift+8
+            '(' => Some((0x26, true)),  // Shift+9
+            ')' => Some((0x27, true)),  // Shift+0
+            '_' => Some((0x2D, true)),  // Shift+-
+            '+' => Some((0x2E, true)),  // Shift+=
+            '{' => Some((0x2F, true)),  // Shift+[
+            '}' => Some((0x30, true)),  // Shift+]
+            '|' => Some((0x31, true)),  // Shift+\
+            ':' => Some((0x33, true)),  // Shift+;
+            '"' => Some((0x34, true)),  // Shift+'
+            '~' => Some((0x35, true)),  // Shift+`
+            '<' => Some((0x36, true)),  // Shift+,
+            '>' => Some((0x37, true)),  // Shift+.
+            '?' => Some((0x38, true)),  // Shift+/
+            _ => None,
         }
     }
 }

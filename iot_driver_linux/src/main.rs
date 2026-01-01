@@ -1,638 +1,21 @@
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
-use futures::{Stream, StreamExt};
-use hidapi::{HidApi, HidDevice};
-use http::header::{ACCEPT, CONTENT_TYPE};
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
-use tonic::{transport::Server, Request, Response, Status};
+use clap::Parser;
+use hidapi::HidApi;
+use tonic::transport::Server;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn, error, debug};
+use tracing::info;
 
 // Use shared protocol definitions from library
 use iot_driver::protocol::{self, cmd};
+use iot_driver::color::hsv_to_rgb;
 
-pub mod driver {
-    tonic::include_proto!("driver");
-}
+// CLI definitions
+mod cli;
+use cli::{Cli, Commands};
 
-use driver::driver_grpc_server::{DriverGrpc, DriverGrpcServer};
-use driver::*;
+// gRPC server module
+mod grpc;
+use grpc::{DriverService, DriverGrpcServer, get_known_devices, dj_dev};
 
-/// Supported device entry from the original iot_driver database
-#[derive(Debug, Clone)]
-struct DeviceEntry {
-    vid: u16,
-    pid: u16,
-    usage: u16,
-    usage_page: u16,
-    interface_number: i32,
-    dongle_common: bool,
-}
-
-/// Known devices extracted from iot_driver.exe
-fn get_known_devices() -> Vec<DeviceEntry> {
-    vec![
-        // MonsGeek M1 V5 HE (our keyboard)
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRED, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, dongle_common: false },
-        // Additional devices from iot_driver_devices.txt
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRELESS, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, dongle_common: false },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_1, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, dongle_common: true },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_2, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, dongle_common: true },
-    ]
-}
-
-/// Connected HID device handle
-struct ConnectedDevice {
-    device: HidDevice,
-    vid: u16,
-    pid: u16,
-    path: String,
-}
-
-/// Calculate checksum for HID message
-fn calculate_checksum(data: &[u8], checksum_type: CheckSumType) -> u8 {
-    match checksum_type {
-        CheckSumType::Bit7 => {
-            let sum: u32 = data.iter().take(7).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        CheckSumType::Bit8 => {
-            let sum: u32 = data.iter().take(8).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        CheckSumType::None => 0,
-    }
-}
-
-/// Apply checksum to message
-fn apply_checksum(data: &mut [u8], checksum_type: CheckSumType) {
-    match checksum_type {
-        CheckSumType::Bit7 => {
-            if data.len() >= 8 {
-                data[7] = calculate_checksum(data, checksum_type);
-            }
-        }
-        CheckSumType::Bit8 => {
-            if data.len() >= 9 {
-                data[8] = calculate_checksum(data, checksum_type);
-            }
-        }
-        CheckSumType::None => {}
-    }
-}
-
-/// Parse device path in format "vid-pid-usage_page-interface"
-fn parse_device_path(path: &str) -> Option<(u16, u16, u16, i32)> {
-    let parts: Vec<&str> = path.split('-').collect();
-    if parts.len() >= 4 {
-        let vid = parts[0].parse().ok()?;
-        let pid = parts[1].parse().ok()?;
-        let usage_page = parts[2].parse().ok()?;
-        let interface = parts[3].parse().ok()?;
-        Some((vid, pid, usage_page, interface))
-    } else {
-        None
-    }
-}
-
-/// Driver service implementation
-pub struct DriverService {
-    hidapi: Arc<Mutex<HidApi>>,
-    devices: Arc<Mutex<HashMap<String, ConnectedDevice>>>,
-    device_tx: broadcast::Sender<DjDev>,
-    vendor_tx: broadcast::Sender<VenderMsg>,
-    vendor_polling: Arc<Mutex<bool>>,
-}
-
-impl DriverService {
-    pub fn new() -> Result<Self, hidapi::HidError> {
-        let hidapi = HidApi::new()?;
-        let (device_tx, _) = broadcast::channel(16);
-        let (vendor_tx, _) = broadcast::channel(256); // Larger buffer for frequent events
-
-        Ok(Self {
-            hidapi: Arc::new(Mutex::new(hidapi)),
-            devices: Arc::new(Mutex::new(HashMap::new())),
-            device_tx,
-            vendor_tx,
-            vendor_polling: Arc::new(Mutex::new(false)),
-        })
-    }
-
-    /// Start background polling for vendor events from connected devices
-    fn start_vendor_polling(&self) {
-        let mut polling = self.vendor_polling.lock().unwrap();
-        if *polling {
-            return; // Already polling
-        }
-        *polling = true;
-        drop(polling);
-
-        let devices = Arc::clone(&self.devices);
-        let vendor_tx = self.vendor_tx.clone();
-        let vendor_polling = Arc::clone(&self.vendor_polling);
-
-        tokio::spawn(async move {
-            info!("Started vendor event polling");
-
-            loop {
-                // Check if we should stop polling
-                {
-                    let polling = vendor_polling.lock().unwrap();
-                    if !*polling {
-                        break;
-                    }
-                }
-
-                // Try to read from any connected device
-                let mut got_event = false;
-                {
-                    let devices_guard = devices.lock().unwrap();
-                    for (path, connected) in devices_guard.iter() {
-                        // Non-blocking read with short timeout
-                        let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
-                        match connected.device.read_timeout(&mut buf, 10) {
-                            Ok(len) if len > 0 => {
-                                debug!("Vendor event from {}: {:02x?}", path, &buf[..std::cmp::min(len, 16)]);
-                                let event = VenderMsg {
-                                    msg: buf[..len].to_vec(),
-                                };
-                                if vendor_tx.send(event).is_err() {
-                                    // No receivers, but that's ok
-                                }
-                                got_event = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // If no events, sleep a bit to avoid busy loop
-                if !got_event {
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                }
-            }
-
-            info!("Stopped vendor event polling");
-        });
-    }
-
-    /// Query device ID using GET_USB_VERSION (0x8F) command
-    fn query_device_id(&self, device: &HidDevice) -> Option<i32> {
-        // Send GET_USB_VERSION command (0x8F)
-        let mut cmd = [0u8; 65];
-        cmd[0] = 0; // Report ID
-        cmd[1] = cmd::GET_USB_VERSION;
-
-        // Calculate checksum (Bit7 type)
-        let sum: u16 = cmd[1..8].iter().map(|&x| x as u16).sum();
-        cmd[8] = (255 - (sum & 0xFF) as u8) as u8;
-
-        // Try sending with retries (Linux hidraw quirk)
-        for attempt in 0..3 {
-            match device.send_feature_report(&cmd) {
-                Ok(_) => break,
-                Err(e) => {
-                    if attempt == 2 {
-                        warn!("Failed to send device ID query after 3 attempts: {}", e);
-                        return None;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-            }
-        }
-
-        // Read response
-        let mut response = [0u8; 65];
-        match device.get_feature_report(&mut response) {
-            Ok(len) if len >= 6 => {
-                // Response format: [report_id, cmd_echo, id_byte0, id_byte1, id_byte2, id_byte3, ...]
-                // Device ID is little-endian uint32 at bytes 1-4 (after report ID)
-                if response[1] == cmd::GET_USB_VERSION {
-                    let device_id = u32::from_le_bytes([
-                        response[2], response[3], response[4], response[5]
-                    ]) as i32;
-                    info!("Device ID: {}", device_id);
-                    return Some(device_id);
-                }
-            }
-            Ok(len) => {
-                warn!("Short response from device ID query: {} bytes", len);
-            }
-            Err(e) => {
-                warn!("Failed to read device ID: {}", e);
-            }
-        }
-        None
-    }
-
-    /// Scan for and connect to known devices
-    pub fn scan_devices(&self) -> Vec<DjDev> {
-        let mut found = Vec::new();
-        let known_devices = get_known_devices();
-
-        let hidapi = self.hidapi.lock().unwrap();
-
-        for device_info in hidapi.device_list() {
-            let vid = device_info.vendor_id();
-            let pid = device_info.product_id();
-            let usage_page = device_info.usage_page();
-            let usage = device_info.usage();
-            let interface = device_info.interface_number();
-
-            // Check if this matches a known device
-            for known in &known_devices {
-                if vid == known.vid && pid == known.pid
-                    && usage_page == known.usage_page
-                    && usage == known.usage
-                    && interface == known.interface_number {
-
-                    let path = format!("{}-{}-{}-{}", vid, pid, usage_page, interface);
-                    let hid_path = device_info.path().to_string_lossy().to_string();
-
-                    info!("Found device: VID={:04x} PID={:04x} path={}", vid, pid, hid_path);
-
-                    // Query device ID by opening temporarily
-                    let device_id = match device_info.open_device(&hidapi) {
-                        Ok(hid_device) => {
-                            match self.query_device_id(&hid_device) {
-                                Some(real_id) => {
-                                    info!("Device ID: {}", real_id);
-                                    real_id
-                                }
-                                None => {
-                                    warn!("Could not query device ID, using fallback 0");
-                                    0
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Could not open device to query ID: {}", e);
-                            0
-                        }
-                    };
-
-                    // Build device proto with webapp-compatible format
-                    let device = Device {
-                        dev_type: DeviceType::YzwKeyboard as i32,
-                        is24: false,  // Wired USB device
-                        path: path.clone(),
-                        id: device_id,
-                        battery: 100,  // Assume full for wired
-                        is_online: true,
-                        vid: vid as u32,
-                        pid: pid as u32,
-                    };
-
-                    found.push(DjDev {
-                        oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
-                    });
-                }
-            }
-        }
-
-        found
-    }
-
-    /// Open a device by path
-    fn open_device(&self, device_path: &str) -> Result<(), Status> {
-        let (vid, pid, _usage_page, _interface) = parse_device_path(device_path)
-            .ok_or_else(|| Status::invalid_argument("Invalid device path format"))?;
-
-        let hidapi = self.hidapi.lock().unwrap();
-
-        // Find the device in the HID list
-        for device_info in hidapi.device_list() {
-            if device_info.vendor_id() == vid && device_info.product_id() == pid {
-                match device_info.open_device(&hidapi) {
-                    Ok(device) => {
-                        let connected = ConnectedDevice {
-                            device,
-                            vid,
-                            pid,
-                            path: device_path.to_string(),
-                        };
-
-                        self.devices.lock().unwrap().insert(device_path.to_string(), connected);
-                        info!("Opened device: {}", device_path);
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Failed to open device {}: {}", device_path, e);
-                        return Err(Status::internal(format!("Failed to open device: {}", e)));
-                    }
-                }
-            }
-        }
-
-        Err(Status::not_found("Device not found"))
-    }
-
-    /// Send feature report to device
-    fn send_feature(&self, device_path: &str, data: &[u8]) -> Result<(), Status> {
-        // Try to open device if not already open
-        {
-            let devices = self.devices.lock().unwrap();
-            if !devices.contains_key(device_path) {
-                drop(devices);
-                self.open_device(device_path)?;
-            }
-        }
-
-        let devices = self.devices.lock().unwrap();
-        let connected = devices.get(device_path)
-            .ok_or_else(|| Status::not_found("Device not connected"))?;
-
-        // Prepare 64-byte buffer with report ID 0
-        let mut buf = vec![0u8; 65]; // Report ID + 64 bytes
-        buf[0] = 0; // Report ID
-        let len = std::cmp::min(data.len(), 64);
-        buf[1..1+len].copy_from_slice(&data[..len]);
-
-        debug!("Sending feature report: {:02x?}", &buf[..9]);
-
-        match connected.device.send_feature_report(&buf) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                error!("Failed to send feature report: {}", e);
-                Err(Status::internal(format!("HID error: {}", e)))
-            }
-        }
-    }
-
-    /// Read feature report from device
-    fn read_feature(&self, device_path: &str) -> Result<Vec<u8>, Status> {
-        // Try to open device if not already open
-        {
-            let devices = self.devices.lock().unwrap();
-            if !devices.contains_key(device_path) {
-                drop(devices);
-                self.open_device(device_path)?;
-            }
-        }
-
-        let devices = self.devices.lock().unwrap();
-        let connected = devices.get(device_path)
-            .ok_or_else(|| Status::not_found("Device not connected"))?;
-
-        let mut buf = vec![0u8; 65]; // Report ID + 64 bytes
-        buf[0] = 0; // Report ID
-
-        match connected.device.get_feature_report(&mut buf) {
-            Ok(len) => {
-                debug!("Received feature report ({} bytes): {:02x?}", len, &buf[..std::cmp::min(len, 9)]);
-                Ok(buf[1..].to_vec()) // Skip report ID
-            }
-            Err(e) => {
-                error!("Failed to read feature report: {}", e);
-                Err(Status::internal(format!("HID error: {}", e)))
-            }
-        }
-    }
-}
-
-#[tonic::async_trait]
-impl DriverGrpc for DriverService {
-    type watchDevListStream = Pin<Box<dyn Stream<Item = Result<DeviceList, Status>> + Send>>;
-    type watchSystemInfoStream = Pin<Box<dyn Stream<Item = Result<SystemInfo, Status>> + Send>>;
-    type upgradeOTAGATTStream = Pin<Box<dyn Stream<Item = Result<Progress, Status>> + Send>>;
-    type watchVenderStream = Pin<Box<dyn Stream<Item = Result<VenderMsg, Status>> + Send>>;  // Note: typo matches original
-
-    async fn watch_dev_list(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Self::watchDevListStream>, Status> {
-        info!("watch_dev_list called");
-
-        // Get currently connected devices
-        let initial_devices = self.scan_devices();
-        info!("Sending {} initial devices to client", initial_devices.len());
-
-        // Subscribe FIRST, then we'll send initial devices
-        let rx = self.device_tx.subscribe();
-
-        // Create DeviceList containing all initial devices
-        let initial_list = DeviceList {
-            dev_list: initial_devices,
-            r#type: DeviceListChangeType::Init as i32,
-        };
-
-        // Create stream that first yields initial device list, then broadcast updates
-        let initial_stream = futures::stream::iter(
-            std::iter::once(Ok(initial_list))
-        );
-
-        let broadcast_stream = BroadcastStream::new(rx)
-            .filter_map(|result| async move {
-                match result {
-                    Ok(dev) => {
-                        // Wrap single device update in DeviceList
-                        Some(Ok(DeviceList {
-                            dev_list: vec![dev],
-                            r#type: DeviceListChangeType::Add as i32,
-                        }))
-                    },
-                    Err(_) => None,
-                }
-            });
-
-        // Chain: initial device list first, then live updates
-        let combined = initial_stream.chain(broadcast_stream);
-
-        Ok(Response::new(Box::pin(combined)))
-    }
-
-    async fn watch_system_info(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Self::watchSystemInfoStream>, Status> {
-        info!("watch_system_info called");
-        let stream = futures::stream::empty();
-        Ok(Response::new(Box::pin(stream)))
-    }
-
-    async fn send_raw_feature(
-        &self,
-        request: Request<SendMsg>,
-    ) -> Result<Response<ResSend>, Status> {
-        let msg = request.into_inner();
-        debug!("send_raw_feature: path={}, {} bytes", msg.device_path, msg.msg.len());
-
-        match self.send_feature(&msg.device_path, &msg.msg) {
-            Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
-            Err(e) => Ok(Response::new(ResSend { err: e.message().to_string() })),
-        }
-    }
-
-    async fn read_raw_feature(
-        &self,
-        request: Request<ReadMsg>,
-    ) -> Result<Response<ResRead>, Status> {
-        let msg = request.into_inner();
-        debug!("read_raw_feature: path={}", msg.device_path);
-
-        match self.read_feature(&msg.device_path) {
-            Ok(data) => Ok(Response::new(ResRead { err: String::new(), msg: data })),
-            Err(e) => Ok(Response::new(ResRead { err: e.message().to_string(), msg: vec![] })),
-        }
-    }
-
-    async fn send_msg(
-        &self,
-        request: Request<SendMsg>,
-    ) -> Result<Response<ResSend>, Status> {
-        let msg = request.into_inner();
-        debug!("send_msg: path={}, checksum={:?}", msg.device_path, msg.check_sum_type);
-
-        // Apply checksum if needed
-        let mut data = msg.msg.clone();
-        if data.len() < 64 {
-            data.resize(64, 0);
-        }
-
-        let checksum_type = CheckSumType::try_from(msg.check_sum_type).unwrap_or(CheckSumType::Bit7);
-        apply_checksum(&mut data, checksum_type);
-
-        match self.send_feature(&msg.device_path, &data) {
-            Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
-            Err(e) => Ok(Response::new(ResSend { err: e.message().to_string() })),
-        }
-    }
-
-    async fn read_msg(
-        &self,
-        request: Request<ReadMsg>,
-    ) -> Result<Response<ResRead>, Status> {
-        let msg = request.into_inner();
-        debug!("read_msg: path={}", msg.device_path);
-
-        match self.read_feature(&msg.device_path) {
-            Ok(data) => Ok(Response::new(ResRead { err: String::new(), msg: data })),
-            Err(e) => Ok(Response::new(ResRead { err: e.message().to_string(), msg: vec![] })),
-        }
-    }
-
-    async fn get_item_from_db(
-        &self,
-        _request: Request<GetItem>,
-    ) -> Result<Response<Item>, Status> {
-        // Stub implementation
-        Ok(Response::new(Item { value: vec![], err_str: String::new() }))
-    }
-
-    async fn insert_db(
-        &self,
-        _request: Request<InsertDb>,
-    ) -> Result<Response<ResSend>, Status> {
-        Ok(Response::new(ResSend { err: String::new() }))
-    }
-
-    async fn delete_item_from_db(
-        &self,
-        _request: Request<DeleteItem>,
-    ) -> Result<Response<ResSend>, Status> {
-        Ok(Response::new(ResSend { err: String::new() }))
-    }
-
-    async fn get_all_keys_from_db(
-        &self,
-        _request: Request<GetAll>,
-    ) -> Result<Response<AllList>, Status> {
-        Ok(Response::new(AllList { data: vec![], err_str: String::new() }))
-    }
-
-    async fn get_all_values_from_db(
-        &self,
-        _request: Request<GetAll>,
-    ) -> Result<Response<AllList>, Status> {
-        Ok(Response::new(AllList { data: vec![], err_str: String::new() }))
-    }
-
-    async fn get_version(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Version>, Status> {
-        Ok(Response::new(Version {
-            base_version: "222".to_string(), // Match original IOTVersion
-            time_stamp: "2024-12-29".to_string(),
-        }))
-    }
-
-    async fn upgrade_otagatt(
-        &self,
-        _request: Request<OtaUpgrade>,
-    ) -> Result<Response<Self::upgradeOTAGATTStream>, Status> {
-        let stream = futures::stream::empty();
-        Ok(Response::new(Box::pin(stream)))
-    }
-
-    async fn mute_microphone(
-        &self,
-        _request: Request<MuteMicrophone>,
-    ) -> Result<Response<ResSend>, Status> {
-        Ok(Response::new(ResSend { err: String::new() }))
-    }
-
-    async fn toggle_microphone_mute(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<MicrophoneMuteStatus>, Status> {
-        Ok(Response::new(MicrophoneMuteStatus { is_mute: false, err: String::new() }))
-    }
-
-    async fn get_microphone_mute(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<MicrophoneMuteStatus>, Status> {
-        Ok(Response::new(MicrophoneMuteStatus { is_mute: false, err: String::new() }))
-    }
-
-    async fn change_wireless_loop_status(
-        &self,
-        _request: Request<WirelessLoopStatus>,
-    ) -> Result<Response<ResSend>, Status> {
-        Ok(Response::new(ResSend { err: String::new() }))
-    }
-
-    async fn set_light_type(
-        &self,
-        _request: Request<SetLight>,
-    ) -> Result<Response<Empty>, Status> {
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn watch_vender(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Self::watchVenderStream>, Status> {
-        info!("watch_vender called - starting vendor event stream");
-
-        // Start polling if not already running
-        self.start_vendor_polling();
-
-        // Subscribe to vendor events
-        let rx = self.vendor_tx.subscribe();
-        let stream = BroadcastStream::new(rx)
-            .filter_map(|result| async move {
-                match result {
-                    Ok(event) => Some(Ok(event)),
-                    Err(_) => None, // Lagged or closed
-                }
-            });
-
-        Ok(Response::new(Box::pin(stream)))
-    }
-
-    async fn get_weather(
-        &self,
-        _request: Request<WeatherReq>,
-    ) -> Result<Response<WeatherRes>, Status> {
-        Ok(Response::new(WeatherRes { res: "{}".to_string() }))
-    }
-}
 
 /// CLI test function - send a command and print response
 /// Uses retry pattern due to Linux HID feature report buffering
@@ -694,7 +77,7 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                 }
 
                 if !success {
-                    println!("\nFailed to get response after {} attempts", MAX_RETRIES);
+                    println!("\nFailed to get response after {MAX_RETRIES} attempts");
                     return Err("No valid response".into());
                 }
 
@@ -710,7 +93,7 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                             | ((resp[5] as u32) << 24);
                         // Version at bytes 8-9 (little-endian uint16)
                         let version = (resp[8] as u16) | ((resp[9] as u16) << 8);
-                        println!("  Device ID:  {} (0x{:04X})", device_id, device_id);
+                        println!("  Device ID:  {device_id} (0x{device_id:04X})");
                         println!("  Version:    {} (v{}.{:02})", version, version / 100, version % 100);
                     }
                     cmd::GET_PROFILE => {
@@ -729,9 +112,9 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                         let b = resp[8];
                         let dazzle = (options & protocol::LED_OPTIONS_MASK) == protocol::LED_DAZZLE_ON;
                         println!("  LED Mode:   {} ({})", mode, cmd::led_mode_name(mode));
-                        println!("  Brightness: {}/4", brightness);
-                        println!("  Speed:      {}/4", speed);
-                        println!("  Color RGB:  ({}, {}, {}) #{:02X}{:02X}{:02X}", r, g, b, r, g, b);
+                        println!("  Brightness: {brightness}/4");
+                        println!("  Speed:      {speed}/4");
+                        println!("  Color RGB:  ({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
                         if dazzle {
                             println!("  Dazzle:     ON (rainbow cycle)");
                         }
@@ -750,7 +133,7 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                             2 => "0.01mm",
                             _ => "unknown",
                         };
-                        println!("  Precision:  {}", precision);
+                        println!("  Precision:  {precision}");
                     }
                     cmd::GET_SLEEPTIME => {
                         let sleep_s = (resp[2] as u16) | ((resp[3] as u16) << 8);
@@ -784,46 +167,6 @@ fn cli_list(hidapi: &HidApi) {
     }
 }
 
-fn print_help() {
-    eprintln!("MonsGeek M1 V5 HE Linux Driver");
-    eprintln!();
-    eprintln!("Usage: iot_driver <command>");
-    eprintln!();
-    eprintln!("Query Commands:");
-    eprintln!("  info, version    Get device ID and firmware version");
-    eprintln!("  profile          Get current profile (0-3)");
-    eprintln!("  led              Get LED settings (mode, brightness, speed, color)");
-    eprintln!("  debounce         Get debounce time (ms)");
-    eprintln!("  options          Get keyboard options (Fn layer, WASD swap, etc.)");
-    eprintln!("  features         Get supported features and precision");
-    eprintln!("  sleep            Get sleep timeout");
-    eprintln!("  all              Show all device information");
-    eprintln!();
-    eprintln!("Set Commands:");
-    eprintln!("  set-profile <0-3>              Set active profile");
-    eprintln!("  set-debounce <ms>              Set debounce time (0-50)");
-    eprintln!("  set-led <mode> [b] [s] [r g b] Set LED (mode 0-25, brightness, speed, RGB)");
-    eprintln!("  set-sleep <seconds>            Set sleep timeout");
-    eprintln!("  reset                          Factory reset keyboard");
-    eprintln!("  calibrate                      Run calibration (min + max)");
-    eprintln!();
-    eprintln!("Trigger Commands (Hall Effect):");
-    eprintln!("  triggers                       Show current trigger settings");
-    eprintln!("  set-actuation <mm>             Set actuation point for all keys");
-    eprintln!("  set-rt <on|off|mm>             Enable/disable Rapid Trigger (or set sensitivity)");
-    eprintln!();
-    eprintln!("Other Commands:");
-    eprintln!("  list             List all HID devices");
-    eprintln!("  raw <hex>        Send raw command byte (hex)");
-    eprintln!("  serve            Run gRPC server on port 3814");
-    eprintln!("  tui              Run interactive terminal UI");
-    eprintln!();
-    eprintln!("Examples:");
-    eprintln!("  iot_driver info");
-    eprintln!("  iot_driver set-profile 1");
-    eprintln!("  iot_driver set-led 2 4 2 255 0 128   # Breathing, max bright, mid speed, purple");
-    eprintln!("  iot_driver raw 8f");
-}
 
 /// Run multiple commands and show all info
 fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
@@ -850,535 +193,855 @@ fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
 
-    // CLI mode
-    if args.len() > 1 {
-        let hidapi = HidApi::new()?;
+    // Handle commands
+    match cli.command {
+        // No command = show help (clap handles this automatically)
+        None => {
+            // Show help
+            use clap::CommandFactory;
+            Cli::command().print_help()?;
+            println!();
+            return Ok(());
+        }
 
-        match args[1].to_lowercase().as_str() {
-            // Query commands with friendly names
-            "info" | "version" | "ver" | "v" => {
-                cli_test(&hidapi, cmd::GET_USB_VERSION)?;
-                return Ok(());
-            }
-            "profile" | "prof" | "p" => {
-                cli_test(&hidapi, cmd::GET_PROFILE)?;
-                return Ok(());
-            }
-            "led" | "light" | "l" => {
-                cli_test(&hidapi, cmd::GET_LEDPARAM)?;
-                return Ok(());
-            }
-            "debounce" | "deb" | "d" => {
-                cli_test(&hidapi, cmd::GET_DEBOUNCE)?;
-                return Ok(());
-            }
-            "options" | "opts" | "opt" | "o" => {
-                cli_test(&hidapi, cmd::GET_KBOPTION)?;
-                return Ok(());
-            }
-            "features" | "feat" | "f" => {
-                cli_test(&hidapi, cmd::GET_FEATURE_LIST)?;
-                return Ok(());
-            }
-            "sleep" | "s" => {
-                cli_test(&hidapi, cmd::GET_SLEEPTIME)?;
-                return Ok(());
-            }
-            "all" | "a" => {
-                cli_all(&hidapi)?;
-                return Ok(());
-            }
+        // === Query Commands ===
+        Some(Commands::Info) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_USB_VERSION)?;
+        }
+        Some(Commands::Profile) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_PROFILE)?;
+        }
+        Some(Commands::Led) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_LEDPARAM)?;
+        }
+        Some(Commands::Debounce) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_DEBOUNCE)?;
+        }
+        Some(Commands::Options) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_KBOPTION)?;
+        }
+        Some(Commands::Features) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_FEATURE_LIST)?;
+        }
+        Some(Commands::Sleep) => {
+            let hidapi = HidApi::new()?;
+            cli_test(&hidapi, cmd::GET_SLEEPTIME)?;
+        }
+        Some(Commands::All) => {
+            let hidapi = HidApi::new()?;
+            cli_all(&hidapi)?;
+        }
 
-            // SET commands
-            "set-profile" | "sp" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-profile <0-3>");
-                    return Ok(());
-                }
-                let profile: u8 = args[2].parse().unwrap_or(0);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.set_profile(profile) {
-                        println!("Profile set to {}", profile);
-                    } else {
-                        eprintln!("Failed to set profile");
-                    }
+        // === Set Commands ===
+        Some(Commands::SetProfile { profile }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if device.set_profile(profile) {
+                    println!("Profile set to {profile}");
                 } else {
-                    eprintln!("No device found");
+                    eprintln!("Failed to set profile");
                 }
-                return Ok(());
-            }
-            "set-debounce" | "sd" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-debounce <ms>");
-                    return Ok(());
-                }
-                let ms: u8 = args[2].parse().unwrap_or(0);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.set_debounce(ms) {
-                        println!("Debounce set to {} ms", ms);
-                    } else {
-                        eprintln!("Failed to set debounce");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "set-led" | "sl" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-led <mode> [brightness] [speed] [r g b]");
-                    eprintln!("  mode: 0-25 (0=off, 1=constant, 2=breathing, etc.)");
-                    eprintln!("  brightness: 0-4 (default: 4)");
-                    eprintln!("  speed: 0-4 (default: 2)");
-                    eprintln!("  r g b: 0-255 (default: 255 255 255)");
-                    return Ok(());
-                }
-                let mode: u8 = args[2].parse().unwrap_or(1);
-                let brightness: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(4);
-                let speed: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2);
-                let r: u8 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(255);
-                let g: u8 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(255);
-                let b: u8 = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(255);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.set_led(mode, brightness, speed, r, g, b, false) {
-                        println!("LED set: mode={} ({}) brightness={} speed={} color=#{:02X}{:02X}{:02X}",
-                            mode, cmd::led_mode_name(mode), brightness, speed, r, g, b);
-                    } else {
-                        eprintln!("Failed to set LED");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "set-sleep" | "ss" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-sleep <seconds>");
-                    return Ok(());
-                }
-                let seconds: u16 = args[2].parse().unwrap_or(300);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.set_sleep(seconds, seconds) {
-                        println!("Sleep timeout set to {} seconds ({} min)", seconds, seconds / 60);
-                    } else {
-                        eprintln!("Failed to set sleep timeout");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "reset" => {
-                print!("This will factory reset the keyboard. Are you sure? (y/N) ");
-                use std::io::{self, Write};
-                io::stdout().flush().unwrap();
-                let mut input = String::new();
-                io::stdin().read_line(&mut input).unwrap();
-                if input.trim().to_lowercase() == "y" {
-                    if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                        if device.reset() {
-                            println!("Keyboard reset to factory defaults");
-                        } else {
-                            eprintln!("Failed to reset keyboard");
-                        }
-                    } else {
-                        eprintln!("No device found");
-                    }
-                } else {
-                    println!("Reset cancelled");
-                }
-                return Ok(());
-            }
-            "calibrate" | "cal" => {
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    println!("Starting calibration...");
-                    println!("Step 1: Calibrating minimum (released) position...");
-                    println!("        Keep all keys released!");
-                    device.calibrate_min(true);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    device.calibrate_min(false);
-                    println!("        Done.");
-                    println!();
-                    println!("Step 2: Calibrating maximum (pressed) position...");
-                    println!("        Press and hold ALL keys firmly for 3 seconds!");
-                    device.calibrate_max(true);
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    device.calibrate_max(false);
-                    println!("        Done.");
-                    println!();
-                    println!("Calibration complete!");
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-
-            // Trigger commands
-            "triggers" | "get-triggers" | "gt" => {
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    let info = device.read_info();
-                    let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
-                    println!("Trigger Settings (firmware v{}, precision: {})",
-                        info.version,
-                        iot_driver::hid::MonsGeekDevice::precision_str_from_version(info.version));
-                    println!();
-
-                    if let Some(triggers) = device.get_all_triggers() {
-                        // Decode 16-bit travel values (little-endian, 2 bytes per key)
-                        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-                            if idx * 2 + 1 < data.len() {
-                                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-                            } else {
-                                0
-                            }
-                        };
-
-                        let first_press = decode_u16(&triggers.press_travel, 0);
-                        let first_lift = decode_u16(&triggers.lift_travel, 0);
-                        let first_rt_press = decode_u16(&triggers.rt_press, 0);
-                        let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
-                        let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
-
-                        let num_keys = triggers.key_modes.len().min(triggers.press_travel.len() / 2);
-
-                        println!("First key settings (as sample):");
-                        println!("  Actuation:     {:.1}mm (raw: {})", first_press as f32 / factor, first_press);
-                        println!("  Release:       {:.1}mm (raw: {})", first_lift as f32 / factor, first_lift);
-                        println!("  RT Press:      {:.2}mm (raw: {})", first_rt_press as f32 / factor, first_rt_press);
-                        println!("  RT Release:    {:.2}mm (raw: {})", first_rt_lift as f32 / factor, first_rt_lift);
-                        println!("  Mode:          {} ({})", first_mode,
-                            protocol::magnetism::mode_name(first_mode));
-                        println!();
-
-                        // Check if all keys have same settings
-                        let all_same_press = (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
-                        let all_same_mode = triggers.key_modes.iter().take(num_keys).all(|&v| v == first_mode);
-
-                        if all_same_press && all_same_mode {
-                            println!("All {} keys have identical settings", num_keys);
-                        } else {
-                            println!("Keys have varying settings ({} keys total)", num_keys);
-                            // Show first 10 different keys
-                            println!("\nFirst 10 key values:");
-                            for i in 0..10.min(num_keys) {
-                                let press = decode_u16(&triggers.press_travel, i);
-                                let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
-                                println!("  Key {:2}: {:.1}mm mode={}", i, press as f32 / factor, mode);
-                            }
-                        }
-                    } else {
-                        eprintln!("Failed to read trigger settings");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "set-actuation" | "sa" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-actuation <mm>");
-                    eprintln!("  Example: iot_driver set-actuation 2.0");
-                    return Ok(());
-                }
-                let mm: f32 = args[2].parse().unwrap_or(2.0);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    let info = device.read_info();
-                    let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
-                    let raw = (mm * factor) as u16;
-                    if device.set_actuation_all_u16(raw) {
-                        println!("Actuation point set to {:.2}mm (raw: {}) for all keys", mm, raw);
-                    } else {
-                        eprintln!("Failed to set actuation point");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "set-rt" | "rapid-trigger" | "rt" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver set-rt <on|off|sensitivity_mm>");
-                    eprintln!("  Examples:");
-                    eprintln!("    iot_driver set-rt on       # Enable RT with default 0.3mm");
-                    eprintln!("    iot_driver set-rt off      # Disable RT");
-                    eprintln!("    iot_driver set-rt 0.2      # Enable RT with 0.2mm sensitivity");
-                    return Ok(());
-                }
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    let info = device.read_info();
-                    let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
-
-                    match args[2].to_lowercase().as_str() {
-                        "off" | "0" | "disable" => {
-                            if device.set_rapid_trigger_all(false) {
-                                println!("Rapid Trigger disabled for all keys");
-                            } else {
-                                eprintln!("Failed to disable Rapid Trigger");
-                            }
-                        }
-                        "on" | "enable" => {
-                            let sensitivity = (0.3 * factor) as u16;
-                            device.set_rapid_trigger_all(true);
-                            device.set_rt_press_all_u16(sensitivity);
-                            device.set_rt_lift_all_u16(sensitivity);
-                            println!("Rapid Trigger enabled with 0.3mm sensitivity for all keys");
-                        }
-                        _ => {
-                            let mm: f32 = args[2].parse().unwrap_or(0.3);
-                            let sensitivity = (mm * factor) as u16;
-                            device.set_rapid_trigger_all(true);
-                            device.set_rt_press_all_u16(sensitivity);
-                            device.set_rt_lift_all_u16(sensitivity);
-                            println!("Rapid Trigger enabled with {:.2}mm sensitivity for all keys", mm);
-                        }
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "set-color-all" | "color-all" | "sc" => {
-                if args.len() < 5 {
-                    eprintln!("Usage: iot_driver set-color-all <r> <g> <b>");
-                    eprintln!("  Sets all keys to the same RGB color (per-key mode 25)");
-                    eprintln!("  Example: iot_driver set-color-all 255 0 128   # Pink");
-                    return Ok(());
-                }
-                let r: u8 = args[2].parse().unwrap_or(255);
-                let g: u8 = args[3].parse().unwrap_or(255);
-                let b: u8 = args[4].parse().unwrap_or(255);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    println!("Setting all keys to color #{:02X}{:02X}{:02X}...", r, g, b);
-                    if device.set_all_keys_color(r, g, b) {
-                        println!("All keys set to #{:02X}{:02X}{:02X}", r, g, b);
-                    } else {
-                        eprintln!("Failed to set per-key colors");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-
-            // Utility commands
-            "list" | "ls" => {
-                cli_list(&hidapi);
-                return Ok(());
-            }
-            "raw" | "cmd" | "hex" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver raw <hex_byte>");
-                    eprintln!("Example: iot_driver raw 8f  (GET_USB_VERSION)");
-                    return Ok(());
-                }
-                let cmd_byte = u8::from_str_radix(&args[2], 16)?;
-                cli_test(&hidapi, cmd_byte)?;
-                return Ok(());
-            }
-            "remap" | "set-key" => {
-                if args.len() < 4 {
-                    eprintln!("Usage: iot_driver remap <key_index> <hid_code>");
-                    eprintln!("  key_index: Key position in matrix (0-97 for 98-key keyboard)");
-                    eprintln!("  hid_code: HID usage code (hex, e.g., 04=A, 29=Escape)");
-                    eprintln!("  Common HID codes:");
-                    eprintln!("    A-Z: 04-1D, 1-9: 1E-26, 0: 27");
-                    eprintln!("    Escape: 29, Tab: 2B, Space: 2C, Enter: 28");
-                    eprintln!("    F1-F12: 3A-45, PrintScr: 46, Delete: 4C");
-                    eprintln!("    Arrows: Left=50, Right=4F, Up=52, Down=51");
-                    eprintln!("  Example: iot_driver remap 0 2c  (remap key 0 to Space)");
-                    return Ok(());
-                }
-                let key_index: u8 = args[2].parse().unwrap_or(0);
-                let hid_code = u8::from_str_radix(&args[3], 16).unwrap_or(0);
-                let profile: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
-
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    let key_name = iot_driver::protocol::hid::key_name(hid_code);
-                    println!("Remapping key {} to {} (0x{:02x}) on profile {}...",
-                        key_index, key_name, hid_code, profile);
-                    if device.set_keymatrix(profile, key_index, hid_code, true, 0) {
-                        println!("Key {} remapped to {}", key_index, key_name);
-                    } else {
-                        eprintln!("Failed to remap key");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "reset-key" | "rk" => {
-                if args.len() < 3 {
-                    eprintln!("Usage: iot_driver reset-key <key_index> [profile]");
-                    eprintln!("  Resets a key to its default mapping");
-                    return Ok(());
-                }
-                let key_index: u8 = args[2].parse().unwrap_or(0);
-                let profile: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    println!("Resetting key {} on profile {}...", key_index, profile);
-                    if device.reset_key(profile, key_index) {
-                        println!("Key {} reset to default", key_index);
-                    } else {
-                        eprintln!("Failed to reset key");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "swap-keys" | "swap" => {
-                if args.len() < 5 {
-                    eprintln!("Usage: iot_driver swap <key_a_index> <key_b_index>");
-                    eprintln!("  Swaps two keys (requires reading current mappings first)");
-                    eprintln!("  Use 'keymatrix' command to find key indices and HID codes");
-                    return Ok(());
-                }
-                let key_a: u8 = args[2].parse().unwrap_or(0);
-                let key_b: u8 = args[3].parse().unwrap_or(0);
-                let profile: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
-
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    // Read current key mappings to get the HID codes
-                    if let Some(data) = device.get_keymatrix(profile, 2) {
-                        let code_a = if (key_a as usize) * 4 + 2 < data.len() {
-                            data[(key_a as usize) * 4 + 2]
-                        } else { 0 };
-                        let code_b = if (key_b as usize) * 4 + 2 < data.len() {
-                            data[(key_b as usize) * 4 + 2]
-                        } else { 0 };
-
-                        let name_a = iot_driver::protocol::hid::key_name(code_a);
-                        let name_b = iot_driver::protocol::hid::key_name(code_b);
-                        println!("Swapping key {} ({}) <-> key {} ({})...",
-                            key_a, name_a, key_b, name_b);
-
-                        if device.swap_keys(profile, key_a, code_a, key_b, code_b) {
-                            println!("Keys swapped successfully");
-                        } else {
-                            eprintln!("Failed to swap keys");
-                        }
-                    } else {
-                        eprintln!("Failed to read current key mappings");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "macro" | "get-macro" => {
-                let macro_index: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    println!("Reading macro {}...", macro_index);
-                    if let Some(data) = device.get_macro(macro_index) {
-                        if data.len() >= 2 {
-                            let length = u16::from_le_bytes([data[0], data[1]]) as usize;
-                            println!("Macro length: {} bytes", length);
-
-                            if length > 0 && data.len() > 2 {
-                                println!("\nMacro events (2 bytes each: [keycode, flags]):");
-                                // Parse macro events starting after the 2-byte length
-                                // Format appears to be: [keycode, flags] where 0x9e = down, 0x1e = up
-                                let events = &data[2..];
-                                for (i, chunk) in events.chunks(2).enumerate() {
-                                    if chunk.len() < 2 || chunk.iter().all(|&b| b == 0) {
-                                        break;
-                                    }
-                                    let keycode = chunk[0];
-                                    let flags = chunk[1];
-
-                                    let event_type = if flags & 0x80 != 0 { "Down" } else { "Up" };
-                                    let key_name = iot_driver::protocol::hid::key_name(keycode);
-                                    println!("  Event {:2}: {} {} (0x{:02x}, flags={:02x})",
-                                        i, event_type, key_name, keycode, flags);
-                                }
-                            } else {
-                                println!("Macro is empty");
-                            }
-                        } else {
-                            println!("Invalid macro data");
-                        }
-
-                        // Also show raw hex for debugging
-                        println!("\nRaw data ({} bytes):", data.len().min(64));
-                        for chunk in data.chunks(16).take(4) {
-                            for b in chunk {
-                                print!("{:02x} ", b);
-                            }
-                            println!();
-                        }
-                    } else {
-                        eprintln!("Failed to read macro (may be empty)");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "keymatrix" | "km" => {
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    let profile: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let pages: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3);
-                    println!("Reading key matrix for profile {} ({} pages)...", profile, pages);
-
-                    if let Some(data) = device.get_keymatrix(profile, pages) {
-                        println!("\nKey matrix data ({} bytes):", data.len());
-                        for (i, chunk) in data.chunks(16).enumerate() {
-                            print!("{:04x}: ", i * 16);
-                            for b in chunk {
-                                print!("{:02x} ", b);
-                            }
-                            // Print ASCII
-                            print!("  |");
-                            for b in chunk {
-                                if *b >= 0x20 && *b < 0x7f {
-                                    print!("{}", *b as char);
-                                } else {
-                                    print!(".");
-                                }
-                            }
-                            println!("|");
-                        }
-
-                        // Parse as key codes (4 bytes each: type, flags, hid_code, layer)
-                        println!("\nKey mappings (format: [type, flags, code, layer]):");
-                        let key_count = device.key_count() as usize;
-                        for i in 0..key_count.min(20) {
-                            if i * 4 + 3 < data.len() {
-                                let k = &data[i * 4..(i + 1) * 4];
-                                let hid_code = k[2];
-                                let key_name = iot_driver::protocol::hid::key_name(hid_code);
-                                println!("  Key {:2}: {:02x} {:02x} {:02x} {:02x}  -> {} (0x{:02x})",
-                                    i, k[0], k[1], k[2], k[3], key_name, hid_code);
-                            }
-                        }
-                    } else {
-                        eprintln!("Failed to read key matrix");
-                    }
-                } else {
-                    eprintln!("No device found");
-                }
-                return Ok(());
-            }
-            "serve" | "server" => {
-                // Fall through to server mode
-            }
-            "help" | "-h" | "--help" => {
-                print_help();
-                return Ok(());
-            }
-            _ => {
-                print_help();
-                return Ok(());
+            } else {
+                eprintln!("No device found");
             }
         }
-    } else {
-        print_help();
-        return Ok(());
+        Some(Commands::SetDebounce { ms }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if device.set_debounce(ms) {
+                    println!("Debounce set to {ms} ms");
+                } else {
+                    eprintln!("Failed to set debounce");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetLed { mode, brightness, speed, r, g, b }) => {
+            let mode_num = cmd::LedMode::parse(&mode)
+                .map(|m| m.as_u8())
+                .unwrap_or_else(|| mode.parse().unwrap_or(1));
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if device.set_led(mode_num, brightness, speed, r, g, b, false) {
+                    println!("LED set: mode={} ({}) brightness={} speed={} color=#{:02X}{:02X}{:02X}",
+                        mode_num, cmd::led_mode_name(mode_num), brightness, speed, r, g, b);
+                } else {
+                    eprintln!("Failed to set LED");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetSleep { seconds }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if device.set_sleep(seconds, seconds) {
+                    println!("Sleep timeout set to {} seconds ({} min)", seconds, seconds / 60);
+                } else {
+                    eprintln!("Failed to set sleep timeout");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::Reset) => {
+            print!("This will factory reset the keyboard. Are you sure? (y/N) ");
+            use std::io::{self, Write};
+            io::stdout().flush().unwrap();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+            if input.trim().to_lowercase() == "y" {
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    if device.reset() {
+                        println!("Keyboard reset to factory defaults");
+                    } else {
+                        eprintln!("Failed to reset keyboard");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+            } else {
+                println!("Reset cancelled");
+            }
+        }
+        Some(Commands::Calibrate) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Starting calibration...");
+                println!("Step 1: Calibrating minimum (released) position...");
+                println!("        Keep all keys released!");
+                device.calibrate_min(true);
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                device.calibrate_min(false);
+                println!("        Done.");
+                println!();
+                println!("Step 2: Calibrating maximum (pressed) position...");
+                println!("        Press and hold ALL keys firmly for 3 seconds!");
+                device.calibrate_max(true);
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                device.calibrate_max(false);
+                println!("        Done.");
+                println!();
+                println!("Calibration complete!");
+            } else {
+                eprintln!("No device found");
+            }
+        }
+
+        // === Trigger Commands ===
+        Some(Commands::Triggers) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                let info = device.read_info();
+                let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+                println!("Trigger Settings (firmware v{}, precision: {})",
+                    info.version,
+                    iot_driver::hid::MonsGeekDevice::precision_str_from_version(info.version));
+                println!();
+
+                if let Some(triggers) = device.get_all_triggers() {
+                    let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+                        if idx * 2 + 1 < data.len() {
+                            u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+                        } else {
+                            0
+                        }
+                    };
+
+                    let first_press = decode_u16(&triggers.press_travel, 0);
+                    let first_lift = decode_u16(&triggers.lift_travel, 0);
+                    let first_rt_press = decode_u16(&triggers.rt_press, 0);
+                    let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
+                    let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
+
+                    let num_keys = triggers.key_modes.len().min(triggers.press_travel.len() / 2);
+
+                    println!("First key settings (as sample):");
+                    println!("  Actuation:     {:.1}mm (raw: {})", first_press as f32 / factor, first_press);
+                    println!("  Release:       {:.1}mm (raw: {})", first_lift as f32 / factor, first_lift);
+                    println!("  RT Press:      {:.2}mm (raw: {})", first_rt_press as f32 / factor, first_rt_press);
+                    println!("  RT Release:    {:.2}mm (raw: {})", first_rt_lift as f32 / factor, first_rt_lift);
+                    println!("  Mode:          {} ({})", first_mode,
+                        protocol::magnetism::mode_name(first_mode));
+                    println!();
+
+                    let all_same_press = (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
+                    let all_same_mode = triggers.key_modes.iter().take(num_keys).all(|&v| v == first_mode);
+
+                    if all_same_press && all_same_mode {
+                        println!("All {num_keys} keys have identical settings");
+                    } else {
+                        println!("Keys have varying settings ({num_keys} keys total)");
+                        println!("\nFirst 10 key values:");
+                        for i in 0..10.min(num_keys) {
+                            let press = decode_u16(&triggers.press_travel, i);
+                            let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
+                            println!("  Key {:2}: {:.1}mm mode={}", i, press as f32 / factor, mode);
+                        }
+                    }
+                } else {
+                    eprintln!("Failed to read trigger settings");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetActuation { mm }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                let info = device.read_info();
+                let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+                let raw = (mm * factor) as u16;
+                if device.set_actuation_all_u16(raw) {
+                    println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys");
+                } else {
+                    eprintln!("Failed to set actuation point");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetRt { value }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                let info = device.read_info();
+                let factor = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+
+                match value.to_lowercase().as_str() {
+                    "off" | "0" | "disable" => {
+                        if device.set_rapid_trigger_all(false) {
+                            println!("Rapid Trigger disabled for all keys");
+                        } else {
+                            eprintln!("Failed to disable Rapid Trigger");
+                        }
+                    }
+                    "on" | "enable" => {
+                        let sensitivity = (0.3 * factor) as u16;
+                        device.set_rapid_trigger_all(true);
+                        device.set_rt_press_all_u16(sensitivity);
+                        device.set_rt_lift_all_u16(sensitivity);
+                        println!("Rapid Trigger enabled with 0.3mm sensitivity for all keys");
+                    }
+                    _ => {
+                        let mm: f32 = value.parse().unwrap_or(0.3);
+                        let sensitivity = (mm * factor) as u16;
+                        device.set_rapid_trigger_all(true);
+                        device.set_rt_press_all_u16(sensitivity);
+                        device.set_rt_lift_all_u16(sensitivity);
+                        println!("Rapid Trigger enabled with {mm:.2}mm sensitivity for all keys");
+                    }
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+
+        // === Per-key Color Commands ===
+        Some(Commands::SetColorAll { r, g, b, layer: _ }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Setting all keys to color #{r:02X}{g:02X}{b:02X}...");
+                if device.set_all_keys_color(r, g, b) {
+                    println!("All keys set to #{r:02X}{g:02X}{b:02X}");
+                } else {
+                    eprintln!("Failed to set per-key colors");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+
+        // === Key Remapping ===
+        Some(Commands::Remap { from, to, layer }) => {
+            let key_index: u8 = from.parse().unwrap_or(0);
+            let hid_code = u8::from_str_radix(&to, 16).unwrap_or(0);
+
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                println!("Remapping key {key_index} to {key_name} (0x{hid_code:02x}) on layer {layer}...");
+                if device.set_keymatrix(layer, key_index, hid_code, true, 0) {
+                    println!("Key {key_index} remapped to {key_name}");
+                } else {
+                    eprintln!("Failed to remap key");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::ResetKey { key, layer }) => {
+            let key_index: u8 = key.parse().unwrap_or(0);
+
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Resetting key {key_index} on layer {layer}...");
+                if device.reset_key(layer, key_index) {
+                    println!("Key {key_index} reset to default");
+                } else {
+                    eprintln!("Failed to reset key");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::Swap { key1, key2, layer }) => {
+            let key_a: u8 = key1.parse().unwrap_or(0);
+            let key_b: u8 = key2.parse().unwrap_or(0);
+
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if let Some(data) = device.get_keymatrix(layer, 2) {
+                    let code_a = if (key_a as usize) * 4 + 2 < data.len() {
+                        data[(key_a as usize) * 4 + 2]
+                    } else { 0 };
+                    let code_b = if (key_b as usize) * 4 + 2 < data.len() {
+                        data[(key_b as usize) * 4 + 2]
+                    } else { 0 };
+
+                    let name_a = iot_driver::protocol::hid::key_name(code_a);
+                    let name_b = iot_driver::protocol::hid::key_name(code_b);
+                    println!("Swapping key {key_a} ({name_a}) <-> key {key_b} ({name_b})...");
+
+                    if device.swap_keys(layer, key_a, code_a, key_b, code_b) {
+                        println!("Keys swapped successfully");
+                    } else {
+                        eprintln!("Failed to swap keys");
+                    }
+                } else {
+                    eprintln!("Failed to read current key mappings");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::Keymatrix { layer }) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Reading key matrix for layer {layer}...");
+
+                if let Some(data) = device.get_keymatrix(layer, 3) {
+                    println!("\nKey matrix data ({} bytes):", data.len());
+                    for (i, chunk) in data.chunks(16).enumerate() {
+                        print!("{:04x}: ", i * 16);
+                        for b in chunk {
+                            print!("{b:02x} ");
+                        }
+                        print!("  |");
+                        for b in chunk {
+                            if *b >= 0x20 && *b < 0x7f {
+                                print!("{}", *b as char);
+                            } else {
+                                print!(".");
+                            }
+                        }
+                        println!("|");
+                    }
+
+                    println!("\nKey mappings (format: [type, flags, code, layer]):");
+                    let key_count = device.key_count() as usize;
+                    for i in 0..key_count.min(20) {
+                        if i * 4 + 3 < data.len() {
+                            let k = &data[i * 4..(i + 1) * 4];
+                            let hid_code = k[2];
+                            let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                            println!("  Key {:2}: {:02x} {:02x} {:02x} {:02x}  -> {} (0x{:02x})",
+                                i, k[0], k[1], k[2], k[3], key_name, hid_code);
+                        }
+                    }
+                } else {
+                    eprintln!("Failed to read key matrix");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+
+        // === Macro Commands ===
+        Some(Commands::Macro { key }) => {
+            let macro_index: u8 = key.parse().unwrap_or(0);
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Reading macro {macro_index}...");
+                if let Some(data) = device.get_macro(macro_index) {
+                    if data.len() >= 2 {
+                        let length = u16::from_le_bytes([data[0], data[1]]) as usize;
+                        println!("Macro length: {length} bytes");
+
+                        if length > 0 && data.len() > 2 {
+                            println!("\nMacro events (2 bytes each: [keycode, flags]):");
+                            let events = &data[2..];
+                            for (i, chunk) in events.chunks(2).enumerate() {
+                                if chunk.len() < 2 || chunk.iter().all(|&b| b == 0) {
+                                    break;
+                                }
+                                let keycode = chunk[0];
+                                let flags = chunk[1];
+
+                                let event_type = if flags & 0x80 != 0 { "Down" } else { "Up" };
+                                let key_name = iot_driver::protocol::hid::key_name(keycode);
+                                println!("  Event {i:2}: {event_type} {key_name} (0x{keycode:02x}, flags={flags:02x})");
+                            }
+                        } else {
+                            println!("Macro is empty");
+                        }
+                    } else {
+                        println!("Invalid macro data");
+                    }
+
+                    println!("\nRaw data ({} bytes):", data.len().min(64));
+                    for chunk in data.chunks(16).take(4) {
+                        for b in chunk {
+                            print!("{b:02x} ");
+                        }
+                        println!();
+                    }
+                } else {
+                    eprintln!("Failed to read macro (may be empty)");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetMacro { key, text }) => {
+            let macro_index: u8 = key.parse().unwrap_or(0);
+
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Setting macro {macro_index} to type: \"{text}\"");
+
+                if device.set_text_macro(macro_index, &text, 10, 1) {
+                    println!("Macro {macro_index} set successfully!");
+                    println!("Assign this macro to a key in the Akko driver to test.");
+                } else {
+                    eprintln!("Failed to set macro");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+        Some(Commands::ClearMacro { key }) => {
+            let macro_index: u8 = key.parse().unwrap_or(0);
+
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                println!("Clearing macro {macro_index}...");
+
+                if device.set_macro(macro_index, &[], 1) {
+                    println!("Macro {macro_index} cleared!");
+                } else {
+                    eprintln!("Failed to clear macro");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
+
+        // === Animation Commands ===
+        Some(Commands::Gif { file, mode, test, frames, delay }) => {
+            use iot_driver::gif::{load_gif, generate_test_animation, print_animation_info};
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            let animation = if test {
+                println!("Generating {frames} frame test animation...");
+                generate_test_animation(frames, delay)
+            } else if let Some(path) = file {
+                println!("Loading GIF: {path}");
+                match load_gif(&path, mode.into()) {
+                    Ok(anim) => anim,
+                    Err(e) => {
+                        eprintln!("Failed to load GIF: {e}");
+                        return Ok(());
+                    }
+                }
+            } else {
+                eprintln!("Either provide a file path or use --test");
+                return Ok(());
+            };
+
+            print_animation_info(&animation);
+
+            let anim_frames: Vec<Vec<(u8, u8, u8)>> = animation.frames
+                .iter()
+                .take(255)
+                .map(|f| f.colors.clone())
+                .collect();
+
+            let delay_ms = animation.frames.first()
+                .map(|f| f.delay_ms)
+                .unwrap_or(100);
+
+            println!("\nUploading {} frames ({}ms delay)...", anim_frames.len(), delay_ms);
+            if device.upload_animation(&anim_frames, delay_ms) {
+                println!("Animation uploaded! Keyboard will play it autonomously.");
+            } else {
+                eprintln!("Failed to upload animation");
+            }
+        }
+        Some(Commands::GifStream { file, mode, r#loop }) => {
+            use iot_driver::gif::{load_gif, print_animation_info};
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+
+            println!("Loading GIF: {file}");
+            let animation = load_gif(&file, mode.into())
+                .map_err(|e| format!("Failed to load GIF: {e}"))?;
+
+            print_animation_info(&animation);
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+
+            let running = Arc::new(AtomicBool::new(true));
+            let r = running.clone();
+
+            ctrlc::set_handler(move || {
+                r.store(false, Ordering::SeqCst);
+            }).ok();
+
+            println!("\nStreaming animation (Ctrl+C to stop)...");
+
+            loop {
+                for (idx, frame) in animation.frames.iter().enumerate() {
+                    if !running.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    device.set_per_key_colors_fast(&frame.colors, 10, 3);
+                    print!("\rFrame {:3}/{}", idx + 1, animation.frame_count);
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+
+                    std::thread::sleep(std::time::Duration::from_millis(frame.delay_ms as u64));
+                }
+
+                if !r#loop || !running.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+
+            println!("\nAnimation stopped.");
+        }
+        Some(Commands::Mode { mode, layer }) => {
+            use iot_driver::protocol::cmd::LedMode;
+
+            let led_mode = match LedMode::parse(&mode) {
+                Some(m) => m,
+                None => {
+                    eprintln!("Unknown mode: {mode}");
+                    eprintln!("\nAvailable modes:");
+                    for (id, name) in LedMode::list_all() {
+                        eprintln!("  {id:2} - {name}");
+                    }
+                    return Ok(());
+                }
+            };
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Setting LED mode to {} ({}) with layer {}...", led_mode.name(), led_mode.as_u8(), layer);
+            device.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer);
+            println!("Done.");
+        }
+        Some(Commands::Modes) => {
+            use iot_driver::protocol::cmd::LedMode;
+            println!("Available LED modes:");
+            for (id, name) in LedMode::list_all() {
+                println!("  {id:2} - {name}");
+            }
+        }
+
+        // === Demo Commands ===
+        Some(Commands::Rainbow) => {
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Starting rainbow test on {}...", device.display_name());
+            println!("Press Ctrl+C to stop");
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            }).ok();
+
+            if let Err(e) = iot_driver::audio_reactive::run_rainbow_test(&device, running) {
+                eprintln!("Rainbow test error: {e}");
+            }
+        }
+        Some(Commands::Checkerboard) => {
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("=== Per-Key Color Test ===\n");
+
+            println!("1. Current LED settings:");
+            if let Some(resp) = device.query(0x87) {
+                println!("   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
+                         resp[2], resp[3], resp[4], resp[5], resp[6], resp[7], resp[8]);
+            }
+
+            println!("\n2. Setting LED mode to 13 (LightUserPicture)...");
+            if !device.set_led(13, 4, 0, 0, 0, 0, false) {
+                println!("   ERROR: Failed to set LED mode!");
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+
+            if let Some(resp) = device.query(0x87) {
+                println!("   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
+                         resp[2], resp[3], resp[4], resp[5], resp[6], resp[7], resp[8]);
+            }
+
+            const MATRIX_SIZE: usize = 126;
+            println!("\n3. Writing RED to ALL layers (0-3)...");
+            let red_colors: Vec<(u8, u8, u8)> = vec![(255, 0, 0); MATRIX_SIZE];
+
+            for layer in 0..4 {
+                println!("   Writing to layer {layer}...");
+                device.set_per_key_colors_to_layer(&red_colors, layer);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            if let Some(colors) = device.get_per_key_colors_debug() {
+                print!("   Stored colors (first 10): ");
+                for (r, g, b) in colors.iter().take(10) {
+                    print!("({r},{g},{b}) ");
+                }
+                println!();
+            }
+
+            for layer in 0..4 {
+                println!("   Setting layer {} (option byte = {:#04X})...", layer, layer << 4);
+                device.set_led_with_option(13, 4, 0, 0, 0, 0, false, layer);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+
+            let mut input = String::new();
+            println!("   Did any layer show RED? [Enter to continue]");
+            std::io::stdin().read_line(&mut input).ok();
+
+            println!("\n4. Setting ALL keys to BLUE...");
+            let blue_colors: Vec<(u8, u8, u8)> = vec![(0, 0, 255); MATRIX_SIZE];
+            device.set_per_key_colors_fast(&blue_colors, 100, 20);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            println!("   Did the keyboard turn BLUE? [Enter to continue]");
+            std::io::stdin().read_line(&mut input).ok();
+
+            println!("\n5. Setting ALL keys to GREEN...");
+            let green_colors: Vec<(u8, u8, u8)> = vec![(0, 255, 0); MATRIX_SIZE];
+            device.set_per_key_colors_fast(&green_colors, 100, 20);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            println!("   Did the keyboard turn GREEN? [Enter to continue]");
+            std::io::stdin().read_line(&mut input).ok();
+
+            println!("\n6. Setting checkerboard pattern (alternating RED/BLUE)...");
+            let mut checker_colors = Vec::with_capacity(MATRIX_SIZE);
+            for i in 0..MATRIX_SIZE {
+                if i % 2 == 0 {
+                    checker_colors.push((255, 0, 0));
+                } else {
+                    checker_colors.push((0, 0, 255));
+                }
+            }
+            device.set_per_key_colors_fast(&checker_colors, 100, 20);
+            println!("   Did the keyboard show alternating RED/BLUE? [Enter to finish]");
+            std::io::stdin().read_line(&mut input).ok();
+
+            println!("\nTest complete!");
+        }
+        Some(Commands::Sweep) => {
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Starting sweep animation on {}...", device.display_name());
+            println!("Press Ctrl+C to stop");
+
+            device.set_led(25, 4, 0, 0, 0, 0, false);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            }).ok();
+
+            let key_count = device.key_count() as usize;
+            let mut position = 0usize;
+
+            while running.load(std::sync::atomic::Ordering::SeqCst) {
+                let mut colors = Vec::with_capacity(key_count);
+                for i in 0..key_count {
+                    let distance = ((i as i32) - (position as i32)).unsigned_abs() as usize;
+                    if distance < 3 {
+                        let brightness = 255 - (distance * 80) as u8;
+                        colors.push((brightness, brightness, brightness));
+                    } else {
+                        colors.push((0, 0, 30));
+                    }
+                }
+
+                device.set_per_key_colors_fast(&colors, 10, 2);
+                position = (position + 1) % key_count;
+
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            println!("Sweep animation stopped");
+        }
+        Some(Commands::Red) => {
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Simple RED test:");
+            println!("1. Setting mode 13 (LightUserPicture) with layer 0...");
+            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            println!("2. Writing RED to layer 0 (126 keys)...");
+            let red: Vec<(u8, u8, u8)> = vec![(255, 0, 0); 126];
+            device.set_per_key_colors_to_layer(&red, 0);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            println!("3. Re-setting mode 13 with layer 0 to refresh...");
+            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+
+            println!("\nDid the keyboard turn RED?");
+            println!("If not, try running: ./target/release/iot_driver mode 13");
+        }
+        Some(Commands::Wave) => {
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+            use iot_driver::devices::M1_V5_HE_LED_MATRIX;
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Starting column-based wave animation...");
+            println!("Press Ctrl+C to stop");
+
+            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            }).ok();
+
+            const LEDS_PER_COL: usize = 6;
+            const NUM_COLS: usize = 16;
+            let mut wave_pos: f32 = 0.0;
+
+            while running.load(std::sync::atomic::Ordering::SeqCst) {
+                let mut colors = [(0u8, 0u8, 0u8); 126];
+
+                for col in 0..NUM_COLS {
+                    let col_pos = col as f32;
+                    let dist = (col_pos - wave_pos).abs().min((col_pos - wave_pos + NUM_COLS as f32).abs());
+                    let intensity = if dist < 3.0 {
+                        (255.0 * (1.0 - dist / 3.0)) as u8
+                    } else {
+                        0
+                    };
+
+                    let hue = ((col as f32 / NUM_COLS as f32) * 360.0 + wave_pos * 20.0) % 360.0;
+                    let (r, g, b) = hsv_to_rgb(hue, 1.0, intensity as f32 / 255.0);
+
+                    for row in 0..LEDS_PER_COL {
+                        let led_idx = col * LEDS_PER_COL + row;
+                        if led_idx < 126 && M1_V5_HE_LED_MATRIX[led_idx] != 0 {
+                            colors[led_idx] = (r, g, b);
+                        }
+                    }
+                }
+
+                device.set_per_key_colors_fast(colors.as_ref(), 10, 3);
+                wave_pos = (wave_pos + 0.3) % (NUM_COLS as f32);
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+
+            println!("\nWave animation stopped");
+        }
+
+        // === Audio Commands ===
+        Some(Commands::Audio { mode, hue, sensitivity }) => {
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Starting audio reactive mode on {}...", device.display_name());
+            println!("Press Ctrl+C to stop");
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            }).ok();
+
+            let config = iot_driver::audio_reactive::AudioConfig {
+                color_mode: mode.as_str().to_string(),
+                base_hue: hue,
+                sensitivity,
+                smoothing: 0.3,
+            };
+
+            if let Err(e) = iot_driver::audio_reactive::run_audio_reactive(&device, config, running) {
+                eprintln!("Audio reactive error: {e}");
+            }
+        }
+        Some(Commands::AudioTest) => {
+            println!("Testing audio capture...\n");
+
+            println!("Available audio devices:");
+            for name in iot_driver::audio_reactive::list_audio_devices() {
+                println!("  - {name}");
+            }
+            println!();
+
+            if let Err(e) = iot_driver::audio_reactive::test_audio_capture() {
+                eprintln!("Audio test failed: {e}");
+            }
+        }
+        Some(Commands::AudioLevels) => {
+            if let Err(e) = iot_driver::audio_reactive::test_audio_levels() {
+                eprintln!("Audio levels test failed: {e}");
+            }
+        }
+
+        // === Utility Commands ===
+        Some(Commands::List) => {
+            let hidapi = HidApi::new()?;
+            cli_list(&hidapi);
+        }
+        Some(Commands::Raw { cmd: cmd_str }) => {
+            let hidapi = HidApi::new()?;
+            let cmd_byte = u8::from_str_radix(&cmd_str, 16)?;
+            cli_test(&hidapi, cmd_byte)?;
+        }
+        Some(Commands::Serve) => {
+            // Fall through to server mode below
+            run_server().await?;
+        }
+        Some(Commands::Tui) => {
+            iot_driver::tui::run()?;
+        }
     }
 
+    Ok(())
+}
+
+async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // Server mode
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1390,11 +1053,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:3814".parse()?;
 
     info!("Starting IOT Driver Linux on {}", addr);
-    println!("addr :: {}", addr);
+    println!("addr :: {addr}");
     println!("SSSSSSSSSSSTTTTTTTTTTTTTTTTTAAAAAAAAAAAARRRRRRRRRRRTTTTTTTTTTT!!!!!!!");
 
     let service = DriverService::new()
-        .map_err(|e| format!("Failed to initialize HID API: {}", e))?;
+        .map_err(|e| format!("Failed to initialize HID API: {e}"))?;
 
     // Scan for devices on startup
     let devices = service.scan_devices();
