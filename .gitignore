@@ -1,7 +1,6 @@
 # Build artifacts
 target/
 *.exe
-!iot_driver.exe
 
 # Node modules
 node_modules/
