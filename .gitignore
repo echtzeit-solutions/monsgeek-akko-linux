@@ -1,0 +1,77 @@
+# Build artifacts
+target/
+*.exe
+!iot_driver.exe
+
+# Node modules
+node_modules/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Large extracted JS files (can be regenerated)
+akko_cloud.js
+akko_cloud_beautified.js
+akko_cloud_app.js
+akko_cloud_clean.js
+akko_cloud_data_extracted.js
+akko_cloud_final.js
+akko_cloud_i18n.js
+akko_cloud_min.js
+akko_cloud_refactored.js
+akko_cloud_slim.js
+akko_only.js
+device_classes.js
+webapp_main.js
+
+# Extracted directories (can be regenerated)
+extracted/
+extracted_js/
+driver_extract/extracted/
+driver_extract/unbundled/
+driver_extract/refactored/
+driver_extract/refactored-v2/
+webapp_source/node_modules/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp files
+*.log
+*.tmp
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Wine prefix
+wine_iot/
+
+# Playwright
+.playwright-mcp/
+
+# Claude artifacts (keep .claude/plans for reference)
+.claude/projects/
+
+# Large data files that can be regenerated
+large_data.json
+outline.json
+modules.json
+
+# Misc temp
+aux
+ps
+
+# Large installer (can be downloaded)
+Akko_Cloud_v4_setup_370.2.17_WIN20251225.zip
+
+# Strings dump (large, can be regenerated)
+iot_driver_strings.txt
+iot_driver_devices.txt
