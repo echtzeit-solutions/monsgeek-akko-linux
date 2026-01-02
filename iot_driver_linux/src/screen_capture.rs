@@ -43,34 +43,53 @@ impl ScreenColorState {
     }
 }
 
-/// Compute average RGB color from raw pixel data
+/// Grid size for sampling (16x16 = 256 samples instead of millions)
+const SAMPLE_GRID_SIZE: u32 = 16;
+
+/// Compute average RGB color by sampling a grid of pixels
+/// Much faster than averaging all pixels for high-res frames
 /// Assumes BGRA or RGBA format (4 bytes per pixel)
 pub fn compute_average_color(data: &[u8], width: u32, height: u32, is_bgra: bool) -> (u8, u8, u8) {
-    let pixel_count = (width * height) as u64;
-    if pixel_count == 0 || data.len() < (pixel_count * 4) as usize {
+    if width == 0 || height == 0 || data.len() < (width * height * 4) as usize {
         return (0, 0, 0);
     }
 
-    let (mut r_sum, mut g_sum, mut b_sum) = (0u64, 0u64, 0u64);
+    let stride = width * 4; // bytes per row
+    let (mut r_sum, mut g_sum, mut b_sum) = (0u32, 0u32, 0u32);
+    let mut sample_count = 0u32;
 
-    for pixel in data.chunks_exact(4) {
-        if is_bgra {
-            // BGRA format (common on Linux)
-            b_sum += pixel[0] as u64;
-            g_sum += pixel[1] as u64;
-            r_sum += pixel[2] as u64;
-        } else {
-            // RGBA format
-            r_sum += pixel[0] as u64;
-            g_sum += pixel[1] as u64;
-            b_sum += pixel[2] as u64;
+    // Sample a grid of points across the image
+    for gy in 0..SAMPLE_GRID_SIZE {
+        let y = (gy * height / SAMPLE_GRID_SIZE) as usize;
+        let row_offset = y * stride as usize;
+
+        for gx in 0..SAMPLE_GRID_SIZE {
+            let x = (gx * width / SAMPLE_GRID_SIZE) as usize;
+            let pixel_offset = row_offset + x * 4;
+
+            if pixel_offset + 3 < data.len() {
+                if is_bgra {
+                    b_sum += data[pixel_offset] as u32;
+                    g_sum += data[pixel_offset + 1] as u32;
+                    r_sum += data[pixel_offset + 2] as u32;
+                } else {
+                    r_sum += data[pixel_offset] as u32;
+                    g_sum += data[pixel_offset + 1] as u32;
+                    b_sum += data[pixel_offset + 2] as u32;
+                }
+                sample_count += 1;
+            }
         }
     }
 
+    if sample_count == 0 {
+        return (0, 0, 0);
+    }
+
     (
-        (r_sum / pixel_count) as u8,
-        (g_sum / pixel_count) as u8,
-        (b_sum / pixel_count) as u8,
+        (r_sum / sample_count) as u8,
+        (g_sum / sample_count) as u8,
+        (b_sum / sample_count) as u8,
     )
 }
 
