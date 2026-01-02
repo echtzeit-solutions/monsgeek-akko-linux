@@ -9,6 +9,7 @@ use futures::{Stream, StreamExt};
 use hidapi::{HidApi, HidDevice};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_udev::{MonitorBuilder, EventType};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn, error, debug};
 
@@ -109,6 +110,7 @@ pub struct DriverService {
     device_tx: broadcast::Sender<DjDev>,
     vendor_tx: broadcast::Sender<VenderMsg>,
     vendor_polling: Arc<Mutex<bool>>,
+    hotplug_running: Arc<Mutex<bool>>,
 }
 
 impl DriverService {
@@ -123,6 +125,7 @@ impl DriverService {
             device_tx,
             vendor_tx,
             vendor_polling: Arc::new(Mutex::new(false)),
+            hotplug_running: Arc::new(Mutex::new(false)),
         })
     }
 
@@ -134,6 +137,9 @@ impl DriverService {
         }
         *polling = true;
         drop(polling);
+
+        // Auto-open all detected devices so we can read vendor events
+        self.open_all_devices();
 
         let devices = Arc::clone(&self.devices);
         let vendor_tx = self.vendor_tx.clone();
@@ -176,6 +182,296 @@ impl DriverService {
 
             info!("Stopped vendor event polling");
         });
+    }
+
+    /// Open all detected devices so they're available for vendor polling
+    fn open_all_devices(&self) {
+        let known_devices = get_known_devices();
+        let hidapi = self.hidapi.lock().unwrap();
+        let mut devices = self.devices.lock().unwrap();
+
+        for device_info in hidapi.device_list() {
+            let vid = device_info.vendor_id();
+            let pid = device_info.product_id();
+            let usage_page = device_info.usage_page();
+            let usage = device_info.usage();
+            let interface = device_info.interface_number();
+
+            for known in &known_devices {
+                if vid == known.vid && pid == known.pid
+                    && usage_page == known.usage_page
+                    && usage == known.usage
+                    && interface == known.interface_number {
+
+                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
+
+                    // Skip if already opened
+                    if devices.contains_key(&path) {
+                        continue;
+                    }
+
+                    match device_info.open_device(&hidapi) {
+                        Ok(device) => {
+                            info!("Auto-opened device for vendor polling: {}", path);
+                            devices.insert(path.clone(), ConnectedDevice {
+                                device,
+                                _vid: vid,
+                                _pid: pid,
+                                _path: path,
+                            });
+                        }
+                        Err(e) => {
+                            warn!("Failed to auto-open device: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start hot-plug monitoring using udev (runs in a separate thread)
+    pub fn start_hotplug_monitor(&self) {
+        let mut running = self.hotplug_running.lock().unwrap();
+        if *running {
+            return;
+        }
+        *running = true;
+        drop(running);
+
+        let hidapi = Arc::clone(&self.hidapi);
+        let devices = Arc::clone(&self.devices);
+        let device_tx = self.device_tx.clone();
+        let hotplug_running = Arc::clone(&self.hotplug_running);
+
+        // Use a standard thread since udev types aren't Send
+        std::thread::spawn(move || {
+            info!("Starting udev hot-plug monitor for hidraw devices");
+
+            let builder = match MonitorBuilder::new() {
+                Ok(b) => b,
+                Err(e) => {
+                    error!("Failed to create udev monitor: {}", e);
+                    return;
+                }
+            };
+
+            let builder = match builder.match_subsystem("hidraw") {
+                Ok(b) => b,
+                Err(e) => {
+                    error!("Failed to set udev subsystem filter: {}", e);
+                    return;
+                }
+            };
+
+            let socket = match builder.listen() {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to start udev monitor: {}", e);
+                    return;
+                }
+            };
+
+            // Use blocking iteration with poll
+            use std::os::unix::io::AsRawFd;
+            let fd = socket.as_raw_fd();
+
+            loop {
+                {
+                    let running = hotplug_running.lock().unwrap();
+                    if !*running {
+                        break;
+                    }
+                }
+
+                // Poll with timeout so we can check the running flag
+                let mut fds = [libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                }];
+
+                let ret = unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
+
+                if ret <= 0 {
+                    continue; // Timeout or error, check running flag
+                }
+
+                // Event available
+                if let Some(event) = socket.iter().next() {
+                    let devnode = event.devnode().map(|p| p.to_string_lossy().to_string());
+                    debug!("udev event: {:?} for {:?}", event.event_type(), devnode);
+
+                    match event.event_type() {
+                        EventType::Add => {
+                            info!("Device added: {:?}", devnode);
+                            // Refresh hidapi and scan for new devices
+                            if let Ok(mut api) = hidapi.lock() {
+                                let _ = api.refresh_devices();
+                            }
+                            // Re-scan and broadcast new devices
+                            Self::rescan_devices_static(&hidapi, &devices, &device_tx);
+                        }
+                        EventType::Remove => {
+                            info!("Device removed: {:?}", devnode);
+                            // Refresh hidapi
+                            if let Ok(mut api) = hidapi.lock() {
+                                let _ = api.refresh_devices();
+                            }
+                            // Clean up disconnected devices
+                            Self::cleanup_disconnected_static(&hidapi, &devices, &device_tx);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            info!("Stopped udev hot-plug monitor");
+        });
+    }
+
+    /// Static helper to re-scan devices (called from async context)
+    fn rescan_devices_static(
+        hidapi: &Arc<Mutex<HidApi>>,
+        devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
+        device_tx: &broadcast::Sender<DjDev>,
+    ) {
+        let known_devices = get_known_devices();
+        let api = match hidapi.lock() {
+            Ok(api) => api,
+            Err(_) => return,
+        };
+        let mut devs = match devices.lock() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        for device_info in api.device_list() {
+            let vid = device_info.vendor_id();
+            let pid = device_info.product_id();
+            let usage_page = device_info.usage_page();
+            let usage = device_info.usage();
+            let interface = device_info.interface_number();
+
+            for known in &known_devices {
+                if vid == known.vid && pid == known.pid
+                    && usage_page == known.usage_page
+                    && usage == known.usage
+                    && interface == known.interface_number {
+
+                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
+
+                    if devs.contains_key(&path) {
+                        continue;
+                    }
+
+                    match device_info.open_device(&api) {
+                        Ok(device) => {
+                            info!("Hot-plug: opened new device {}", path);
+
+                            // Query device ID
+                            let device_id = Self::query_device_id_static(&device).unwrap_or(0);
+
+                            let dev_info = Device {
+                                dev_type: DeviceType::YzwKeyboard as i32,
+                                is24: false,
+                                path: path.clone(),
+                                id: device_id,
+                                battery: 100,
+                                is_online: true,
+                                vid: vid as u32,
+                                pid: pid as u32,
+                            };
+
+                            // Broadcast new device
+                            let _ = device_tx.send(DjDev {
+                                oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
+                            });
+
+                            devs.insert(path.clone(), ConnectedDevice {
+                                device,
+                                _vid: vid,
+                                _pid: pid,
+                                _path: path,
+                            });
+                        }
+                        Err(e) => {
+                            warn!("Hot-plug: failed to open device: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Static helper to clean up disconnected devices
+    fn cleanup_disconnected_static(
+        hidapi: &Arc<Mutex<HidApi>>,
+        devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
+        _device_tx: &broadcast::Sender<DjDev>,
+    ) {
+        let api = match hidapi.lock() {
+            Ok(api) => api,
+            Err(_) => return,
+        };
+        let mut devs = match devices.lock() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        // Get current device paths from hidapi
+        let known_devices = get_known_devices();
+        let mut current_paths = std::collections::HashSet::new();
+
+        for device_info in api.device_list() {
+            let vid = device_info.vendor_id();
+            let pid = device_info.product_id();
+            let usage_page = device_info.usage_page();
+            let interface = device_info.interface_number();
+
+            for known in &known_devices {
+                if vid == known.vid && pid == known.pid && usage_page == known.usage_page {
+                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
+                    current_paths.insert(path);
+                }
+            }
+        }
+
+        // Remove devices no longer present
+        let to_remove: Vec<String> = devs.keys()
+            .filter(|path| !current_paths.contains(*path))
+            .cloned()
+            .collect();
+
+        for path in to_remove {
+            info!("Hot-plug: removing disconnected device {}", path);
+            devs.remove(&path);
+            // TODO: Could broadcast device removal here
+        }
+    }
+
+    /// Static helper to query device ID
+    fn query_device_id_static(device: &HidDevice) -> Option<i32> {
+        let mut cmd_buf = [0u8; 65];
+        cmd_buf[0] = 0;
+        cmd_buf[1] = cmd::GET_USB_VERSION;
+
+        let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
+        cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+
+        if device.send_feature_report(&cmd_buf).is_err() {
+            return None;
+        }
+
+        let mut response = [0u8; 65];
+        match device.get_feature_report(&mut response) {
+            Ok(len) if len >= 6 && response[1] == cmd::GET_USB_VERSION => {
+                let device_id = u32::from_le_bytes([
+                    response[2], response[3], response[4], response[5]
+                ]) as i32;
+                Some(device_id)
+            }
+            _ => None,
+        }
     }
 
     /// Query device ID using GET_USB_VERSION (0x8F) command

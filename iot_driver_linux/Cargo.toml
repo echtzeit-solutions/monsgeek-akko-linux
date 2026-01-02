@@ -16,6 +16,10 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # HID access
 hidapi = "2.6"
 
+# Hot-plug detection (Linux udev)
+tokio-udev = "0.9"
+libc = "0.2"
+
 # Async utilities
 futures = "0.3"
 async-stream = "0.3"
@@ -42,6 +46,10 @@ crossterm = "0.28"
 # Audio reactive mode
 cpal = { version = "0.15", features = ["jack"] }
 spectrum-analyzer = "1.4"
+
+# Screen color reactive mode (PipeWire screencast)
+ashpd = "0.10"
+pipewire = "0.8"
 
 # Signal handling
 ctrlc = "3.4"

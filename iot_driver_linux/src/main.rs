@@ -1019,6 +1019,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // === Screen Color Commands ===
+        Some(Commands::Screen { fps }) => {
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+
+            let fps = fps.clamp(1, 60);
+
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Starting screen color mode on {}...", device.display_name());
+            println!("Press Ctrl+C to stop");
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            }).ok();
+
+            // Use await since main is already async
+            if let Err(e) = iot_driver::screen_capture::run_screen_color_mode(&device, running, fps).await {
+                eprintln!("Screen color mode error: {e}");
+            }
+        }
+
         // === Firmware Commands (DRY-RUN ONLY) ===
         Some(Commands::Firmware(fw_cmd)) => {
             match fw_cmd {
@@ -1275,6 +1301,9 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let service = DriverService::new()
         .map_err(|e| format!("Failed to initialize HID API: {e}"))?;
+
+    // Start hot-plug monitoring for device connect/disconnect
+    service.start_hotplug_monitor();
 
     // Scan for devices on startup
     let devices = service.scan_devices();

@@ -7,6 +7,7 @@ pub mod hid;
 pub mod device_loader;
 pub mod tui;
 pub mod audio_reactive;
+pub mod screen_capture;
 pub mod gif;
 pub mod color;
 pub mod firmware;

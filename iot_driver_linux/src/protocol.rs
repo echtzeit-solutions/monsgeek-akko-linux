@@ -15,6 +15,7 @@ pub mod cmd {
     pub const SET_MACRO: u8 = 0x0B;
     pub const SET_USERPIC: u8 = 0x0C;  // Per-key RGB colors (static)
     pub const SET_AUDIO_VIZ: u8 = 0x0D;  // Audio visualizer frequency bands (16 bands, values 0-6)
+    pub const SET_SCREEN_COLOR: u8 = 0x0E;  // Screen color RGB (streamed, for mode 21)
     pub const SET_USERGIF: u8 = 0x12;  // Per-key RGB animation (dynamic)
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
@@ -227,6 +228,7 @@ pub mod cmd {
             SET_KEYMATRIX => "SET_KEYMATRIX",
             SET_MACRO => "SET_MACRO",
             SET_USERPIC => "SET_USERPIC",
+            SET_SCREEN_COLOR => "SET_SCREEN_COLOR",
             SET_FN => "SET_FN",
             SET_SLEEPTIME => "SET_SLEEPTIME",
             SET_AUTOOS_EN => "SET_AUTOOS_EN",
@@ -651,5 +653,29 @@ pub mod audio_viz {
             }
         }
         bands
+    }
+}
+
+/// Screen color protocol (command 0x0E)
+/// Streams average screen RGB color to the keyboard's built-in screen reactive mode (mode 21)
+pub mod screen_color {
+    /// Update rate in Hz
+    pub const UPDATE_RATE_HZ: u32 = 50;
+    /// Update interval in milliseconds
+    pub const UPDATE_INTERVAL_MS: u64 = 20;
+
+    /// Build a screen color HID report
+    /// Sends RGB values to keyboard for mode 21 (Screen Color)
+    pub fn build_report(r: u8, g: u8, b: u8) -> [u8; 64] {
+        let mut buf = [0u8; 64];
+        buf[0] = super::cmd::SET_SCREEN_COLOR;  // 0x0E
+        buf[1] = r;
+        buf[2] = g;
+        buf[3] = b;
+        // Bytes 4-6 are reserved (zeros)
+        // Byte 7 is checksum (255 - sum of bytes 0-6)
+        let sum: u32 = buf[0..7].iter().map(|&b| b as u32).sum();
+        buf[7] = (255 - (sum & 0xFF)) as u8;
+        buf
     }
 }

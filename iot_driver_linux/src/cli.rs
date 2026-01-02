@@ -280,6 +280,15 @@ pub enum Commands {
     /// Show real-time audio levels
     AudioLevels,
 
+    // === Screen Color Commands ===
+    /// Run screen color reactive LED mode (streams average screen color to keyboard)
+    #[command(visible_alias = "screencolor")]
+    Screen {
+        /// Capture framerate (1-60, default 2)
+        #[arg(short, long, default_value = "2")]
+        fps: u32,
+    },
+
     // === Firmware Commands (DRY-RUN ONLY) ===
     /// Firmware update tools (dry-run only, no actual flashing)
     #[command(subcommand, visible_alias = "fw")]
