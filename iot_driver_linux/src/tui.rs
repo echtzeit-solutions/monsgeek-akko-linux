@@ -508,13 +508,16 @@ impl App {
         }
         if let Some(ref device) = self.device {
             // Non-blocking read of input reports
+            // Format: [0x1B, key_index, depth_lo, depth_hi, ...]
             while let Some(buf) = device.read_input(10) {
-                if buf.len() > 2 && buf[0] == cmd::SET_MAGNETISM_REPORT {
+                if buf.len() >= 4 && buf[0] == cmd::SET_MAGNETISM_REPORT {
+                    let key_index = buf[1] as usize;
+                    let depth_raw = (buf[2] as u16) | ((buf[3] as u16) << 8);
                     let precision = MonsGeekDevice::precision_factor(self.info.precision);
-                    let depth = ((buf[1] as u16) | ((buf[2] as u16) << 8)) as f32 / precision;
-                    // Store depth - simplified mapping
-                    if (buf[1] as usize) < self.key_depths.len() {
-                        self.key_depths[buf[1] as usize] = depth;
+                    let depth_mm = depth_raw as f32 / precision;
+
+                    if key_index < self.key_depths.len() {
+                        self.key_depths[key_index] = depth_mm;
                     }
                 }
             }
