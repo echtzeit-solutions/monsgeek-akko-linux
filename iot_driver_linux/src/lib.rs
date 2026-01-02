@@ -9,6 +9,8 @@ pub mod tui;
 pub mod audio_reactive;
 pub mod gif;
 pub mod color;
+pub mod firmware;
+pub mod firmware_api;
 
 pub use protocol::cmd;
 pub use protocol::magnetism;

@@ -5,7 +5,7 @@ use hidapi::{HidApi, HidDevice};
 use std::time::Duration;
 
 use crate::devices::{self, DeviceDefinition};
-use crate::protocol::{self, cmd, ChecksumType, timing, rgb, firmware};
+use crate::protocol::{self, cmd, ChecksumType, timing, rgb, firmware, firmware_update};
 
 /// Connected device info (VID, PID, path)
 #[derive(Debug, Clone)]
@@ -1233,6 +1233,32 @@ impl MonsGeekDevice {
             1 => "0.05mm",
             2 => "0.01mm",
             _ => "unknown",
+        }
+    }
+
+    /// Check if device is in bootloader mode (by VID/PID)
+    pub fn is_boot_mode(&self) -> bool {
+        firmware_update::is_boot_mode(self.vid, self.pid)
+    }
+
+    /// Format firmware version as human-readable string (e.g., "1.0.8")
+    pub fn format_version(version: u16) -> String {
+        let major = (version >> 8) & 0xF;
+        let minor = (version >> 4) & 0xF;
+        let patch = version & 0xF;
+        format!("{}.{}.{}", major, minor, patch)
+    }
+
+    /// Get device API ID for firmware checks
+    /// Queries the device directly for its ID
+    pub fn get_api_device_id(&self) -> Option<u32> {
+        // Query the device directly for its ID rather than using VID/PID mapping
+        let info = self.read_info();
+        if info.device_id != 0 {
+            Some(info.device_id)
+        } else {
+            // Fallback to VID/PID mapping if device query fails
+            crate::firmware_api::device_ids::from_vid_pid(self.vid, self.pid)
         }
     }
 

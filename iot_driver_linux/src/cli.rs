@@ -1,6 +1,7 @@
 // CLI definitions using clap
 
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "iot_driver")]
@@ -279,6 +280,11 @@ pub enum Commands {
     /// Show real-time audio levels
     AudioLevels,
 
+    // === Firmware Commands (DRY-RUN ONLY) ===
+    /// Firmware update tools (dry-run only, no actual flashing)
+    #[command(subcommand, visible_alias = "fw")]
+    Firmware(FirmwareCommands),
+
     // === Utility Commands ===
     /// List all HID devices
     #[command(visible_alias = "ls")]
@@ -341,4 +347,50 @@ impl AudioMode {
             AudioMode::Gradient => "gradient",
         }
     }
+}
+
+/// Firmware commands (DRY-RUN ONLY - no actual flashing)
+#[derive(Subcommand)]
+pub enum FirmwareCommands {
+    /// Show current device firmware version
+    #[command(visible_alias = "i")]
+    Info,
+
+    /// Validate a firmware file (parse, checksum, structure)
+    #[command(visible_alias = "val")]
+    Validate {
+        /// Path to firmware file (.bin or .zip)
+        file: PathBuf,
+    },
+
+    /// Dry-run: simulate firmware update (NO ACTUAL FLASHING)
+    #[command(visible_alias = "dr")]
+    DryRun {
+        /// Path to firmware file
+        file: PathBuf,
+
+        /// Show detailed command sequence
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Check for firmware updates from MonsGeek server
+    #[command(visible_alias = "chk")]
+    Check {
+        /// Device ID (auto-detected if not specified)
+        #[arg(long)]
+        device_id: Option<u32>,
+    },
+
+    /// Download firmware from MonsGeek server
+    #[command(visible_alias = "dl")]
+    Download {
+        /// Device ID (auto-detected if not specified)
+        #[arg(long)]
+        device_id: Option<u32>,
+
+        /// Output file path
+        #[arg(short, long, default_value = "firmware.zip")]
+        output: PathBuf,
+    },
 }

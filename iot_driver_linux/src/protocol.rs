@@ -512,6 +512,90 @@ pub mod hid {
     }
 }
 
+/// Firmware update protocol constants (DRY-RUN ONLY - no actual flashing)
+/// These constants document the protocol but should NOT be used to send boot commands
+pub mod firmware_update {
+    /// Boot mode entry command for USB firmware (DANGEROUS - DO NOT SEND)
+    /// Format: [0x7F, 0x55, 0xAA, 0x55, 0xAA] with Bit7 checksum
+    pub const BOOT_ENTRY_USB: [u8; 5] = [0x7F, 0x55, 0xAA, 0x55, 0xAA];
+
+    /// Boot mode entry command for RF firmware (DANGEROUS - DO NOT SEND)
+    /// Format: [0xF8, 0x55, 0xAA, 0x55, 0xAA, 0x00, 0x00, 0x82] with Bit7 checksum
+    pub const BOOT_ENTRY_RF: [u8; 8] = [0xF8, 0x55, 0xAA, 0x55, 0xAA, 0x00, 0x00, 0x82];
+
+    /// Firmware transfer start marker
+    pub const TRANSFER_START: [u8; 2] = [0xBA, 0xC0];
+
+    /// Firmware transfer complete marker
+    pub const TRANSFER_COMPLETE: [u8; 2] = [0xBA, 0xC2];
+
+    /// Boot mode VID/PIDs - device uses these when in bootloader mode
+    pub const BOOT_VID_PIDS: [(u16, u16); 4] = [
+        (0x3141, 0x504A),  // USB boot mode 1
+        (0x3141, 0x404A),  // USB boot mode 2
+        (0x046A, 0x012E),  // RF boot mode 1
+        (0x046A, 0x0130),  // RF boot mode 2
+    ];
+
+    /// Firmware data chunk size
+    pub const CHUNK_SIZE: usize = 64;
+
+    /// USB firmware offset in combined file
+    pub const USB_FIRMWARE_OFFSET: usize = 20480;
+
+    /// RF firmware offset in combined file
+    pub const RF_FIRMWARE_OFFSET: usize = 65536;
+
+    /// Delay after boot entry (ms)
+    pub const BOOT_ENTRY_DELAY_MS: u64 = 1000;
+
+    /// Delay after RF boot entry (ms)
+    pub const RF_BOOT_ENTRY_DELAY_MS: u64 = 3000;
+
+    /// Check if a VID/PID pair indicates boot mode
+    pub fn is_boot_mode(vid: u16, pid: u16) -> bool {
+        BOOT_VID_PIDS.contains(&(vid, pid))
+    }
+
+    /// Calculate firmware checksum (simple 32-bit sum of all bytes)
+    pub fn calculate_checksum(data: &[u8]) -> u32 {
+        data.iter().map(|&b| b as u32).sum()
+    }
+
+    /// Build transfer start command header
+    /// Returns: [0xBA, 0xC0, chunk_count_lo, chunk_count_hi, size_lo, size_mid, size_hi]
+    pub fn build_start_header(chunk_count: u16, size: u32) -> [u8; 7] {
+        [
+            TRANSFER_START[0],
+            TRANSFER_START[1],
+            (chunk_count & 0xFF) as u8,
+            (chunk_count >> 8) as u8,
+            (size & 0xFF) as u8,
+            ((size >> 8) & 0xFF) as u8,
+            ((size >> 16) & 0xFF) as u8,
+        ]
+    }
+
+    /// Build transfer complete command header
+    /// Returns bytes for: [0xBA, 0xC2, chunk_count_2bytes, checksum_4bytes, size_4bytes]
+    pub fn build_complete_header(chunk_count: u16, checksum: u32, size: u32) -> Vec<u8> {
+        vec![
+            TRANSFER_COMPLETE[0],
+            TRANSFER_COMPLETE[1],
+            (chunk_count & 0xFF) as u8,
+            (chunk_count >> 8) as u8,
+            (checksum & 0xFF) as u8,
+            ((checksum >> 8) & 0xFF) as u8,
+            ((checksum >> 16) & 0xFF) as u8,
+            ((checksum >> 24) & 0xFF) as u8,
+            (size & 0xFF) as u8,
+            ((size >> 8) & 0xFF) as u8,
+            ((size >> 16) & 0xFF) as u8,
+            ((size >> 24) & 0xFF) as u8,
+        ]
+    }
+}
+
 /// Audio visualizer protocol (command 0x0D)
 /// Sends 16 frequency band levels to the keyboard's built-in audio reactive mode
 pub mod audio_viz {
