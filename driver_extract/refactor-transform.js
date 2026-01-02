@@ -267,14 +267,42 @@ function createExportDefault(name, valueNode) {
 function createModule(name, valueNode, deps = []) {
     const statements = [];
 
-    // Add imports for dependencies
+    // Group imports by path for combining
+    const importsByPath = {};
     deps.forEach(dep => {
-        statements.push(
-            t.importDeclaration(
-                [t.importDefaultSpecifier(t.identifier(dep.localName))],
-                t.stringLiteral(dep.importPath)
-            )
-        );
+        if (!importsByPath[dep.importPath]) {
+            importsByPath[dep.importPath] = { default: [], named: [] };
+        }
+        if (dep.isNamed) {
+            importsByPath[dep.importPath].named.push(dep.localName);
+        } else {
+            importsByPath[dep.importPath].default.push(dep.localName);
+        }
+    });
+
+    // Add imports for dependencies
+    Object.entries(importsByPath).forEach(([importPath, imports]) => {
+        // Default imports (one per import path)
+        imports.default.forEach(localName => {
+            statements.push(
+                t.importDeclaration(
+                    [t.importDefaultSpecifier(t.identifier(localName))],
+                    t.stringLiteral(importPath)
+                )
+            );
+        });
+
+        // Named imports (combined)
+        if (imports.named.length > 0) {
+            statements.push(
+                t.importDeclaration(
+                    imports.named.map(name =>
+                        t.importSpecifier(t.identifier(name), t.identifier(name))
+                    ),
+                    t.stringLiteral(importPath)
+                )
+            );
+        }
     });
 
     // Export const name = value
@@ -444,14 +472,7 @@ traverse(ast, {
         if (isDeviceArray(init)) {
             const safename = safeName(name);
             const code = generate(init).code;
-            // Detect dependencies
-            const deps = [];
-            if (code.includes('KeyLayout.')) {
-                deps.push({ localName: 'KeyLayout', importPath: './KeyLayout.js' });
-            }
-            if (code.includes('HidMapping.')) {
-                deps.push({ localName: 'HidMapping', importPath: './HidMapping.js' });
-            }
+            // Dependencies will be resolved later after all extractions are known
             state.extractions.push({
                 name: safename,
                 originalName: name,
@@ -502,6 +523,19 @@ traverse(ast, {
                 state.variablesToRemove.add(name);
                 console.log(`  Layout constant: ${name}`);
             }
+        }
+
+        // Light layout objects (lightAKKOLayout, lightIKBC, etc.)
+        if (/^light[A-Z]/.test(name) && t.isObjectExpression(init)) {
+            // Track for combined lightLayouts.js
+            if (!state.lightLayouts) state.lightLayouts = [];
+            state.lightLayouts.push({
+                name,
+                ast: t.cloneNode(init, true),
+                nodePath,
+            });
+            state.variablesToRemove.add(name);
+            console.log(`  Light layout: ${name}`);
         }
 
         // Large JSON data blobs (figma_json, strings_json, etc.)
@@ -695,6 +729,111 @@ traverse(ast, {
 
 console.log(`\nFound: ${state.stats.devices} devices, ${state.stats.svg} SVGs, ${state.stats.components} components, ${state.stats.protocol} protocol, ${state.stats.protobuf} protobuf, ${state.stats.utils} utils, ${state.stats.vendor} vendor (removed)`);
 
+// Special handling for HidMapping - it has a unique pattern:
+// 1. const j = [...] (large array of key mappings)
+// 2. var HidMapping; (uninitialized declaration)
+// 3. (g => {...})(HidMapping ||= {}) (IIFE that populates it)
+console.log('\n=== Pass 1d: Extracting HidMapping ===');
+
+let hidMappingArrayNode = null;
+let hidMappingArrayPath = null;
+let hidMappingDeclPath = null;
+let hidMappingIIFEPath = null;
+
+// Find j array (key mappings)
+traverse(ast, {
+    VariableDeclarator(nodePath) {
+        const name = nodePath.node.id?.name;
+        if (name === 'j' && t.isArrayExpression(nodePath.node.init)) {
+            const elements = nodePath.node.init.elements;
+            // Check if it looks like key mappings (objects with hidCode, keyCode, etc.)
+            if (elements.length > 50) {
+                const firstElement = elements[0];
+                if (t.isObjectExpression(firstElement)) {
+                    const props = firstElement.properties.map(p => p.key?.name || p.key?.value);
+                    if (props.includes('hidCode') || props.includes('keyCode')) {
+                        console.log(`  Found key mapping array 'j' with ${elements.length} entries`);
+                        hidMappingArrayNode = t.cloneNode(nodePath.node.init, true);
+                        hidMappingArrayPath = nodePath;
+                    }
+                }
+            }
+        }
+    },
+    noScope: true
+});
+
+// Find var HidMapping; (without init)
+traverse(ast, {
+    VariableDeclarator(nodePath) {
+        const name = nodePath.node.id?.name;
+        if (name === 'HidMapping' && !nodePath.node.init) {
+            console.log('  Found HidMapping declaration');
+            hidMappingDeclPath = nodePath;
+        }
+    },
+    noScope: true
+});
+
+// Find the IIFE: (g => {...})(HidMapping ||= {})
+traverse(ast, {
+    ExpressionStatement(nodePath) {
+        const expr = nodePath.node.expression;
+        if (!t.isCallExpression(expr)) return;
+
+        // Check if it's an arrow function IIFE
+        const callee = expr.callee;
+        if (!t.isArrowFunctionExpression(callee) && !t.isFunctionExpression(callee)) return;
+
+        // Check if the argument is HidMapping ||= {}
+        const args = expr.arguments;
+        if (args.length !== 1) return;
+
+        const arg = args[0];
+        if (t.isAssignmentExpression(arg, { operator: '||=' }) &&
+            t.isIdentifier(arg.left, { name: 'HidMapping' })) {
+            console.log('  Found HidMapping IIFE');
+            hidMappingIIFEPath = nodePath;
+        }
+    },
+    noScope: true
+});
+
+// If we found all parts, create HidMapping.js
+if (hidMappingArrayNode && hidMappingDeclPath && hidMappingIIFEPath) {
+    console.log('  Creating HidMapping.js with combined content');
+
+    // Create the module content:
+    // const j = [...];
+    // var HidMapping;
+    // (g => {...})(HidMapping ||= {});
+    // export default HidMapping;
+    const hidMappingModule = t.program([
+        t.variableDeclaration('const', [
+            t.variableDeclarator(t.identifier('j'), hidMappingArrayNode)
+        ]),
+        t.variableDeclaration('var', [
+            t.variableDeclarator(t.identifier('HidMapping'), null)
+        ]),
+        t.cloneNode(hidMappingIIFEPath.node, true),
+        t.exportDefaultDeclaration(t.identifier('HidMapping'))
+    ]);
+
+    const hidMappingCode = generate(hidMappingModule, {
+        comments: true,
+        compact: false,
+    });
+
+    const hidMappingPath = path.join(outputDir, 'src', 'devices', 'HidMapping.js');
+    fs.writeFileSync(hidMappingPath, `// Auto-extracted: HidMapping\n${hidMappingCode.code}\n`);
+    console.log('  Wrote HidMapping.js');
+
+    // Mark for removal
+    state.variablesToRemove.add('j');
+    state.variablesToRemove.add('HidMapping');
+    state.hidMappingIIFEPath = hidMappingIIFEPath;
+}
+
 console.log('\n=== Pass 2: Writing extracted modules ===');
 
 // Write each extraction as a module
@@ -714,7 +853,20 @@ state.extractions.forEach(extraction => {
         ]);
     } else {
         // Value: export const name = value; export default name;
-        moduleAst = createModule(extraction.name, extraction.ast, extraction.deps || []);
+        // Fix IIFE self-references like (g => {...})(KeyLayout || {}) -> (g => {...})({})
+        let astNode = extraction.ast;
+        if (t.isCallExpression(astNode) && astNode.arguments.length === 1) {
+            const arg = astNode.arguments[0];
+            // Check for Name || {} pattern
+            if (t.isLogicalExpression(arg, { operator: '||' }) &&
+                t.isIdentifier(arg.left, { name: extraction.originalName }) &&
+                t.isObjectExpression(arg.right)) {
+                // Replace with just {}
+                astNode = t.cloneNode(astNode, true);
+                astNode.arguments[0] = t.objectExpression([]);
+            }
+        }
+        moduleAst = createModule(extraction.name, astNode, extraction.deps || []);
     }
 
     const output = generate(moduleAst, {
@@ -726,6 +878,32 @@ state.extractions.forEach(extraction => {
 });
 
 console.log(`Wrote ${state.extractions.length} modules`);
+
+// Write combined lightLayouts.js if any were collected
+if (state.lightLayouts && state.lightLayouts.length > 0) {
+    const statements = [];
+
+    // Export each light layout as named export
+    state.lightLayouts.forEach(layout => {
+        statements.push(
+            t.exportNamedDeclaration(
+                t.variableDeclaration('const', [
+                    t.variableDeclarator(t.identifier(layout.name), layout.ast)
+                ])
+            )
+        );
+    });
+
+    const lightLayoutsAst = t.program(statements);
+    const lightLayoutsCode = generate(lightLayoutsAst, {
+        comments: true,
+        compact: false,
+    });
+
+    const lightLayoutsPath = path.join(outputDir, 'src', 'devices', 'lightLayouts.js');
+    fs.writeFileSync(lightLayoutsPath, `// Auto-extracted: lightLayouts\n${lightLayoutsCode.code}\n`);
+    console.log(`Wrote lightLayouts.js with ${state.lightLayouts.length} layouts`);
+}
 
 console.log('\n=== Pass 3: Transforming source ===');
 
@@ -799,6 +977,24 @@ traverse(ast, {
         }
     },
 
+    // Remove HidMapping IIFE that was extracted
+    ExpressionStatement(nodePath) {
+        const expr = nodePath.node.expression;
+        if (!t.isCallExpression(expr)) return;
+
+        const callee = expr.callee;
+        if (!t.isArrowFunctionExpression(callee) && !t.isFunctionExpression(callee)) return;
+
+        const args = expr.arguments;
+        if (args.length !== 1) return;
+
+        const arg = args[0];
+        if (t.isAssignmentExpression(arg, { operator: '||=' }) &&
+            t.isIdentifier(arg.left, { name: 'HidMapping' })) {
+            nodePath.remove();
+        }
+    },
+
     // Insert imports at the top of the program
     Program: {
         exit(nodePath) {
@@ -832,6 +1028,16 @@ traverse(ast, {
                             t.importSpecifier(t.identifier('Fragment'), t.identifier('Fragment')),
                         ],
                         t.stringLiteral('react/jsx-runtime')
+                    )
+                );
+            }
+
+            // Add HidMapping import if it was extracted
+            if (state.variablesToRemove.has('HidMapping')) {
+                imports.push(
+                    t.importDeclaration(
+                        [t.importDefaultSpecifier(t.identifier('HidMapping'))],
+                        t.stringLiteral('./devices/HidMapping.js')
                     )
                 );
             }
