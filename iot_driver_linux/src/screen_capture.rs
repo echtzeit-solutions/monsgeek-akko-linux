@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use tracing::trace;
+
 use crate::hid::MonsGeekDevice;
 use crate::protocol::{cmd, screen_color};
 
@@ -113,8 +115,7 @@ fn run_screen_color_loop(
 
         // Only send if color changed (reduces USB traffic)
         if (r, g, b) != last_color {
-            // Debug: print color
-            println!("Screen color: RGB({}, {}, {}) #{:02X}{:02X}{:02X}", r, g, b, r, g, b);
+            trace!("Screen color: RGB({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
 
             let report = screen_color::build_report(r, g, b);
             // Use the standard send method with Bit7 checksum
@@ -142,12 +143,12 @@ pub mod pipewire_capture {
         // 1. Request screen cast via XDG portal
         let screencast = Screencast::new()
             .await
-            .map_err(|e| format!("Failed to create screencast portal: {}", e))?;
+            .map_err(|e| format!("Failed to create screencast portal: {e}"))?;
 
         let session = screencast
             .create_session()
             .await
-            .map_err(|e| format!("Failed to create session: {}", e))?;
+            .map_err(|e| format!("Failed to create session: {e}"))?;
 
         // Select monitor source
         screencast
@@ -160,17 +161,17 @@ pub mod pipewire_capture {
                 PersistMode::DoNot,
             )
             .await
-            .map_err(|e| format!("Failed to select sources: {}", e))?;
+            .map_err(|e| format!("Failed to select sources: {e}"))?;
 
         // Start the stream - pass None for window identifier
         let response = screencast
             .start(&session, None)
             .await
-            .map_err(|e| format!("Failed to start screencast: {}", e))?;
+            .map_err(|e| format!("Failed to start screencast: {e}"))?;
 
         let response = response
             .response()
-            .map_err(|e| format!("Failed to get response: {}", e))?;
+            .map_err(|e| format!("Failed to get response: {e}"))?;
 
         let streams = response.streams();
         if streams.is_empty() {
@@ -178,14 +179,14 @@ pub mod pipewire_capture {
         }
 
         let node_id = streams[0].pipe_wire_node_id();
-        println!("Got PipeWire node ID: {}", node_id);
+        println!("Got PipeWire node ID: {node_id}");
 
         // 2. Connect to PipeWire and receive frames
         // This runs in a blocking thread since pipewire-rs uses its own event loop
         let state_clone = state.clone();
         std::thread::spawn(move || {
             if let Err(e) = run_pipewire_capture(node_id, state_clone, fps) {
-                eprintln!("PipeWire capture error: {}", e);
+                eprintln!("PipeWire capture error: {e}");
             }
         });
 
@@ -206,12 +207,12 @@ pub mod pipewire_capture {
         pipewire::init();
 
         let main_loop = MainLoop::new(None)
-            .map_err(|e| format!("Failed to create main loop: {:?}", e))?;
+            .map_err(|e| format!("Failed to create main loop: {e:?}"))?;
         let context = Context::new(&main_loop)
-            .map_err(|e| format!("Failed to create context: {:?}", e))?;
+            .map_err(|e| format!("Failed to create context: {e:?}"))?;
         let core = context
             .connect(None)
-            .map_err(|e| format!("Failed to connect to PipeWire: {:?}", e))?;
+            .map_err(|e| format!("Failed to connect to PipeWire: {e:?}"))?;
 
         // Create properties for the stream
         let props = pipewire::properties::properties! {
@@ -222,7 +223,7 @@ pub mod pipewire_capture {
 
         // Create stream
         let stream = Stream::new(&core, "screen-color-capture", props)
-            .map_err(|e| format!("Failed to create stream: {:?}", e))?;
+            .map_err(|e| format!("Failed to create stream: {e:?}"))?;
 
         // State for video format
         let format_width: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
@@ -267,7 +268,7 @@ pub mod pipewire_capture {
                 }
             })
             .register()
-            .map_err(|e| format!("Failed to register listener: {:?}", e))?;
+            .map_err(|e| format!("Failed to register listener: {e:?}"))?;
 
         // Build video format parameters
         let mut params_buffer = vec![0u8; 1024];
@@ -319,11 +320,11 @@ pub mod pipewire_capture {
             std::io::Cursor::new(&mut params_buffer),
             &pw::spa::pod::Value::Object(obj),
         )
-        .map_err(|e| format!("Failed to serialize params: {:?}", e))?
+        .map_err(|e| format!("Failed to serialize params: {e:?}"))?
         .0
         .into_inner();
 
-        let pod = pw::spa::pod::Pod::from_bytes(&pod)
+        let pod = pw::spa::pod::Pod::from_bytes(pod)
             .ok_or("Failed to create pod from bytes")?;
 
         // Connect to the screencast node
@@ -334,7 +335,7 @@ pub mod pipewire_capture {
                 StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
                 &mut [pod],
             )
-            .map_err(|e| format!("Failed to connect stream: {:?}", e))?;
+            .map_err(|e| format!("Failed to connect stream: {e:?}"))?;
 
         state.running.store(true, Ordering::SeqCst);
 
@@ -352,7 +353,7 @@ pub mod pipewire_capture {
             let n_events = loop_.iterate(Duration::from_millis(50));
 
             if n_events < 0 {
-                eprintln!("PipeWire iterate() returned error: {}", n_events);
+                eprintln!("PipeWire iterate() returned error: {n_events}");
                 break;
             }
         }
@@ -382,7 +383,7 @@ pub async fn run_screen_color_mode(
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {
-    println!("Starting screen color mode ({}fps)...", fps);
+    println!("Starting screen color mode ({fps}fps)...");
 
     // Set LED mode to Screen Color (mode 21)
     device.set_led_with_option(cmd::LedMode::ScreenColor.as_u8(), 4, 4, 0, 0, 0, false, 0);
@@ -415,7 +416,7 @@ pub fn run_screen_color_mode_sync(
 ) -> Result<(), String> {
     // Create a new tokio runtime for the async parts
     let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create runtime: {}", e))?;
+        .map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(run_screen_color_mode(device, running, fps))
 }

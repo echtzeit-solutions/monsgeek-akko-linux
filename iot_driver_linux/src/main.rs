@@ -1061,7 +1061,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Boot Mode:  {}", if device.is_boot_mode() { "Yes" } else { "No" });
 
                         if let Some(api_id) = device.get_api_device_id() {
-                            println!("API ID:     {}", api_id);
+                            println!("API ID:     {api_id}");
                         }
                     } else {
                         eprintln!("No device found");
@@ -1084,7 +1084,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             match fw.validate() {
                                 Ok(()) => println!("\nStatus:     VALID"),
-                                Err(e) => println!("\nStatus:     INVALID - {}", e),
+                                Err(e) => println!("\nStatus:     INVALID - {e}"),
                             }
 
                             // If ZIP, list contents
@@ -1092,13 +1092,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Ok(contents) = FirmwareFile::list_zip_contents(&file) {
                                     println!("\nZIP contents:");
                                     for name in contents {
-                                        println!("  - {}", name);
+                                        println!("  - {name}");
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to load firmware file: {}", e);
+                            eprintln!("Failed to load firmware file: {e}");
                         }
                     }
                 }
@@ -1120,14 +1120,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match FirmwareFile::load(&file) {
                         Ok(fw) => {
                             if let Err(e) = fw.validate() {
-                                eprintln!("Warning: Firmware validation failed: {}", e);
+                                eprintln!("Warning: Firmware validation failed: {e}");
                             }
 
                             let result = dry_run_usb(&fw, current_version, device_id);
                             result.print(verbose);
                         }
                         Err(e) => {
-                            eprintln!("Failed to load firmware file: {}", e);
+                            eprintln!("Failed to load firmware file: {e}");
                         }
                     }
                 }
@@ -1155,7 +1155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         };
 
-                        println!("Checking for firmware updates for device ID {}...", api_device_id);
+                        println!("Checking for firmware updates for device ID {api_device_id}...");
 
                         match check_firmware_blocking(api_device_id) {
                             Ok(response) => {
@@ -1164,23 +1164,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("{}", response.versions.display());
 
                                 if let Some(path) = &response.versions.download_path {
-                                    println!("\nDownload path: {}", path);
+                                    println!("\nDownload path: {path}");
                                 }
 
                                 if let Some(min_app) = &response.lowest_app_version {
-                                    println!("Min app version: {}", min_app);
+                                    println!("Min app version: {min_app}");
                                 }
 
                                 // Compare with current device if connected
                                 if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
                                     let info = device.read_info();
                                     let current_usb = info.version;
-                                    println!("\nCurrent device USB version: 0x{:04X}", current_usb);
+                                    println!("\nCurrent device USB version: 0x{current_usb:04X}");
 
                                     if let Some(server_usb) = response.versions.usb {
                                         if server_usb > current_usb {
-                                            println!("UPDATE AVAILABLE: 0x{:04X} -> 0x{:04X}",
-                                                current_usb, server_usb);
+                                            println!("UPDATE AVAILABLE: 0x{current_usb:04X} -> 0x{server_usb:04X}");
                                         } else {
                                             println!("Firmware is up to date.");
                                         }
@@ -1190,11 +1189,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Err(ApiError::ServerError(500, _)) => {
                                 // 500 "Record not found" means device ID not in server database
                                 // This is normal - the official app also shows "up to date" in this case
-                                println!("\nDevice ID {} not found in server database.", api_device_id);
+                                println!("\nDevice ID {api_device_id} not found in server database.");
                                 println!("This is normal for some devices. Assuming firmware is up to date.");
                             }
                             Err(e) => {
-                                eprintln!("Failed to check firmware: {}", e);
+                                eprintln!("Failed to check firmware: {e}");
                             }
                         }
                     }
@@ -1229,18 +1228,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         };
 
-                        println!("Getting firmware info for device ID {}...", api_device_id);
+                        println!("Getting firmware info for device ID {api_device_id}...");
 
                         match check_firmware_blocking(api_device_id) {
                             Ok(response) => {
                                 if let Some(path) = response.versions.download_path {
-                                    println!("Downloading from: {}", path);
+                                    println!("Downloading from: {path}");
                                     match download_firmware_blocking(&path, &output) {
                                         Ok(size) => {
                                             println!("Downloaded {} bytes to {}", size, output.display());
                                         }
                                         Err(e) => {
-                                            eprintln!("Download failed: {}", e);
+                                            eprintln!("Download failed: {e}");
                                         }
                                     }
                                 } else {
@@ -1248,7 +1247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Failed to get firmware info: {}", e);
+                                eprintln!("Failed to get firmware info: {e}");
                             }
                         }
                     }

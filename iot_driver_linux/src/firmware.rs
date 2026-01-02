@@ -21,11 +21,11 @@ pub enum FirmwareError {
 impl std::fmt::Display for FirmwareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IoError(e) => write!(f, "I/O error: {}", e),
-            Self::ZipError(e) => write!(f, "ZIP error: {}", e),
-            Self::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
-            Self::FileTooSmall(size) => write!(f, "File too small: {} bytes", size),
-            Self::FileTooLarge(size) => write!(f, "File too large: {} bytes", size),
+            Self::IoError(e) => write!(f, "I/O error: {e}"),
+            Self::ZipError(e) => write!(f, "ZIP error: {e}"),
+            Self::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
+            Self::FileTooSmall(size) => write!(f, "File too small: {size} bytes"),
+            Self::FileTooLarge(size) => write!(f, "File too large: {size} bytes"),
         }
     }
 }
@@ -107,7 +107,7 @@ impl FirmwareFile {
 
         let size = data.len();
         let checksum = firmware_update::calculate_checksum(&data);
-        let chunk_count = (size + firmware_update::CHUNK_SIZE - 1) / firmware_update::CHUNK_SIZE;
+        let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
 
         // Detect firmware type based on size/content
         let firmware_type = Self::detect_type(&data, &filename);
@@ -137,7 +137,7 @@ impl FirmwareFile {
 
                 let size = data.len();
                 let checksum = firmware_update::calculate_checksum(&data);
-                let chunk_count = (size + firmware_update::CHUNK_SIZE - 1) / firmware_update::CHUNK_SIZE;
+                let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
 
                 return Ok(Self {
                     data,
@@ -160,7 +160,7 @@ impl FirmwareFile {
 
                 let size = data.len();
                 let checksum = firmware_update::calculate_checksum(&data);
-                let chunk_count = (size + firmware_update::CHUNK_SIZE - 1) / firmware_update::CHUNK_SIZE;
+                let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
 
                 return Ok(Self {
                     data,
@@ -284,22 +284,21 @@ impl DryRunCommand {
             Self::EnterBootMode { mode, bytes } => {
                 format!("Enter {} boot mode: [{}] (NOT SENT)",
                     mode,
-                    bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))
+                    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
             }
             Self::WaitReconnect { vid, pid, timeout_ms } => {
-                format!("Wait for device reconnect at {:04X}:{:04X} (timeout: {}ms)",
-                    vid, pid, timeout_ms)
+                format!("Wait for device reconnect at {vid:04X}:{pid:04X} (timeout: {timeout_ms}ms)")
             }
             Self::StartTransfer { header } => {
                 format!("Start transfer: [{}]",
-                    header.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))
+                    header.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
             }
             Self::DataChunk { index, offset, size } => {
-                format!("Send chunk {}: {} bytes at offset 0x{:X}", index, size, offset)
+                format!("Send chunk {index}: {size} bytes at offset 0x{offset:X}")
             }
             Self::CompleteTransfer { header, checksum } => {
                 format!("Complete transfer: [{}...] checksum=0x{:08X}",
-                    header.iter().take(4).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "),
+                    header.iter().take(4).map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
                     checksum)
             }
         }
@@ -335,10 +334,10 @@ impl DryRunResult {
         println!();
 
         if let Some(ref ver) = self.current_version {
-            println!("Current device firmware: {}", ver);
+            println!("Current device firmware: {ver}");
         }
         if let Some(id) = self.device_id {
-            println!("Device ID: 0x{:08X}", id);
+            println!("Device ID: 0x{id:08X}");
         }
         println!();
 
@@ -386,7 +385,7 @@ pub fn dry_run_usb(
     // Get effective data (with offset for combined firmware)
     let data = firmware.usb_data().unwrap_or(&firmware.data);
     let size = data.len() as u32;
-    let chunk_count = ((data.len() + firmware_update::CHUNK_SIZE - 1) / firmware_update::CHUNK_SIZE) as u16;
+    let chunk_count = data.len().div_ceil(firmware_update::CHUNK_SIZE) as u16;
     let checksum = firmware_update::calculate_checksum(data);
 
     // 3. Start transfer

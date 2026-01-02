@@ -1246,7 +1246,7 @@ impl MonsGeekDevice {
         let major = (version >> 8) & 0xF;
         let minor = (version >> 4) & 0xF;
         let patch = version & 0xF;
-        format!("{}.{}.{}", major, minor, patch)
+        format!("{major}.{minor}.{patch}")
     }
 
     /// Get device API ID for firmware checks

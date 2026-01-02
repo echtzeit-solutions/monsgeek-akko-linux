@@ -23,10 +23,10 @@ pub enum ApiError {
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RequestError(msg) => write!(f, "Request error: {}", msg),
-            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            Self::IoError(e) => write!(f, "I/O error: {}", e),
-            Self::ServerError(code, msg) => write!(f, "Server error {}: {}", code, msg),
+            Self::RequestError(msg) => write!(f, "Request error: {msg}"),
+            Self::ParseError(msg) => write!(f, "Parse error: {msg}"),
+            Self::IoError(e) => write!(f, "I/O error: {e}"),
+            Self::ServerError(code, msg) => write!(f, "Server error {code}: {msg}"),
         }
     }
 }
@@ -105,19 +105,19 @@ impl FirmwareVersions {
             parts.push(format!("USB: {}.{}.{}", (v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF));
         }
         if let Some(v) = self.rf {
-            parts.push(format!("RF: 0x{:X}", v));
+            parts.push(format!("RF: 0x{v:X}"));
         }
         if let Some(v) = self.mled {
-            parts.push(format!("MLED: {}", v));
+            parts.push(format!("MLED: {v}"));
         }
         if let Some(v) = self.nord {
-            parts.push(format!("Nordic: {}", v));
+            parts.push(format!("Nordic: {v}"));
         }
         if let Some(v) = self.oled {
-            parts.push(format!("OLED: {}", v));
+            parts.push(format!("OLED: {v}"));
         }
         if let Some(v) = self.flash {
-            parts.push(format!("Flash: {}", v));
+            parts.push(format!("Flash: {v}"));
         }
 
         if parts.is_empty() {
@@ -195,7 +195,7 @@ pub fn check_firmware_blocking(device_id: u32) -> Result<FirmwareCheckResponse, 
         .build()
         .map_err(|e| ApiError::RequestError(e.to_string()))?;
 
-    let url = format!("{}/get_fw_version", API_BASE);
+    let url = format!("{API_BASE}/get_fw_version");
 
     let mut body = HashMap::new();
     body.insert("dev_id", device_id);
@@ -261,7 +261,7 @@ pub fn download_firmware_blocking<P: AsRef<Path>>(
         .build()
         .map_err(|e| ApiError::RequestError(e.to_string()))?;
 
-    let url = format!("{}{}", DOWNLOAD_BASE, download_path);
+    let url = format!("{DOWNLOAD_BASE}{download_path}");
 
     let response = client
         .get(&url)
