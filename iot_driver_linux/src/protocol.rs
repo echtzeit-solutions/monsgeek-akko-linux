@@ -302,7 +302,10 @@ pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
 pub const VENDOR_ID: u16 = 0x3151;
 pub const PRODUCT_ID: u16 = 0x5030;
 pub const USAGE_PAGE: u16 = 0xFFFF;
+/// Vendor Feature reports (interface 2) - for sending commands
 pub const USAGE: u16 = 0x02;
+/// Vendor Input reports (interface 1) - for receiving key depth, events
+pub const USAGE_INPUT: u16 = 0x01;
 pub const INTERFACE: i32 = 2;
 
 /// Additional known product IDs (from iot_driver.exe)
@@ -416,6 +419,55 @@ pub mod magnetism {
             MODE_TOGGLE => "Toggle",
             MODE_SNAPTAP => "Snap Tap",
             _ => "Unknown",
+        }
+    }
+}
+
+/// Magnetism (key depth) report parsing
+/// Report format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, 0, 0, 0, ...]
+pub mod depth_report {
+    use super::cmd;
+
+    /// Report ID for magnetism reports on Linux
+    pub const REPORT_ID: u8 = 0x05;
+
+    /// Parsed depth report
+    #[derive(Debug, Clone, Copy)]
+    pub struct DepthReport {
+        /// Key matrix index (0-125)
+        pub key_index: u8,
+        /// Raw depth value from sensor
+        pub depth_raw: u16,
+    }
+
+    impl DepthReport {
+        /// Convert raw depth to millimeters using precision factor
+        pub fn depth_mm(&self, precision: f32) -> f32 {
+            self.depth_raw as f32 / precision
+        }
+    }
+
+    /// Parse a magnetism depth report from raw HID buffer
+    /// Returns None if buffer is not a valid depth report
+    pub fn parse(buf: &[u8]) -> Option<DepthReport> {
+        if buf.len() >= 5 {
+            // Check for report ID prefix (Linux HID includes report ID as byte 0)
+            let (depth_lo, depth_hi, key_idx) = if buf[0] == REPORT_ID && buf[1] == cmd::SET_MAGNETISM_REPORT {
+                // Format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, ...]
+                (buf[2], buf[3], buf[4])
+            } else if buf[0] == cmd::SET_MAGNETISM_REPORT {
+                // Format without report ID: [cmd(0x1B), depth_lo, depth_hi, key_index, ...]
+                (buf[1], buf[2], buf[3])
+            } else {
+                return None;
+            };
+
+            Some(DepthReport {
+                key_index: key_idx,
+                depth_raw: (depth_lo as u16) | ((depth_hi as u16) << 8),
+            })
+        } else {
+            None
         }
     }
 }
