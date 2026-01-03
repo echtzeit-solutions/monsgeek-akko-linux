@@ -423,6 +423,51 @@ pub mod magnetism {
     }
 }
 
+/// Key matrix position to name mapping for MonsGeek M1 V5 (82 keys)
+/// Matrix is column-major: 6 rows × 14 columns
+/// Index = column * 6 + row
+pub mod matrix {
+    /// Key names indexed by matrix position (column-major order)
+    /// Each group of 6 is one column from top to bottom
+    const KEY_NAMES: &[&str] = &[
+        // Col 0 (0-5): Esc column
+        "Esc", "`", "Tab", "Caps", "LShf", "LCtl",
+        // Col 1 (6-11): 1/Q/A/Z column
+        "F1", "1", "Q", "A", "Z", "Win",
+        // Col 2 (12-17): 2/W/S/X column
+        "F2", "2", "W", "S", "X", "LAlt",
+        // Col 3 (18-23): 3/E/D/C column
+        "F3", "3", "E", "D", "C", "Spc",
+        // Col 4 (24-29): 4/R/F/V column
+        "F4", "4", "R", "F", "V", "Spc",
+        // Col 5 (30-35): 5/T/G/B column
+        "F5", "5", "T", "G", "B", "Spc",
+        // Col 6 (36-41): 6/Y/H/N column
+        "F6", "6", "Y", "H", "N", "Spc",
+        // Col 7 (42-47): 7/U/J/M column
+        "F7", "7", "U", "J", "M", "Spc",
+        // Col 8 (48-53): 8/I/K/, column
+        "F8", "8", "I", "K", ",", "RAlt",
+        // Col 9 (54-59): 9/O/L/. column
+        "F9", "9", "O", "L", ".", "Fn",
+        // Col 10 (60-65): 0/P/;// column
+        "F10", "0", "P", ";", "/", "RCtl",
+        // Col 11 (66-71): -/[/'/RShf column
+        "F11", "-", "[", "'", "RShf", "Left",
+        // Col 12 (72-77): =/]/Enter/Up column
+        "F12", "=", "]", "Ent", "Up", "Down",
+        // Col 13 (78-83): Bksp/\/PgDn/End/Right column
+        "Del", "Bksp", "\\", "PgUp", "PgDn", "Right",
+        // Col 14 (84-89): Extra keys (if any)
+        "Knob", "Ins", "Home", "End", "?", "?",
+    ];
+
+    /// Get key name from matrix position
+    pub fn key_name(index: u8) -> &'static str {
+        KEY_NAMES.get(index as usize).copied().unwrap_or("?")
+    }
+}
+
 /// Magnetism (key depth) report parsing
 /// Report format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, 0, 0, 0, ...]
 pub mod depth_report {
