@@ -127,12 +127,7 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                     }
                     cmd::GET_FEATURE_LIST => {
                         println!("  Features:   {:02x?}", &resp[2..12]);
-                        let precision = match resp[3] {
-                            0 => "0.1mm",
-                            1 => "0.05mm",
-                            2 => "0.01mm",
-                            _ => "unknown",
-                        };
+                        let precision = iot_driver::hid::MonsGeekDevice::precision_str(resp[3]);
                         println!("  Precision:  {precision}");
                     }
                     cmd::GET_SLEEPTIME => {
@@ -1043,6 +1038,169 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = iot_driver::screen_capture::run_screen_color_mode(&device, running, fps).await {
                 eprintln!("Screen color mode error: {e}");
             }
+        }
+
+        // === Debug: Key Depth Monitoring ===
+        Some(Commands::Depth { raw: show_raw, zero: show_zero, verbose }) => {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+
+            fn print_depth_report(buf: &[u8], precision: f32, show_raw: bool, show_zero: bool) -> bool {
+                use iot_driver::protocol::depth_report;
+
+                if let Some(report) = depth_report::parse(buf) {
+                    // Skip zero-depth reports unless show_zero is set
+                    if report.depth_raw == 0 && !show_zero {
+                        return false;
+                    }
+
+                    let depth_mm = report.depth_mm(precision);
+
+                    // Create visual bar (max ~4mm travel = 40 chars at 10 chars/mm)
+                    let bar_len = ((depth_mm * 10.0).min(50.0)) as usize;
+                    let bar: String = "█".repeat(bar_len);
+                    let empty: String = "░".repeat(50 - bar_len);
+
+                    if show_raw {
+                        println!("  Key {:3} [{bar}{empty}] {:.2}mm (raw={:5})",
+                            report.key_index, depth_mm, report.depth_raw);
+                    } else {
+                        println!("  Key {:3} [{bar}{empty}] {:.2}mm", report.key_index, depth_mm);
+                    }
+                    return true;
+                }
+                false
+            }
+
+            // Open main device for commands
+            let device = iot_driver::hid::MonsGeekDevice::open()
+                .map_err(|e| format!("Failed to open device: {e}"))?;
+
+            println!("Device: {}", device.display_name());
+            println!("Feature path: {}", device.path);
+
+            // Read device info to get precision factor
+            let info = device.read_info();
+            // Use version-based precision (more accurate than legacy precision byte)
+            let precision = iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+            println!("Firmware version: {} (precision factor: {})", info.version, precision);
+
+            // Enable magnetism reporting (via feature interface)
+            println!("\nEnabling magnetism reporting...");
+            let success = device.set_magnetism_report(true);
+            println!("set_magnetism_report(true) returned: {success}");
+
+            if !success {
+                eprintln!("Failed to enable magnetism reporting");
+                return Ok(());
+            }
+
+            // Also try opening the separate INPUT interface for comparison
+            let input_device = iot_driver::hid::MonsGeekDevice::open_input_interface(device.vid, device.pid).ok();
+            if input_device.is_some() {
+                println!("Also opened vendor INPUT interface for comparison");
+            }
+
+            // Try an immediate read right after enabling to catch the confirmation event
+            println!("\nWaiting for magnetism start confirmation...");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            // Check if confirmation came on feature interface
+            if let Some(buf) = device.read_input(500) {
+                print!("Confirmation from FEATURE: ");
+                for b in &buf {
+                    print!("{b:02x} ");
+                }
+                println!();
+                print_depth_report(&buf, precision, show_raw, show_zero);
+            } else {
+                println!("No confirmation on FEATURE interface");
+            }
+
+            // Check INPUT interface too
+            if let Some(ref input_dev) = input_device {
+                let mut buf = [0u8; 64];
+                match input_dev.read_timeout(&mut buf, 500) {
+                    Ok(len) if len > 0 => {
+                        print!("Confirmation from INPUT ({len} bytes): ");
+                        for b in &buf[..len] {
+                            print!("{b:02x} ");
+                        }
+                        println!();
+                    }
+                    Ok(_) => println!("No confirmation on INPUT interface (timeout)"),
+                    Err(e) => println!("INPUT interface read error: {e}"),
+                }
+            }
+
+            println!("\nMonitoring key depth (Ctrl+C to stop)...");
+            println!("Press keys to see depth data.");
+            println!("Reading from both FEATURE and INPUT interfaces...\n");
+
+            let running = Arc::new(AtomicBool::new(true));
+            let running_clone = Arc::clone(&running);
+
+            ctrlc::set_handler(move || {
+                running_clone.store(false, Ordering::SeqCst);
+            }).ok();
+
+            let mut report_count = 0u64;
+            let mut verbose_count = 0u64;
+            let start = std::time::Instant::now();
+
+            // Read buffer for INPUT interface
+            let mut input_buf = [0u8; 64];
+
+            while running.load(Ordering::SeqCst) {
+                verbose_count += 1;
+
+                // Print verbose status periodically (every ~2 seconds) if verbose flag is set
+                if verbose && verbose_count % 40 == 1 {
+                    let (_, status) = device.read_input_verbose(1);
+                    println!("[{:.1}s] Read status: {status}, reports received: {report_count}", start.elapsed().as_secs_f32());
+                }
+
+                // Try reading from FEATURE interface (same interface we send commands on)
+                if let Some(buf) = device.read_input(50) {
+                    let elapsed = start.elapsed().as_secs_f32();
+
+                    if print_depth_report(&buf, precision, show_raw, show_zero) {
+                        report_count += 1;
+                        if verbose {
+                            print!("[FEAT {elapsed:.1}s #{report_count}] Raw ({} bytes): ", buf.len());
+                            for b in &buf {
+                                print!("{b:02x} ");
+                            }
+                            println!();
+                        }
+                    }
+                }
+
+                // Also try INPUT interface if available
+                if let Some(ref input_dev) = input_device {
+                    match input_dev.read_timeout(&mut input_buf, 50) {
+                        Ok(len) if len > 0 => {
+                            let elapsed = start.elapsed().as_secs_f32();
+
+                            if print_depth_report(&input_buf[..len], precision, show_raw, show_zero) {
+                                report_count += 1;
+                                if verbose {
+                                    print!("[INPUT {elapsed:.1}s #{report_count}] Raw ({len} bytes): ");
+                                    for b in &input_buf[..len] {
+                                        print!("{b:02x} ");
+                                    }
+                                    println!();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            println!("\nStopping...");
+            device.set_magnetism_report(false);
+            println!("Received {report_count} reports in {:.1}s", start.elapsed().as_secs_f32());
         }
 
         // === Firmware Commands (DRY-RUN ONLY) ===

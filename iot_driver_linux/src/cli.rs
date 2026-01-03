@@ -289,6 +289,21 @@ pub enum Commands {
         fps: u32,
     },
 
+    // === Debug Commands ===
+    /// Monitor real-time key depth (magnetism) from keyboard
+    #[command(visible_alias = "keydepth")]
+    Depth {
+        /// Show raw hex bytes for each report
+        #[arg(short, long)]
+        raw: bool,
+        /// Show zero-depth reports (keys at rest)
+        #[arg(short, long)]
+        zero: bool,
+        /// Verbose status updates
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
     // === Firmware Commands (DRY-RUN ONLY) ===
     /// Firmware update tools (dry-run only, no actual flashing)
     #[command(subcommand, visible_alias = "fw")]
