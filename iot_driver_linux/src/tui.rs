@@ -1346,9 +1346,15 @@ fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(help, inner[2]);
 }
 
-/// Get key label for display - use matrix position mapping
+/// Get key label for display - use device profile matrix key names
 fn get_key_label(index: usize) -> String {
-    crate::protocol::matrix::key_name(index as u8).to_string()
+    use crate::profile::builtin::M1V5HeProfile;
+    use crate::profile::DeviceProfile;
+
+    // Use builtin profile for key name lookup
+    static PROFILE: std::sync::OnceLock<M1V5HeProfile> = std::sync::OnceLock::new();
+    let profile = PROFILE.get_or_init(M1V5HeProfile::new);
+    profile.matrix_key_name(index as u8).to_string()
 }
 
 fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {

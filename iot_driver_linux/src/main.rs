@@ -1217,8 +1217,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let bar: String = "█".repeat(bar_len);
                         let empty: String = "░".repeat(20 - bar_len);
 
-                        // Get key name from matrix position mapping
-                        let key_name = iot_driver::protocol::matrix::key_name(**key_idx);
+                        // Get key name from device profile matrix mapping
+                        let key_name = device.matrix_key_name(**key_idx);
 
                         if show_raw {
                             print!("{key_name}[{bar}{empty}]{depth_mm:.1}({raw:4}) ");

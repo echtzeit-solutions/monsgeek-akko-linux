@@ -2,10 +2,12 @@
 // Shared device access code with multi-device support
 
 use hidapi::{HidApi, HidDevice};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::devices::{self, DeviceDefinition};
-use crate::protocol::{self, cmd, ChecksumType, timing, rgb, firmware, firmware_update};
+use crate::profile::{profile_registry, DeviceProfile};
+use crate::protocol::{self, cmd, firmware, firmware_update, rgb, timing, ChecksumType};
 
 /// Connected device info (VID, PID, path)
 #[derive(Debug, Clone)]
@@ -205,6 +207,25 @@ impl MonsGeekDevice {
     /// Check if device has magnetism support
     pub fn has_magnetism(&self) -> bool {
         self.definition.has_magnetism
+    }
+
+    /// Get the device profile for this device
+    /// Returns the profile from the registry, which includes matrix key mappings
+    pub fn profile(&self) -> Option<Arc<dyn DeviceProfile>> {
+        profile_registry().find_by_vid_pid(self.vid, self.pid)
+    }
+
+    /// Get key name for a matrix position using the device profile
+    /// Falls back to "?" if profile not found or position out of range
+    pub fn matrix_key_name(&self, position: u8) -> &'static str {
+        // Use the builtin profile directly for static lifetime
+        use crate::profile::builtin::M1V5HeProfile;
+
+        // For now, we only have M1 V5 HE profiles
+        // Return static reference from the builtin profile
+        static PROFILE: std::sync::OnceLock<M1V5HeProfile> = std::sync::OnceLock::new();
+        let profile = PROFILE.get_or_init(M1V5HeProfile::new);
+        profile.matrix_key_name(position)
     }
 
     /// Send a command and receive response using retry pattern for Linux HID buffering

@@ -423,12 +423,19 @@ pub mod magnetism {
     }
 }
 
-/// Key matrix position to name mapping for MonsGeek M1 V5 (82 keys)
-/// Matrix is column-major: 6 rows × 14 columns
-/// Index = column * 6 + row
+/// Key matrix position to name mapping
+///
+/// **DEPRECATED**: Use `crate::profile::DeviceProfile::matrix_key_name()` instead.
+/// This module contains incorrect mappings for some keys.
+/// The profile system provides correct per-device matrix key mappings.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use crate::profile::DeviceProfile::matrix_key_name() instead"
+)]
 pub mod matrix {
     /// Key names indexed by matrix position (column-major order)
-    /// Each group of 6 is one column from top to bottom
+    /// **DEPRECATED**: This mapping is incomplete/incorrect for M1 V5 HE.
+    /// Use the device profile system for accurate mappings.
     const KEY_NAMES: &[&str] = &[
         // Col 0 (0-5): Esc column
         "Esc", "`", "Tab", "Caps", "LShf", "LCtl",
@@ -463,6 +470,12 @@ pub mod matrix {
     ];
 
     /// Get key name from matrix position
+    ///
+    /// **DEPRECATED**: Use `crate::profile::DeviceProfile::matrix_key_name()` instead.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use crate::profile::DeviceProfile::matrix_key_name() instead"
+    )]
     pub fn key_name(index: u8) -> &'static str {
         KEY_NAMES.get(index as usize).copied().unwrap_or("?")
     }
