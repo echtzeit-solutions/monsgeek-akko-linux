@@ -507,14 +507,12 @@ impl App {
             return;
         }
         if let Some(ref device) = self.device {
-            // Non-blocking read of input reports
-            // Format: [0x1B, key_index, depth_lo, depth_hi, ...]
+            // Non-blocking read of input reports using shared parser
             while let Some(buf) = device.read_input(10) {
-                if buf.len() >= 4 && buf[0] == cmd::SET_MAGNETISM_REPORT {
-                    let key_index = buf[1] as usize;
-                    let depth_raw = (buf[2] as u16) | ((buf[3] as u16) << 8);
-                    let precision = MonsGeekDevice::precision_factor(self.info.precision);
-                    let depth_mm = depth_raw as f32 / precision;
+                if let Some(report) = crate::protocol::depth_report::parse(&buf) {
+                    let precision = MonsGeekDevice::precision_factor_from_version(self.info.version);
+                    let depth_mm = report.depth_mm(precision);
+                    let key_index = report.key_index as usize;
 
                     if key_index < self.key_depths.len() {
                         self.key_depths[key_index] = depth_mm;
