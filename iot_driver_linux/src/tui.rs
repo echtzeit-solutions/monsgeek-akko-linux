@@ -1,6 +1,7 @@
 // MonsGeek M1 V5 HE TUI Application
 // Real-time monitoring and settings configuration
 
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, stdout};
 use std::time::{Duration, Instant};
 use crossterm::{
@@ -19,6 +20,7 @@ use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism};
 /// Application state
 struct App {
     device: Option<MonsGeekDevice>,
+    input_device: Option<hidapi::HidDevice>,  // Separate INPUT interface for depth reports
     info: DeviceInfo,
     tab: usize,
     selected: usize,
@@ -40,6 +42,13 @@ struct App {
     macro_selected: usize,
     macro_editing: bool,
     macro_edit_text: String,
+    // Key depth visualization
+    depth_view_mode: DepthViewMode,
+    depth_history: Vec<VecDeque<f32>>,  // Per-key history for time series
+    active_keys: HashSet<usize>,         // Keys with recent activity
+    selected_keys: HashSet<usize>,       // Keys selected for time series view
+    depth_cursor: usize,                 // Cursor for key selection
+    depth_sample_idx: usize,             // Global sample counter for time axis
 }
 
 /// Macro slot data
@@ -68,10 +77,22 @@ struct KeyboardOptions {
     wasd_swap: bool,
 }
 
+/// Key depth visualization mode
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum DepthViewMode {
+    #[default]
+    BarChart,    // Bar chart of all active keys
+    TimeSeries,  // Time series graph of selected keys
+}
+
+/// History length for time series (samples)
+const DEPTH_HISTORY_LEN: usize = 100;
+
 impl App {
     fn new() -> Self {
         Self {
             device: None,
+            input_device: None,
             info: DeviceInfo::default(),
             tab: 0,
             selected: 0,
@@ -90,6 +111,13 @@ impl App {
             macro_selected: 0,
             macro_editing: false,
             macro_edit_text: String::new(),
+            // Key depth visualization
+            depth_view_mode: DepthViewMode::default(),
+            depth_history: Vec::new(),
+            active_keys: HashSet::new(),
+            selected_keys: HashSet::new(),
+            depth_cursor: 0,
+            depth_sample_idx: 0,
         }
     }
 
@@ -101,6 +129,16 @@ impl App {
                 self.key_count = dev.key_count();
                 // Initialize key depths array based on actual key count
                 self.key_depths = vec![0.0; self.key_count as usize];
+                // Initialize depth history for time series
+                self.depth_history = vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
+                self.active_keys.clear();
+                self.selected_keys.clear();
+
+                // Also open the INPUT interface for depth reports
+                let vid = dev.vid;
+                let pid = dev.pid;
+                self.input_device = MonsGeekDevice::open_input_interface(vid, pid).ok();
+
                 self.device = Some(dev);
                 self.connected = true;
                 self.status_msg = format!("Connected to {}", self.device_name);
@@ -506,20 +544,87 @@ impl App {
         if !self.depth_monitoring {
             return;
         }
+
+        let precision = MonsGeekDevice::precision_factor_from_version(self.info.version);
+
+        // Read from feature interface
         if let Some(ref device) = self.device {
-            // Non-blocking read of input reports using shared parser
-            while let Some(buf) = device.read_input(10) {
+            while let Some(buf) = device.read_input(5) {
                 if let Some(report) = crate::protocol::depth_report::parse(&buf) {
-                    let precision = MonsGeekDevice::precision_factor_from_version(self.info.version);
                     let depth_mm = report.depth_mm(precision);
                     let key_index = report.key_index as usize;
-
                     if key_index < self.key_depths.len() {
                         self.key_depths[key_index] = depth_mm;
+                        if depth_mm > 0.1 {
+                            self.active_keys.insert(key_index);
+                        }
                     }
                 }
             }
         }
+
+        // Read from INPUT interface (where depth reports actually come from)
+        if let Some(ref input_dev) = self.input_device {
+            let mut buf = [0u8; 64];
+            while let Ok(len) = input_dev.read_timeout(&mut buf, 5) {
+                if len == 0 {
+                    break;
+                }
+                if let Some(report) = crate::protocol::depth_report::parse(&buf[..len]) {
+                    let depth_mm = report.depth_mm(precision);
+                    let key_index = report.key_index as usize;
+                    if key_index < self.key_depths.len() {
+                        self.key_depths[key_index] = depth_mm;
+                        if depth_mm > 0.1 {
+                            self.active_keys.insert(key_index);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Push current depths to history for all active keys (time-based sampling)
+        self.depth_sample_idx += 1;
+        for &key_idx in &self.active_keys.clone() {
+            if key_idx < self.depth_history.len() {
+                let history = &mut self.depth_history[key_idx];
+                if history.len() >= DEPTH_HISTORY_LEN {
+                    history.pop_front();
+                }
+                history.push_back(self.key_depths[key_idx]);
+            }
+        }
+    }
+
+    /// Toggle view mode for depth tab
+    fn toggle_depth_view(&mut self) {
+        self.depth_view_mode = match self.depth_view_mode {
+            DepthViewMode::BarChart => DepthViewMode::TimeSeries,
+            DepthViewMode::TimeSeries => DepthViewMode::BarChart,
+        };
+        self.status_msg = format!("Depth view: {:?}", self.depth_view_mode);
+    }
+
+    /// Toggle selection of a key for time series view
+    fn toggle_key_selection(&mut self, key_index: usize) {
+        if self.selected_keys.contains(&key_index) {
+            self.selected_keys.remove(&key_index);
+        } else if self.selected_keys.len() < 8 {
+            // Limit to 8 selected keys for readability
+            self.selected_keys.insert(key_index);
+        }
+    }
+
+    /// Clear depth history and active keys
+    fn clear_depth_data(&mut self) {
+        for history in &mut self.depth_history {
+            history.clear();
+        }
+        self.active_keys.clear();
+        for depth in &mut self.key_depths {
+            *depth = 0.0;
+        }
+        self.status_msg = "Depth data cleared".to_string();
     }
 }
 
@@ -607,7 +712,19 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
-                            if app.tab == 3 {
+                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                                // Move cursor up one row in depth bar chart
+                                // Row sizes: 15, 15, 13, 13, 10
+                                let row_starts = [0, 15, 30, 43, 56];
+                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
+                                    if row > 0 {
+                                        let col = app.depth_cursor - row_starts[row];
+                                        let prev_row_start = row_starts[row - 1];
+                                        let prev_row_size = row_starts[row] - prev_row_start;
+                                        app.depth_cursor = prev_row_start + col.min(prev_row_size - 1);
+                                    }
+                                }
+                            } else if app.tab == 3 {
                                 // Scroll trigger list
                                 if app.trigger_scroll > 0 {
                                     app.trigger_scroll -= 1;
@@ -622,7 +739,18 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if app.tab == 3 {
+                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                                // Move cursor down one row in depth bar chart
+                                let row_starts = [0, 15, 30, 43, 56, 66]; // last is end sentinel
+                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
+                                    if row < 4 { // 5 rows total
+                                        let col = app.depth_cursor - row_starts[row];
+                                        let next_row_start = row_starts[row + 1];
+                                        let next_row_size = row_starts[row + 2] - next_row_start;
+                                        app.depth_cursor = next_row_start + col.min(next_row_size - 1);
+                                    }
+                                }
+                            } else if app.tab == 3 {
                                 // Scroll trigger list
                                 let max_scroll = app.triggers.as_ref()
                                     .map(|t| t.key_modes.len().saturating_sub(15))
@@ -640,7 +768,12 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-                            if app.tab == 1 {
+                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                                // Move cursor left in depth bar chart
+                                if app.depth_cursor > 0 {
+                                    app.depth_cursor -= 1;
+                                }
+                            } else if app.tab == 1 {
                                 let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
                                     // Main LED
@@ -703,7 +836,13 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-                            if app.tab == 1 {
+                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                                // Move cursor right in depth bar chart
+                                let max_key = app.key_depths.len().min(66).saturating_sub(1);
+                                if app.depth_cursor < max_key {
+                                    app.depth_cursor += 1;
+                                }
+                            } else if app.tab == 1 {
                                 let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
                                     // Main LED
@@ -841,6 +980,25 @@ pub fn run() -> io::Result<()> {
                         // Per-key color mode in LED Settings tab
                         KeyCode::Char('p') if app.tab == 1 => {
                             app.apply_per_key_color();
+                        }
+                        // Depth tab controls
+                        KeyCode::Char('v') if app.tab == 2 => {
+                            app.toggle_depth_view();
+                        }
+                        KeyCode::Char('x') if app.tab == 2 => {
+                            app.clear_depth_data();
+                        }
+                        KeyCode::Char(' ') if app.tab == 2 => {
+                            // Select/deselect key at cursor in bar chart mode
+                            if app.depth_view_mode == DepthViewMode::BarChart {
+                                app.toggle_key_selection(app.depth_cursor);
+                                let label = get_key_label(app.depth_cursor);
+                                if app.selected_keys.contains(&app.depth_cursor) {
+                                    app.status_msg = format!("Selected Key {label} for time series");
+                                } else {
+                                    app.status_msg = format!("Deselected Key {label}");
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -1136,54 +1294,226 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
 fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
     let inner = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(5)])
+        .constraints([Constraint::Length(4), Constraint::Min(5), Constraint::Length(3)])
         .split(area);
 
-    // Status and instructions
+    // Status and mode indicator
+    let mode_str = match app.depth_view_mode {
+        DepthViewMode::BarChart => "Bar Chart",
+        DepthViewMode::TimeSeries => "Time Series",
+    };
     let status_text = if app.depth_monitoring {
         vec![
-            Line::from(Span::styled("Key depth monitoring is ACTIVE", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
-            Line::from("Press keys to see real-time depth values"),
-            Line::from("Press 'm' to stop monitoring"),
+            Line::from(vec![
+                Span::styled("MONITORING ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw("| View: "),
+                Span::styled(mode_str, Style::default().fg(Color::Cyan)),
+                Span::raw(" | Active keys: "),
+                Span::styled(format!("{}", app.active_keys.len()), Style::default().fg(Color::Yellow)),
+                Span::raw(" | Selected: "),
+                Span::styled(format!("{}", app.selected_keys.len()), Style::default().fg(Color::Magenta)),
+            ]),
+            Line::from("Press 'v' to switch view, Space to select key, 'x' to clear data"),
         ]
     } else {
         vec![
-            Line::from(Span::styled("Key depth monitoring is OFF", Style::default().fg(Color::Yellow))),
-            Line::from("Press 'm' to start monitoring"),
-            Line::from("This enables real-time key depth reporting via HID input reports"),
+            Line::from(Span::styled("Key depth monitoring is OFF - press 'm' to start", Style::default().fg(Color::Yellow))),
+            Line::from(""),
         ]
     };
     let status = Paragraph::new(status_text)
         .block(Block::default().borders(Borders::ALL).title("Monitor Status"));
     f.render_widget(status, inner[0]);
 
-    // Key depth visualization
-    let mut bars: Vec<(&str, u64)> = vec![];
-    let key_names = [
-        "Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Bsp",
-        "Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\",
-        "Cap", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Ent",
-        "Shf", "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "Shf",
-        "Ctl", "Win", "Alt", "Space", "Alt", "Fn", "Ctl",
-    ];
+    // Main visualization area
+    match app.depth_view_mode {
+        DepthViewMode::BarChart => render_depth_bar_chart(f, app, inner[1]),
+        DepthViewMode::TimeSeries => render_depth_time_series(f, app, inner[1]),
+    }
 
-    for (i, name) in key_names.iter().enumerate() {
-        if i < app.key_depths.len() {
-            let depth_pct = (app.key_depths[i] * 25.0) as u64; // Scale to percentage (4mm max = 100%)
-            bars.push((*name, depth_pct.min(100)));
+    // Help bar
+    let help_text = if app.depth_monitoring {
+        match app.depth_view_mode {
+            DepthViewMode::BarChart => "m:Stop  v:TimeSeries  ↑↓←→:Navigate  Space:Select  x:Clear",
+            DepthViewMode::TimeSeries => "m:Stop  v:BarChart  Space:Deselect  x:Clear",
+        }
+    } else {
+        "m:Start monitoring  v:Switch view"
+    };
+    let help = Paragraph::new(help_text)
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(help, inner[2]);
+}
+
+/// Get key label for display - use matrix position mapping
+fn get_key_label(index: usize) -> String {
+    crate::protocol::matrix::key_name(index as u8).to_string()
+}
+
+fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
+    // Find max depth for normalization (minimum 0.1mm to avoid division by zero)
+    let max_depth = app.key_depths.iter().cloned().fold(0.1_f32, f32::max);
+
+    // Show all keys with non-zero depth as a single row of bars
+    let mut bar_data: Vec<(String, u64)> = Vec::new();
+
+    for (i, &depth) in app.key_depths.iter().enumerate() {
+        if depth > 0.01 || app.active_keys.contains(&i) {
+            // Normalize to 100 based on max depth
+            let depth_pct = ((depth / max_depth) * 100.0).min(100.0) as u64;
+            let label = get_key_label(i);
+            bar_data.push((label, depth_pct));
         }
     }
 
-    // Show first row of keys as bar chart
-    let chart_data: Vec<(&str, u64)> = bars.into_iter().take(14).collect();
+    // If no active keys, show placeholder
+    if bar_data.is_empty() {
+        let text = vec![
+            Line::from(""),
+            Line::from(Span::styled("No keys pressed", Style::default().fg(Color::DarkGray))),
+            Line::from("Press keys to see their depth"),
+        ];
+        let para = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title(format!("Key Depths (max: {max_depth:.1}mm)")));
+        f.render_widget(para, area);
+        return;
+    }
+
+    // Convert to references for BarChart
+    let bar_refs: Vec<(&str, u64)> = bar_data.iter().map(|(s, v)| (s.as_str(), *v)).collect();
+
     let chart = BarChart::default()
-        .block(Block::default().borders(Borders::ALL).title("Key Depths (top row) - Press keys to see activity"))
+        .block(Block::default().borders(Borders::ALL).title(format!("Key Depths (max: {max_depth:.2}mm)")))
         .bar_width(3)
         .bar_gap(1)
         .bar_style(Style::default().fg(Color::Cyan))
-        .value_style(Style::default().fg(Color::White))
-        .data(&chart_data);
-    f.render_widget(chart, inner[1]);
+        .value_style(Style::default().fg(Color::White).add_modifier(Modifier::DIM))
+        .data(&bar_refs);
+
+    f.render_widget(chart, area);
+}
+
+fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
+    // Find all keys with history data (any non-empty history)
+    let mut active_keys: Vec<usize> = app.depth_history
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| !h.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    active_keys.sort();
+
+    // Limit to first 8 keys for readability
+    active_keys.truncate(8);
+
+    if active_keys.is_empty() {
+        let text = vec![
+            Line::from(""),
+            Line::from(Span::styled("No key activity recorded yet", Style::default().fg(Color::Yellow))),
+            Line::from(""),
+            Line::from("Press keys while monitoring to see their depth over time"),
+        ];
+        let para = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Time Series"));
+        f.render_widget(para, area);
+        return;
+    }
+
+    // Colors for different keys
+    let colors = [
+        Color::Cyan, Color::Yellow, Color::Green, Color::Magenta,
+        Color::Red, Color::Blue, Color::LightCyan, Color::LightYellow,
+    ];
+
+    // Build datasets for Chart widget
+    let mut datasets: Vec<Dataset> = Vec::new();
+    let mut all_data: Vec<Vec<(f64, f64)>> = Vec::new();
+
+    // Find the maximum history length to align x-axis
+    let max_len = active_keys
+        .iter()
+        .filter_map(|&k| app.depth_history.get(k))
+        .map(|h| h.len())
+        .max()
+        .unwrap_or(0);
+
+    for (color_idx, &key_idx) in active_keys.iter().enumerate() {
+        if key_idx < app.depth_history.len() {
+            let history = &app.depth_history[key_idx];
+            // Use actual sample indices for scrolling effect
+            let start_idx = max_len.saturating_sub(history.len());
+            let data: Vec<(f64, f64)> = history
+                .iter()
+                .enumerate()
+                .map(|(i, &depth)| ((start_idx + i) as f64, depth as f64))
+                .collect();
+            all_data.push(data);
+
+            let color = colors[color_idx % colors.len()];
+            let label = get_key_label(key_idx);
+            datasets.push(
+                Dataset::default()
+                    .name(label)
+                    .marker(symbols::Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(color))
+            );
+        }
+    }
+
+    // Set data references
+    let datasets: Vec<Dataset> = datasets
+        .into_iter()
+        .zip(all_data.iter())
+        .map(|(ds, data)| ds.data(data))
+        .collect();
+
+    // Build legend string
+    let legend: String = active_keys
+        .iter()
+        .enumerate()
+        .map(|(i, &k)| {
+            let color_char = match i {
+                0 => "C", 1 => "Y", 2 => "G", 3 => "M",
+                4 => "R", 5 => "B", 6 => "c", 7 => "y",
+                _ => "?",
+            };
+            format!("[{}]K{}", color_char, get_key_label(k))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // X-axis scrolls: show last DEPTH_HISTORY_LEN samples
+    let x_max = max_len.max(DEPTH_HISTORY_LEN) as f64;
+    let x_min = x_max - DEPTH_HISTORY_LEN as f64;
+
+    let chart = Chart::new(datasets)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Time Series: {legend}")))
+        .x_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::Gray))
+                .bounds([x_min.max(0.0), x_max])
+        )
+        .y_axis(
+            Axis::default()
+                .title("mm")
+                .style(Style::default().fg(Color::Gray))
+                .bounds([0.0, 4.5])
+                .labels(vec![
+                    Span::raw("0"),
+                    Span::raw("1"),
+                    Span::raw("2"),
+                    Span::raw("3"),
+                    Span::raw("4"),
+                ])
+        );
+
+    f.render_widget(chart, area);
 }
 
 fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
