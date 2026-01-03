@@ -1,20 +1,22 @@
 // MonsGeek M1 V5 HE Linux Driver - Shared Library
 // Protocol definitions, device registry, and HID communication
 
-pub mod protocol;
-pub mod devices;
-pub mod hid;
-pub mod device_loader;
-pub mod tui;
 pub mod audio_reactive;
-pub mod screen_capture;
-pub mod gif;
 pub mod color;
+pub mod device_loader;
+pub mod devices;
 pub mod firmware;
 pub mod firmware_api;
+pub mod gif;
+pub mod hid;
+pub mod profile;
+pub mod protocol;
+pub mod screen_capture;
+pub mod tui;
 
+pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
+pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES};
+pub use hid::{ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings, VendorEventType};
+pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
 pub use protocol::cmd;
 pub use protocol::magnetism;
-pub use devices::{DeviceDefinition, SUPPORTED_DEVICES, find_device, is_supported};
-pub use hid::{MonsGeekDevice, DeviceInfo, VendorEventType, ConnectedDeviceInfo, TriggerSettings};
-pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
