@@ -136,6 +136,30 @@ impl MonsGeekDevice {
         Err(format!("Device {vid:04x}:{pid:04x} not connected"))
     }
 
+    /// Open the vendor INPUT interface for a device (for receiving key depth, events)
+    /// This is separate from the main device which uses the FEATURE interface
+    pub fn open_input_interface(vid: u16, pid: u16) -> Result<HidDevice, String> {
+        let hidapi = HidApi::new().map_err(|e| format!("HID init failed: {e}"))?;
+
+        for dev_info in hidapi.device_list() {
+            if dev_info.vendor_id() == vid
+                && dev_info.product_id() == pid
+                && dev_info.usage_page() == protocol::USAGE_PAGE
+                && dev_info.usage() == protocol::USAGE_INPUT
+            {
+                println!("Opening INPUT interface: {} (usage {:04x}, page {:04x})",
+                    dev_info.path().to_string_lossy(),
+                    dev_info.usage(),
+                    dev_info.usage_page()
+                );
+                return dev_info
+                    .open_device(&hidapi)
+                    .map_err(|e| format!("Failed to open input interface: {e}"));
+            }
+        }
+        Err(format!("Input interface for {vid:04x}:{pid:04x} not found"))
+    }
+
     /// List all connected supported devices
     pub fn list_connected() -> Vec<ConnectedDeviceInfo> {
         let mut devices_found = Vec::new();
@@ -383,7 +407,28 @@ impl MonsGeekDevice {
 
     /// Enable/disable magnetism (key depth) reporting
     pub fn set_magnetism_report(&self, enable: bool) -> bool {
-        self.send(cmd::SET_MAGNETISM_REPORT, &[if enable { 1 } else { 0 }], ChecksumType::Bit7)
+        // Build the command buffer manually to debug
+        let mut buf = vec![0u8; protocol::REPORT_SIZE];
+        buf[0] = 0; // Report ID
+        buf[1] = cmd::SET_MAGNETISM_REPORT; // 0x1B
+        buf[2] = if enable { 1 } else { 0 };
+        // Checksum: sum buf[1..8], put at buf[8]
+        let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+        buf[8] = (255 - (sum & 0xFF)) as u8;
+
+        println!("set_magnetism_report({enable}) sending: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x}",
+            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8]);
+
+        match self.device.send_feature_report(&buf) {
+            Ok(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                true
+            }
+            Err(e) => {
+                eprintln!("set_magnetism_report failed: {e}");
+                false
+            }
+        }
     }
 
     /// Initialize per-key RGB mode (sends USERGIF start command)
@@ -1150,7 +1195,27 @@ impl MonsGeekDevice {
         let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
         match self.device.read_timeout(&mut buf, timeout_ms) {
             Ok(len) if len > 0 => Some(buf[..len].to_vec()),
-            _ => None,
+            Ok(_) => None, // timeout or zero-length read
+            Err(e) => {
+                tracing::debug!("HID read error: {e:?}");
+                None
+            }
+        }
+    }
+
+    /// Read HID input report with verbose debugging
+    pub fn read_input_verbose(&self, timeout_ms: i32) -> (Option<Vec<u8>>, String) {
+        let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
+        match self.device.read_timeout(&mut buf, timeout_ms) {
+            Ok(len) if len > 0 => {
+                (Some(buf[..len].to_vec()), format!("OK: {len} bytes"))
+            }
+            Ok(len) => {
+                (None, format!("Timeout/empty: {len} bytes"))
+            }
+            Err(e) => {
+                (None, format!("Error: {e:?}"))
+            }
         }
     }
 
@@ -1168,16 +1233,29 @@ impl MonsGeekDevice {
     }
 
     /// Classify a vendor event by its first byte(s)
+    /// Handles both formats: with report ID prefix (0x05) and without
     pub fn classify_vendor_event(data: &[u8]) -> VendorEventType {
         if data.is_empty() {
             return VendorEventType::Unknown;
         }
-        match data[0] {
+
+        // Handle report ID prefix (Linux HID includes 0x05 as first byte)
+        let cmd_data = if data[0] == 0x05 && data.len() > 1 {
+            &data[1..]
+        } else {
+            data
+        };
+
+        if cmd_data.is_empty() {
+            return VendorEventType::Unknown;
+        }
+
+        match cmd_data[0] {
             0x1B => VendorEventType::KeyDepth,
-            0x0F if data.len() >= 3 => {
-                if data[1] == 0x01 && data[2] == 0x00 {
+            0x0F if cmd_data.len() >= 3 => {
+                if cmd_data[1] == 0x01 && cmd_data[2] == 0x00 {
                     VendorEventType::MagnetismStart
-                } else if data[1] == 0x00 && data[2] == 0x00 {
+                } else if cmd_data[1] == 0x00 && cmd_data[2] == 0x00 {
                     VendorEventType::MagnetismStop
                 } else {
                     VendorEventType::Unknown
