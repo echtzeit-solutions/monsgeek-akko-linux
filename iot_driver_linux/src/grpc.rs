@@ -40,12 +40,17 @@ pub struct DeviceEntry {
 }
 
 /// Known devices extracted from iot_driver.exe
+/// Includes both FEATURE interface (USAGE=0x02) for commands and INPUT interface (USAGE=0x01) for events
 pub fn get_known_devices() -> Vec<DeviceEntry> {
     vec![
+        // Feature interfaces (for sending commands, reading settings)
         DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRED, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
         DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRELESS, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
         DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_1, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: true },
         DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_2, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: true },
+        // Input interfaces (for receiving key depth, vendor events)
+        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRED, usage: protocol::USAGE_INPUT, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
+        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRELESS, usage: protocol::USAGE_INPUT, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
     ]
 }
 
