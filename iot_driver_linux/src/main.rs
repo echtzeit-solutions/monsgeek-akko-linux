@@ -1135,7 +1135,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("\nMonitoring key depth (Ctrl+C to stop)...");
             println!("Press keys to see depth data.");
-            println!("Reading from both FEATURE and INPUT interfaces...\n");
+            if input_device.is_some() {
+                println!("Reading from INPUT interface (high-speed batch mode)...\n");
+            } else {
+                println!("Reading from FEATURE interface...\n");
+            }
 
             let running = Arc::new(AtomicBool::new(true));
             let running_clone = Arc::clone(&running);
@@ -1145,62 +1149,104 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }).ok();
 
             let mut report_count = 0u64;
-            let mut verbose_count = 0u64;
             let start = std::time::Instant::now();
+            let mut last_print = std::time::Instant::now();
+
+            // Track latest depth per key for batched display
+            let mut key_depths: std::collections::HashMap<u8, (u16, f32)> = std::collections::HashMap::new();
 
             // Read buffer for INPUT interface
             let mut input_buf = [0u8; 64];
 
             while running.load(Ordering::SeqCst) {
-                verbose_count += 1;
+                let mut batch_count = 0u32;
 
-                // Print verbose status periodically (every ~2 seconds) if verbose flag is set
-                if verbose && verbose_count % 40 == 1 {
-                    let (_, status) = device.read_input_verbose(1);
-                    println!("[{:.1}s] Read status: {status}, reports received: {report_count}", start.elapsed().as_secs_f32());
-                }
-
-                // Try reading from FEATURE interface (same interface we send commands on)
-                if let Some(buf) = device.read_input(50) {
-                    let elapsed = start.elapsed().as_secs_f32();
-
-                    if print_depth_report(&buf, precision, show_raw, show_zero) {
-                        report_count += 1;
-                        if verbose {
-                            print!("[FEAT {elapsed:.1}s #{report_count}] Raw ({} bytes): ", buf.len());
-                            for b in &buf {
-                                print!("{b:02x} ");
-                            }
-                            println!();
-                        }
-                    }
-                }
-
-                // Also try INPUT interface if available
+                // Batch read all queued reports from INPUT interface (preferred, faster)
                 if let Some(ref input_dev) = input_device {
-                    match input_dev.read_timeout(&mut input_buf, 50) {
-                        Ok(len) if len > 0 => {
-                            let elapsed = start.elapsed().as_secs_f32();
-
-                            if print_depth_report(&input_buf[..len], precision, show_raw, show_zero) {
-                                report_count += 1;
-                                if verbose {
-                                    print!("[INPUT {elapsed:.1}s #{report_count}] Raw ({len} bytes): ");
-                                    for b in &input_buf[..len] {
-                                        print!("{b:02x} ");
-                                    }
-                                    println!();
+                    // Read with short timeout first, then drain with non-blocking
+                    loop {
+                        let timeout = if batch_count == 0 { 10 } else { 0 }; // 10ms initial, then non-blocking
+                        match input_dev.read_timeout(&mut input_buf, timeout) {
+                            Ok(len) if len > 0 => {
+                                if let Some(report) = iot_driver::protocol::depth_report::parse(&input_buf[..len]) {
+                                    report_count += 1;
+                                    batch_count += 1;
+                                    let depth_mm = report.depth_mm(precision);
+                                    key_depths.insert(report.key_index, (report.depth_raw, depth_mm));
                                 }
                             }
+                            _ => break, // No more data or error
                         }
-                        _ => {}
                     }
+                } else {
+                    // Fallback to FEATURE interface
+                    loop {
+                        let timeout = if batch_count == 0 { 10 } else { 0 };
+                        match device.read_input(timeout) {
+                            Some(buf) => {
+                                if let Some(report) = iot_driver::protocol::depth_report::parse(&buf) {
+                                    report_count += 1;
+                                    batch_count += 1;
+                                    let depth_mm = report.depth_mm(precision);
+                                    key_depths.insert(report.key_index, (report.depth_raw, depth_mm));
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+
+                // Print at ~60Hz max to avoid flooding terminal
+                let now = std::time::Instant::now();
+                if now.duration_since(last_print).as_millis() >= 16 && !key_depths.is_empty() {
+                    // Clear line and print all active keys
+                    print!("\r\x1b[K"); // Clear line
+
+                    // Sort keys and print
+                    let mut keys: Vec<_> = key_depths.iter().collect();
+                    keys.sort_by_key(|(k, _)| *k);
+
+                    for (key_idx, (raw, depth_mm)) in &keys {
+                        // Skip zero depths unless show_zero
+                        if *raw == 0 && !show_zero {
+                            continue;
+                        }
+
+                        // Compact bar (20 chars max)
+                        let bar_len = ((*depth_mm * 5.0).min(20.0)) as usize;
+                        let bar: String = "█".repeat(bar_len);
+                        let empty: String = "░".repeat(20 - bar_len);
+
+                        // Get key name from matrix position mapping
+                        let key_name = iot_driver::protocol::matrix::key_name(**key_idx);
+
+                        if show_raw {
+                            print!("{key_name}[{bar}{empty}]{depth_mm:.1}({raw:4}) ");
+                        } else {
+                            print!("{key_name}[{bar}{empty}]{depth_mm:.1} ");
+                        }
+                    }
+
+                    if verbose {
+                        let elapsed = start.elapsed().as_secs_f32();
+                        let rate = report_count as f32 / elapsed;
+                        print!(" [{rate:.0}/s]");
+                    }
+
+                    use std::io::Write;
+                    std::io::stdout().flush().ok();
+
+                    last_print = now;
+
+                    // Remove keys that have returned to zero (after displaying once)
+                    key_depths.retain(|_, (raw, _)| *raw > 0 || show_zero);
                 }
             }
 
-            println!("\nStopping...");
+            println!("\n\nStopping...");
             device.set_magnetism_report(false);
-            println!("Received {report_count} reports in {:.1}s", start.elapsed().as_secs_f32());
+            let elapsed = start.elapsed().as_secs_f32();
+            println!("Received {report_count} reports in {:.1}s ({:.0} reports/sec)", elapsed, report_count as f32 / elapsed);
         }
 
         // === Firmware Commands (DRY-RUN ONLY) ===
