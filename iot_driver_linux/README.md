@@ -1,0 +1,252 @@
+# MonsGeek M1 V5 HE Linux Driver
+
+A Linux userspace driver for MonsGeek/Akko magnetic Hall Effect keyboards, providing full configuration support via CLI, TUI, and gRPC server for web-based control.
+
+## Supported Devices
+
+- MonsGeek M1 V5 HE (Wired) - VID:3151 PID:5030
+- MonsGeek M1 V5 HE (Wireless/2.4GHz) - VID:3151 PID:503A
+- Akko MOD007B-HE and other Akko HE keyboards (same protocol)
+
+## Features
+
+- **Full keyboard configuration** - LED modes, brightness, speed, colors
+- **Per-key settings** - Actuation points, Rapid Trigger, DKS, Snap-Tap
+- **Real-time key depth monitoring** - Visualize analog key travel
+- **Audio reactive lighting** - Built-in frequency analyzer
+- **Screen color sync** - Ambient lighting from screen content
+- **GIF animations** - Upload or stream animations to keyboard
+- **Key remapping and macros** - Remap keys, record text macros
+- **gRPC server** - Compatible with official MonsGeek web app
+
+## Installation
+
+### Prerequisites
+
+```bash
+# Debian/Ubuntu
+sudo apt install libudev-dev libhidapi-dev
+
+# Fedora
+sudo dnf install systemd-devel hidapi-devel
+
+# Arch
+sudo pacman -S hidapi
+```
+
+### Build
+
+```bash
+git clone https://github.com/YOUR_USERNAME/monsgeek-linux-driver.git
+cd monsgeek-linux-driver/iot_driver_linux
+cargo build --release
+```
+
+### udev Rules (Required for non-root access)
+
+Create `/etc/udev/rules.d/99-monsgeek.rules`:
+
+```
+# MonsGeek/Akko HE Keyboards
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
+```
+
+Then reload:
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+## Usage
+
+### CLI Commands
+
+```bash
+# Device information
+iot_driver info              # Device ID and firmware version
+iot_driver all               # All device settings
+iot_driver features          # Supported features and precision
+
+# LED control
+iot_driver led               # Current LED settings
+iot_driver mode wave         # Set LED mode by name
+iot_driver mode 4            # Set LED mode by number
+iot_driver modes             # List all LED modes
+iot_driver set-led 1 4 2 255 0 128  # mode brightness speed R G B
+
+# Per-key settings
+iot_driver triggers          # Show trigger settings
+iot_driver set-actuation 2.0 # Set actuation point (mm)
+iot_driver set-rt on 0.3     # Enable Rapid Trigger with sensitivity
+iot_driver set-rt off        # Disable Rapid Trigger
+
+# Polling rate
+iot_driver rate              # Get current polling rate
+iot_driver set-rate 8000     # Set to 8kHz (8000, 4000, 2000, 1000, 500, 250, 125)
+
+# Key remapping
+iot_driver remap A B         # Remap A key to output B
+iot_driver swap A S          # Swap two keys
+iot_driver reset-key A       # Reset key to default
+
+# Macros
+iot_driver set-macro F1 "Hello World"  # Set text macro
+iot_driver macro F1                     # Show macro
+iot_driver clear-macro F1               # Clear macro
+
+# Animations
+iot_driver gif image.gif     # Upload GIF to keyboard memory
+iot_driver gif-stream a.gif  # Stream GIF in real-time
+iot_driver rainbow           # Real-time rainbow animation
+iot_driver wave              # Wave animation demo
+
+# Audio reactive
+iot_driver audio             # Run audio reactive mode
+iot_driver audio-test        # List audio devices
+iot_driver audio-levels      # Show audio levels
+
+# Screen sync
+iot_driver screen            # Sync keyboard to screen colors
+
+# Key depth monitoring
+iot_driver depth             # Real-time key depth display
+iot_driver depth --raw       # Raw depth values
+```
+
+### Interactive TUI
+
+Launch the terminal user interface for interactive control:
+
+```bash
+iot_driver tui
+```
+
+**TUI Features:**
+- Tab navigation between Device Info, LED Settings, Key Depth, Triggers, Options, Macros
+- Real-time key depth visualization (bar chart and time series)
+- Visual keyboard layout for per-key trigger settings
+- Arrow keys to adjust values, Enter to confirm
+
+**Key Depth Tab:**
+- `v` - Toggle between bar chart and time series view
+- `Space` - Select key for time series tracking
+- `x` - Clear depth history
+
+**Triggers Tab:**
+- `v` - Toggle between list and keyboard layout view
+- Arrow keys - Navigate keys in layout view
+- `n/t/d/s` - Set mode (Normal/RT/DKS/SnapTap) for selected key
+- `N/T/D/S` - Set mode for ALL keys
+
+### Web App (app.monsgeek.com)
+
+The driver includes a gRPC server that's compatible with the official MonsGeek web configurator.
+
+**Start the server:**
+```bash
+iot_driver serve
+```
+
+The server runs on `127.0.0.1:3814` with gRPC-Web support.
+
+**Connect from web app:**
+
+1. Start the driver server: `iot_driver serve`
+2. Open https://app.monsgeek.com in your browser
+3. The web app will detect and connect to your keyboard
+4. Use the full web UI for configuration
+
+**Note:** The web app expects the server at localhost:3814. All keyboard features are accessible through the web interface including:
+- LED mode selection and color picker
+- Per-key RGB customization
+- Trigger/actuation settings
+- Key remapping
+- Macro editor
+- Firmware updates (use with caution)
+
+## LED Modes
+
+| # | Mode | Description |
+|---|------|-------------|
+| 0 | Off | LEDs disabled |
+| 1 | Constant | Static color |
+| 2 | Breathing | Pulsing effect |
+| 3 | Neon | Neon glow |
+| 4 | Wave | Color wave |
+| 5 | Ripple | Ripple from keypress |
+| 6 | Raindrop | Raindrops |
+| 7 | Snake | Snake pattern |
+| 8 | Reactive | React to keypress (stay lit) |
+| 9 | Converge | Converging pattern |
+| 10 | Sine Wave | Sine wave |
+| 11 | Kaleidoscope | Kaleidoscope |
+| 12 | Line Wave | Line wave |
+| 13 | User Picture | Custom per-key (4 layers) |
+| 14 | Laser | Laser effect |
+| 15 | Circle Wave | Circular wave |
+| 16 | Rainbow | Rainbow/dazzle |
+| 17 | Rain Down | Rain downward |
+| 18 | Meteor | Meteor shower |
+| 19 | Reactive Off | React briefly |
+| 20 | Music Patterns | Audio reactive patterns |
+| 21 | Screen Sync | Ambient screen color |
+| 22 | Music Bars | Audio reactive bars |
+| 23 | Train | Train pattern |
+| 24 | Fireworks | Fireworks |
+| 25 | Per-Key Color | Dynamic animation (GIF) |
+
+## Per-Key Modes
+
+| Mode | Description |
+|------|-------------|
+| Normal | Standard actuation/release points |
+| Rapid Trigger (RT) | Dynamic actuation based on movement |
+| DKS | Dynamic Keystroke (4-stage trigger) |
+| Mod-Tap | Different action for tap vs hold |
+| Toggle Hold | Toggle on hold |
+| Toggle Dots | Toggle on double-tap |
+| Snap-Tap | SOCD resolution (bind to another key) |
+
+## Troubleshooting
+
+### Permission Denied
+Make sure udev rules are installed and you've re-plugged the keyboard.
+
+### Device Not Found
+```bash
+iot_driver list  # Check if device is visible
+lsusb | grep 3151  # Verify USB connection
+```
+
+### TUI Not Starting
+The TUI requires a proper terminal. It won't work in background mode or without a TTY.
+
+### Web App Not Connecting
+1. Ensure server is running: `iot_driver serve`
+2. Check firewall isn't blocking port 3814
+3. Verify with: `curl -v http://127.0.0.1:3814`
+
+## Protocol Documentation
+
+The driver implements the MonsGeek/Akko HID protocol:
+- Feature reports on interface 2 (usage 0x02, page 0xFFFF)
+- Input reports on interface 1 (usage 0x01, page 0xFFFF) for key depth
+- 65-byte reports with command byte and checksum
+
+Key commands:
+- `0x8F` - GET_USB_VERSION (device ID, firmware)
+- `0x8C` - GET_LEDPARAM (LED settings)
+- `0x0C` - SET_LEDPARAM (set LED)
+- `0x65` - SET_MULTI_MAGNETISM (per-key settings)
+- `0xE5` - GET_MULTI_MAGNETISM (read per-key)
+- `0x0D` - SET_AUDIO_VIZ (audio reactive data)
+- `0x0E` - SET_SCREEN_COLOR (screen sync RGB)
+
+## License
+
+MIT License
+
+## Acknowledgments
+
+- Protocol reverse-engineered from the official MonsGeek Windows driver
+- Inspired by the need for Linux support for HE keyboards
