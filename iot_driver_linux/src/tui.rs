@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 // Use shared library
-use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism};
+use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism, key_mode};
 
 /// Application state
 struct App {
@@ -34,6 +34,8 @@ struct App {
     // Trigger settings
     triggers: Option<TriggerSettings>,
     trigger_scroll: usize,
+    trigger_view_mode: TriggerViewMode,
+    trigger_selected_key: usize,  // Selected key in layout view
     precision_factor: f32,
     // Keyboard options
     options: Option<KeyboardOptions>,
@@ -85,6 +87,14 @@ enum DepthViewMode {
     TimeSeries,  // Time series graph of selected keys
 }
 
+/// Trigger settings view mode
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum TriggerViewMode {
+    #[default]
+    List,        // Scrollable list of keys
+    Layout,      // Visual keyboard layout
+}
+
 /// History length for time series (samples)
 const DEPTH_HISTORY_LEN: usize = 100;
 
@@ -105,6 +115,8 @@ impl App {
             key_count: 0,
             triggers: None,
             trigger_scroll: 0,
+            trigger_view_mode: TriggerViewMode::default(),
+            trigger_selected_key: 0,
             precision_factor: 100.0, // Default 0.01mm precision
             options: None,
             macros: Vec::new(),
@@ -385,6 +397,31 @@ impl App {
         }
     }
 
+    /// Set mode for a single key (used in layout view)
+    fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
+        if let (Some(ref device), Some(ref mut triggers)) = (&self.device, &mut self.triggers) {
+            if key_index >= triggers.key_modes.len() {
+                self.status_msg = format!("Invalid key index: {key_index}");
+                return;
+            }
+            if device.set_single_key_mode(&mut triggers.key_modes, key_index, mode) {
+                let key_name = get_key_label(key_index);
+                self.status_msg = format!("Key {} ({}) set to {}", key_index, key_name, magnetism::mode_name(mode));
+            } else {
+                self.status_msg = format!("Failed to set key {key_index} mode");
+            }
+        }
+    }
+
+    /// Set key mode - dispatches to single or all based on view mode
+    fn set_key_mode(&mut self, mode: u8) {
+        if self.trigger_view_mode == TriggerViewMode::Layout {
+            self.set_single_key_mode(self.trigger_selected_key, mode);
+        } else {
+            self.set_all_key_modes(mode);
+        }
+    }
+
     fn apply_per_key_color(&mut self) {
         if let Some(ref device) = self.device {
             let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
@@ -626,6 +663,104 @@ impl App {
         }
         self.status_msg = "Depth data cleared".to_string();
     }
+
+    /// Toggle trigger view mode between List and Layout
+    fn toggle_trigger_view(&mut self) {
+        self.trigger_view_mode = match self.trigger_view_mode {
+            TriggerViewMode::List => TriggerViewMode::Layout,
+            TriggerViewMode::Layout => TriggerViewMode::List,
+        };
+        self.status_msg = format!("Trigger view: {:?}", self.trigger_view_mode);
+    }
+
+    /// Navigate to next valid key in layout view (Tab key)
+    #[allow(dead_code)]
+    fn layout_key_next(&mut self) {
+        let max_key = self.triggers.as_ref()
+            .map(|t| t.key_modes.len().saturating_sub(1))
+            .unwrap_or(125);
+
+        // Find next non-empty key
+        for next in (self.trigger_selected_key + 1)..=max_key {
+            if self.is_valid_key_position(next) {
+                self.trigger_selected_key = next;
+                return;
+            }
+        }
+    }
+
+    /// Navigate to previous valid key in layout view (Shift+Tab key)
+    #[allow(dead_code)]
+    fn layout_key_prev(&mut self) {
+        if self.trigger_selected_key == 0 {
+            return;
+        }
+
+        // Find previous non-empty key
+        for prev in (0..self.trigger_selected_key).rev() {
+            if self.is_valid_key_position(prev) {
+                self.trigger_selected_key = prev;
+                return;
+            }
+        }
+    }
+
+    /// Move up one row in keyboard layout
+    fn layout_key_up(&mut self) {
+        let col = self.trigger_selected_key / 6;
+        let row = self.trigger_selected_key % 6;
+        if row > 0 {
+            let new_pos = col * 6 + (row - 1);
+            if self.is_valid_key_position(new_pos) {
+                self.trigger_selected_key = new_pos;
+            }
+        }
+    }
+
+    /// Move down one row in keyboard layout
+    fn layout_key_down(&mut self) {
+        let col = self.trigger_selected_key / 6;
+        let row = self.trigger_selected_key % 6;
+        if row < 5 {
+            let new_pos = col * 6 + (row + 1);
+            if new_pos < 126 && self.is_valid_key_position(new_pos) {
+                self.trigger_selected_key = new_pos;
+            }
+        }
+    }
+
+    /// Move left one column in keyboard layout
+    fn layout_key_left(&mut self) {
+        let col = self.trigger_selected_key / 6;
+        let row = self.trigger_selected_key % 6;
+        if col > 0 {
+            let new_pos = (col - 1) * 6 + row;
+            if self.is_valid_key_position(new_pos) {
+                self.trigger_selected_key = new_pos;
+            }
+        }
+    }
+
+    /// Move right one column in keyboard layout
+    fn layout_key_right(&mut self) {
+        let col = self.trigger_selected_key / 6;
+        let row = self.trigger_selected_key % 6;
+        if col < 20 {  // 21 columns total
+            let new_pos = (col + 1) * 6 + row;
+            if new_pos < 126 && self.is_valid_key_position(new_pos) {
+                self.trigger_selected_key = new_pos;
+            }
+        }
+    }
+
+    /// Check if a matrix position has an active key
+    fn is_valid_key_position(&self, pos: usize) -> bool {
+        if pos >= 126 {
+            return false;
+        }
+        let name = get_key_label(pos);
+        !name.is_empty() && name != "?"
+    }
 }
 
 /// Run the TUI - called via 'iot_driver tui' command
@@ -725,8 +860,10 @@ pub fn run() -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 3 {
-                                // Scroll trigger list
-                                if app.trigger_scroll > 0 {
+                                // Triggers tab navigation
+                                if app.trigger_view_mode == TriggerViewMode::Layout {
+                                    app.layout_key_up();
+                                } else if app.trigger_scroll > 0 {
                                     app.trigger_scroll -= 1;
                                 }
                             } else if app.tab == 5 {
@@ -751,12 +888,17 @@ pub fn run() -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 3 {
-                                // Scroll trigger list
-                                let max_scroll = app.triggers.as_ref()
-                                    .map(|t| t.key_modes.len().saturating_sub(15))
-                                    .unwrap_or(0);
-                                if app.trigger_scroll < max_scroll {
-                                    app.trigger_scroll += 1;
+                                // Triggers tab navigation
+                                if app.trigger_view_mode == TriggerViewMode::Layout {
+                                    app.layout_key_down();
+                                } else {
+                                    // Scroll trigger list
+                                    let max_scroll = app.triggers.as_ref()
+                                        .map(|t| t.key_modes.len().saturating_sub(15))
+                                        .unwrap_or(0);
+                                    if app.trigger_scroll < max_scroll {
+                                        app.trigger_scroll += 1;
+                                    }
                                 }
                             } else if app.tab == 5 {
                                 // Select macro
@@ -773,6 +915,8 @@ pub fn run() -> io::Result<()> {
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
+                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                                app.layout_key_left();
                             } else if app.tab == 1 {
                                 let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
@@ -842,6 +986,8 @@ pub fn run() -> io::Result<()> {
                                 if app.depth_cursor < max_key {
                                     app.depth_cursor += 1;
                                 }
+                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                                app.layout_key_right();
                             } else if app.tab == 1 {
                                 let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
@@ -964,17 +1110,32 @@ pub fn run() -> io::Result<()> {
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
                             }
                         }
-                        // Key mode switching on Triggers tab (Shift+key sets all)
+                        // Key mode switching on Triggers tab
+                        // In Layout view: sets selected key only
+                        // In List view: sets all keys
+                        // Shift+key always sets all keys
                         KeyCode::Char('n') if app.tab == 3 => {
+                            app.set_key_mode(magnetism::MODE_NORMAL);
+                        }
+                        KeyCode::Char('N') if app.tab == 3 => {
                             app.set_all_key_modes(magnetism::MODE_NORMAL);
                         }
                         KeyCode::Char('t') if app.tab == 3 => {
+                            app.set_key_mode(magnetism::MODE_RAPID_TRIGGER);
+                        }
+                        KeyCode::Char('T') if app.tab == 3 => {
                             app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER);
                         }
                         KeyCode::Char('d') if app.tab == 3 => {
+                            app.set_key_mode(magnetism::MODE_DKS);
+                        }
+                        KeyCode::Char('D') if app.tab == 3 => {
                             app.set_all_key_modes(magnetism::MODE_DKS);
                         }
                         KeyCode::Char('s') if app.tab == 3 => {
+                            app.set_key_mode(magnetism::MODE_SNAPTAP);
+                        }
+                        KeyCode::Char('S') if app.tab == 3 => {
                             app.set_all_key_modes(magnetism::MODE_SNAPTAP);
                         }
                         // Per-key color mode in LED Settings tab
@@ -984,6 +1145,10 @@ pub fn run() -> io::Result<()> {
                         // Depth tab controls
                         KeyCode::Char('v') if app.tab == 2 => {
                             app.toggle_depth_view();
+                        }
+                        // Triggers tab view toggle
+                        KeyCode::Char('v') if app.tab == 3 => {
+                            app.toggle_trigger_view();
                         }
                         KeyCode::Char('x') if app.tab == 2 => {
                             app.clear_depth_data();
@@ -1110,6 +1275,17 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::raw("Debounce:       "),
             Span::styled(format!("{} ms", info.debounce), Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::raw("Polling Rate:   "),
+            Span::styled(
+                if info.polling_rate > 0 {
+                    crate::protocol::polling_rate::name(info.polling_rate)
+                } else {
+                    "N/A".to_string()
+                },
+                Style::default().fg(Color::Cyan)
+            ),
         ]),
         Line::from(vec![
             Span::raw("Fn Layer:       "),
@@ -1523,6 +1699,14 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
+    match app.trigger_view_mode {
+        TriggerViewMode::List => render_trigger_list(f, app, area),
+        TriggerViewMode::Layout => render_trigger_layout(f, app, area),
+    }
+}
+
+/// Render trigger settings as a list view
+fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
     // Split into summary and detail areas
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1561,6 +1745,9 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  |  "),
                 Span::styled("Keys: ", Style::default().fg(Color::Gray)),
                 Span::styled(format!("{num_keys}"), Style::default().fg(Color::Green)),
+                Span::raw("  |  "),
+                Span::styled("View: List", Style::default().fg(Color::Yellow)),
+                Span::styled(" (v to toggle)", Style::default().fg(Color::DarkGray)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -1617,9 +1804,11 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
                 let rt_p = decode_u16(&triggers.rt_press, i);
                 let rt_l = decode_u16(&triggers.rt_lift, i);
                 let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
+                let key_name = get_key_label(i);
 
                 Row::new(vec![
                     Cell::from(format!("{i:3}")),
+                    Cell::from(if key_name.is_empty() { "-".to_string() } else { key_name }),
                     Cell::from(format!("{:.2}", press as f32 / factor)),
                     Cell::from(format!("{:.2}", lift as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_p as f32 / factor)),
@@ -1629,20 +1818,21 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
             })
             .collect();
 
-        let header = Row::new(vec!["Key", "Act(mm)", "Rel(mm)", "RT↓(mm)", "RT↑(mm)", "Mode"])
+        let header = Row::new(vec!["#", "Key", "Act", "Rel", "RT↓", "RT↑", "Mode"])
             .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan));
 
         let table = Table::new(rows, [
             Constraint::Length(4),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
             Constraint::Length(14),
         ])
         .header(header)
         .block(Block::default().borders(Borders::ALL).title(format!(
-            "Per-Key [{}-{}] n:Normal t:RT d:DKS s:SnapTap",
+            "Per-Key [{}-{}] n/t/d/s:SetAll v:Layout",
             app.trigger_scroll,
             (app.trigger_scroll + 15).min(num_keys)
         )));
@@ -1653,6 +1843,7 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
             Line::from(""),
             Line::from(Span::styled("Controls:", Style::default().add_modifier(Modifier::BOLD))),
             Line::from("  r - Reload trigger settings from device"),
+            Line::from("  v - Toggle layout/list view"),
             Line::from("  ↑/↓ - Scroll through keys"),
             Line::from(""),
             Line::from(Span::styled("Mode Switching (all keys):", Style::default().add_modifier(Modifier::BOLD))),
@@ -1662,6 +1853,162 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
             Line::from("  s - SnapTap mode"),
         ])
         .block(Block::default().borders(Borders::ALL).title("Per-Key Settings"));
+        f.render_widget(help, chunks[1]);
+    }
+}
+
+/// Render trigger settings as a keyboard layout view
+fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
+    // Split into layout area and detail area
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),      // Keyboard layout
+            Constraint::Length(9),    // Selected key details
+        ])
+        .split(area);
+
+    let factor = app.precision_factor;
+
+    // Render keyboard layout
+    let layout_area = chunks[0];
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]")
+        .inner(layout_area);
+
+    f.render_widget(
+        Block::default().borders(Borders::ALL).title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]"),
+        layout_area
+    );
+
+    // Calculate key cell dimensions
+    // Layout is 16 main columns + nav cluster (5 more columns) = ~21 columns
+    // 6 rows
+    let key_width = 5u16;  // Width of each key cell
+    let key_height = 2u16; // Height of each key cell
+
+    // Draw each key in the matrix (column-major order: 21 cols × 6 rows)
+    for pos in 0..126 {
+        let col = pos / 6;
+        let row = pos % 6;
+
+        // Skip positions outside visible area or empty keys
+        let key_name = get_key_label(pos);
+        if key_name.is_empty() || key_name == "?" {
+            continue;
+        }
+
+        // Calculate screen position
+        let x = inner.x + (col as u16 * key_width);
+        let y = inner.y + (row as u16 * key_height);
+
+        // Skip if outside area
+        if x + key_width > inner.x + inner.width || y + key_height > inner.y + inner.height {
+            continue;
+        }
+
+        let key_rect = Rect::new(x, y, key_width, key_height);
+
+        // Determine key style based on selection and mode
+        let is_selected = pos == app.trigger_selected_key;
+        let mode = app.triggers.as_ref()
+            .and_then(|t| t.key_modes.get(pos).copied())
+            .unwrap_or(0);
+
+        let mode_color = match key_mode::base_mode(mode) {
+            0 => Color::White,      // Normal
+            0x80 => Color::Yellow,  // RT
+            2 => Color::Magenta,    // DKS
+            7 => Color::Cyan,       // SnapTap
+            _ => Color::Gray,
+        };
+
+        let style = if is_selected {
+            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(mode_color)
+        };
+
+        // Truncate key name to fit
+        let display_name: String = key_name.chars().take(4).collect();
+
+        // Create a mini block for each key
+        let key_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(if is_selected {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            });
+
+        let key_text = Paragraph::new(display_name)
+            .style(style)
+            .alignment(Alignment::Center)
+            .block(key_block);
+
+        f.render_widget(key_text, key_rect);
+    }
+
+    // Render selected key details
+    if let Some(ref triggers) = app.triggers {
+        let pos = app.trigger_selected_key;
+        let key_name = get_key_label(pos);
+
+        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+            if idx * 2 + 1 < data.len() {
+                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+            } else {
+                0
+            }
+        };
+
+        let press = decode_u16(&triggers.press_travel, pos);
+        let lift = decode_u16(&triggers.lift_travel, pos);
+        let rt_press = decode_u16(&triggers.rt_press, pos);
+        let rt_lift = decode_u16(&triggers.rt_lift, pos);
+        let mode = triggers.key_modes.get(pos).copied().unwrap_or(0);
+        let bottom_dz = decode_u16(&triggers.bottom_deadzone, pos);
+        let top_dz = decode_u16(&triggers.top_deadzone, pos);
+
+        let details = vec![
+            Line::from(vec![
+                Span::styled(format!("Key {pos}: "), Style::default().fg(Color::Gray)),
+                Span::styled(&key_name, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw("  |  Mode: "),
+                Span::styled(magnetism::mode_name(mode), Style::default().fg(Color::Magenta)),
+            ]),
+            Line::from(vec![
+                Span::raw("Actuation: "),
+                Span::styled(format!("{:.2}mm", press as f32 / factor), Style::default().fg(Color::Cyan)),
+                Span::raw("  |  Release: "),
+                Span::styled(format!("{:.2}mm", lift as f32 / factor), Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(vec![
+                Span::raw("RT Press: "),
+                Span::styled(format!("{:.2}mm", rt_press as f32 / factor), Style::default().fg(Color::Yellow)),
+                Span::raw("   |  RT Release: "),
+                Span::styled(format!("{:.2}mm", rt_lift as f32 / factor), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::raw("Deadzone: Bottom "),
+                Span::styled(format!("{:.2}mm", bottom_dz as f32 / factor), Style::default().fg(Color::Green)),
+                Span::raw("  |  Top "),
+                Span::styled(format!("{:.2}mm", top_dz as f32 / factor), Style::default().fg(Color::Green)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "n/t/d/s: Set this key  |  N/T/D/S: Set ALL keys",
+                Style::default().fg(Color::DarkGray)
+            )),
+        ];
+
+        let detail_block = Paragraph::new(details)
+            .block(Block::default().borders(Borders::ALL).title(format!("Selected Key Details [{key_name}]")));
+        f.render_widget(detail_block, chunks[1]);
+    } else {
+        let help = Paragraph::new("Press 'r' to load trigger settings")
+            .block(Block::default().borders(Borders::ALL).title("Selected Key Details"));
         f.render_widget(help, chunks[1]);
     }
 }
