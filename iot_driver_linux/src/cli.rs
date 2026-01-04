@@ -31,6 +31,10 @@ pub enum Commands {
     #[command(visible_aliases = ["deb", "d"])]
     Debounce,
 
+    /// Get polling rate (Hz)
+    #[command(visible_aliases = ["poll", "hz"])]
+    Rate,
+
     /// Get keyboard options (Fn layer, WASD swap, etc.)
     #[command(visible_aliases = ["opts", "opt", "o"])]
     Options,
@@ -62,6 +66,13 @@ pub enum Commands {
         /// Debounce time in milliseconds (0-50)
         #[arg(value_parser = clap::value_parser!(u8).range(0..51))]
         ms: u8,
+    },
+
+    /// Set polling rate (125, 250, 500, 1000, 2000, 4000, 8000 Hz)
+    #[command(visible_aliases = ["sr", "setpoll"])]
+    SetRate {
+        /// Polling rate (e.g., 1000, 1000hz, 1khz, 1k)
+        rate: String,
     },
 
     /// Set LED mode and parameters
