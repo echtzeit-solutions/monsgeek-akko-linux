@@ -386,7 +386,7 @@ pub async fn run_screen_color_mode(
     println!("Starting screen color mode ({fps}fps)...");
 
     // Set LED mode to Screen Color (mode 21)
-    device.set_led_with_option(cmd::LedMode::ScreenColor.as_u8(), 4, 4, 0, 0, 0, false, 0);
+    device.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
     std::thread::sleep(Duration::from_millis(200));
 
     // Create shared state

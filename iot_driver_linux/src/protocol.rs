@@ -26,6 +26,30 @@ pub mod cmd {
     pub const SET_KEY_MAGNETISM_MODE: u8 = 0x1D;
     pub const SET_MULTI_MAGNETISM: u8 = 0x65;
 
+    // Undocumented/variant-specific SET commands (from firmware analysis)
+    // These commands exist in firmware but may not be used on all devices
+    /// OLED screen options (for keyboards with OLED displays)
+    pub const SET_OLEDOPTION: u8 = 0x22;
+    /// TFT LCD image data (for keyboards with color screens)
+    pub const SET_TFTLCDDATA: u8 = 0x25;
+    /// OLED language setting
+    pub const SET_OLEDLANGUAGE: u8 = 0x27;
+    /// OLED clock display
+    pub const SET_OLEDCLOCK: u8 = 0x28;
+    /// 24-bit color screen data
+    pub const SET_SCREEN_24BITDATA: u8 = 0x29;
+    /// OLED bootloader mode entry
+    pub const SET_OLEDBOOTLOADER: u8 = 0x30;
+    /// OLED boot start
+    pub const SET_OLEDBOOTSTART: u8 = 0x31;
+    /// Factory SKU setting (manufacturing only)
+    pub const SET_SKU: u8 = 0x50;
+    /// Factory reset - DANGEROUS: erases flash
+    /// Format: [0x7F, 0x55, 0xAA, 0x55, 0xAA] with magic bytes
+    pub const FACTORY_RESET: u8 = 0x7F;
+    /// Flash chip erase - DANGEROUS
+    pub const SET_FLASHCHIPERASSE: u8 = 0xAC;
+
     // GET commands (0x80 - 0xE6)
     pub const GET_REV: u8 = 0x80;           // Get firmware revision
     pub const GET_REPORT: u8 = 0x83;        // Get report rate
@@ -45,37 +69,56 @@ pub mod cmd {
     pub const GET_MULTI_MAGNETISM: u8 = 0xE5;  // Get RT/DKS per-key settings
     pub const GET_FEATURE_LIST: u8 = 0xE6;     // Get supported features
 
+    // Undocumented/variant-specific GET commands (from firmware analysis)
+    /// LED on/off state
+    pub const GET_LEDONOFF: u8 = 0x85;
+    /// TFT LCD data readback
+    pub const GET_TFTLCDDATA: u8 = 0xA5;
+    /// 24-bit screen data readback
+    pub const GET_SCREEN_24BITDATA: u8 = 0xA9;
+    /// OLED firmware version
+    pub const GET_OLED_VERSION: u8 = 0xAD;
+    /// Matrix LED controller version
+    pub const GET_MLED_VERSION: u8 = 0xAE;
+    /// OLED bootloader state
+    pub const GET_OLEDBOOTLOADER: u8 = 0xB0;
+    /// OLED firmware checksum
+    pub const GET_OLEDBOOTCHECKSUM: u8 = 0xB1;
+    /// Factory SKU readback
+    pub const GET_SKU: u8 = 0xD0;
+
     // Response status
     pub const STATUS_SUCCESS: u8 = 0xAA;
 
     /// LED effect mode names (from Akko Cloud LightList)
+    /// Music modes use command 0x0D for audio data, Screen Sync uses 0x0E for RGB
     pub const LED_MODES: &[&str] = &[
-        "Off",              // 0
-        "Constant",         // 1
-        "Breathing",        // 2
-        "Neon",             // 3
-        "Wave",             // 4
-        "Ripple",           // 5
-        "Raindrop",         // 6
-        "Snake",            // 7
-        "Reactive",         // 8
-        "Converge",         // 9
-        "Sine Wave",        // 10
-        "Kaleidoscope",     // 11
-        "Line Wave",        // 12
-        "User Picture",     // 13
-        "Laser",            // 14
-        "Circle Wave",      // 15
-        "Rainbow",          // 16
-        "Rain Down",        // 17
-        "Meteor",           // 18
-        "Reactive Off",     // 19
-        "Music Reactive 3", // 20
-        "Screen Color",     // 21
-        "Music Reactive 2", // 22
-        "Train",            // 23
-        "Fireworks",        // 24
-        "Per-Key Color",    // 25
+        "Off",              // 0  - LEDs off
+        "Constant",         // 1  - Static color
+        "Breathing",        // 2  - Breathing/pulsing effect
+        "Neon",             // 3  - Neon glow
+        "Wave",             // 4  - Color wave
+        "Ripple",           // 5  - Ripple from keypress
+        "Raindrop",         // 6  - Raindrops falling
+        "Snake",            // 7  - Snake pattern
+        "Reactive",         // 8  - React to keypress (keep lit)
+        "Converge",         // 9  - Converging pattern
+        "Sine Wave",        // 10 - Sine wave pattern
+        "Kaleidoscope",     // 11 - Kaleidoscope effect
+        "Line Wave",        // 12 - Line wave pattern
+        "User Picture",     // 13 - Custom per-key colors (4 layers)
+        "Laser",            // 14 - Laser effect
+        "Circle Wave",      // 15 - Circular wave
+        "Rainbow",          // 16 - Rainbow/dazzle effect
+        "Rain Down",        // 17 - Rain downward
+        "Meteor",           // 18 - Meteor shower
+        "Reactive Off",     // 19 - React to keypress (brief flash)
+        "Music Patterns",   // 20 - LightMusicFollow3: audio reactive with preset patterns (1-5)
+        "Screen Sync",      // 21 - LightScreenColor: ambient RGB from 0x0E command
+        "Music Bars",       // 22 - LightMusicFollow2: audio reactive bars (upright/separate/intersect)
+        "Train",            // 23 - Train pattern
+        "Fireworks",        // 24 - Fireworks effect
+        "Per-Key Color",    // 25 - Dynamic per-key animation (GIF)
     ];
 
     pub fn led_mode_name(mode: u8) -> &'static str {
@@ -109,13 +152,29 @@ pub mod cmd {
         RainDown = 17,
         Meteor = 18,
         ReactiveOff = 19,
-        Music3 = 20,
-        ScreenColor = 21,
-        Music2 = 22,
+        /// Music reactive mode with preset patterns (1-5)
+        /// Use SET_AUDIO_VIZ (0x0D) to send frequency band data
+        MusicPatterns = 20,
+        /// Screen color sync mode - receives RGB via SET_SCREEN_COLOR (0x0E)
+        ScreenSync = 21,
+        /// Music reactive mode with bar visualization (upright/separate/intersect)
+        /// Use SET_AUDIO_VIZ (0x0D) to send frequency band data
+        MusicBars = 22,
         Train = 23,
         Fireworks = 24,
         UserColor = 25,     // Dynamic per-key animation (GIF)
     }
+
+    // Backwards compatibility aliases (deprecated, use the enum variants directly)
+    #[allow(non_upper_case_globals)]
+    #[deprecated(note = "Use LedMode::MusicPatterns instead")]
+    pub const Music3: LedMode = LedMode::MusicPatterns;
+    #[allow(non_upper_case_globals)]
+    #[deprecated(note = "Use LedMode::MusicBars instead")]
+    pub const Music2: LedMode = LedMode::MusicBars;
+    #[allow(non_upper_case_globals)]
+    #[deprecated(note = "Use LedMode::ScreenSync instead")]
+    pub const ScreenColor: LedMode = LedMode::ScreenSync;
 
     impl LedMode {
         /// Convert from u8, returns None if invalid
@@ -141,9 +200,9 @@ pub mod cmd {
                 17 => Some(Self::RainDown),
                 18 => Some(Self::Meteor),
                 19 => Some(Self::ReactiveOff),
-                20 => Some(Self::Music3),
-                21 => Some(Self::ScreenColor),
-                22 => Some(Self::Music2),
+                20 => Some(Self::MusicPatterns),
+                21 => Some(Self::ScreenSync),
+                22 => Some(Self::MusicBars),
                 23 => Some(Self::Train),
                 24 => Some(Self::Fireworks),
                 25 => Some(Self::UserColor),
@@ -180,9 +239,9 @@ pub mod cmd {
                 "raindown" => Some(Self::RainDown),
                 "meteor" => Some(Self::Meteor),
                 "reactiveoff" => Some(Self::ReactiveOff),
-                "music3" => Some(Self::Music3),
-                "screencolor" | "screen" => Some(Self::ScreenColor),
-                "music2" => Some(Self::Music2),
+                "musicpatterns" | "music3" | "patterns" => Some(Self::MusicPatterns),
+                "screensync" | "screencolor" | "screen" | "ambient" => Some(Self::ScreenSync),
+                "musicbars" | "music2" | "bars" | "music" => Some(Self::MusicBars),
                 "train" => Some(Self::Train),
                 "fireworks" => Some(Self::Fireworks),
                 "usercolor" | "color" | "gif" | "animation" => Some(Self::UserColor),
@@ -228,29 +287,52 @@ pub mod cmd {
             SET_KEYMATRIX => "SET_KEYMATRIX",
             SET_MACRO => "SET_MACRO",
             SET_USERPIC => "SET_USERPIC",
+            SET_AUDIO_VIZ => "SET_AUDIO_VIZ",
             SET_SCREEN_COLOR => "SET_SCREEN_COLOR",
             SET_FN => "SET_FN",
             SET_SLEEPTIME => "SET_SLEEPTIME",
+            SET_USERGIF => "SET_USERGIF",
             SET_AUTOOS_EN => "SET_AUTOOS_EN",
             SET_MAGNETISM_REPORT => "SET_MAGNETISM_REPORT",
             SET_MAGNETISM_CAL => "SET_MAGNETISM_CAL",
             SET_MAGNETISM_MAX_CAL => "SET_MAGNETISM_MAX_CAL",
             SET_KEY_MAGNETISM_MODE => "SET_KEY_MAGNETISM_MODE",
             SET_MULTI_MAGNETISM => "SET_MULTI_MAGNETISM",
+            // Undocumented SET commands
+            SET_OLEDOPTION => "SET_OLEDOPTION",
+            SET_TFTLCDDATA => "SET_TFTLCDDATA",
+            SET_OLEDLANGUAGE => "SET_OLEDLANGUAGE",
+            SET_OLEDCLOCK => "SET_OLEDCLOCK",
+            SET_SCREEN_24BITDATA => "SET_SCREEN_24BITDATA",
+            SET_OLEDBOOTLOADER => "SET_OLEDBOOTLOADER",
+            SET_OLEDBOOTSTART => "SET_OLEDBOOTSTART",
+            SET_SKU => "SET_SKU",
+            FACTORY_RESET => "FACTORY_RESET",
+            SET_FLASHCHIPERASSE => "SET_FLASHCHIPERASSE",
+            // GET commands
             GET_REV => "GET_REV",
             GET_REPORT => "GET_REPORT",
             GET_PROFILE => "GET_PROFILE",
+            GET_LEDONOFF => "GET_LEDONOFF",
             GET_DEBOUNCE => "GET_DEBOUNCE",
             GET_LEDPARAM => "GET_LEDPARAM",
             GET_SLEDPARAM => "GET_SLEDPARAM",
             GET_KBOPTION => "GET_KBOPTION",
             GET_KEYMATRIX => "GET_KEYMATRIX",
             GET_MACRO => "GET_MACRO",
+            GET_USERPIC => "GET_USERPIC",
             GET_USB_VERSION => "GET_USB_VERSION",
             GET_FN => "GET_FN",
             GET_SLEEPTIME => "GET_SLEEPTIME",
             GET_AUTOOS_EN => "GET_AUTOOS_EN",
             GET_KEY_MAGNETISM_MODE => "GET_KEY_MAGNETISM_MODE",
+            GET_TFTLCDDATA => "GET_TFTLCDDATA",
+            GET_SCREEN_24BITDATA => "GET_SCREEN_24BITDATA",
+            GET_OLED_VERSION => "GET_OLED_VERSION",
+            GET_MLED_VERSION => "GET_MLED_VERSION",
+            GET_OLEDBOOTLOADER => "GET_OLEDBOOTLOADER",
+            GET_OLEDBOOTCHECKSUM => "GET_OLEDBOOTCHECKSUM",
+            GET_SKU => "GET_SKU",
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
             _ => "UNKNOWN",
@@ -769,6 +851,92 @@ pub mod firmware_update {
             ((size >> 16) & 0xFF) as u8,
             ((size >> 24) & 0xFF) as u8,
         ]
+    }
+}
+
+/// Music mode visualization options
+/// Used with SET_LEDPARAM to configure the visualization style
+pub mod music_viz {
+    /// Visualization style for MusicBars mode (22 / LightMusicFollow2)
+    /// The option value is stored in the upper nibble of the option byte
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum BarsStyle {
+        /// Vertical bars rising from bottom (竖直)
+        Upright = 0,
+        /// Separated/split frequency bands (分离)
+        Separate = 1,
+        /// Horizontal crossing pattern (横断)
+        Intersect = 2,
+    }
+
+    impl BarsStyle {
+        pub fn from_u8(value: u8) -> Option<Self> {
+            match value {
+                0 => Some(Self::Upright),
+                1 => Some(Self::Separate),
+                2 => Some(Self::Intersect),
+                _ => None,
+            }
+        }
+
+        pub fn name(&self) -> &'static str {
+            match self {
+                Self::Upright => "Upright",
+                Self::Separate => "Separate",
+                Self::Intersect => "Intersect",
+            }
+        }
+    }
+
+    /// Pattern selection for MusicPatterns mode (20 / LightMusicFollow3)
+    /// The option value is stored in the upper nibble of the option byte
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum PatternsStyle {
+        Pattern1 = 0,
+        Pattern2 = 1,
+        Pattern3 = 2,
+        Pattern4 = 3,
+        Pattern5 = 4,
+    }
+
+    impl PatternsStyle {
+        pub fn from_u8(value: u8) -> Option<Self> {
+            match value {
+                0 => Some(Self::Pattern1),
+                1 => Some(Self::Pattern2),
+                2 => Some(Self::Pattern3),
+                3 => Some(Self::Pattern4),
+                4 => Some(Self::Pattern5),
+                _ => None,
+            }
+        }
+
+        pub fn name(&self) -> &'static str {
+            match self {
+                Self::Pattern1 => "Pattern 1",
+                Self::Pattern2 => "Pattern 2",
+                Self::Pattern3 => "Pattern 3",
+                Self::Pattern4 => "Pattern 4",
+                Self::Pattern5 => "Pattern 5",
+            }
+        }
+    }
+
+    /// Encode music mode option byte
+    /// option = (style << 4) | dazzle_flag
+    pub fn encode_option(style: u8, dazzle: bool) -> u8 {
+        let dazzle_flag = if dazzle { super::LED_DAZZLE_ON } else { super::LED_DAZZLE_OFF };
+        (style << 4) | dazzle_flag
+    }
+
+    /// Decode music mode option byte
+    /// Returns (style, dazzle)
+    pub fn decode_option(option: u8) -> (u8, bool) {
+        let style = option >> 4;
+        let dazzle = (option & super::LED_OPTIONS_MASK) == super::LED_DAZZLE_ON;
+        (style, dazzle)
     }
 }
 

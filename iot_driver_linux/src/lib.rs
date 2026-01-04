@@ -22,3 +22,4 @@ pub use hid::{ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings, 
 pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
 pub use protocol::cmd;
 pub use protocol::magnetism;
+pub use protocol::music_viz;
