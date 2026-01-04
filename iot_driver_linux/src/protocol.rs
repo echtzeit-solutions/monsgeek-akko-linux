@@ -298,21 +298,8 @@ pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
     }
 }
 
-/// Device identification
-pub const VENDOR_ID: u16 = 0x3151;
-pub const PRODUCT_ID: u16 = 0x5030;
-pub const USAGE_PAGE: u16 = 0xFFFF;
-/// Vendor Feature reports (interface 2) - for sending commands
-pub const USAGE: u16 = 0x02;
-/// Vendor Input reports (interface 1) - for receiving key depth, events
-pub const USAGE_INPUT: u16 = 0x01;
-pub const INTERFACE: i32 = 2;
-
-/// Additional known product IDs (from iot_driver.exe)
-pub const PRODUCT_ID_M1_V5_WIRED: u16 = 0x5030;
-pub const PRODUCT_ID_M1_V5_WIRELESS: u16 = 0x503A;
-pub const PRODUCT_ID_DONGLE_1: u16 = 0x503D;
-pub const PRODUCT_ID_DONGLE_2: u16 = 0x5040;
+// Device constants (VID, PID, USAGE, etc.) are now in hal::constants
+// Use hal::VENDOR_ID, hal::PRODUCT_ID_*, etc.
 
 /// HID report sizes
 pub const REPORT_SIZE: usize = 65;       // Feature report size (with report ID)
@@ -476,8 +463,85 @@ pub mod matrix {
         since = "0.2.0",
         note = "Use crate::profile::DeviceProfile::matrix_key_name() instead"
     )]
+    #[allow(deprecated)]
     pub fn key_name(index: u8) -> &'static str {
         KEY_NAMES.get(index as usize).copied().unwrap_or("?")
+    }
+}
+
+/// Polling rate (report rate) encoding/decoding
+/// Protocol: SET_REPORT (0x03) / GET_REPORT (0x83)
+/// Format: [cmd, 0, rate_code, 0, 0, 0, 0, checksum]
+pub mod polling_rate {
+    /// Available polling rates in Hz
+    pub const RATES: &[u16] = &[8000, 4000, 2000, 1000, 500, 250, 125];
+
+    /// Encode polling rate (Hz) to protocol value (0-6)
+    /// Returns None if rate is not supported
+    pub fn encode(hz: u16) -> Option<u8> {
+        match hz {
+            8000 => Some(0),
+            4000 => Some(1),
+            2000 => Some(2),
+            1000 => Some(3),
+            500 => Some(4),
+            250 => Some(5),
+            125 => Some(6),
+            _ => None,
+        }
+    }
+
+    /// Decode protocol value (0-6) to polling rate in Hz
+    /// Returns None if value is invalid
+    pub fn decode(code: u8) -> Option<u16> {
+        match code {
+            0 => Some(8000),
+            1 => Some(4000),
+            2 => Some(2000),
+            3 => Some(1000),
+            4 => Some(500),
+            5 => Some(250),
+            6 => Some(125),
+            _ => None,
+        }
+    }
+
+    /// Get polling rate name for display
+    pub fn name(hz: u16) -> String {
+        if hz >= 1000 {
+            format!("{}kHz", hz / 1000)
+        } else {
+            format!("{hz}Hz")
+        }
+    }
+
+    /// Parse rate from string (e.g., "1000", "1000hz", "1khz", "1k")
+    pub fn parse(s: &str) -> Option<u16> {
+        let s = s.to_lowercase().trim().to_string();
+
+        // Handle "khz" suffix
+        if let Some(num) = s.strip_suffix("khz") {
+            let n: u16 = num.trim().parse().ok()?;
+            let hz = n * 1000;
+            return if RATES.contains(&hz) { Some(hz) } else { None };
+        }
+
+        // Handle "k" suffix
+        if let Some(num) = s.strip_suffix('k') {
+            let n: u16 = num.trim().parse().ok()?;
+            let hz = n * 1000;
+            return if RATES.contains(&hz) { Some(hz) } else { None };
+        }
+
+        // Handle "hz" suffix
+        if let Some(num) = s.strip_suffix("hz") {
+            let hz: u16 = num.trim().parse().ok()?;
+            return if RATES.contains(&hz) { Some(hz) } else { None };
+        }
+
+        // Plain number
+        let hz: u16 = s.parse().ok()?;
+        if RATES.contains(&hz) { Some(hz) } else { None }
     }
 }
 

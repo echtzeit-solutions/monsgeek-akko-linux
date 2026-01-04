@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::devices::{self, DeviceDefinition};
+use crate::hal;
 use crate::profile::{profile_registry, DeviceProfile};
 use crate::protocol::{self, cmd, firmware, firmware_update, rgb, timing, ChecksumType};
 
@@ -48,8 +49,54 @@ pub struct TriggerSettings {
     pub rt_press: Vec<u8>,
     /// Rapid Trigger lift sensitivity per key
     pub rt_lift: Vec<u8>,
-    /// Key mode per key (0=Normal, 1=RT, 2=DKS, etc.)
+    /// Key mode per key (0=Normal, 2=DKS, 3=MT, 4=TglHold, 5=TglDots, 7=Snap, +128=RT)
     pub key_modes: Vec<u8>,
+    /// Bottom deadzone per key (travel below which key won't deactivate)
+    pub bottom_deadzone: Vec<u8>,
+    /// Top deadzone per key (travel above which key won't activate)
+    pub top_deadzone: Vec<u8>,
+}
+
+/// Key mode values for per-key settings
+pub mod key_mode {
+    /// Normal mode - simple actuation/release points
+    pub const NORMAL: u8 = 0;
+    /// Dynamic Keystroke - 4-stage trigger
+    pub const DKS: u8 = 2;
+    /// Mod-Tap - different action for tap vs hold
+    pub const MOD_TAP: u8 = 3;
+    /// Toggle on hold
+    pub const TOGGLE_HOLD: u8 = 4;
+    /// Toggle on double-tap
+    pub const TOGGLE_DOTS: u8 = 5;
+    /// Snap-tap - bind to another key
+    pub const SNAP_TAP: u8 = 7;
+    /// Rapid Trigger flag (OR with mode)
+    pub const RT_FLAG: u8 = 0x80;
+
+    /// Check if RT is enabled for this mode
+    pub fn has_rt(mode: u8) -> bool {
+        mode & RT_FLAG != 0
+    }
+
+    /// Get base mode without RT flag
+    pub fn base_mode(mode: u8) -> u8 {
+        mode & 0x7F
+    }
+
+    /// Get mode name
+    pub fn name(mode: u8) -> &'static str {
+        let base = base_mode(mode);
+        match base {
+            NORMAL => "Normal",
+            DKS => "DKS",
+            MOD_TAP => "Mod-Tap",
+            TOGGLE_HOLD => "TglHold",
+            TOGGLE_DOTS => "TglDots",
+            SNAP_TAP => "SnapTap",
+            _ => "Unknown",
+        }
+    }
 }
 
 /// Device information read from keyboard
@@ -59,6 +106,7 @@ pub struct DeviceInfo {
     pub version: u16,
     pub profile: u8,
     pub debounce: u8,
+    pub polling_rate: u16,
     pub led_mode: u8,
     pub led_brightness: u8,
     pub led_speed: u8,
@@ -101,8 +149,8 @@ impl MonsGeekDevice {
 
             // Check if this is a supported device
             if let Some(definition) = devices::find_device(vid, pid) {
-                if dev_info.usage_page() == protocol::USAGE_PAGE
-                    && dev_info.usage() == protocol::USAGE
+                if dev_info.usage_page() == hal::USAGE_PAGE
+                    && dev_info.usage() == hal::USAGE_FEATURE
                 {
                     let device = dev_info
                         .open_device(&hidapi)
@@ -125,8 +173,8 @@ impl MonsGeekDevice {
         for dev_info in hidapi.device_list() {
             if dev_info.vendor_id() == vid
                 && dev_info.product_id() == pid
-                && dev_info.usage_page() == protocol::USAGE_PAGE
-                && dev_info.usage() == protocol::USAGE
+                && dev_info.usage_page() == hal::USAGE_PAGE
+                && dev_info.usage() == hal::USAGE_FEATURE
             {
                 let device = dev_info
                     .open_device(&hidapi)
@@ -146,8 +194,8 @@ impl MonsGeekDevice {
         for dev_info in hidapi.device_list() {
             if dev_info.vendor_id() == vid
                 && dev_info.product_id() == pid
-                && dev_info.usage_page() == protocol::USAGE_PAGE
-                && dev_info.usage() == protocol::USAGE_INPUT
+                && dev_info.usage_page() == hal::USAGE_PAGE
+                && dev_info.usage() == hal::USAGE_INPUT
             {
                 println!("Opening INPUT interface: {} (usage {:04x}, page {:04x})",
                     dev_info.path().to_string_lossy(),
@@ -172,8 +220,8 @@ impl MonsGeekDevice {
                 let pid = dev_info.product_id();
 
                 if let Some(definition) = devices::find_device(vid, pid) {
-                    if dev_info.usage_page() == protocol::USAGE_PAGE
-                        && dev_info.usage() == protocol::USAGE
+                    if dev_info.usage_page() == hal::USAGE_PAGE
+                        && dev_info.usage() == hal::USAGE_FEATURE
                     {
                         devices_found.push(ConnectedDeviceInfo {
                             vid,
@@ -333,6 +381,11 @@ impl MonsGeekDevice {
         // Debounce
         if let Some(resp) = self.query(cmd::GET_DEBOUNCE) {
             info.debounce = resp[2];
+        }
+
+        // Polling rate
+        if let Some(hz) = self.get_polling_rate() {
+            info.polling_rate = hz;
         }
 
         // LED params
@@ -707,6 +760,28 @@ impl MonsGeekDevice {
         self.send(cmd::SET_DEBOUNCE, &[ms], ChecksumType::Bit7)
     }
 
+    /// Get current polling rate in Hz
+    /// Returns None if query fails or response is invalid
+    pub fn get_polling_rate(&self) -> Option<u16> {
+        let resp = self.query(cmd::GET_REPORT)?;
+        if resp[0] == cmd::GET_REPORT {
+            protocol::polling_rate::decode(resp[1])
+        } else {
+            None
+        }
+    }
+
+    /// Set polling rate in Hz
+    /// Valid rates: 8000, 4000, 2000, 1000, 500, 250, 125
+    pub fn set_polling_rate(&self, hz: u16) -> bool {
+        if let Some(code) = protocol::polling_rate::encode(hz) {
+            // Format: [cmd, 0, rate_code, ...]
+            self.send(cmd::SET_REPORT, &[0, code], ChecksumType::Bit7)
+        } else {
+            false
+        }
+    }
+
     /// Set sleep timeout (for wireless keyboards)
     /// bt_seconds: Bluetooth sleep timeout
     /// rf_seconds: 2.4GHz sleep timeout
@@ -1066,7 +1141,7 @@ impl MonsGeekDevice {
     }
 
     /// Get all trigger settings for display
-    /// Returns (press_travel, lift_travel, rt_press, rt_lift, key_modes) for each key
+    /// Returns per-key settings: travel, RT sensitivity, modes, and deadzones
     /// Travel values are 16-bit (2 bytes per key), modes are 8-bit (1 byte per key)
     pub fn get_all_triggers(&self) -> Option<TriggerSettings> {
         // Key modes use 1 byte per key, need 2 pages for up to ~120 keys
@@ -1079,12 +1154,20 @@ impl MonsGeekDevice {
         let rt_press = self.get_magnetism(protocol::magnetism::RT_PRESS, 2)?;
         let rt_lift = self.get_magnetism(protocol::magnetism::RT_LIFT, 2)?;
 
+        // Deadzones - may fail on older firmware, use empty vecs as fallback
+        let bottom_dz = self.get_magnetism(protocol::magnetism::BOTTOM_DEADZONE, 2)
+            .unwrap_or_default();
+        let top_dz = self.get_magnetism(protocol::magnetism::TOP_DEADZONE, 2)
+            .unwrap_or_default();
+
         Some(TriggerSettings {
             press_travel: press,
             lift_travel: lift,
             rt_press,
             rt_lift,
             key_modes: modes,
+            bottom_deadzone: bottom_dz,
+            top_deadzone: top_dz,
         })
     }
 
@@ -1209,6 +1292,16 @@ impl MonsGeekDevice {
     /// Set key modes for all keys (per-key u8 values)
     pub fn set_key_modes(&self, modes: &[u8]) -> bool {
         self.set_magnetism(protocol::magnetism::KEY_MODE, modes)
+    }
+
+    /// Set mode for a single key (modifies the modes array in place and sends)
+    /// Returns true if successful, updates the modes array
+    pub fn set_single_key_mode(&self, modes: &mut [u8], key_index: usize, mode: u8) -> bool {
+        if key_index >= modes.len() {
+            return false;
+        }
+        modes[key_index] = mode;
+        self.set_key_modes(modes)
     }
 
     /// Read HID input report (non-blocking, for key depth data)

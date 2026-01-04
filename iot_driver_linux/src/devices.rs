@@ -1,7 +1,7 @@
 // Device Registry for Akko/MonsGeek Keyboards
 // Defines supported devices and their capabilities
 
-use crate::protocol;
+use crate::hal;
 
 /// Device definition with capabilities
 #[derive(Debug, Clone, Copy)]
@@ -20,8 +20,8 @@ pub struct DeviceDefinition {
 pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
     // MonsGeek M1 V5 HE (our primary test device)
     DeviceDefinition {
-        vid: protocol::VENDOR_ID,
-        pid: protocol::PRODUCT_ID_M1_V5_WIRED,
+        vid: hal::VENDOR_ID,
+        pid: hal::PRODUCT_ID_M1_V5_WIRED,
         name: "m1v5he_wired",
         display_name: "MonsGeek M1 V5 HE",
         key_count: 98,
@@ -30,8 +30,8 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
     },
     // MonsGeek M1 V5 HE Wireless
     DeviceDefinition {
-        vid: protocol::VENDOR_ID,
-        pid: protocol::PRODUCT_ID_M1_V5_WIRELESS,
+        vid: hal::VENDOR_ID,
+        pid: hal::PRODUCT_ID_M1_V5_WIRELESS,
         name: "m1v5he_wireless",
         display_name: "MonsGeek M1 V5 HE (Wireless)",
         key_count: 98,
@@ -40,8 +40,8 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
     },
     // Wireless dongle (variant 1)
     DeviceDefinition {
-        vid: protocol::VENDOR_ID,
-        pid: protocol::PRODUCT_ID_DONGLE_1,
+        vid: hal::VENDOR_ID,
+        pid: hal::PRODUCT_ID_DONGLE_1,
         name: "dongle_1",
         display_name: "MonsGeek Wireless Dongle",
         key_count: 0,
@@ -50,8 +50,8 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
     },
     // Wireless dongle (variant 2)
     DeviceDefinition {
-        vid: protocol::VENDOR_ID,
-        pid: protocol::PRODUCT_ID_DONGLE_2,
+        vid: hal::VENDOR_ID,
+        pid: hal::PRODUCT_ID_DONGLE_2,
         name: "dongle_2",
         display_name: "MonsGeek Wireless Dongle Alt",
         key_count: 0,

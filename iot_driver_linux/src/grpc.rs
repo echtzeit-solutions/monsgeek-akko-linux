@@ -13,6 +13,7 @@ use tokio_udev::{MonitorBuilder, EventType};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn, error, debug};
 
+use iot_driver::hal::{device_registry, HidInterface};
 use iot_driver::protocol::{self, cmd};
 
 #[allow(non_camel_case_types)]  // Proto types use camelCase to match original iot_driver.exe
@@ -28,31 +29,7 @@ pub use driver::*;
 const DEVICE_CHANNEL_SIZE: usize = 16;
 const VENDOR_CHANNEL_SIZE: usize = 256;
 
-/// Supported device entry from the original iot_driver database
-#[derive(Debug, Clone)]
-pub struct DeviceEntry {
-    pub vid: u16,
-    pub pid: u16,
-    pub usage: u16,
-    pub usage_page: u16,
-    pub interface_number: i32,
-    pub _dongle_common: bool,
-}
-
-/// Known devices extracted from iot_driver.exe
-/// Includes both FEATURE interface (USAGE=0x02) for commands and INPUT interface (USAGE=0x01) for events
-pub fn get_known_devices() -> Vec<DeviceEntry> {
-    vec![
-        // Feature interfaces (for sending commands, reading settings)
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRED, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRELESS, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_1, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: true },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_DONGLE_2, usage: protocol::USAGE, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: true },
-        // Input interfaces (for receiving key depth, vendor events)
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRED, usage: protocol::USAGE_INPUT, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
-        DeviceEntry { vid: protocol::VENDOR_ID, pid: protocol::PRODUCT_ID_M1_V5_WIRELESS, usage: protocol::USAGE_INPUT, usage_page: protocol::USAGE_PAGE, interface_number: protocol::INTERFACE, _dongle_common: false },
-    ]
-}
+// Device definitions now come from hal::device_registry()
 
 /// Connected HID device handle
 struct ConnectedDevice {
@@ -94,18 +71,9 @@ fn apply_checksum(data: &mut [u8], checksum_type: CheckSumType) {
     }
 }
 
-/// Parse device path in format "vid-pid-usage_page-interface"
-fn parse_device_path(path: &str) -> Option<(u16, u16, u16, i32)> {
-    let parts: Vec<&str> = path.split('-').collect();
-    if parts.len() >= 4 {
-        let vid = parts[0].parse().ok()?;
-        let pid = parts[1].parse().ok()?;
-        let usage_page = parts[2].parse().ok()?;
-        let interface = parts[3].parse().ok()?;
-        Some((vid, pid, usage_page, interface))
-    } else {
-        None
-    }
+/// Parse device path in format "vid-pid-usage_page-usage-interface"
+fn parse_device_path(path: &str) -> Option<(u16, u16, u16, u16, i32)> {
+    HidInterface::parse_path_key(path)
 }
 
 /// Driver service implementation
@@ -191,43 +159,36 @@ impl DriverService {
 
     /// Open all detected devices so they're available for vendor polling
     fn open_all_devices(&self) {
-        let known_devices = get_known_devices();
+        let registry = device_registry();
         let hidapi = self.hidapi.lock().unwrap();
         let mut devices = self.devices.lock().unwrap();
 
         for device_info in hidapi.device_list() {
-            let vid = device_info.vendor_id();
-            let pid = device_info.product_id();
-            let usage_page = device_info.usage_page();
-            let usage = device_info.usage();
-            let interface = device_info.interface_number();
+            // Check if this device matches any known interface
+            if let Some(known) = registry.find_matching(device_info) {
+                let path = known.path_key();
 
-            for known in &known_devices {
-                if vid == known.vid && pid == known.pid
-                    && usage_page == known.usage_page
-                    && usage == known.usage
-                    && interface == known.interface_number {
+                // Skip if already opened
+                if devices.contains_key(&path) {
+                    continue;
+                }
 
-                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
+                let vid = device_info.vendor_id();
+                let pid = device_info.product_id();
+                let usage = device_info.usage();
 
-                    // Skip if already opened
-                    if devices.contains_key(&path) {
-                        continue;
+                match device_info.open_device(&hidapi) {
+                    Ok(device) => {
+                        info!("Auto-opened device for vendor polling: {} (usage=0x{:02x})", path, usage);
+                        devices.insert(path.clone(), ConnectedDevice {
+                            device,
+                            _vid: vid,
+                            _pid: pid,
+                            _path: path,
+                        });
                     }
-
-                    match device_info.open_device(&hidapi) {
-                        Ok(device) => {
-                            info!("Auto-opened device for vendor polling: {}", path);
-                            devices.insert(path.clone(), ConnectedDevice {
-                                device,
-                                _vid: vid,
-                                _pid: pid,
-                                _path: path,
-                            });
-                        }
-                        Err(e) => {
-                            warn!("Failed to auto-open device: {}", e);
-                        }
+                    Err(e) => {
+                        warn!("Failed to auto-open device: {}", e);
                     }
                 }
             }
@@ -340,7 +301,7 @@ impl DriverService {
         devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
         device_tx: &broadcast::Sender<DjDev>,
     ) {
-        let known_devices = get_known_devices();
+        let registry = device_registry();
         let api = match hidapi.lock() {
             Ok(api) => api,
             Err(_) => return,
@@ -351,57 +312,48 @@ impl DriverService {
         };
 
         for device_info in api.device_list() {
-            let vid = device_info.vendor_id();
-            let pid = device_info.product_id();
-            let usage_page = device_info.usage_page();
-            let usage = device_info.usage();
-            let interface = device_info.interface_number();
+            if let Some(known) = registry.find_matching(device_info) {
+                let path = known.path_key();
 
-            for known in &known_devices {
-                if vid == known.vid && pid == known.pid
-                    && usage_page == known.usage_page
-                    && usage == known.usage
-                    && interface == known.interface_number {
+                if devs.contains_key(&path) {
+                    continue;
+                }
 
-                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
+                let vid = device_info.vendor_id();
+                let pid = device_info.product_id();
 
-                    if devs.contains_key(&path) {
-                        continue;
+                match device_info.open_device(&api) {
+                    Ok(device) => {
+                        info!("Hot-plug: opened new device {}", path);
+
+                        // Query device ID
+                        let device_id = Self::query_device_id_static(&device).unwrap_or(0);
+
+                        let dev_info = Device {
+                            dev_type: DeviceType::YzwKeyboard as i32,
+                            is24: false,
+                            path: path.clone(),
+                            id: device_id,
+                            battery: 100,
+                            is_online: true,
+                            vid: vid as u32,
+                            pid: pid as u32,
+                        };
+
+                        // Broadcast new device
+                        let _ = device_tx.send(DjDev {
+                            oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
+                        });
+
+                        devs.insert(path.clone(), ConnectedDevice {
+                            device,
+                            _vid: vid,
+                            _pid: pid,
+                            _path: path,
+                        });
                     }
-
-                    match device_info.open_device(&api) {
-                        Ok(device) => {
-                            info!("Hot-plug: opened new device {}", path);
-
-                            // Query device ID
-                            let device_id = Self::query_device_id_static(&device).unwrap_or(0);
-
-                            let dev_info = Device {
-                                dev_type: DeviceType::YzwKeyboard as i32,
-                                is24: false,
-                                path: path.clone(),
-                                id: device_id,
-                                battery: 100,
-                                is_online: true,
-                                vid: vid as u32,
-                                pid: pid as u32,
-                            };
-
-                            // Broadcast new device
-                            let _ = device_tx.send(DjDev {
-                                oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
-                            });
-
-                            devs.insert(path.clone(), ConnectedDevice {
-                                device,
-                                _vid: vid,
-                                _pid: pid,
-                                _path: path,
-                            });
-                        }
-                        Err(e) => {
-                            warn!("Hot-plug: failed to open device: {}", e);
-                        }
+                    Err(e) => {
+                        warn!("Hot-plug: failed to open device: {}", e);
                     }
                 }
             }
@@ -414,6 +366,7 @@ impl DriverService {
         devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
         _device_tx: &broadcast::Sender<DjDev>,
     ) {
+        let registry = device_registry();
         let api = match hidapi.lock() {
             Ok(api) => api,
             Err(_) => return,
@@ -424,20 +377,11 @@ impl DriverService {
         };
 
         // Get current device paths from hidapi
-        let known_devices = get_known_devices();
         let mut current_paths = std::collections::HashSet::new();
 
         for device_info in api.device_list() {
-            let vid = device_info.vendor_id();
-            let pid = device_info.product_id();
-            let usage_page = device_info.usage_page();
-            let interface = device_info.interface_number();
-
-            for known in &known_devices {
-                if vid == known.vid && pid == known.pid && usage_page == known.usage_page {
-                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
-                    current_paths.insert(path);
-                }
+            if let Some(known) = registry.find_matching(device_info) {
+                current_paths.insert(known.path_key());
             }
         }
 
@@ -522,55 +466,51 @@ impl DriverService {
         None
     }
 
-    /// Scan for and connect to known devices
+    /// Scan for and connect to known devices (only returns client-facing interfaces)
     pub fn scan_devices(&self) -> Vec<DjDev> {
         let mut found = Vec::new();
-        let known_devices = get_known_devices();
+        let registry = device_registry();
         let hidapi = self.hidapi.lock().unwrap();
 
         for device_info in hidapi.device_list() {
-            let vid = device_info.vendor_id();
-            let pid = device_info.product_id();
-            let usage_page = device_info.usage_page();
-            let usage = device_info.usage();
-            let interface = device_info.interface_number();
-
-            for known in &known_devices {
-                if vid == known.vid && pid == known.pid
-                    && usage_page == known.usage_page
-                    && usage == known.usage
-                    && interface == known.interface_number {
-
-                    let path = format!("{vid}-{pid}-{usage_page}-{interface}");
-                    let hid_path = device_info.path().to_string_lossy().to_string();
-
-                    info!("Found device: VID={:04x} PID={:04x} path={}", vid, pid, hid_path);
-
-                    let device_id = match device_info.open_device(&hidapi) {
-                        Ok(hid_device) => {
-                            self.query_device_id(&hid_device).unwrap_or(0)
-                        }
-                        Err(e) => {
-                            warn!("Could not open device to query ID: {}", e);
-                            0
-                        }
-                    };
-
-                    let device = Device {
-                        dev_type: DeviceType::YzwKeyboard as i32,
-                        is24: false,
-                        path: path.clone(),
-                        id: device_id,
-                        battery: 100,
-                        is_online: true,
-                        vid: vid as u32,
-                        pid: pid as u32,
-                    };
-
-                    found.push(DjDev {
-                        oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
-                    });
+            // Check if device matches a known interface
+            if let Some(known) = registry.find_matching(device_info) {
+                // Only report client-facing interfaces (FEATURE, not INPUT)
+                if !known.is_client_facing() {
+                    continue;
                 }
+
+                let vid = device_info.vendor_id();
+                let pid = device_info.product_id();
+                let path = known.path_key();
+                let hid_path = device_info.path().to_string_lossy().to_string();
+
+                info!("Found device: VID={:04x} PID={:04x} path={}", vid, pid, hid_path);
+
+                let device_id = match device_info.open_device(&hidapi) {
+                    Ok(hid_device) => {
+                        self.query_device_id(&hid_device).unwrap_or(0)
+                    }
+                    Err(e) => {
+                        warn!("Could not open device to query ID: {}", e);
+                        0
+                    }
+                };
+
+                let device = Device {
+                    dev_type: DeviceType::YzwKeyboard as i32,
+                    is24: false,
+                    path: path.clone(),
+                    id: device_id,
+                    battery: 100,
+                    is_online: true,
+                    vid: vid as u32,
+                    pid: pid as u32,
+                };
+
+                found.push(DjDev {
+                    oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
+                });
             }
         }
 
@@ -579,7 +519,7 @@ impl DriverService {
 
     #[allow(clippy::result_large_err)]
     fn open_device(&self, device_path: &str) -> Result<(), Status> {
-        let (vid, pid, _usage_page, _interface) = parse_device_path(device_path)
+        let (vid, pid, _usage_page, _usage, _interface) = parse_device_path(device_path)
             .ok_or_else(|| Status::invalid_argument("Invalid device path format"))?;
 
         let hidapi = self.hidapi.lock().unwrap();

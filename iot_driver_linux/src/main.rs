@@ -14,133 +14,130 @@ use cli::{Cli, Commands, FirmwareCommands};
 
 // gRPC server module
 mod grpc;
-use grpc::{DriverService, DriverGrpcServer, get_known_devices, dj_dev};
+use grpc::{DriverService, DriverGrpcServer, dj_dev};
+use iot_driver::hal::device_registry;
 
 
 /// CLI test function - send a command and print response
 /// Uses retry pattern due to Linux HID feature report buffering
 fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> {
-    let known_devices = get_known_devices();
+    let registry = device_registry();
 
     for device_info in hidapi.device_list() {
-        let vid = device_info.vendor_id();
-        let pid = device_info.product_id();
-        let usage_page = device_info.usage_page();
-        let usage = device_info.usage();
-        let interface = device_info.interface_number();
-
-        for known in &known_devices {
-            if vid == known.vid && pid == known.pid
-                && usage_page == known.usage_page
-                && usage == known.usage
-                && interface == known.interface_number {
-
-                println!("Found device: VID={:04x} PID={:04x} path={}",
-                    vid, pid, device_info.path().to_string_lossy());
-
-                let device = device_info.open_device(hidapi)?;
-
-                // Prepare command with checksum (Bit7 mode)
-                let mut buf = vec![0u8; 65];
-                buf[0] = 0; // Report ID
-                buf[1] = cmd; // Command byte
-                // Checksum at byte 7 of payload (buf[8])
-                let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
-                buf[8] = (255 - (sum & 0xFF)) as u8;
-
-                println!("Sending command 0x{:02x} ({})...", cmd, cmd::name(cmd));
-                println!("  TX: {:02x?}", &buf[1..12]);
-
-                // Linux HID feature reports have buffering - need retry pattern
-                // Send command, wait, then retry reading until we get our response
-                const MAX_RETRIES: usize = 5;
-                let mut resp = vec![0u8; 65];
-                let mut success = false;
-
-                for attempt in 0..MAX_RETRIES {
-                    // Send the command
-                    device.send_feature_report(&buf)?;
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-
-                    // Read response
-                    resp[0] = 0;
-                    let _len = device.get_feature_report(&mut resp)?;
-
-                    let cmd_echo = resp[1];
-                    println!("  Attempt {}: echo=0x{:02x} data={:02x?}",
-                        attempt + 1, cmd_echo, &resp[1..12]);
-
-                    if cmd_echo == cmd {
-                        success = true;
-                        break;
-                    }
-                }
-
-                if !success {
-                    println!("\nFailed to get response after {MAX_RETRIES} attempts");
-                    return Err("No valid response".into());
-                }
-
-                println!("\nResponse (0x{:02x} = {}):", resp[1], cmd::name(resp[1]));
-
-                // Parse based on command type
-                match cmd {
-                    cmd::GET_USB_VERSION => {
-                        // Device ID at bytes 2-5 (little-endian uint32)
-                        let device_id = (resp[2] as u32)
-                            | ((resp[3] as u32) << 8)
-                            | ((resp[4] as u32) << 16)
-                            | ((resp[5] as u32) << 24);
-                        // Version at bytes 8-9 (little-endian uint16)
-                        let version = (resp[8] as u16) | ((resp[9] as u16) << 8);
-                        println!("  Device ID:  {device_id} (0x{device_id:04X})");
-                        println!("  Version:    {} (v{}.{:02})", version, version / 100, version % 100);
-                    }
-                    cmd::GET_PROFILE => {
-                        println!("  Profile:    {}", resp[2]);
-                    }
-                    cmd::GET_DEBOUNCE => {
-                        println!("  Debounce:   {} ms", resp[2]);
-                    }
-                    cmd::GET_LEDPARAM => {
-                        let mode = resp[2];
-                        let brightness = resp[3];
-                        let speed = protocol::LED_SPEED_MAX - resp[4].min(protocol::LED_SPEED_MAX);
-                        let options = resp[5];
-                        let r = resp[6];
-                        let g = resp[7];
-                        let b = resp[8];
-                        let dazzle = (options & protocol::LED_OPTIONS_MASK) == protocol::LED_DAZZLE_ON;
-                        println!("  LED Mode:   {} ({})", mode, cmd::led_mode_name(mode));
-                        println!("  Brightness: {brightness}/4");
-                        println!("  Speed:      {speed}/4");
-                        println!("  Color RGB:  ({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
-                        if dazzle {
-                            println!("  Dazzle:     ON (rainbow cycle)");
-                        }
-                    }
-                    cmd::GET_KBOPTION => {
-                        println!("  Fn Layer:   {}", resp[3]);
-                        println!("  Anti-ghost: {}", resp[4]);
-                        println!("  RTStab:     {} ms", resp[5] as u32 * 25);
-                        println!("  WASD Swap:  {}", resp[6]);
-                    }
-                    cmd::GET_FEATURE_LIST => {
-                        println!("  Features:   {:02x?}", &resp[2..12]);
-                        let precision = iot_driver::hid::MonsGeekDevice::precision_str(resp[3]);
-                        println!("  Precision:  {precision}");
-                    }
-                    cmd::GET_SLEEPTIME => {
-                        let sleep_s = (resp[2] as u16) | ((resp[3] as u16) << 8);
-                        println!("  Sleep:      {} seconds ({} min)", sleep_s, sleep_s / 60);
-                    }
-                    _ => {
-                        println!("  Raw data:   {:02x?}", &resp[1..17]);
-                    }
-                }
-
-                return Ok(());
+        // Only match FEATURE interfaces (client-facing)
+        if let Some(known) = registry.find_matching(device_info) {
+            if !known.is_client_facing() {
+                continue;
             }
+
+            let vid = device_info.vendor_id();
+            let pid = device_info.product_id();
+
+            println!("Found device: VID={:04x} PID={:04x} path={}",
+                vid, pid, device_info.path().to_string_lossy());
+
+            let device = device_info.open_device(hidapi)?;
+
+            // Prepare command with checksum (Bit7 mode)
+            let mut buf = vec![0u8; 65];
+            buf[0] = 0; // Report ID
+            buf[1] = cmd; // Command byte
+            // Checksum at byte 7 of payload (buf[8])
+            let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+            buf[8] = (255 - (sum & 0xFF)) as u8;
+
+            println!("Sending command 0x{:02x} ({})...", cmd, cmd::name(cmd));
+            println!("  TX: {:02x?}", &buf[1..12]);
+
+            // Linux HID feature reports have buffering - need retry pattern
+            // Send command, wait, then retry reading until we get our response
+            const MAX_RETRIES: usize = 5;
+            let mut resp = vec![0u8; 65];
+            let mut success = false;
+
+            for attempt in 0..MAX_RETRIES {
+                // Send the command
+                device.send_feature_report(&buf)?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+
+                // Read response
+                resp[0] = 0;
+                let _len = device.get_feature_report(&mut resp)?;
+
+                let cmd_echo = resp[1];
+                println!("  Attempt {}: echo=0x{:02x} data={:02x?}",
+                    attempt + 1, cmd_echo, &resp[1..12]);
+
+                if cmd_echo == cmd {
+                    success = true;
+                    break;
+                }
+            }
+
+            if !success {
+                println!("\nFailed to get response after {MAX_RETRIES} attempts");
+                return Err("No valid response".into());
+            }
+
+            println!("\nResponse (0x{:02x} = {}):", resp[1], cmd::name(resp[1]));
+
+            // Parse based on command type
+            match cmd {
+                cmd::GET_USB_VERSION => {
+                    // Device ID at bytes 2-5 (little-endian uint32)
+                    let device_id = (resp[2] as u32)
+                        | ((resp[3] as u32) << 8)
+                        | ((resp[4] as u32) << 16)
+                        | ((resp[5] as u32) << 24);
+                    // Version at bytes 8-9 (little-endian uint16)
+                    let version = (resp[8] as u16) | ((resp[9] as u16) << 8);
+                    println!("  Device ID:  {device_id} (0x{device_id:04X})");
+                    println!("  Version:    {} (v{}.{:02})", version, version / 100, version % 100);
+                }
+                cmd::GET_PROFILE => {
+                    println!("  Profile:    {}", resp[2]);
+                }
+                cmd::GET_DEBOUNCE => {
+                    println!("  Debounce:   {} ms", resp[2]);
+                }
+                cmd::GET_LEDPARAM => {
+                    let mode = resp[2];
+                    let brightness = resp[3];
+                    let speed = protocol::LED_SPEED_MAX - resp[4].min(protocol::LED_SPEED_MAX);
+                    let options = resp[5];
+                    let r = resp[6];
+                    let g = resp[7];
+                    let b = resp[8];
+                    let dazzle = (options & protocol::LED_OPTIONS_MASK) == protocol::LED_DAZZLE_ON;
+                    println!("  LED Mode:   {} ({})", mode, cmd::led_mode_name(mode));
+                    println!("  Brightness: {brightness}/4");
+                    println!("  Speed:      {speed}/4");
+                    println!("  Color RGB:  ({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
+                    if dazzle {
+                        println!("  Dazzle:     ON (rainbow cycle)");
+                    }
+                }
+                cmd::GET_KBOPTION => {
+                    println!("  Fn Layer:   {}", resp[3]);
+                    println!("  Anti-ghost: {}", resp[4]);
+                    println!("  RTStab:     {} ms", resp[5] as u32 * 25);
+                    println!("  WASD Swap:  {}", resp[6]);
+                }
+                cmd::GET_FEATURE_LIST => {
+                    println!("  Features:   {:02x?}", &resp[2..12]);
+                    let precision = iot_driver::hid::MonsGeekDevice::precision_str(resp[3]);
+                    println!("  Precision:  {precision}");
+                }
+                cmd::GET_SLEEPTIME => {
+                    let sleep_s = (resp[2] as u16) | ((resp[3] as u16) << 8);
+                    println!("  Sleep:      {} seconds ({} min)", sleep_s, sleep_s / 60);
+                }
+                _ => {
+                    println!("  Raw data:   {:02x?}", &resp[1..17]);
+                }
+            }
+
+            return Ok(());
         }
     }
 
@@ -218,6 +215,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hidapi = HidApi::new()?;
             cli_test(&hidapi, cmd::GET_DEBOUNCE)?;
         }
+        Some(Commands::Rate) => {
+            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                if let Some(hz) = device.get_polling_rate() {
+                    println!("Polling rate: {} ({})", hz, protocol::polling_rate::name(hz));
+                } else {
+                    eprintln!("Failed to get polling rate");
+                }
+            } else {
+                eprintln!("No device found");
+            }
+        }
         Some(Commands::Options) => {
             let hidapi = HidApi::new()?;
             cli_test(&hidapi, cmd::GET_KBOPTION)?;
@@ -256,6 +264,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 eprintln!("No device found");
+            }
+        }
+        Some(Commands::SetRate { rate }) => {
+            if let Some(hz) = protocol::polling_rate::parse(&rate) {
+                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+                    if device.set_polling_rate(hz) {
+                        println!("Polling rate set to {} ({})", hz, protocol::polling_rate::name(hz));
+                    } else {
+                        eprintln!("Failed to set polling rate");
+                    }
+                } else {
+                    eprintln!("No device found");
+                }
+            } else {
+                eprintln!("Invalid polling rate '{rate}'. Valid rates: 125, 250, 500, 1000, 2000, 4000, 8000");
             }
         }
         Some(Commands::SetLed { mode, brightness, speed, r, g, b }) => {
