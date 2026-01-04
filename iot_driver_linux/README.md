@@ -244,7 +244,9 @@ Key commands:
 
 ## License
 
-MIT License
+This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for details.
+
+This means you're free to use, modify, and distribute this software, but any modifications must also be released under GPL-3.0.
 
 ## Acknowledgments
 
