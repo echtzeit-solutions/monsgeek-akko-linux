@@ -1554,6 +1554,9 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .accept_http1(true)  // Required for gRPC-Web
+        .tcp_nodelay(true)   // Disable Nagle's algorithm for lower latency
+        .initial_stream_window_size(4096)      // Smaller buffer for faster flushing
+        .initial_connection_window_size(4096)  // Smaller connection buffer
         .layer(cors)
         .add_service(grpc_service)
         .serve(addr)
