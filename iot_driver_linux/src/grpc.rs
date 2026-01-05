@@ -398,6 +398,28 @@ impl DriverService {
         }
     }
 
+    /// Query battery status from 2.4GHz dongle
+    /// Returns (battery_level, is_online) if successful
+    fn query_dongle_battery(device: &HidDevice) -> Option<(u32, bool)> {
+        let mut buf = [0u8; 65];
+        buf[0] = 0x05;  // Report ID for vendor interface
+
+        match device.get_feature_report(&mut buf) {
+            Ok(len) if len >= 4 => {
+                let battery = buf[1] as u32;
+                let online = buf[3] != 0;
+
+                // Sanity check battery level
+                if battery <= 100 {
+                    Some((battery, online))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Static helper to query device ID
     fn query_device_id_static(device: &HidDevice) -> Option<i32> {
         let mut cmd_buf = [0u8; 65];
@@ -487,23 +509,36 @@ impl DriverService {
 
                 info!("Found device: VID={:04x} PID={:04x} path={}", vid, pid, hid_path);
 
-                let device_id = match device_info.open_device(&hidapi) {
+                // Check if this is a 2.4GHz dongle
+                let is_dongle = pid == 0x5038;
+
+                let (device_id, battery, is_online) = match device_info.open_device(&hidapi) {
                     Ok(hid_device) => {
-                        self.query_device_id(&hid_device).unwrap_or(0)
+                        let id = self.query_device_id(&hid_device).unwrap_or(0);
+
+                        // Query battery status for dongles
+                        let (batt, online) = if is_dongle {
+                            Self::query_dongle_battery(&hid_device)
+                                .unwrap_or((100, true))
+                        } else {
+                            (100, true)  // Wired devices always "online" with "full" battery
+                        };
+
+                        (id, batt, online)
                     }
                     Err(e) => {
                         warn!("Could not open device to query ID: {}", e);
-                        0
+                        (0, 100, true)
                     }
                 };
 
                 let device = Device {
                     dev_type: DeviceType::YzwKeyboard as i32,
-                    is24: false,
+                    is24: is_dongle,
                     path: path.clone(),
                     id: device_id,
-                    battery: 100,
-                    is_online: true,
+                    battery,
+                    is_online,
                     vid: vid as u32,
                     pid: pid as u32,
                 };

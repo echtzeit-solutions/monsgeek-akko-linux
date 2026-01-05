@@ -183,6 +183,138 @@ fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Get battery status from 2.4GHz dongle
+fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
+    for device_info in hidapi.device_list() {
+        // Only match dongle devices (PID 0x5038)
+        let vid = device_info.vendor_id();
+        let pid = device_info.product_id();
+
+        if vid != 0x3151 || pid != 0x5038 {
+            continue;
+        }
+
+        // Only match vendor interface (usage_page 0xFFFF)
+        if device_info.usage_page() != 0xFFFF {
+            continue;
+        }
+
+        println!("Found 2.4GHz dongle: VID={:04x} PID={:04x}", vid, pid);
+
+        let device = device_info.open_device(hidapi)?;
+
+        // Read feature report to get battery status
+        let mut buf = [0u8; 65];
+        buf[0] = 0x05;  // Report ID
+
+        let len = device.get_feature_report(&mut buf)?;
+
+        if len < 4 {
+            println!("Invalid response length: {}", len);
+            continue;
+        }
+
+        let battery = buf[1];
+        let charging = buf[2] != 0;
+        let online = buf[3] != 0;
+
+        println!();
+        println!("Battery Status");
+        println!("--------------");
+        println!("  Level:     {}%", battery);
+        println!("  Charging:  {}", if charging { "Yes" } else { "No" });
+        println!("  Connected: {}", if online { "Yes" } else { "No" });
+
+        // Show raw bytes for debugging
+        let hex: Vec<String> = buf[1..8].iter().map(|b| format!("{:02x}", b)).collect();
+        println!("  Raw:       {}", hex.join(" "));
+
+        return Ok(());
+    }
+
+    println!("No 2.4GHz dongle found (PID 5038)");
+    Ok(())
+}
+
+/// Continuously monitor battery status and export to /run/akko-keyboard
+fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> {
+    use iot_driver::power_supply::PowerSupply;
+    use iot_driver::hid::BatteryInfo;
+    use std::time::{Duration, Instant};
+
+    println!("Starting battery monitor (polling every {}s)...", interval);
+    println!("Press Ctrl+C to stop\n");
+
+    // Create power supply interface
+    let ps = match PowerSupply::new("akko-m1v5") {
+        Ok(ps) => {
+            println!("Created /run/akko-keyboard/akko-m1v5/");
+            ps
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not create sysfs files: {}", e);
+            eprintln!("Run with sudo for /run/akko-keyboard access");
+            return Err(e.into());
+        }
+    };
+
+    let interval_duration = Duration::from_secs(interval);
+    let start = Instant::now();
+
+    loop {
+        let hidapi = HidApi::new()?;
+        let mut found = false;
+
+        for device_info in hidapi.device_list() {
+            let vid = device_info.vendor_id();
+            let pid = device_info.product_id();
+
+            if vid != 0x3151 || pid != 0x5038 {
+                continue;
+            }
+
+            if device_info.usage_page() != 0xFFFF {
+                continue;
+            }
+
+            if let Ok(device) = device_info.open_device(&hidapi) {
+                let mut buf = [0u8; 65];
+                buf[0] = 0x05;
+
+                if let Ok(len) = device.get_feature_report(&mut buf) {
+                    if len >= 4 {
+                        let info = BatteryInfo {
+                            level: buf[1],
+                            charging: buf[2] != 0,
+                            online: buf[3] != 0,
+                        };
+
+                        if let Err(e) = ps.update(&info) {
+                            eprintln!("Warning: Could not update sysfs files: {}", e);
+                        }
+
+                        let elapsed = start.elapsed().as_secs();
+                        println!("[{:5}s] Battery: {:3}%  Charging: {}  Online: {}",
+                            elapsed,
+                            info.level,
+                            if info.charging { "yes" } else { "no " },
+                            if info.online { "yes" } else { "no " });
+                        found = true;
+                    }
+                }
+            }
+            break;
+        }
+
+        if !found {
+            let elapsed = start.elapsed().as_secs();
+            println!("[{:5}s] No dongle found or not responding", elapsed);
+        }
+
+        std::thread::sleep(interval_duration);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -241,6 +373,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::All) => {
             let hidapi = HidApi::new()?;
             cli_all(&hidapi)?;
+        }
+
+        Some(Commands::Battery) => {
+            let hidapi = HidApi::new()?;
+            cli_battery(&hidapi)?;
+        }
+
+        Some(Commands::BatteryMonitor { interval }) => {
+            cli_battery_monitor(interval)?;
         }
 
         // === Set Commands ===

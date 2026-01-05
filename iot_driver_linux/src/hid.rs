@@ -34,8 +34,81 @@ pub enum VendorEventType {
     LedChange,
     /// Magnetism mode changed (byte[0] = 0x1D)
     MagnetismModeChange,
+    /// Battery/wireless status from dongle (byte[0] = 0x88)
+    BatteryStatus,
     /// Unknown event type
     Unknown,
+}
+
+/// Battery/power status from wireless dongle
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BatteryInfo {
+    /// Battery level 0-100 (255 = unknown/wired)
+    pub level: u8,
+    /// Device is online/connected
+    pub online: bool,
+    /// Device is charging
+    pub charging: bool,
+}
+
+impl BatteryInfo {
+    /// Parse battery info from dongle feature report response
+    /// Discovered format from 2.4GHz dongle (VID:3151 PID:5038):
+    /// - byte[0] = 0x00 (response report ID)
+    /// - byte[1] = battery level (0-100)
+    /// - byte[2] = charging flag (0=no, 1=yes)
+    /// - byte[3] = online flag (0=disconnected, 1=connected)
+    /// - bytes[4-6] = unknown flags (typically 0x01 0x01 0x01)
+    pub fn from_feature_report(data: &[u8]) -> Option<Self> {
+        if data.len() < 4 {
+            return None;
+        }
+
+        // Response starts at byte 1 (byte 0 is report ID)
+        let level = data[1];
+        let charging = data[2] != 0;
+        let online = data[3] != 0;
+
+        // Sanity check - battery level should be 0-100
+        if level > 100 {
+            return None;
+        }
+
+        Some(Self {
+            level,
+            online,
+            charging,
+        })
+    }
+
+    /// Parse battery info from vendor input event (legacy format)
+    /// Format (speculative, from firmware analysis):
+    /// - byte[0] = 0x88 (status marker)
+    /// - byte[3] = battery level (1-100)
+    /// - byte[4] = flags (bit 0 = online, bit 1 = charging)
+    pub fn from_vendor_event(data: &[u8]) -> Option<Self> {
+        // Skip report ID if present
+        let cmd_data = if data.first() == Some(&0x05) && data.len() > 1 {
+            &data[1..]
+        } else {
+            data
+        };
+
+        if cmd_data.len() < 5 || cmd_data[0] != 0x88 {
+            return None;
+        }
+
+        Some(Self {
+            level: cmd_data[3],
+            online: cmd_data[4] & 0x01 != 0,
+            charging: cmd_data[4] & 0x02 != 0,
+        })
+    }
+
+    /// Check if this is valid battery data (not wired/unknown)
+    pub fn is_valid(&self) -> bool {
+        self.level <= 100
+    }
 }
 
 /// Per-key trigger settings
@@ -1378,6 +1451,7 @@ impl MonsGeekDevice {
             0x01 => VendorEventType::ProfileChange,
             0x04..=0x07 => VendorEventType::LedChange,
             0x1D => VendorEventType::MagnetismModeChange,
+            0x88 => VendorEventType::BatteryStatus,
             _ => VendorEventType::Unknown,
         }
     }
