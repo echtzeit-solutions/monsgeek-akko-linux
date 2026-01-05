@@ -16,6 +16,7 @@ use ratatui::{
 
 // Use shared library
 use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism, key_mode};
+use crate::hid::BatteryInfo;
 
 /// Application state
 struct App {
@@ -51,6 +52,12 @@ struct App {
     selected_keys: HashSet<usize>,       // Keys selected for time series view
     depth_cursor: usize,                 // Cursor for key selection
     depth_sample_idx: usize,             // Global sample counter for time axis
+    // Battery status (for 2.4GHz dongle)
+    battery: Option<BatteryInfo>,
+    last_battery_check: Instant,
+    is_wireless: bool,
+    // Help popup
+    show_help: bool,
 }
 
 /// Macro slot data
@@ -98,6 +105,103 @@ enum TriggerViewMode {
 /// History length for time series (samples)
 const DEPTH_HISTORY_LEN: usize = 100;
 
+// ============================================================================
+// Help System - Self-documenting keybindings
+// ============================================================================
+
+/// Context in which a keybind is active
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KeyContext {
+    Global,      // Available everywhere
+    Led,         // LED Settings tab (1)
+    Depth,       // Key Depth tab (2)
+    Triggers,    // Trigger Settings tab (3)
+    Macros,      // Macros tab (5)
+}
+
+/// A single keybinding definition
+struct Keybind {
+    keys: &'static str,
+    description: &'static str,
+    context: KeyContext,
+}
+
+/// All TUI keybindings - single source of truth
+const TUI_KEYBINDS: &[Keybind] = &[
+    // Global keybindings
+    Keybind { keys: "q / Esc", description: "Quit application", context: KeyContext::Global },
+    Keybind { keys: "? / F1", description: "Toggle this help", context: KeyContext::Global },
+    Keybind { keys: "Tab", description: "Next tab", context: KeyContext::Global },
+    Keybind { keys: "Shift+Tab", description: "Previous tab", context: KeyContext::Global },
+    Keybind { keys: "↑ / k", description: "Navigate up", context: KeyContext::Global },
+    Keybind { keys: "↓ / j", description: "Navigate down", context: KeyContext::Global },
+    Keybind { keys: "← / h", description: "Navigate left / decrease", context: KeyContext::Global },
+    Keybind { keys: "→ / l", description: "Navigate right / increase", context: KeyContext::Global },
+    Keybind { keys: "r", description: "Refresh device info", context: KeyContext::Global },
+    Keybind { keys: "c", description: "Connect to device", context: KeyContext::Global },
+    Keybind { keys: "m", description: "Toggle depth monitoring", context: KeyContext::Global },
+    Keybind { keys: "Ctrl+1-4", description: "Switch profile 1-4", context: KeyContext::Global },
+    Keybind { keys: "PgUp/PgDn", description: "Fast scroll (15 items)", context: KeyContext::Global },
+    // LED tab
+    Keybind { keys: "p", description: "Apply LED settings", context: KeyContext::Led },
+    Keybind { keys: "Shift+←/→", description: "Adjust by ±10", context: KeyContext::Led },
+    // Depth tab
+    Keybind { keys: "v", description: "Toggle visualization mode", context: KeyContext::Depth },
+    Keybind { keys: "x", description: "Clear depth data", context: KeyContext::Depth },
+    Keybind { keys: "Space", description: "Pause/resume monitoring", context: KeyContext::Depth },
+    // Triggers tab
+    Keybind { keys: "v", description: "Toggle list/layout view", context: KeyContext::Triggers },
+    Keybind { keys: "n / N", description: "Actuation -/+ 0.1mm", context: KeyContext::Triggers },
+    Keybind { keys: "t / T", description: "RT press sens -/+ 0.1mm", context: KeyContext::Triggers },
+    Keybind { keys: "d / D", description: "RT release sens -/+ 0.1mm", context: KeyContext::Triggers },
+    Keybind { keys: "s / S", description: "DKS sensitivity -/+ 0.1mm", context: KeyContext::Triggers },
+    // Macros tab
+    Keybind { keys: "e", description: "Edit selected macro", context: KeyContext::Macros },
+    Keybind { keys: "c", description: "Clear selected macro", context: KeyContext::Macros },
+];
+
+/// Physical keyboard shortcuts from the manual
+const KEYBOARD_SHORTCUTS: &[(&str, &str)] = &[
+    // Profile switching
+    ("Fn+F9", "Profile 1"),
+    ("Fn+F10", "Profile 2"),
+    ("Fn+F11", "Profile 3"),
+    ("Fn+F12", "Profile 4"),
+    // LED controls
+    ("Fn+\\", "Cycle 7 colors + RGB"),
+    ("Fn+↑", "Brightness up"),
+    ("Fn+↓", "Brightness down"),
+    ("Fn+←", "LED speed down"),
+    ("Fn+→", "LED speed up"),
+    ("Fn+=", "LED settings"),
+    ("Fn+L", "LED mode cycle"),
+    ("Fn+Home", "Effect 1-5"),
+    ("Fn+PgUp", "Effect 6-10"),
+    ("Fn+End", "Effect 11-15"),
+    ("Fn+PgDn", "Effect 16-20"),
+    // Connection modes
+    ("Fn+E/R/T", "Bluetooth 1/2/3 (long=pair)"),
+    ("Fn+Y", "2.4GHz mode (long=pair)"),
+    // Utility
+    ("Fn+Space", "Battery check"),
+    ("Fn+W", "WASD/Arrow swap"),
+    ("Fn+L_Win", "Win key lock"),
+    ("Fn+I", "Insert"),
+    ("Fn+P", "Print Screen"),
+    ("Fn+C", "Calculator"),
+    // Media (Windows)
+    ("Fn+F1", "File Explorer"),
+    ("Fn+F2", "Mail"),
+    ("Fn+F3", "Browser"),
+    ("Fn+F4", "Lock PC"),
+    ("Fn+F5", "Display off"),
+    ("Fn+F6/F8", "Play/Pause"),
+    ("Fn+F7", "Volume down"),
+    ("Fn+M", "Mute"),
+    ("Fn+<", "Volume down"),
+    ("Fn+>", "Volume up"),
+];
+
 impl App {
     fn new() -> Self {
         Self {
@@ -130,6 +234,12 @@ impl App {
             selected_keys: HashSet::new(),
             depth_cursor: 0,
             depth_sample_idx: 0,
+            // Battery status
+            battery: None,
+            last_battery_check: Instant::now(),
+            is_wireless: false,
+            // Help popup
+            show_help: false,
         }
     }
 
@@ -150,6 +260,12 @@ impl App {
                 let vid = dev.vid;
                 let pid = dev.pid;
                 self.input_device = MonsGeekDevice::open_input_interface(vid, pid).ok();
+
+                // Check if this is a wireless dongle
+                self.is_wireless = pid == 0x5038;
+                if self.is_wireless {
+                    self.refresh_battery();
+                }
 
                 self.device = Some(dev);
                 self.connected = true;
@@ -180,6 +296,36 @@ impl App {
                 self.status_msg = "Failed to load trigger settings".to_string();
             }
         }
+    }
+
+    fn refresh_battery(&mut self) {
+        if !self.is_wireless {
+            return;
+        }
+
+        // Query battery from 2.4GHz dongle
+        if let Ok(hidapi) = hidapi::HidApi::new() {
+            for device_info in hidapi.device_list() {
+                let vid = device_info.vendor_id();
+                let pid = device_info.product_id();
+
+                // Only match dongle (PID 0x5038) vendor interface
+                if vid != 0x3151 || pid != 0x5038 || device_info.usage_page() != 0xFFFF {
+                    continue;
+                }
+
+                if let Ok(device) = device_info.open_device(&hidapi) {
+                    let mut buf = [0u8; 65];
+                    buf[0] = 0x05; // Report ID
+
+                    if let Ok(_len) = device.get_feature_report(&mut buf) {
+                        self.battery = BatteryInfo::from_feature_report(&buf);
+                    }
+                    break;
+                }
+            }
+        }
+        self.last_battery_check = Instant::now();
     }
 
     fn toggle_depth_monitoring(&mut self) {
@@ -818,7 +964,22 @@ pub fn run() -> io::Result<()> {
                         continue;
                     }
 
+                    // Help popup handling
+                    if app.show_help {
+                        match key.code {
+                            KeyCode::Char('?') | KeyCode::Esc | KeyCode::F(1) => {
+                                app.show_help = false;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
+                        // Help toggle
+                        KeyCode::Char('?') | KeyCode::F(1) => {
+                            app.show_help = true;
+                        }
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Tab => {
                             app.tab = (app.tab + 1) % 6;
@@ -1091,11 +1252,11 @@ pub fn run() -> io::Result<()> {
                                 app.refresh_info();
                             }
                         }
-                        // Profile switching with number keys 1-4
-                        KeyCode::Char('1') => app.set_profile(0),
-                        KeyCode::Char('2') => app.set_profile(1),
-                        KeyCode::Char('3') => app.set_profile(2),
-                        KeyCode::Char('4') => app.set_profile(3),
+                        // Profile switching with Ctrl+1-4
+                        KeyCode::Char('1') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(0),
+                        KeyCode::Char('2') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(1),
+                        KeyCode::Char('3') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(2),
+                        KeyCode::Char('4') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(3),
                         // Page up/down for fast trigger scrolling
                         KeyCode::PageUp => {
                             if app.tab == 3 {
@@ -1174,6 +1335,11 @@ pub fn run() -> io::Result<()> {
         if last_tick.elapsed() >= tick_rate {
             app.read_input_reports();
             last_tick = Instant::now();
+
+            // Refresh battery every 30 seconds for wireless devices
+            if app.is_wireless && app.last_battery_check.elapsed() >= Duration::from_secs(30) {
+                app.refresh_battery();
+            }
         }
     }
 
@@ -1234,18 +1400,141 @@ fn ui(f: &mut Frame, app: &App) {
     let status_color = if app.connected { Color::Green } else { Color::Red };
     let conn_status = if app.connected { "Connected" } else { "Disconnected" };
     let profile_str = if app.connected {
-        format!(" P{}", app.info.profile + 1)
+        format!(" Profile {}", app.info.profile + 1)
     } else {
         String::new()
     };
+
+    // Battery status for wireless devices
+    let battery_str = if app.is_wireless {
+        if let Some(ref batt) = app.battery {
+            let icon = if batt.charging {
+                "⚡"
+            } else if batt.level > 75 {
+                "█"
+            } else if batt.level > 50 {
+                "▆"
+            } else if batt.level > 25 {
+                "▃"
+            } else {
+                "▁"
+            };
+            format!(" {}{}%", icon, batt.level)
+        } else {
+            " ?%".to_string()
+        }
+    } else {
+        String::new()
+    };
+
+    let monitoring_str = if app.depth_monitoring { " MONITORING" } else { "" };
+
     let status = Paragraph::new(format!(
-        " [{}{}] {} | q:Quit r:Refresh c:Connect m:Monitor 1-4:Profile | {}",
-        conn_status, profile_str, app.status_msg,
-        if app.depth_monitoring { "MONITORING" } else { "" }
+        " [{}{}{}] {} | ?:Help q:Quit{}",
+        conn_status, profile_str, battery_str, app.status_msg, monitoring_str
     ))
     .style(Style::default().fg(status_color))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(status, chunks[3]);
+
+    // Help popup (renders on top)
+    if app.show_help {
+        render_help_popup(f, f.area());
+    }
+}
+
+/// Render help popup with all keybindings
+fn render_help_popup(f: &mut Frame, area: Rect) {
+    // Calculate popup size (80% width, 80% height)
+    let popup_width = (area.width as f32 * 0.85) as u16;
+    let popup_height = (area.height as f32 * 0.85) as u16;
+    let popup_x = (area.width - popup_width) / 2;
+    let popup_y = (area.height - popup_height) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, popup_area);
+
+    // Split into two columns: TUI shortcuts and Keyboard shortcuts
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(popup_area);
+
+    // Left column: TUI Keybindings
+    let mut tui_lines: Vec<Line> = vec![
+        Line::from(Span::styled("── Global ──", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+    ];
+
+    let mut current_context = KeyContext::Global;
+    for kb in TUI_KEYBINDS {
+        if kb.context != current_context {
+            current_context = kb.context;
+            let section_name = match current_context {
+                KeyContext::Global => "Global",
+                KeyContext::Led => "LED Tab",
+                KeyContext::Depth => "Depth Tab",
+                KeyContext::Triggers => "Triggers Tab",
+                KeyContext::Macros => "Macros Tab",
+            };
+            tui_lines.push(Line::from(""));
+            tui_lines.push(Line::from(Span::styled(
+                format!("── {section_name} ──"),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+        }
+        tui_lines.push(Line::from(vec![
+            Span::styled(format!("{:14}", kb.keys), Style::default().fg(Color::Cyan)),
+            Span::raw(" "),
+            Span::raw(kb.description),
+        ]));
+    }
+
+    let tui_help = Paragraph::new(tui_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title(" TUI Shortcuts [? to close] ")
+            .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+        .wrap(Wrap { trim: false });
+    f.render_widget(tui_help, columns[0]);
+
+    // Right column: Physical Keyboard Shortcuts
+    let mut kb_lines: Vec<Line> = vec![
+        Line::from(Span::styled("── Profiles ──", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+    ];
+
+    let sections = [
+        (0, 4, "Profiles"),
+        (4, 12, "LED Controls"),
+        (12, 14, "Connection"),
+        (14, 19, "Utility"),
+        (19, 29, "Media (Win)"),
+    ];
+
+    for (idx, (start, end, name)) in sections.into_iter().enumerate() {
+        if idx > 0 {
+            kb_lines.push(Line::from(""));
+            kb_lines.push(Line::from(Span::styled(
+                format!("── {name} ──"),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+        }
+        for (key, desc) in &KEYBOARD_SHORTCUTS[start..end] {
+            kb_lines.push(Line::from(vec![
+                Span::styled(format!("{:14}", key), Style::default().fg(Color::Magenta)),
+                Span::raw(" "),
+                Span::raw(*desc),
+            ]));
+        }
+    }
+
+    let kb_help = Paragraph::new(kb_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title(" Physical Keyboard (Fn+key) ")
+            .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+        .wrap(Wrap { trim: false });
+    f.render_widget(kb_help, columns[1]);
 }
 
 fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
