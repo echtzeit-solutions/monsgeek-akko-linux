@@ -1,0 +1,5 @@
+# MonsGeek/Akko/RongYuan HE Keyboards
+# Install: sudo cp udev/99-monsgeek.rules /etc/udev/rules.d/
+# Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
