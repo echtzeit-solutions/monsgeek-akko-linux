@@ -38,22 +38,21 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
         has_magnetism: true,
         has_sidelight: false,
     },
-    // Wireless dongle (variant 1)
+    // Legacy dongle PIDs (untested, may be other models)
     DeviceDefinition {
         vid: hal::VENDOR_ID,
-        pid: hal::PRODUCT_ID_DONGLE_1,
-        name: "dongle_1",
-        display_name: "MonsGeek Wireless Dongle",
+        pid: hal::PRODUCT_ID_DONGLE_LEGACY_1,
+        name: "dongle_legacy_1",
+        display_name: "MonsGeek Wireless Dongle (Legacy)",
         key_count: 0,
         has_magnetism: false,
         has_sidelight: false,
     },
-    // Wireless dongle (variant 2)
     DeviceDefinition {
         vid: hal::VENDOR_ID,
-        pid: hal::PRODUCT_ID_DONGLE_2,
-        name: "dongle_2",
-        display_name: "MonsGeek Wireless Dongle Alt",
+        pid: hal::PRODUCT_ID_DONGLE_LEGACY_2,
+        name: "dongle_legacy_2",
+        display_name: "MonsGeek Wireless Dongle (Legacy Alt)",
         key_count: 0,
         has_magnetism: false,
         has_sidelight: false,
@@ -360,8 +359,8 @@ mod tests {
 
     #[test]
     fn test_is_supported() {
-        assert!(is_supported(0x3151, 0x5030));
-        assert!(is_supported(0x3151, 0x503A));
+        assert!(is_supported(0x3151, 0x5030));  // Wired
+        assert!(is_supported(0x3151, 0x5038));  // 2.4GHz dongle
         assert!(!is_supported(0x1234, 0x5678));
     }
 
@@ -369,7 +368,7 @@ mod tests {
     fn test_get_pids() {
         let pids = get_pids_for_vid(0x3151);
         assert_eq!(pids.len(), 4);
-        assert!(pids.contains(&0x5030));
-        assert!(pids.contains(&0x503A));
+        assert!(pids.contains(&0x5030));  // Wired
+        assert!(pids.contains(&0x5038));  // 2.4GHz dongle
     }
 }

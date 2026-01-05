@@ -45,37 +45,34 @@ const KNOWN_INTERFACES: &[HidInterface] = &[
         interface_number: constants::INTERFACE_INPUT,
         interface_type: InterfaceType::Input,
     },
-    // Dongle 1 - FEATURE (for wireless keyboards)
+    // Legacy dongle PIDs (untested, may be other models)
     HidInterface {
         vid: constants::VENDOR_ID,
-        pid: constants::PRODUCT_ID_DONGLE_1,
+        pid: constants::PRODUCT_ID_DONGLE_LEGACY_1,
         usage: constants::USAGE_FEATURE,
         usage_page: constants::USAGE_PAGE,
         interface_number: constants::INTERFACE_FEATURE,
         interface_type: InterfaceType::Feature,
     },
-    // Dongle 1 - INPUT (for wireless keyboards)
     HidInterface {
         vid: constants::VENDOR_ID,
-        pid: constants::PRODUCT_ID_DONGLE_1,
+        pid: constants::PRODUCT_ID_DONGLE_LEGACY_1,
         usage: constants::USAGE_INPUT,
         usage_page: constants::USAGE_PAGE,
         interface_number: constants::INTERFACE_INPUT,
         interface_type: InterfaceType::Input,
     },
-    // Dongle 2 - FEATURE (for wireless keyboards)
     HidInterface {
         vid: constants::VENDOR_ID,
-        pid: constants::PRODUCT_ID_DONGLE_2,
+        pid: constants::PRODUCT_ID_DONGLE_LEGACY_2,
         usage: constants::USAGE_FEATURE,
         usage_page: constants::USAGE_PAGE,
         interface_number: constants::INTERFACE_FEATURE,
         interface_type: InterfaceType::Feature,
     },
-    // Dongle 2 - INPUT (for wireless keyboards)
     HidInterface {
         vid: constants::VENDOR_ID,
-        pid: constants::PRODUCT_ID_DONGLE_2,
+        pid: constants::PRODUCT_ID_DONGLE_LEGACY_2,
         usage: constants::USAGE_INPUT,
         usage_page: constants::USAGE_PAGE,
         interface_number: constants::INTERFACE_INPUT,
