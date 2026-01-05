@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0"
 description = "Linux driver for MonsGeek/Akko magnetic Hall Effect keyboards"
-repository = "https://github.com/YOUR_USERNAME/monsgeek-linux-driver"
-keywords = ["keyboard", "hid", "monsgeek", "akko", "hall-effect"]
+repository = "https://github.com/echtzeit-solutions/monsgeek-akko-linux"
+keywords = ["keyboard", "hid", "monsgeek", "akko", "rongyuan", "hall-effect", "magnetic"]
 categories = ["hardware-support"]
 
 [dependencies]

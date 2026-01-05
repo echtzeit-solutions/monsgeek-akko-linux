@@ -1,6 +1,6 @@
-# MonsGeek M1 V5 HE Linux Driver
+# MonsGeek/Akko Linux Driver
 
-A Linux userspace driver for MonsGeek/Akko magnetic Hall Effect keyboards, providing full configuration support via CLI, TUI, and gRPC server for web-based control.
+A Linux userspace driver for MonsGeek, Akko, and other magnetic keyboards using RongYuan firmware (RY5088/YC3121 chipsets). Provides full configuration support via CLI, TUI, and gRPC server compatible with the official web configurator.
 
 ## Supported Devices
 
@@ -37,25 +37,20 @@ sudo pacman -S hidapi
 ### Build
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/monsgeek-linux-driver.git
-cd monsgeek-linux-driver/iot_driver_linux
+git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
+cd monsgeek-akko-linux
 cargo build --release
 ```
 
 ### udev Rules (Required for non-root access)
 
-Create `/etc/udev/rules.d/99-monsgeek.rules`:
-
-```
-# MonsGeek/Akko HE Keyboards
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
-```
-
-Then reload:
 ```bash
+sudo cp udev/99-monsgeek.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
+
+Then unplug and replug your keyboard.
 
 ## Usage
 
