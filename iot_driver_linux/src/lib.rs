@@ -2,6 +2,7 @@
 // Protocol definitions, device registry, and HID communication
 
 pub mod audio_reactive;
+pub mod bpf_loader;
 pub mod color;
 pub mod device_loader;
 pub mod devices;
@@ -21,6 +22,7 @@ pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
 pub use hid::{BatteryInfo, ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings, VendorEventType, key_mode};
 pub use power_supply::{BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus};
+pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
 pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
 pub use protocol::cmd;
 pub use protocol::magnetism;
