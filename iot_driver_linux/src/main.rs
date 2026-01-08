@@ -184,7 +184,15 @@ fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Get battery status from 2.4GHz dongle
+///
+/// Byte offsets confirmed via Windows iot_driver.exe decompilation:
+/// - byte[1] = battery level (0-100)
+/// - byte[4] = is_online (keyboard connected)
+/// - Charging status is NOT available via this protocol
 fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
+    let mut found_any = false;
+    let mut best_battery: Option<(u8, bool, [u8; 7])> = None;
+
     for device_info in hidapi.device_list() {
         // Only match dongle devices (PID 0x5038)
         let vid = device_info.vendor_id();
@@ -194,45 +202,86 @@ fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // Only match vendor interface (usage_page 0xFFFF)
+        // Match vendor interfaces (both Usage 0x01 and 0x02 for testing)
         if device_info.usage_page() != 0xFFFF {
             continue;
         }
 
-        println!("Found 2.4GHz dongle: VID={:04x} PID={:04x}", vid, pid);
-
-        let device = device_info.open_device(hidapi)?;
-
-        // Read feature report to get battery status
-        let mut buf = [0u8; 65];
-        buf[0] = 0x05;  // Report ID
-
-        let len = device.get_feature_report(&mut buf)?;
-
-        if len < 4 {
-            println!("Invalid response length: {}", len);
+        // Only test vendor interfaces
+        let usage = device_info.usage();
+        if usage != 0x01 && usage != 0x02 {
             continue;
         }
 
-        let battery = buf[1];
-        let charging = buf[2] != 0;
-        let online = buf[3] != 0;
+        found_any = true;
+        let path = device_info.path().to_string_lossy();
+        println!("Testing interface: VID={:04x} PID={:04x} Usage=0x{:02x}", vid, pid, usage);
+        println!("  Path: {}", path);
+
+        let device = match device_info.open_device(hidapi) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("  Failed to open: {:?}", e);
+                continue;
+            }
+        };
+
+        // Try Feature report with Report ID 5
+        let mut buf = [0u8; 65];
+        buf[0] = 0x05;  // Report ID
+
+        println!("  get_feature_report(5)...");
+        match device.get_feature_report(&mut buf) {
+            Ok(l) => {
+                let is_zero = buf[1..8].iter().all(|&b| b == 0);
+                let hex: Vec<String> = buf[0..8].iter().map(|b| format!("{:02x}", b)).collect();
+                println!("    len={}, data=[{}]", l, hex.join(" "));
+                if !is_zero && buf[1] > 0 && buf[1] <= 100 {
+                    let mut raw = [0u8; 7];
+                    raw.copy_from_slice(&buf[1..8]);
+                    // byte[1] = battery, byte[4] = is_online (confirmed)
+                    best_battery = Some((buf[1], buf[4] != 0, raw));
+                }
+            }
+            Err(e) => println!("    failed: {:?}", e),
+        };
+
+        // Try Feature with Report ID 0
+        buf = [0u8; 65];
+        buf[0] = 0x00;
+        println!("  get_feature_report(0)...");
+        match device.get_feature_report(&mut buf) {
+            Ok(l) => {
+                let is_zero = buf[1..8].iter().all(|&b| b == 0);
+                let hex: Vec<String> = buf[0..8].iter().map(|b| format!("{:02x}", b)).collect();
+                println!("    len={}, data=[{}]", l, hex.join(" "));
+                if !is_zero && best_battery.is_none() && buf[1] > 0 && buf[1] <= 100 {
+                    let mut raw = [0u8; 7];
+                    raw.copy_from_slice(&buf[1..8]);
+                    // byte[1] = battery, byte[4] = is_online (confirmed)
+                    best_battery = Some((buf[1], buf[4] != 0, raw));
+                }
+            }
+            Err(e) => println!("    failed: {:?}", e),
+        };
 
         println!();
+    }
+
+    if let Some((battery, online, raw)) = best_battery {
         println!("Battery Status");
         println!("--------------");
         println!("  Level:     {}%", battery);
-        println!("  Charging:  {}", if charging { "Yes" } else { "No" });
         println!("  Connected: {}", if online { "Yes" } else { "No" });
-
-        // Show raw bytes for debugging
-        let hex: Vec<String> = buf[1..8].iter().map(|b| format!("{:02x}", b)).collect();
+        let hex: Vec<String> = raw.iter().map(|b| format!("{:02x}", b)).collect();
         println!("  Raw:       {}", hex.join(" "));
-
-        return Ok(());
+        println!();
+        println!("Note: Charging status not available via dongle protocol");
+    } else if found_any {
+        println!("Dongle found but battery data not available (all zeros)");
+    } else {
+        println!("No 2.4GHz dongle found (PID 5038)");
     }
-
-    println!("No 2.4GHz dongle found (PID 5038)");
     Ok(())
 }
 
@@ -282,11 +331,14 @@ fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> 
                 buf[0] = 0x05;
 
                 if let Ok(len) = device.get_feature_report(&mut buf) {
-                    if len >= 4 {
+                    if len >= 5 {
+                        // Byte offsets confirmed via Windows driver decompilation:
+                        // byte[1] = battery, byte[4] = is_online
+                        // Charging not available via dongle protocol
                         let info = BatteryInfo {
                             level: buf[1],
-                            charging: buf[2] != 0,
-                            online: buf[3] != 0,
+                            charging: false,  // Not available via dongle protocol
+                            online: buf[4] != 0,
                         };
 
                         if let Err(e) = ps.update(&info) {
@@ -294,10 +346,9 @@ fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> 
                         }
 
                         let elapsed = start.elapsed().as_secs();
-                        println!("[{:5}s] Battery: {:3}%  Charging: {}  Online: {}",
+                        println!("[{:5}s] Battery: {:3}%  Online: {}",
                             elapsed,
                             info.level,
-                            if info.charging { "yes" } else { "no " },
                             if info.online { "yes" } else { "no " });
                         found = true;
                     }

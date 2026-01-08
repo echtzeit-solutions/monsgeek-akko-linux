@@ -400,14 +400,18 @@ impl DriverService {
 
     /// Query battery status from 2.4GHz dongle
     /// Returns (battery_level, is_online) if successful
+    ///
+    /// Byte offsets confirmed via Windows iot_driver.exe decompilation:
+    /// - byte[1] = battery level (0-100)
+    /// - byte[4] = is_online flag
     fn query_dongle_battery(device: &HidDevice) -> Option<(u32, bool)> {
         let mut buf = [0u8; 65];
         buf[0] = 0x05;  // Report ID for vendor interface
 
         match device.get_feature_report(&mut buf) {
-            Ok(len) if len >= 4 => {
+            Ok(len) if len >= 5 => {
                 let battery = buf[1] as u32;
-                let online = buf[3] != 0;
+                let online = buf[4] != 0;  // byte[4] = is_online (confirmed)
 
                 // Sanity check battery level
                 if battery <= 100 {

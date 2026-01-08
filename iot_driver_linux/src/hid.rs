@@ -53,21 +53,32 @@ pub struct BatteryInfo {
 
 impl BatteryInfo {
     /// Parse battery info from dongle feature report response
-    /// Discovered format from 2.4GHz dongle (VID:3151 PID:5038):
+    ///
+    /// Confirmed byte layout from Windows iot_driver.exe decompilation:
+    /// The driver uses protobuf Status24 { battery: u32, is_online: bool }
+    ///
+    /// HID response format from 2.4GHz dongle (VID:3151 PID:5038):
     /// - byte[0] = 0x00 (response report ID)
-    /// - byte[1] = battery level (0-100)
-    /// - byte[2] = charging flag (0=no, 1=yes)
-    /// - byte[3] = online flag (0=disconnected, 1=connected)
-    /// - bytes[4-6] = unknown flags (typically 0x01 0x01 0x01)
+    /// - byte[1] = battery level (0-100) - CONFIRMED
+    /// - byte[2] = 0x00 (unknown)
+    /// - byte[3] = 0x00 (unknown)
+    /// - byte[4] = is_online (0=disconnected, 1=connected) - CONFIRMED
+    /// - byte[5] = unknown flag (NOT charging - verified by user)
+    /// - byte[6] = unknown flag
+    ///
+    /// Note: Charging status is NOT available via this protocol.
+    /// The Windows driver's Status24 proto only has battery + is_online.
     pub fn from_feature_report(data: &[u8]) -> Option<Self> {
-        if data.len() < 4 {
+        if data.len() < 5 {
             return None;
         }
 
-        // Response starts at byte 1 (byte 0 is report ID)
+        // Byte offsets confirmed via Windows driver decompilation
         let level = data[1];
-        let charging = data[2] != 0;
-        let online = data[3] != 0;
+        let online = data[4] != 0;
+        // Note: byte[5] is NOT charging status (user confirmed KB wasn't charging when byte[5]=1)
+        // Charging status is not available from dongle protocol
+        let charging = false;
 
         // Sanity check - battery level should be 0-100
         if level > 100 {
