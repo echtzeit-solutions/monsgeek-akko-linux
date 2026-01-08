@@ -15,7 +15,12 @@ BPF_SRC_DIR := $(RUST_DIR)/bpf
 BINARY := iot_driver
 
 .PHONY: all build build-debug clean install install-udev install-bin uninstall \
-        bpf install-bpf clean-bpf help test check
+        bpf install-bpf clean-bpf install-tray uninstall-tray run-tray help test check
+
+# Tray app directory
+TRAY_DIR := plasma-tray
+TRAY_INSTALL_DIR := /usr/share/akko-keyboard/tray
+AUTOSTART_DIR := $(HOME)/.config/autostart
 
 # Default target
 all: build
@@ -104,6 +109,33 @@ clean-bpf:
 	fi
 
 # ============================================================================
+# Tray App Targets (KDE Plasma system tray)
+# ============================================================================
+
+## Run tray app (for testing)
+run-tray:
+	cd $(TRAY_DIR) && python3 main.py
+
+## Install tray app
+install-tray:
+	@echo "Installing tray app..."
+	$(INSTALL) -d $(TRAY_INSTALL_DIR)
+	$(INSTALL) -m 644 $(TRAY_DIR)/main.py $(TRAY_INSTALL_DIR)/main.py
+	$(INSTALL) -m 644 $(TRAY_DIR)/controller.py $(TRAY_INSTALL_DIR)/controller.py
+	$(INSTALL) -m 644 $(TRAY_DIR)/main.qml $(TRAY_INSTALL_DIR)/main.qml
+	$(INSTALL) -d $(AUTOSTART_DIR)
+	$(INSTALL) -m 644 $(TRAY_DIR)/akko-tray.desktop $(AUTOSTART_DIR)/akko-tray.desktop
+	@echo "Tray app installed. It will start automatically on login."
+	@echo "Run 'make run-tray' to test now."
+
+## Uninstall tray app
+uninstall-tray:
+	@echo "Removing tray app..."
+	rm -rf $(TRAY_INSTALL_DIR)
+	rm -f $(AUTOSTART_DIR)/akko-tray.desktop
+	@echo "Tray app uninstalled."
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -130,6 +162,11 @@ help:
 	@echo "  bpf          Build BPF objects"
 	@echo "  install-bpf  Install BPF objects"
 	@echo "  clean-bpf    Clean BPF build artifacts"
+	@echo ""
+	@echo "Tray app targets (KDE Plasma system tray):"
+	@echo "  run-tray       Run tray app for testing"
+	@echo "  install-tray   Install tray app + autostart"
+	@echo "  uninstall-tray Remove tray app"
 	@echo ""
 	@echo "Variables:"
 	@echo "  BIN_DIR=$(BIN_DIR)"

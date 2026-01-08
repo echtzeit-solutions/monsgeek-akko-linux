@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Akko Keyboard Tray
+Comment=System tray control for MonsGeek/Akko keyboards
+Exec=python3 /usr/share/akko-keyboard/tray/main.py
+Icon=input-keyboard
+Terminal=false
+Type=Application
+Categories=Utility;HardwareSettings;
+Keywords=keyboard;led;rgb;akko;monsgeek;
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel
