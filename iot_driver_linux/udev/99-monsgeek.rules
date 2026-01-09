@@ -1,5 +1,17 @@
 # MonsGeek/Akko/RongYuan HE Keyboards
-# Install: sudo cp udev/99-monsgeek.rules /etc/udev/rules.d/
+# Install: sudo make install-udev install-bpf install-systemd
 # Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
 
+# Allow non-root access to hidraw devices for all Akko/MonsGeek products (VID 3151)
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3151", MODE="0666"
+
+# Fix UPower classification for 2.4GHz dongle (PID 5038)
+# System Control interface is misdetected as joystick, causing "gaming-input" icon
+ACTION=="add|change", SUBSYSTEM=="input", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5038", \
+    ENV{ID_INPUT_JOYSTICK}="0"
+
+# Start BPF battery loader when keyboard interface is detected
+# Only trigger on the keyboard interface (starts with 05 01 09 06)
+ACTION=="add", SUBSYSTEM=="hid", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5038", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}="akko-bpf-battery.service"
