@@ -21,7 +21,7 @@ pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
 pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES};
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
 pub use hid::{BatteryInfo, ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings, VendorEventType, key_mode};
-pub use power_supply::{BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus};
+pub use power_supply::{BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration};
 pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
 pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
 pub use protocol::cmd;

@@ -286,26 +286,35 @@ fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Continuously monitor battery status and export to /run/akko-keyboard
+/// Also updates test_power module if loaded (appears in UPower)
 fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> {
-    use iot_driver::power_supply::PowerSupply;
+    use iot_driver::power_supply::{PowerSupply, TestPowerIntegration};
     use iot_driver::hid::BatteryInfo;
     use std::time::{Duration, Instant};
 
     println!("Starting battery monitor (polling every {}s)...", interval);
     println!("Press Ctrl+C to stop\n");
 
-    // Create power supply interface
+    // Create power supply interface for /run/akko-keyboard
     let ps = match PowerSupply::new("akko-m1v5") {
         Ok(ps) => {
             println!("Created /run/akko-keyboard/akko-m1v5/");
-            ps
+            Some(ps)
         }
         Err(e) => {
-            eprintln!("Warning: Could not create sysfs files: {}", e);
-            eprintln!("Run with sudo for /run/akko-keyboard access");
-            return Err(e.into());
+            eprintln!("Note: Could not create /run/akko-keyboard files: {}", e);
+            None
         }
     };
+
+    // Try to use test_power module for UPower integration
+    let test_power = TestPowerIntegration::new();
+    if test_power.is_available() {
+        println!("test_power module detected - UPower will show battery");
+    } else {
+        println!("Tip: 'sudo modprobe test_power' for UPower integration");
+    }
+    println!();
 
     let interval_duration = Duration::from_secs(interval);
     let start = Instant::now();
@@ -341,8 +350,21 @@ fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> 
                             online: buf[4] != 0,
                         };
 
-                        if let Err(e) = ps.update(&info) {
-                            eprintln!("Warning: Could not update sysfs files: {}", e);
+                        // Update /run/akko-keyboard files
+                        if let Some(ref ps) = ps {
+                            if let Err(e) = ps.update(&info) {
+                                eprintln!("Warning: Could not update sysfs files: {}", e);
+                            }
+                        }
+
+                        // Update test_power module (for UPower)
+                        if let Err(e) = test_power.update(&info) {
+                            // Only warn once, not every iteration
+                            static WARNED: std::sync::atomic::AtomicBool =
+                                std::sync::atomic::AtomicBool::new(false);
+                            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                eprintln!("Note: Could not update test_power: {}", e);
+                            }
                         }
 
                         let elapsed = start.elapsed().as_secs();

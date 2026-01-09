@@ -2,8 +2,8 @@
 //!
 //! Provides battery status via:
 //! 1. Simple file export (/run/akko-keyboard/battery)
-//! 2. UPower D-Bus (future)
-//! 3. Kernel power_supply (requires module, see akko_power_supply.c)
+//! 2. Kernel test_power module (if loaded) - appears in UPower
+//! 3. Custom kernel power_supply module (future)
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicU8, AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::hid::BatteryInfo;
+
+/// Path to test_power module parameters
+const TEST_POWER_PARAMS: &str = "/sys/module/test_power/parameters";
 
 /// Runtime directory for battery status files
 const RUNTIME_DIR: &str = "/run/akko-keyboard";
@@ -41,6 +44,85 @@ impl PowerSupplyStatus {
             Self::NotCharging => "Not charging",
             Self::Full => "Full",
         }
+    }
+
+    /// Get status string for test_power module (lowercase, hyphenated)
+    pub fn as_test_power_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "discharging", // test_power doesn't have unknown
+            Self::Charging => "charging",
+            Self::Discharging => "discharging",
+            Self::NotCharging => "not-charging",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// Integration with the kernel's test_power module.
+///
+/// When the test_power module is loaded, it creates:
+/// - /sys/class/power_supply/test_battery/
+/// - /sys/class/power_supply/test_ac/
+/// - /sys/class/power_supply/test_usb/
+///
+/// We can update battery parameters via /sys/module/test_power/parameters/
+/// and UPower will automatically pick up the changes.
+pub struct TestPowerIntegration {
+    available: bool,
+}
+
+impl TestPowerIntegration {
+    /// Check if test_power module is loaded and create integration
+    pub fn new() -> Self {
+        let available = Path::new(TEST_POWER_PARAMS).exists();
+        Self { available }
+    }
+
+    /// Check if test_power integration is available
+    pub fn is_available(&self) -> bool {
+        self.available
+    }
+
+    /// Update battery status via test_power module parameters
+    pub fn update(&self, info: &BatteryInfo) -> io::Result<()> {
+        if !self.available {
+            return Ok(());
+        }
+
+        // Update capacity (0-100)
+        if info.is_valid() {
+            self.write_param("battery_capacity", &info.level.to_string())?;
+        }
+
+        // Update status
+        let status = if info.level > 100 {
+            PowerSupplyStatus::Unknown
+        } else if info.charging {
+            PowerSupplyStatus::Charging
+        } else if info.level >= 100 {
+            PowerSupplyStatus::Full
+        } else {
+            PowerSupplyStatus::Discharging
+        };
+        self.write_param("battery_status", status.as_test_power_str())?;
+
+        // Update present/health (use "good" for present, "dead" for not connected)
+        let health = if info.online { "good" } else { "dead" };
+        self.write_param("battery_health", health)?;
+
+        Ok(())
+    }
+
+    /// Write a parameter to the test_power module
+    fn write_param(&self, name: &str, value: &str) -> io::Result<()> {
+        let path = PathBuf::from(TEST_POWER_PARAMS).join(name);
+        fs::write(&path, value)
+    }
+}
+
+impl Default for TestPowerIntegration {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
