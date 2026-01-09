@@ -1,0 +1,19 @@
+[Unit]
+Description=Akko/MonsGeek Keyboard Battery BPF Loader
+Documentation=https://github.com/user/monsgeek-m1-v5-tmr
+After=sys-subsystem-hid-devices.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/akko-bpf-loader
+Restart=on-failure
+RestartSec=1
+
+# Security hardening
+NoNewPrivileges=no
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
