@@ -85,6 +85,31 @@ Attaches to the main keyboard interface (00D8) and appends a Battery Strength Fe
 cd iot_driver_linux && sudo make install-udev
 ```
 
+### `option_b_bidirectional/` - Vendor Interface with Periodic F7 Refresh
+
+**Status: WORKS**
+
+Attaches to the vendor interface (00DA) and exposes battery. The loader sends periodic F7 commands to refresh battery data.
+
+**Result**: `/sys/class/power_supply/hid-0003:3151:5038.00DA-battery`
+
+**Advantages**:
+- Uses vendor interface instead of keyboard interface
+- Loader must keep running for F7 refresh
+
+### `option_b_wq_experimental/` - bpf_wq Auto-Refresh
+
+**Status: EXPERIMENTAL - WORKS ON KERNEL 6.17**
+
+Uses BPF work queues (`bpf_wq`) to automatically send F7 commands from within BPF. No userspace daemon needed after initial load.
+
+**Key fix**: `bpf_wq` must be embedded in a struct inside map value, not directly as map value (the latter caused kernel verifier crash).
+
+**Advantages**:
+- Self-contained - loader can exit after setup
+- Automatic F7 refresh every 30 seconds via BPF work queue
+- Requires kernel 6.10+ for bpf_wq support
+
 ### `option_c_vendor_feature/` - Pure Feature Report
 
 **Status: DOES NOT WORK**
@@ -103,19 +128,27 @@ Contains common header files:
 ## Quick Start
 
 ```bash
-# Build the working version
+# Build the recommended version (Option A)
 cd /path/to/bpf
-make clean && make
+make option_a
 
-# Load BPF (requires root)
-sudo ./loader 218  # or auto-detect: sudo ./loader
+# Or build Option B (vendor interface, loader-based refresh)
+make option_b
 
-# Rebind device (may be done automatically)
-echo "0003:3151:5038.00DA" | sudo tee /sys/bus/hid/drivers/hid-generic/unbind
-echo "0003:3151:5038.00DA" | sudo tee /sys/bus/hid/drivers/hid-generic/bind
+# Or build Option B WQ (experimental bpf_wq auto-refresh)
+make option_b_wq
+
+# Load BPF (requires root) - Option A
+sudo ./hid_battery_support/option_a_keyboard_inject/loader_kb
+
+# Or load Option B (loader must keep running)
+sudo ./hid_battery_support/option_b_bidirectional/loader_bidir
+
+# Or load Option B WQ (loader can exit after setup)
+sudo ./hid_battery_support/option_b_wq_experimental/loader_wq
 
 # Check battery
-cat /sys/class/power_supply/hid-0003:3151:5038.00DA-battery/capacity
+cat /sys/class/power_supply/hid-0003:3151:5038.*-battery/capacity
 upower -i "$(upower -e | grep 3151)"
 ```
 
