@@ -18,7 +18,7 @@ LOADER_LDFLAGS := -lbpf
 SRCS := akko_dongle.bpf.c
 OBJS := $(SRCS:.bpf.c=.bpf.o)
 
-.PHONY: all clean vmlinux option_a
+.PHONY: all clean vmlinux option_a option_b option_b_wq akko-loader
 
 all: $(OBJS) loader
 
@@ -45,6 +45,34 @@ option_a:
 	$(CLANG) $(BPF_CFLAGS) -I../common -c akko_keyboard_battery.bpf.c -o akko_keyboard_battery.bpf.o && \
 	$(BPFTOOL) gen skeleton akko_keyboard_battery.bpf.o > akko_keyboard_battery.skel.h && \
 	$(CC) $(LOADER_CFLAGS) -o loader_kb loader_kb.c $(LOADER_LDFLAGS)
+
+# Build Option B (vendor interface with periodic F7)
+option_b:
+	@echo "Building Option B in hid_battery_support/option_b_bidirectional/"
+	cd hid_battery_support/option_b_bidirectional && \
+	$(CLANG) $(BPF_CFLAGS) -I../common -c akko_bidirectional.bpf.c -o akko_bidirectional.bpf.o && \
+	$(BPFTOOL) gen skeleton akko_bidirectional.bpf.o > akko_bidirectional.skel.h && \
+	$(CC) $(LOADER_CFLAGS) -o loader_bidir loader_bidir.c $(LOADER_LDFLAGS)
+
+# Build Option B WQ (experimental bpf_wq version)
+option_b_wq:
+	@echo "Building Option B WQ (experimental) in hid_battery_support/option_b_wq_experimental/"
+	cd hid_battery_support/option_b_wq_experimental && \
+	$(CLANG) $(BPF_CFLAGS) -I../common -c akko_wq.bpf.c -o akko_wq.bpf.o && \
+	$(BPFTOOL) gen skeleton akko_wq.bpf.o > akko_wq.skel.h && \
+	$(CC) $(LOADER_CFLAGS) -o loader_wq loader_wq.c $(LOADER_LDFLAGS)
+
+# Build unified loader with all strategies
+# Note: Requires skeletons to exist (run option_a, option_b, option_b_wq first if needed)
+akko-loader:
+	@echo "Building unified akko-loader..."
+	@echo "Note: Requires skeleton headers. Run 'make option_a option_b option_b_wq' first if missing."
+	cd hid_battery_support && \
+	$(CC) $(LOADER_CFLAGS) -I. \
+		-o akko-loader akko_loader.c $(LOADER_LDFLAGS)
+	@echo "Built: hid_battery_support/akko-loader"
+	@echo ""
+	@echo "Usage: sudo ./hid_battery_support/akko-loader -s <keyboard|vendor|wq> [-v] [-d]"
 
 # Install to system location (requires sudo)
 install: $(OBJS)
