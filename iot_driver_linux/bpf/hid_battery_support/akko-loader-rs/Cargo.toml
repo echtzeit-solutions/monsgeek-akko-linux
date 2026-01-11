@@ -1,0 +1,27 @@
+[package]
+name = "akko-loader"
+version = "2.0.0"
+edition = "2021"
+description = "HID-BPF loader for Akko/MonsGeek keyboard battery integration"
+license = "GPL-2.0"
+
+[[bin]]
+name = "akko-loader"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1.0"
+nix = { version = "0.29", features = ["ioctl", "fs", "user"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ctrlc = "3.4"
+libc = "0.2"
+
+# Local Aya fork with struct_ops hid_id support
+aya = { path = "../../../../../aya/aya-main/aya" }
+aya-obj = { path = "../../../../../aya/aya-main/aya-obj" }
+
+[profile.release]
+lto = true
+strip = true
