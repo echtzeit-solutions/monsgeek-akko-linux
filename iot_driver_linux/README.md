@@ -1,5 +1,7 @@
 # MonsGeek/Akko Linux Driver
 
+[![CI](https://github.com/echtzeit-solutions/monsgeek-akko-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/echtzeit-solutions/monsgeek-akko-linux/actions/workflows/ci.yml)
+
 A Linux userspace driver for MonsGeek, Akko, and other magnetic keyboards using RongYuan firmware (RY5088/YC3121 chipsets). Provides full configuration support via CLI, TUI, and gRPC server compatible with the official web configurator.
 
 ## Supported Devices
