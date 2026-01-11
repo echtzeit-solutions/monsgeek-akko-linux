@@ -49,7 +49,7 @@ pub fn cleanup_files() {
 
 /// Check if a process is running
 fn process_running(pid: u32) -> bool {
-    Path::new(&format!("/proc/{}", pid)).exists()
+    Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// Kill previous loader instances
@@ -112,7 +112,7 @@ pub fn do_stop() -> Result<()> {
     // Create stop file - loader will see this and exit
     fs::File::create(STOP_FILE).context("Failed to create stop file")?;
 
-    eprintln!("Signaling loader (PID {}) to stop...", pid);
+    eprintln!("Signaling loader (PID {pid}) to stop...");
 
     // Wait for loader to exit (up to 5 seconds)
     for _ in 0..50 {
@@ -146,12 +146,12 @@ pub fn do_status() -> Result<()> {
     };
 
     if !process_running(pid) {
-        println!("  Status: not running (stale PID file, PID was {})", pid);
+        println!("  Status: not running (stale PID file, PID was {pid})");
         return Ok(());
     }
 
     println!("  Status: running");
-    println!("  PID: {}", pid);
+    println!("  PID: {pid}");
 
     // Show battery if available
     let ps_dir = Path::new("/sys/class/power_supply");

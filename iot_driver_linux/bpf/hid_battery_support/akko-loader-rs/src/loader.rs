@@ -62,7 +62,7 @@ impl LoadedBpf {
         info!("Loading BPF from {:?}", bpf_path);
 
         let mut bpf = Ebpf::load_file(&bpf_path)
-            .with_context(|| format!("Failed to load BPF object: {:?}", bpf_path))?;
+            .with_context(|| format!("Failed to load BPF object: {bpf_path:?}"))?;
 
         // Debug: print available programs and maps
         info!("Available programs:");
@@ -86,7 +86,7 @@ impl LoadedBpf {
         // Get the struct_ops map
         let map = bpf
             .map_mut(struct_ops_name)
-            .with_context(|| format!("struct_ops map '{}' not found", struct_ops_name))?;
+            .with_context(|| format!("struct_ops map '{struct_ops_name}' not found"))?;
 
         let mut struct_ops: StructOpsMap<_> = map
             .try_into()
@@ -117,6 +117,7 @@ impl LoadedBpf {
     }
 
     /// Get the strategy this BPF was loaded with
+    #[allow(dead_code)]
     pub fn strategy(&self) -> &Strategy {
         &self.strategy
     }

@@ -18,7 +18,7 @@ LOADER_LDFLAGS := -lbpf
 SRCS := akko_dongle.bpf.c
 OBJS := $(SRCS:.bpf.c=.bpf.o)
 
-.PHONY: all clean vmlinux option_a option_b option_b_wq akko-loader
+.PHONY: all clean vmlinux option_a option_b option_b_wq akko-loader akko-loader-rs akko-ebpf
 
 all: $(OBJS) loader
 
@@ -73,6 +73,21 @@ akko-loader:
 	@echo "Built: hid_battery_support/akko-loader"
 	@echo ""
 	@echo "Usage: sudo ./hid_battery_support/akko-loader -s <keyboard|vendor|wq> [-v] [-d]"
+
+# Build Rust-based akko-loader (uses local Aya fork)
+akko-loader-rs:
+	@echo "Building Rust akko-loader..."
+	cd hid_battery_support/akko-loader-rs && cargo build --release
+	@echo "Built: hid_battery_support/akko-loader-rs/target/release/akko-loader"
+
+# Build Rust BPF program (experimental)
+# Requires: rustup +nightly, bpf-linker
+akko-ebpf:
+	@echo "Building Rust BPF program (requires nightly + bpf-linker)..."
+	cd ../akko-ebpf && cargo +nightly build --release
+	cp ../akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf \
+		hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o
+	@echo "Built: hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o"
 
 # Install to system location (requires sudo)
 install: $(OBJS)

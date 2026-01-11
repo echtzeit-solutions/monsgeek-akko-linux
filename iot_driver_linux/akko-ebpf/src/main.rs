@@ -59,6 +59,7 @@ impl From<*const u64> for HidBpfCtx {
     /// The caller must ensure ctx_array points to a valid u64 array
     /// where element [0] is a valid hid_bpf_ctx pointer.
     #[inline(always)]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn from(ctx_array: *const u64) -> Self {
         unsafe { HidBpfCtx(*ctx_array as *mut hid_bpf_ctx) }
     }
@@ -118,6 +119,10 @@ impl HidBpfCtx {
 /// ```
 macro_rules! hid_bpf_prog {
     ($member:ident, $name:ident, |$ctx:ident| $body:expr) => {
+        /// HID-BPF callback - called by kernel BPF subsystem.
+        ///
+        /// # Safety
+        /// This function is called by the kernel with a valid context array.
         #[no_mangle]
         #[link_section = concat!("struct_ops/", stringify!($member))]
         pub unsafe extern "C" fn $name(ctx_array: *const u64) -> i32 {

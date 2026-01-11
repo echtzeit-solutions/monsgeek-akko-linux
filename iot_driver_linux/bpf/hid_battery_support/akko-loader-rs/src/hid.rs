@@ -120,8 +120,7 @@ pub fn find_hid_interface(want_vendor: bool) -> Result<HidInfo> {
     }
 
     bail!(
-        "Could not find {} interface. Is the dongle connected?",
-        target
+        "Could not find {target} interface. Is the dongle connected?"
     );
 }
 
@@ -183,7 +182,7 @@ fn find_hidraw_for_hid(hid_path: &Path) -> Option<String> {
         let name_str = name.to_string_lossy();
 
         if name_str.starts_with("hidraw") {
-            return Some(format!("/dev/{}", name_str));
+            return Some(format!("/dev/{name_str}"));
         }
     }
 
@@ -225,7 +224,7 @@ pub fn send_f7_command(hidraw_path: &str) -> Result<u8> {
         .read(true)
         .write(true)
         .open(hidraw_path)
-        .with_context(|| format!("Failed to open {}", hidraw_path))?;
+        .with_context(|| format!("Failed to open {hidraw_path}"))?;
 
     let fd = file.as_raw_fd();
 
@@ -259,9 +258,7 @@ pub fn send_f7_command(hidraw_path: &str) -> Result<u8> {
 
     // Battery is at offset 1 (Report ID 0 is at offset 0 due to firmware quirk)
     // The firmware returns Report ID 0x00 instead of 0x05
-    let battery = if buf[0] == 0x00 && buf[1] <= 100 {
-        buf[1]
-    } else if buf[0] == 0x05 && buf[1] <= 100 {
+    let battery = if (buf[0] == 0x00 || buf[0] == 0x05) && buf[1] <= 100 {
         buf[1]
     } else {
         tracing::warn!("Unexpected battery response: {:02x?}", &buf[..8]);
@@ -280,14 +277,14 @@ pub fn rebind_device(device_name: &str) -> Result<()> {
 
     // Unbind
     if let Ok(mut f) = File::create(unbind_path) {
-        let _ = write!(f, "{}", device_name);
+        let _ = write!(f, "{device_name}");
     }
 
     thread::sleep(Duration::from_millis(100));
 
     // Bind
     if let Ok(mut f) = File::create(bind_path) {
-        let _ = write!(f, "{}", device_name);
+        let _ = write!(f, "{device_name}");
     }
 
     thread::sleep(Duration::from_millis(100));
