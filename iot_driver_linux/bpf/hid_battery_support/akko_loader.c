@@ -9,13 +9,17 @@
  *
  * Usage:
  *   akko-loader -s <strategy> [-i <hid_id>] [-r <refresh_sec>] [-d]
+ *   akko-loader --stop         Stop running loader (no sudo needed)
+ *   akko-loader --status       Show loader status
  *
  * Options:
  *   -s, --strategy   Loading strategy: keyboard, vendor, wq (default: keyboard)
  *   -i, --hid-id     Override auto-detected HID ID
- *   -r, --refresh    F7 refresh interval in seconds (default: 30, vendor only)
+ *   -r, --refresh    F7 refresh interval in seconds (default: 600, vendor only)
  *   -d, --daemon     Run as daemon (fork to background)
  *   -v, --verbose    Verbose output
+ *   --stop           Stop running loader (no sudo required)
+ *   --status         Show loader status
  *   -h, --help       Show help
  */
 
@@ -42,7 +46,11 @@
 #define VID 0x3151
 #define PID 0x5038
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
+
+/* PID and stop file paths - in /tmp so any user can access */
+#define PID_FILE "/tmp/akko-loader.pid"
+#define STOP_FILE "/tmp/akko-loader.stop"
 
 /* Strategy types */
 typedef enum {
@@ -61,7 +69,7 @@ static struct {
 } config = {
     .strategy = STRATEGY_KEYBOARD,
     .hid_id = -1,
-    .refresh_interval = 30,
+    .refresh_interval = 600,
     .daemon_mode = 0,
     .verbose = 0,
 };
@@ -82,6 +90,139 @@ static void sig_handler(int sig)
     running = 0;
 }
 
+/* Write PID file */
+static void write_pid_file(void)
+{
+    FILE *f = fopen(PID_FILE, "w");
+    if (f) {
+        fprintf(f, "%d\n", getpid());
+        fclose(f);
+        /* Make world-readable so --status works without sudo */
+        chmod(PID_FILE, 0644);
+    }
+}
+
+/* Remove PID and stop files on exit */
+static void cleanup_files(void)
+{
+    unlink(PID_FILE);
+    unlink(STOP_FILE);
+}
+
+/* Check if stop file exists (non-root stop mechanism) */
+static int check_stop_file(void)
+{
+    return access(STOP_FILE, F_OK) == 0;
+}
+
+/* Read PID from file, returns -1 if not found */
+static pid_t read_pid_file(void)
+{
+    FILE *f = fopen(PID_FILE, "r");
+    if (!f)
+        return -1;
+
+    pid_t pid = -1;
+    if (fscanf(f, "%d", &pid) != 1)
+        pid = -1;
+    fclose(f);
+    return pid;
+}
+
+/* Check if process is running */
+static int process_running(pid_t pid)
+{
+    if (pid <= 0)
+        return 0;
+    return kill(pid, 0) == 0;
+}
+
+/* Stop command - create stop file to signal loader */
+static int do_stop(void)
+{
+    pid_t pid = read_pid_file();
+
+    if (pid <= 0) {
+        fprintf(stderr, "No loader running (PID file not found)\n");
+        return 1;
+    }
+
+    if (!process_running(pid)) {
+        fprintf(stderr, "Loader not running (stale PID file)\n");
+        unlink(PID_FILE);
+        return 1;
+    }
+
+    /* Create stop file - loader will see this and exit */
+    FILE *f = fopen(STOP_FILE, "w");
+    if (!f) {
+        fprintf(stderr, "Failed to create stop file: %s\n", strerror(errno));
+        return 1;
+    }
+    fclose(f);
+
+    fprintf(stderr, "Signaling loader (PID %d) to stop...\n", pid);
+
+    /* Wait for loader to exit (up to 5 seconds) */
+    for (int i = 0; i < 50; i++) {
+        usleep(100000);
+        if (!process_running(pid)) {
+            fprintf(stderr, "Loader stopped\n");
+            unlink(STOP_FILE);
+            return 0;
+        }
+    }
+
+    fprintf(stderr, "Loader did not stop in time, sending SIGTERM...\n");
+    kill(pid, SIGTERM);
+    unlink(STOP_FILE);
+    return 0;
+}
+
+/* Status command - show loader state */
+static int do_status(void)
+{
+    pid_t pid = read_pid_file();
+
+    printf("Akko Loader Status:\n");
+
+    if (pid <= 0) {
+        printf("  Status: not running (no PID file)\n");
+        return 1;
+    }
+
+    if (!process_running(pid)) {
+        printf("  Status: not running (stale PID file, PID was %d)\n", pid);
+        return 1;
+    }
+
+    printf("  Status: running\n");
+    printf("  PID: %d\n", pid);
+
+    /* Show battery if available */
+    DIR *dir = opendir("/sys/class/power_supply");
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (strstr(ent->d_name, "3151")) {
+                char path[256];
+                snprintf(path, sizeof(path), "/sys/class/power_supply/%s/capacity", ent->d_name);
+                FILE *f = fopen(path, "r");
+                if (f) {
+                    int cap;
+                    if (fscanf(f, "%d", &cap) == 1) {
+                        printf("  Battery: %d%%\n", cap);
+                    }
+                    fclose(f);
+                }
+            }
+        }
+        closedir(dir);
+    }
+
+    return 0;
+}
+
 static void print_usage(const char *prog)
 {
     fprintf(stderr, "Akko/MonsGeek Keyboard Battery BPF Loader v%s\n\n", VERSION);
@@ -92,14 +233,18 @@ static void print_usage(const char *prog)
     fprintf(stderr, "                          vendor   - Use vendor interface, loader F7 refresh\n");
     fprintf(stderr, "                          wq       - Use vendor interface, bpf_wq auto-refresh\n");
     fprintf(stderr, "  -i, --hid-id <id>       Override auto-detected HID ID\n");
-    fprintf(stderr, "  -r, --refresh <sec>     F7 refresh interval (default: 30, vendor strategy only)\n");
+    fprintf(stderr, "  -r, --refresh <sec>     F7 refresh interval (default: 600 = 10min)\n");
     fprintf(stderr, "  -d, --daemon            Run as daemon (fork to background)\n");
     fprintf(stderr, "  -v, --verbose           Verbose output\n");
+    fprintf(stderr, "  --stop                  Stop running loader (no sudo needed)\n");
+    fprintf(stderr, "  --status                Show loader status (no sudo needed)\n");
     fprintf(stderr, "  -h, --help              Show this help\n");
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  %s                      # Use keyboard strategy (default)\n", prog);
     fprintf(stderr, "  %s -s vendor -d         # Vendor strategy as daemon\n", prog);
     fprintf(stderr, "  %s -s wq                # Self-contained bpf_wq strategy\n", prog);
+    fprintf(stderr, "  %s --stop               # Stop running loader\n", prog);
+    fprintf(stderr, "  %s --status             # Check if loader is running\n", prog);
 }
 
 static int parse_strategy(const char *name)
@@ -449,18 +594,26 @@ static void run_loop(void)
     /* WQ strategy doesn't need refresh loop - loader can exit */
     if (config.strategy == STRATEGY_WQ) {
         fprintf(stderr, "\nbpf_wq handles F7 refresh automatically.\n");
-        fprintf(stderr, "Press Ctrl+C to unload, or loader can exit safely.\n");
+        fprintf(stderr, "Stop with: akko-loader --stop (or Ctrl+C)\n");
     } else if (config.strategy == STRATEGY_VENDOR) {
         fprintf(stderr, "\nF7 refresh every %d seconds.\n", config.refresh_interval);
-        fprintf(stderr, "Press Ctrl+C to unload...\n");
+        fprintf(stderr, "Stop with: akko-loader --stop (or Ctrl+C)\n");
     } else {
         fprintf(stderr, "\nKeyboard strategy - no refresh needed.\n");
-        fprintf(stderr, "Press Ctrl+C to unload...\n");
+        fprintf(stderr, "Stop with: akko-loader --stop (or Ctrl+C)\n");
     }
 
     while (running) {
         sleep(1);
         seconds_since_f7++;
+
+        /* Check for stop file (allows non-root to stop loader) */
+        if (check_stop_file()) {
+            if (config.verbose)
+                fprintf(stderr, "Stop file detected, exiting...\n");
+            running = 0;
+            break;
+        }
 
         /* Only vendor strategy needs periodic F7 from loader */
         if (config.strategy == STRATEGY_VENDOR &&
@@ -492,6 +645,8 @@ int main(int argc, char **argv)
         {"daemon", no_argument, 0, 'd'},
         {"verbose", no_argument, 0, 'v'},
         {"help", no_argument, 0, 'h'},
+        {"stop", no_argument, 0, 'S'},
+        {"status", no_argument, 0, 'T'},
         {0, 0, 0, 0}
     };
 
@@ -521,6 +676,10 @@ int main(int argc, char **argv)
         case 'v':
             config.verbose = 1;
             break;
+        case 'S':  /* --stop */
+            return do_stop();
+        case 'T':  /* --status */
+            return do_status();
         case 'h':
             print_usage(argv[0]);
             return 0;
@@ -559,6 +718,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Write PID file for --stop/--status commands */
+    write_pid_file();
+
     /* Rebind device */
     if (g_device_name[0]) {
         rebind_hid_device(g_device_name);
@@ -595,6 +757,7 @@ int main(int argc, char **argv)
     run_loop();
 
     fprintf(stderr, "\nUnloading BPF program...\n");
+    cleanup_files();
     cleanup_bpf();
     fprintf(stderr, "Done\n");
 
