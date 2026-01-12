@@ -15,9 +15,30 @@
 #![no_main]
 #![feature(asm_experimental_arch)]
 
-use aya_ebpf::helpers::{bpf_printk, bpf_ktime_get_ns};
 use aya_ebpf::btf_maps::Array;
 use aya_ebpf::macros::btf_map;
+use core::marker::PhantomData;
+
+// =============================================================================
+// Safe wrappers for BPF helpers
+// =============================================================================
+
+/// Get current kernel time in nanoseconds (safe wrapper).
+#[inline(always)]
+fn ktime_get_ns() -> u64 {
+    // SAFETY: bpf_ktime_get_ns is always safe to call, returns monotonic time
+    unsafe { aya_ebpf::helpers::bpf_ktime_get_ns() }
+}
+
+/// Safe wrapper for bpf_printk that hides the unsafe.
+///
+/// Usage: `trace!(b"message with %d arg", value);`
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        // SAFETY: bpf_printk is safe when given valid format string and matching args
+        unsafe { aya_ebpf::helpers::bpf_printk!($($arg)*) }
+    };
+}
 
 // =============================================================================
 // Constants
@@ -54,8 +75,73 @@ pub struct hid_bpf_ctx {
 }
 
 // =============================================================================
-// Idiomatic Rust wrapper for HID-BPF context
+// Safe abstractions for HID-BPF
 // =============================================================================
+
+/// Safe wrapper around HID report data buffer with bounds checking.
+///
+/// This type provides safe indexed access to the kernel's HID report buffer,
+/// preventing out-of-bounds access that would be undefined behavior.
+pub struct HidBpfData<'a> {
+    ptr: *mut u8,
+    len: u32,
+    _marker: PhantomData<&'a mut [u8]>,
+}
+
+impl HidBpfData<'_> {
+    /// Get a byte at the given index, returns None if out of bounds.
+    #[inline(always)]
+    pub fn get(&self, idx: usize) -> Option<u8> {
+        if idx < self.len as usize {
+            // SAFETY: bounds checked above, ptr valid for len bytes per kernel contract
+            Some(unsafe { *self.ptr.add(idx) })
+        } else {
+            None
+        }
+    }
+
+    /// Set a byte at the given index, returns false if out of bounds.
+    #[inline(always)]
+    pub fn set(&mut self, idx: usize, val: u8) -> bool {
+        if idx < self.len as usize {
+            // SAFETY: bounds checked above, ptr valid for len bytes per kernel contract
+            unsafe { *self.ptr.add(idx) = val };
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Copy a slice into the buffer at the given offset.
+    /// Returns false if the write would exceed bounds.
+    #[inline(always)]
+    pub fn copy_from_slice(&mut self, offset: usize, src: &[u8]) -> bool {
+        let end = offset.saturating_add(src.len());
+        if end > self.len as usize {
+            return false;
+        }
+        for (i, &byte) in src.iter().enumerate() {
+            // SAFETY: bounds checked above
+            unsafe { *self.ptr.add(offset + i) = byte };
+        }
+        true
+    }
+
+    /// Check if a slice of bytes matches at the given offset.
+    #[inline(always)]
+    pub fn starts_with(&self, pattern: &[u8]) -> bool {
+        if pattern.len() > self.len as usize {
+            return false;
+        }
+        for (i, &expected) in pattern.iter().enumerate() {
+            // SAFETY: bounds checked above
+            if unsafe { *self.ptr.add(i) } != expected {
+                return false;
+            }
+        }
+        true
+    }
+}
 
 /// Safe wrapper around the kernel's hid_bpf_ctx.
 #[derive(Clone, Copy)]
@@ -63,40 +149,77 @@ pub struct HidBpfCtx(*mut hid_bpf_ctx);
 
 impl From<*const u64> for HidBpfCtx {
     #[inline(always)]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn from(ctx_array: *const u64) -> Self {
+        // SAFETY: kernel passes valid context pointer as first element
         unsafe { HidBpfCtx(*ctx_array as *mut hid_bpf_ctx) }
     }
 }
 
 impl HidBpfCtx {
-    /// Get a pointer to the HID report data buffer.
+    /// Get safe access to the HID report data buffer.
     #[inline(always)]
-    pub fn get_data(&self, offset: u32, size: u32) -> Option<*mut u8> {
-        let ptr = unsafe { call_hid_bpf_get_data(self.0, offset, size) };
+    pub fn data(&self, offset: u32, size: u32) -> Option<HidBpfData<'_>> {
+        // SAFETY: kfunc returns valid pointer or null, size is validated by kernel
+        let ptr = unsafe { kfunc::hid_bpf_get_data(self.0, offset, size) };
         if ptr.is_null() {
             None
         } else {
-            Some(ptr)
+            Some(HidBpfData {
+                ptr,
+                len: size,
+                _marker: PhantomData,
+            })
         }
     }
 
     /// Get the return value / descriptor size from context.
     #[inline(always)]
     pub fn retval(&self) -> i32 {
+        // SAFETY: context pointer valid per kernel contract
         unsafe { (*self.0).retval }
     }
 
     /// Get the allocated buffer size.
     #[inline(always)]
     pub fn allocated_size(&self) -> u32 {
+        // SAFETY: context pointer valid per kernel contract
         unsafe { (*self.0).allocated_size }
     }
+}
 
-    /// Get raw pointer for advanced use.
+/// RAII guard for allocated HID-BPF context.
+///
+/// Automatically releases the context when dropped, preventing resource leaks
+/// even on early returns or panics.
+pub struct VendorCtxGuard(*mut hid_bpf_ctx);
+
+impl VendorCtxGuard {
+    /// Allocate a new HID-BPF context for the given HID ID.
+    /// Returns None if allocation fails.
     #[inline(always)]
-    pub fn as_ptr(&self) -> *mut hid_bpf_ctx {
-        self.0
+    pub fn new(hid_id: u32) -> Option<Self> {
+        // SAFETY: kfunc returns valid pointer or null
+        let ctx = unsafe { kfunc::hid_bpf_allocate_context(hid_id) };
+        if ctx.is_null() {
+            None
+        } else {
+            Some(Self(ctx))
+        }
+    }
+
+    /// Send a HID hardware request through this context.
+    #[inline(always)]
+    pub fn hw_request(&self, buf: &mut [u8], rtype: u32, reqtype: u32) -> i32 {
+        // SAFETY: context valid, buffer valid for its length
+        unsafe { kfunc::hid_bpf_hw_request(self.0, buf.as_mut_ptr(), buf.len(), rtype, reqtype) }
+    }
+}
+
+impl Drop for VendorCtxGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        // SAFETY: context was allocated successfully in new()
+        unsafe { kfunc::hid_bpf_release_context(self.0) };
     }
 }
 
@@ -105,11 +228,15 @@ impl HidBpfCtx {
 // =============================================================================
 
 /// Define a HID-BPF struct_ops callback.
+///
+/// The callback body receives a safe `HidBpfCtx` wrapper and should not
+/// contain any unsafe code.
 macro_rules! hid_bpf_prog {
     ($member:ident, $name:ident, |$ctx:ident| $body:expr) => {
         #[no_mangle]
         #[link_section = concat!("struct_ops/", stringify!($member))]
-        pub unsafe extern "C" fn $name(ctx_array: *const u64) -> i32 {
+        pub extern "C" fn $name(ctx_array: *const u64) -> i32 {
+            // SAFETY: kernel passes valid context, wrapper provides safe access
             let $ctx = HidBpfCtx::from(ctx_array);
             $body
         }
@@ -117,11 +244,15 @@ macro_rules! hid_bpf_prog {
 }
 
 /// Define a sleepable HID-BPF struct_ops callback.
+///
+/// The callback body receives a safe `HidBpfCtx` wrapper and should not
+/// contain any unsafe code.
 macro_rules! hid_bpf_prog_sleepable {
     ($member:ident, $name:ident, |$ctx:ident| $body:expr) => {
         #[no_mangle]
         #[link_section = concat!("struct_ops.s/", stringify!($member))]
-        pub unsafe extern "C" fn $name(ctx_array: *const u64) -> i32 {
+        pub extern "C" fn $name(ctx_array: *const u64) -> i32 {
+            // SAFETY: kernel passes valid context, wrapper provides safe access
             let $ctx = HidBpfCtx::from(ctx_array);
             $body
         }
@@ -129,102 +260,121 @@ macro_rules! hid_bpf_prog_sleepable {
 }
 
 // =============================================================================
-// Kernel function (kfunc) declarations
+// Kernel function (kfunc) bindings
 // =============================================================================
 
-extern "C" {
-    fn hid_bpf_get_data(ctx: *mut hid_bpf_ctx, offset: u32, size: u32) -> *mut u8;
-    fn hid_bpf_allocate_context(hid_id: u32) -> *mut hid_bpf_ctx;
-    fn hid_bpf_release_context(ctx: *mut hid_bpf_ctx);
-    fn hid_bpf_hw_request(
+/// Low-level kernel function bindings.
+///
+/// All unsafe code for calling kernel functions is contained in this module.
+/// The rest of the codebase uses safe wrappers built on top of these.
+mod kfunc {
+    use super::hid_bpf_ctx;
+
+    // External declarations for BTF generation (not called directly)
+    extern "C" {
+        fn extern_hid_bpf_get_data(ctx: *mut hid_bpf_ctx, offset: u32, size: u32) -> *mut u8;
+        fn extern_hid_bpf_allocate_context(hid_id: u32) -> *mut hid_bpf_ctx;
+        fn extern_hid_bpf_release_context(ctx: *mut hid_bpf_ctx);
+        fn extern_hid_bpf_hw_request(
+            ctx: *mut hid_bpf_ctx,
+            buf: *mut u8,
+            buf_sz: usize,
+            rtype: u32,
+            reqtype: u32,
+        ) -> i32;
+    }
+
+    // Force externs to be emitted in .ksyms section for BTF generation.
+    // These use the actual kernel symbol names.
+    #[used]
+    #[link_section = ".ksyms"]
+    #[export_name = "hid_bpf_get_data"]
+    static HID_BPF_GET_DATA_REF: unsafe extern "C" fn(*mut hid_bpf_ctx, u32, u32) -> *mut u8 =
+        extern_hid_bpf_get_data;
+
+    #[used]
+    #[link_section = ".ksyms"]
+    #[export_name = "hid_bpf_allocate_context"]
+    static HID_BPF_ALLOCATE_CONTEXT_REF: unsafe extern "C" fn(u32) -> *mut hid_bpf_ctx =
+        extern_hid_bpf_allocate_context;
+
+    #[used]
+    #[link_section = ".ksyms"]
+    #[export_name = "hid_bpf_release_context"]
+    static HID_BPF_RELEASE_CONTEXT_REF: unsafe extern "C" fn(*mut hid_bpf_ctx) =
+        extern_hid_bpf_release_context;
+
+    #[used]
+    #[link_section = ".ksyms"]
+    #[export_name = "hid_bpf_hw_request"]
+    static HID_BPF_HW_REQUEST_REF: unsafe extern "C" fn(
+        *mut hid_bpf_ctx,
+        *mut u8,
+        usize,
+        u32,
+        u32,
+    ) -> i32 = extern_hid_bpf_hw_request;
+
+    /// Call hid_bpf_get_data via inline assembly for reliable kfunc invocation.
+    #[inline(always)]
+    pub unsafe fn hid_bpf_get_data(ctx: *mut hid_bpf_ctx, offset: u32, size: u32) -> *mut u8 {
+        let result: *mut u8;
+        core::arch::asm!(
+            "call hid_bpf_get_data",
+            in("r1") ctx,
+            in("r2") offset,
+            in("r3") size,
+            lateout("r0") result,
+            clobber_abi("C"),
+        );
+        result
+    }
+
+    /// Call hid_bpf_allocate_context via inline assembly.
+    #[inline(always)]
+    pub unsafe fn hid_bpf_allocate_context(hid_id: u32) -> *mut hid_bpf_ctx {
+        let result: *mut hid_bpf_ctx;
+        core::arch::asm!(
+            "call hid_bpf_allocate_context",
+            in("r1") hid_id,
+            lateout("r0") result,
+            clobber_abi("C"),
+        );
+        result
+    }
+
+    /// Call hid_bpf_release_context via inline assembly.
+    #[inline(always)]
+    pub unsafe fn hid_bpf_release_context(ctx: *mut hid_bpf_ctx) {
+        core::arch::asm!(
+            "call hid_bpf_release_context",
+            in("r1") ctx,
+            clobber_abi("C"),
+        );
+    }
+
+    /// Call hid_bpf_hw_request via inline assembly.
+    #[inline(always)]
+    pub unsafe fn hid_bpf_hw_request(
         ctx: *mut hid_bpf_ctx,
         buf: *mut u8,
         buf_sz: usize,
         rtype: u32,
         reqtype: u32,
-    ) -> i32;
-}
-
-// Force externs to be emitted in .ksyms section for BTF generation
-#[used]
-#[link_section = ".ksyms"]
-static HID_BPF_GET_DATA_REF: unsafe extern "C" fn(*mut hid_bpf_ctx, u32, u32) -> *mut u8 =
-    hid_bpf_get_data;
-
-#[used]
-#[link_section = ".ksyms"]
-static HID_BPF_ALLOCATE_CONTEXT_REF: unsafe extern "C" fn(u32) -> *mut hid_bpf_ctx =
-    hid_bpf_allocate_context;
-
-#[used]
-#[link_section = ".ksyms"]
-static HID_BPF_RELEASE_CONTEXT_REF: unsafe extern "C" fn(*mut hid_bpf_ctx) =
-    hid_bpf_release_context;
-
-#[used]
-#[link_section = ".ksyms"]
-static HID_BPF_HW_REQUEST_REF: unsafe extern "C" fn(*mut hid_bpf_ctx, *mut u8, usize, u32, u32) -> i32 =
-    hid_bpf_hw_request;
-
-/// Call hid_bpf_get_data using inline assembly.
-#[inline(always)]
-unsafe fn call_hid_bpf_get_data(ctx: *mut hid_bpf_ctx, offset: u32, size: u32) -> *mut u8 {
-    let result: *mut u8;
-    core::arch::asm!(
-        "call hid_bpf_get_data",
-        in("r1") ctx,
-        in("r2") offset,
-        in("r3") size,
-        lateout("r0") result,
-        clobber_abi("C"),
-    );
-    result
-}
-
-/// Call hid_bpf_allocate_context using inline assembly.
-#[inline(always)]
-unsafe fn call_hid_bpf_allocate_context(hid_id: u32) -> *mut hid_bpf_ctx {
-    let result: *mut hid_bpf_ctx;
-    core::arch::asm!(
-        "call hid_bpf_allocate_context",
-        in("r1") hid_id,
-        lateout("r0") result,
-        clobber_abi("C"),
-    );
-    result
-}
-
-/// Call hid_bpf_release_context using inline assembly.
-#[inline(always)]
-unsafe fn call_hid_bpf_release_context(ctx: *mut hid_bpf_ctx) {
-    core::arch::asm!(
-        "call hid_bpf_release_context",
-        in("r1") ctx,
-        clobber_abi("C"),
-    );
-}
-
-/// Call hid_bpf_hw_request using inline assembly.
-#[inline(always)]
-unsafe fn call_hid_bpf_hw_request(
-    ctx: *mut hid_bpf_ctx,
-    buf: *mut u8,
-    buf_sz: usize,
-    rtype: u32,
-    reqtype: u32,
-) -> i32 {
-    let result: i32;
-    core::arch::asm!(
-        "call hid_bpf_hw_request",
-        in("r1") ctx,
-        in("r2") buf,
-        in("r3") buf_sz,
-        in("r4") rtype,
-        in("r5") reqtype,
-        lateout("r0") result,
-        clobber_abi("C"),
-    );
-    result
+    ) -> i32 {
+        let result: i32;
+        core::arch::asm!(
+            "call hid_bpf_hw_request",
+            in("r1") ctx,
+            in("r2") buf,
+            in("r3") buf_sz,
+            in("r4") rtype,
+            in("r5") reqtype,
+            lateout("r0") result,
+            clobber_abi("C"),
+        );
+        result
+    }
 }
 
 // =============================================================================
@@ -297,22 +447,23 @@ static BATTERY_FEATURE_DESC: [u8; 24] = [
 ];
 
 // =============================================================================
-// HID-BPF callbacks
+// HID-BPF callbacks (safe code - no unsafe blocks)
 // =============================================================================
 
+/// Keyboard HID descriptor signature: Usage Page (Generic Desktop), Usage (Keyboard)
+const KEYBOARD_SIGNATURE: [u8; 4] = [0x05, 0x01, 0x09, 0x06];
+
 // Device event handler - not used
-hid_bpf_prog!(hid_device_event, akko_on_demand_event, |_ctx| {
-    0
-});
+hid_bpf_prog!(hid_device_event, akko_on_demand_event, |_ctx| 0);
 
 // Report descriptor fixup - appends battery Feature report
 hid_bpf_prog!(hid_rdesc_fixup, akko_on_demand_rdesc_fixup, |ctx| {
-    let Some(data) = ctx.get_data(0, 128) else {
+    let Some(mut data) = ctx.data(0, 128) else {
         return 0;
     };
 
     // Verify keyboard interface (05 01 09 06)
-    if *data != 0x05 || *data.add(1) != 0x01 || *data.add(2) != 0x09 || *data.add(3) != 0x06 {
+    if !data.starts_with(&KEYBOARD_SIGNATURE) {
         return 0;
     }
 
@@ -321,11 +472,11 @@ hid_bpf_prog!(hid_rdesc_fixup, akko_on_demand_rdesc_fixup, |ctx| {
         return 0;
     }
 
-    bpf_printk!(b"akko_ondemand: appending battery, orig=%d", orig_size as u32);
+    trace!(b"akko_ondemand: appending battery, orig=%d", orig_size as u32);
 
-    // Append battery descriptor
-    for (i, &byte) in BATTERY_FEATURE_DESC.iter().enumerate() {
-        *data.add(orig_size + i) = byte;
+    // Append battery descriptor using safe copy
+    if !data.copy_from_slice(orig_size, &BATTERY_FEATURE_DESC) {
+        return 0;
     }
 
     // Initialize state map
@@ -339,7 +490,7 @@ hid_bpf_prog!(hid_rdesc_fixup, akko_on_demand_rdesc_fixup, |ctx| {
     }
 
     let new_size = orig_size + BATTERY_FEATURE_DESC.len();
-    bpf_printk!(b"akko_ondemand: new size = %d bytes", new_size as u32);
+    trace!(b"akko_ondemand: new size = %d bytes", new_size as u32);
 
     new_size as i32
 });
@@ -351,18 +502,21 @@ hid_bpf_prog_sleepable!(hid_hw_request, akko_on_demand_hw_request, |ctx| {
         return 0;
     }
 
-    let Some(data) = ctx.get_data(0, 4) else {
+    let Some(data) = ctx.data(0, 4) else {
         return 0;
     };
 
-    let report_id = *data;
+    // Safe bounds-checked access
+    let Some(report_id) = data.get(0) else {
+        return 0;
+    };
 
     // Only handle battery report requests (Report ID 0 or 5)
     if report_id != 0x00 && report_id != BATTERY_REPORT_ID {
         return 0;
     }
 
-    bpf_printk!(b"akko_ondemand: battery request, report_id=%d", report_id as u32);
+    trace!(b"akko_ondemand: battery request, report_id=%d", report_id as u32);
 
     // Check throttle
     let Some(&last_f7) = STATE_MAP.get(0) else {
@@ -372,56 +526,47 @@ hid_bpf_prog_sleepable!(hid_hw_request, akko_on_demand_hw_request, |ctx| {
         return 0;
     };
 
-    let now = bpf_ktime_get_ns();
+    let now = ktime_get_ns();
     let elapsed = now - last_f7;
 
     if elapsed <= throttle {
-        bpf_printk!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
+        trace!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
         return 0;
     }
 
     // Throttle expired - send F7 to vendor interface
     // Vendor hid_id is set by loader in VENDOR_HID_MAP
     let Some(&vendor_hid_id) = VENDOR_HID_MAP.get(0) else {
-        bpf_printk!(b"akko_ondemand: vendor_hid_id not set in map");
+        trace!(b"akko_ondemand: vendor_hid_id not set in map");
         return 0;
     };
 
     if vendor_hid_id == 0 {
-        bpf_printk!(b"akko_ondemand: vendor_hid_id is 0, not configured");
+        trace!(b"akko_ondemand: vendor_hid_id is 0, not configured");
         return 0;
     }
 
-    bpf_printk!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
+    trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
 
-    // Allocate context for vendor interface
-    let vendor_ctx = call_hid_bpf_allocate_context(vendor_hid_id);
-    if vendor_ctx.is_null() {
-        bpf_printk!(b"akko_ondemand: failed to allocate vendor context");
+    // RAII guard - context automatically released on drop (even on early return)
+    let Some(vendor) = VendorCtxGuard::new(vendor_hid_id) else {
+        trace!(b"akko_ondemand: failed to allocate vendor context");
         let _ = STATE_MAP.set(0, now, 0);
         return 0;
-    }
+    };
 
     // Send F7 command (64-byte buffer, F7 at byte 0)
     let mut f7_buf: [u8; 64] = [0; 64];
     f7_buf[0] = 0xF7;
 
-    let ret = call_hid_bpf_hw_request(
-        vendor_ctx,
-        f7_buf.as_mut_ptr(),
-        f7_buf.len(),
-        HID_FEATURE_REPORT,
-        HID_REQ_SET_REPORT,
-    );
+    let ret = vendor.hw_request(&mut f7_buf, HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 
-    bpf_printk!(b"akko_ondemand: F7 ret=%d", ret);
-
-    // Release vendor context
-    call_hid_bpf_release_context(vendor_ctx);
+    trace!(b"akko_ondemand: F7 ret=%d", ret);
 
     // Update timestamp
     let _ = STATE_MAP.set(0, now, 0);
 
+    // vendor automatically released here via Drop
     0
 });
 
