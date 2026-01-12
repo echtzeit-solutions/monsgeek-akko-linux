@@ -9,7 +9,9 @@ use crossterm::{
 use ratatui::{prelude::*, widgets::*};
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, stdout};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
 
 // Use shared library
 use crate::hid::BatteryInfo;
@@ -24,7 +26,6 @@ struct App {
     selected: usize,
     key_depths: Vec<f32>,
     depth_monitoring: bool,
-    last_refresh: Instant,
     status_msg: String,
     connected: bool,
     device_name: String,
@@ -55,6 +56,11 @@ struct App {
     is_wireless: bool,
     // Help popup
     show_help: bool,
+    // Worker thread communication
+    loading: LoadingStates,
+    throbber_state: ThrobberState,
+    cmd_tx: Option<Sender<HidCommand>>,
+    result_rx: Option<Receiver<HidResult>>,
 }
 
 /// Macro slot data
@@ -97,6 +103,93 @@ enum TriggerViewMode {
     #[default]
     List, // Scrollable list of keys
     Layout, // Visual keyboard layout
+}
+
+/// Loading state for async data fetching
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum LoadState {
+    #[default]
+    NotLoaded,
+    Loading,
+    Loaded,
+    Error,
+}
+
+/// Track loading state per HID query group
+#[derive(Debug, Clone, Default)]
+struct LoadingStates {
+    // Device info queries (tab 0/1)
+    usb_version: LoadState,    // device_id + version
+    profile: LoadState,
+    debounce: LoadState,
+    polling_rate: LoadState,
+    led_params: LoadState,     // all main LED fields
+    side_led_params: LoadState,
+    kb_options_info: LoadState, // fn_layer + wasd_swap for info display
+    feature_list: LoadState,   // precision
+    sleep_time: LoadState,
+    // Other tabs
+    triggers: LoadState,       // tab 3
+    options: LoadState,        // tab 4
+    macros: LoadState,         // tab 5
+}
+
+/// Commands sent to the HID worker thread
+#[derive(Debug)]
+enum HidCommand {
+    // Queries
+    QueryUsbVersion,
+    QueryProfile,
+    QueryDebounce,
+    QueryPollingRate,
+    QueryLedParams,
+    QuerySideLedParams,
+    QueryKbOptions,
+    QueryFeatureList,
+    QuerySleepTime,
+    QueryTriggers,
+    QueryOptions,
+    QueryMacros,
+    QueryBattery,
+    // Setters (we can add these later)
+    SetProfile(u8),
+    SetDebounce(u8),
+    SetPollingRate(u16),
+    SetLedParams { mode: u8, brightness: u8, speed: u8, dazzle: bool, r: u8, g: u8, b: u8 },
+    SetSideLedParams { mode: u8, brightness: u8, speed: u8, dazzle: bool, r: u8, g: u8, b: u8 },
+    SetTrigger { key_idx: u8, act: u8, deact: u8, mode: u8 },
+    SetTextMacro { slot: u8, text: String, delay_ms: u8, repeat: u16 },
+    ClearMacro(u8),
+    Shutdown,
+}
+
+/// Results from the HID worker thread
+#[derive(Debug)]
+enum HidResult {
+    UsbVersion { device_id: u32, version: u16 },
+    Profile(u8),
+    Debounce(u8),
+    PollingRate(u16),
+    LedParams { mode: u8, brightness: u8, speed: u8, dazzle: bool, r: u8, g: u8, b: u8 },
+    SideLedParams { mode: u8, brightness: u8, speed: u8, dazzle: bool, r: u8, g: u8, b: u8 },
+    KbOptions { fn_layer: u8, wasd_swap: bool },
+    FeatureList { precision: u8 },
+    SleepTime(u16),
+    Triggers(Option<TriggerSettings>),
+    Options { os_mode: u8, fn_layer: u8, anti_mistouch: bool, rt_stability: u8, wasd_swap: bool },
+    Macros(Vec<MacroSlot>),
+    Battery(Option<BatteryInfo>),
+    // Setter confirmations
+    ProfileSet(bool),
+    DebounceSet(bool),
+    PollingRateSet(bool),
+    LedParamsSet(bool),
+    SideLedParamsSet(bool),
+    TriggerSet(bool),
+    MacroSet(bool),
+    MacroCleared(bool),
+    // Errors
+    QueryError { field: &'static str },
 }
 
 /// History length for time series (samples)
@@ -309,7 +402,6 @@ impl App {
             selected: 0,
             key_depths: Vec::new(),
             depth_monitoring: false,
-            last_refresh: Instant::now(),
             status_msg: String::new(),
             connected: false,
             device_name: String::new(),
@@ -337,15 +429,23 @@ impl App {
             is_wireless: false,
             // Help popup
             show_help: false,
+            // Worker thread communication
+            loading: LoadingStates::default(),
+            throbber_state: ThrobberState::default(),
+            cmd_tx: None,
+            result_rx: None,
         }
     }
 
     fn connect(&mut self) -> Result<(), String> {
         match MonsGeekDevice::open() {
             Ok(dev) => {
-                // Get device info from definition
+                // Get device info from definition before moving device to worker
                 self.device_name = dev.display_name().to_string();
                 self.key_count = dev.key_count();
+                let vid = dev.vid;
+                let pid = dev.pid;
+
                 // Initialize key depths array based on actual key count
                 self.key_depths = vec![0.0; self.key_count as usize];
                 // Initialize depth history for time series
@@ -354,20 +454,32 @@ impl App {
                 self.active_keys.clear();
                 self.selected_keys.clear();
 
-                // Also open the INPUT interface for depth reports
-                let vid = dev.vid;
-                let pid = dev.pid;
+                // Also open the INPUT interface for depth reports (separate from worker)
                 self.input_device = MonsGeekDevice::open_input_interface(vid, pid).ok();
 
                 // Check if this is a wireless dongle
                 self.is_wireless = pid == 0x5038;
-                if self.is_wireless {
-                    self.refresh_battery();
-                }
 
-                self.device = Some(dev);
+                // Create channels for worker communication
+                let (cmd_tx, cmd_rx) = mpsc::channel::<HidCommand>();
+                let (result_tx, result_rx) = mpsc::channel::<HidResult>();
+
+                // Spawn worker thread that owns the device
+                std::thread::spawn(move || {
+                    hid_worker(dev, cmd_rx, result_tx);
+                });
+
+                self.cmd_tx = Some(cmd_tx);
+                self.result_rx = Some(result_rx);
+                self.device = None; // Device now owned by worker
                 self.connected = true;
                 self.status_msg = format!("Connected to {}", self.device_name);
+
+                // Request battery status for wireless devices
+                if self.is_wireless {
+                    self.send_command(HidCommand::QueryBattery);
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -377,24 +489,42 @@ impl App {
         }
     }
 
-    fn refresh_info(&mut self) {
-        if let Some(ref device) = self.device {
-            self.info = device.read_info();
-            self.precision_factor =
-                MonsGeekDevice::precision_factor_from_version(self.info.version);
-            self.last_refresh = Instant::now();
+    /// Send a command to the HID worker
+    fn send_command(&self, cmd: HidCommand) {
+        if let Some(ref tx) = self.cmd_tx {
+            let _ = tx.send(cmd);
         }
     }
 
-    fn refresh_triggers(&mut self) {
-        if let Some(ref device) = self.device {
-            self.triggers = device.get_all_triggers();
-            if self.triggers.is_some() {
-                self.status_msg = "Trigger settings loaded".to_string();
-            } else {
-                self.status_msg = "Failed to load trigger settings".to_string();
-            }
-        }
+    /// Start async loading of device info (all queries for tabs 0/1)
+    fn start_loading_info(&mut self) {
+        // Mark all info fields as Loading
+        self.loading.usb_version = LoadState::Loading;
+        self.loading.profile = LoadState::Loading;
+        self.loading.debounce = LoadState::Loading;
+        self.loading.polling_rate = LoadState::Loading;
+        self.loading.led_params = LoadState::Loading;
+        self.loading.side_led_params = LoadState::Loading;
+        self.loading.kb_options_info = LoadState::Loading;
+        self.loading.feature_list = LoadState::Loading;
+        self.loading.sleep_time = LoadState::Loading;
+
+        // Send all query commands to worker
+        self.send_command(HidCommand::QueryUsbVersion);
+        self.send_command(HidCommand::QueryProfile);
+        self.send_command(HidCommand::QueryDebounce);
+        self.send_command(HidCommand::QueryPollingRate);
+        self.send_command(HidCommand::QueryLedParams);
+        self.send_command(HidCommand::QuerySideLedParams);
+        self.send_command(HidCommand::QueryKbOptions);
+        self.send_command(HidCommand::QueryFeatureList);
+        self.send_command(HidCommand::QuerySleepTime);
+    }
+
+    /// Start async loading of trigger settings (tab 3)
+    fn start_loading_triggers(&mut self) {
+        self.loading.triggers = LoadState::Loading;
+        self.send_command(HidCommand::QueryTriggers);
     }
 
     fn refresh_battery(&mut self) {
@@ -498,7 +628,7 @@ impl App {
                 self.info.profile = profile;
                 self.status_msg = format!("Switched to profile {}", profile + 1);
                 // Refresh info to get profile-specific settings
-                self.refresh_info();
+                self.start_loading_info();
             } else {
                 self.status_msg = format!("Failed to set profile {}", profile + 1);
             }
@@ -689,23 +819,10 @@ impl App {
         }
     }
 
-    fn refresh_options(&mut self) {
-        if let Some(ref device) = self.device {
-            if let Some((os_mode, fn_layer, anti_mistouch, rt_stability, wasd_swap)) =
-                device.get_options()
-            {
-                self.options = Some(KeyboardOptions {
-                    os_mode,
-                    fn_layer,
-                    anti_mistouch,
-                    rt_stability,
-                    wasd_swap,
-                });
-                self.status_msg = "Keyboard options loaded".to_string();
-            } else {
-                self.status_msg = "Failed to load keyboard options".to_string();
-            }
-        }
+    /// Start async loading of keyboard options (tab 4)
+    fn start_loading_options(&mut self) {
+        self.loading.options = LoadState::Loading;
+        self.send_command(HidCommand::QueryOptions);
     }
 
     fn save_options(&mut self) {
@@ -763,64 +880,203 @@ impl App {
         self.status_msg = format!("RT stability: {value}ms");
     }
 
-    fn refresh_macros(&mut self) {
-        use crate::protocol::hid::key_name;
+    /// Start async loading of macros (tab 5)
+    fn start_loading_macros(&mut self) {
+        self.loading.macros = LoadState::Loading;
+        self.send_command(HidCommand::QueryMacros);
+    }
 
-        if let Some(ref device) = self.device {
-            self.macros.clear();
+    /// Process results from HID worker thread
+    fn process_load_results(&mut self) {
+        // Collect all pending results first to avoid borrow conflicts
+        let results: Vec<HidResult> = if let Some(ref rx) = self.result_rx {
+            let mut v = Vec::new();
+            while let Ok(result) = rx.try_recv() {
+                v.push(result);
+            }
+            v
+        } else {
+            return;
+        };
 
-            // Load first 8 macro slots
-            for i in 0..8 {
-                if let Some(data) = device.get_macro(i) {
-                    let mut slot = MacroSlot::default();
-
-                    if data.len() >= 2 {
-                        slot.repeat_count = u16::from_le_bytes([data[0], data[1]]);
-
-                        // Parse events
-                        let events = &data[2..];
-                        let mut text = String::new();
-
-                        for chunk in events.chunks(2) {
-                            if chunk.len() < 2 || (chunk[0] == 0 && chunk[1] == 0) {
-                                break;
-                            }
-                            let keycode = chunk[0];
-                            let flags = chunk[1];
-                            let is_down = flags & 0x80 != 0;
-                            let delay_ms = flags & 0x7F;
-
-                            slot.events.push(MacroEvent {
-                                keycode,
-                                is_down,
-                                delay_ms,
-                            });
-
-                            // Build text preview (only on key down, skip modifiers)
-                            if is_down && keycode < 0xE0 {
-                                let name = key_name(keycode);
-                                if name.len() == 1 {
-                                    text.push_str(name);
-                                } else if name == "Space" {
-                                    text.push(' ');
-                                } else if name == "Enter" {
-                                    text.push('↵');
-                                }
-                            }
-                        }
-                        slot.text_preview = if text.is_empty() {
-                            format!("{} events", slot.events.len())
-                        } else {
-                            text.chars().take(20).collect()
-                        };
+        for result in results {
+            match result {
+                HidResult::UsbVersion { device_id, version } => {
+                    self.info.device_id = device_id;
+                    self.info.version = version;
+                    self.precision_factor = MonsGeekDevice::precision_factor_from_version(version);
+                    self.loading.usb_version = LoadState::Loaded;
+                }
+                HidResult::Profile(profile) => {
+                    self.info.profile = profile;
+                    self.loading.profile = LoadState::Loaded;
+                }
+                HidResult::Debounce(debounce) => {
+                    self.info.debounce = debounce;
+                    self.loading.debounce = LoadState::Loaded;
+                }
+                HidResult::PollingRate(rate) => {
+                    self.info.polling_rate = rate;
+                    self.loading.polling_rate = LoadState::Loaded;
+                }
+                HidResult::LedParams {
+                    mode,
+                    brightness,
+                    speed,
+                    dazzle,
+                    r,
+                    g,
+                    b,
+                } => {
+                    self.info.led_mode = mode;
+                    self.info.led_brightness = brightness;
+                    self.info.led_speed = speed;
+                    self.info.led_dazzle = dazzle;
+                    self.info.led_r = r;
+                    self.info.led_g = g;
+                    self.info.led_b = b;
+                    self.loading.led_params = LoadState::Loaded;
+                }
+                HidResult::SideLedParams {
+                    mode,
+                    brightness,
+                    speed,
+                    dazzle,
+                    r,
+                    g,
+                    b,
+                } => {
+                    self.info.side_mode = mode;
+                    self.info.side_brightness = brightness;
+                    self.info.side_speed = speed;
+                    self.info.side_dazzle = dazzle;
+                    self.info.side_r = r;
+                    self.info.side_g = g;
+                    self.info.side_b = b;
+                    self.loading.side_led_params = LoadState::Loaded;
+                }
+                HidResult::KbOptions { fn_layer, wasd_swap } => {
+                    self.info.fn_layer = fn_layer;
+                    self.info.wasd_swap = wasd_swap;
+                    self.loading.kb_options_info = LoadState::Loaded;
+                }
+                HidResult::FeatureList { precision } => {
+                    self.info.precision = precision;
+                    self.loading.feature_list = LoadState::Loaded;
+                }
+                HidResult::SleepTime(seconds) => {
+                    self.info.sleep_seconds = seconds;
+                    self.loading.sleep_time = LoadState::Loaded;
+                }
+                HidResult::Triggers(triggers) => {
+                    if triggers.is_some() {
+                        self.triggers = triggers;
+                        self.loading.triggers = LoadState::Loaded;
+                        self.status_msg = "Trigger settings loaded".to_string();
+                    } else {
+                        self.loading.triggers = LoadState::Error;
+                        self.status_msg = "Failed to load trigger settings".to_string();
                     }
-                    self.macros.push(slot);
-                } else {
-                    self.macros.push(MacroSlot::default());
+                }
+                HidResult::Options {
+                    os_mode,
+                    fn_layer,
+                    anti_mistouch,
+                    rt_stability,
+                    wasd_swap,
+                } => {
+                    self.options = Some(KeyboardOptions {
+                        os_mode,
+                        fn_layer,
+                        anti_mistouch,
+                        rt_stability,
+                        wasd_swap,
+                    });
+                    self.loading.options = LoadState::Loaded;
+                    self.status_msg = "Keyboard options loaded".to_string();
+                }
+                HidResult::Macros(macros) => {
+                    self.macros = macros;
+                    self.loading.macros = LoadState::Loaded;
+                    self.status_msg = format!("Loaded {} macro slots", self.macros.len());
+                }
+                HidResult::Battery(battery) => {
+                    self.battery = battery;
+                    self.last_battery_check = Instant::now();
+                }
+                HidResult::ProfileSet(ok) => {
+                    if ok {
+                        self.start_loading_info();
+                    } else {
+                        self.status_msg = "Failed to set profile".to_string();
+                    }
+                }
+                HidResult::DebounceSet(ok) => {
+                    if !ok {
+                        self.status_msg = "Failed to set debounce".to_string();
+                    }
+                }
+                HidResult::PollingRateSet(ok) => {
+                    if !ok {
+                        self.status_msg = "Failed to set polling rate".to_string();
+                    }
+                }
+                HidResult::LedParamsSet(ok) => {
+                    if !ok {
+                        self.status_msg = "Failed to set LED parameters".to_string();
+                    }
+                }
+                HidResult::SideLedParamsSet(ok) => {
+                    if !ok {
+                        self.status_msg = "Failed to set side LED parameters".to_string();
+                    }
+                }
+                HidResult::TriggerSet(ok) => {
+                    if !ok {
+                        self.status_msg = "Failed to set trigger".to_string();
+                    }
+                }
+                HidResult::MacroSet(ok) => {
+                    if ok {
+                        self.start_loading_macros();
+                    } else {
+                        self.status_msg = "Failed to set macro".to_string();
+                    }
+                }
+                HidResult::MacroCleared(ok) => {
+                    if ok {
+                        self.start_loading_macros();
+                    } else {
+                        self.status_msg = "Failed to clear macro".to_string();
+                    }
+                }
+                HidResult::QueryError { field } => {
+                    // Set error state for the corresponding field
+                    match field {
+                        "usb_version" => self.loading.usb_version = LoadState::Error,
+                        "profile" => self.loading.profile = LoadState::Error,
+                        "debounce" => self.loading.debounce = LoadState::Error,
+                        "polling_rate" => self.loading.polling_rate = LoadState::Error,
+                        "led_params" => self.loading.led_params = LoadState::Error,
+                        "side_led_params" => self.loading.side_led_params = LoadState::Error,
+                        "kb_options" => self.loading.kb_options_info = LoadState::Error,
+                        "feature_list" => self.loading.feature_list = LoadState::Error,
+                        "sleep_time" => self.loading.sleep_time = LoadState::Error,
+                        "triggers" => self.loading.triggers = LoadState::Error,
+                        "options" => self.loading.options = LoadState::Error,
+                        "macros" => self.loading.macros = LoadState::Error,
+                        _ => {}
+                    }
+                    self.status_msg = format!("Failed to load {field}");
                 }
             }
-            self.status_msg = format!("Loaded {} macro slots", self.macros.len());
         }
+    }
+
+    /// Get current spinner character for inline display
+    fn spinner_char(&self) -> &'static str {
+        let idx = self.throbber_state.index() as usize % BRAILLE_SIX.symbols.len();
+        BRAILLE_SIX.symbols[idx]
     }
 
     fn set_macro_text(&mut self, index: usize, text: &str, delay_ms: u8, repeat: u16) {
@@ -828,7 +1084,7 @@ impl App {
             if device.set_text_macro(index as u8, text, delay_ms, repeat) {
                 self.status_msg = format!("Macro {index} set to: {text}");
                 // Refresh to show updated macro
-                self.refresh_macros();
+                self.start_loading_macros();
             } else {
                 self.status_msg = format!("Failed to set macro {index}");
             }
@@ -839,7 +1095,7 @@ impl App {
         if let Some(ref device) = self.device {
             if device.set_macro(index as u8, &[], 1) {
                 self.status_msg = format!("Macro {index} cleared");
-                self.refresh_macros();
+                self.start_loading_macros();
             } else {
                 self.status_msg = format!("Failed to clear macro {index}");
             }
@@ -1035,6 +1291,213 @@ impl App {
     }
 }
 
+/// HID worker thread - owns the device and processes commands
+fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: Sender<HidResult>) {
+    loop {
+        match cmd_rx.recv() {
+            Ok(cmd) => {
+                match cmd {
+                    HidCommand::QueryUsbVersion => {
+                        if let Some(resp) = device.query(cmd::GET_USB_VERSION) {
+                            let device_id = (resp[2] as u32)
+                                | ((resp[3] as u32) << 8)
+                                | ((resp[4] as u32) << 16)
+                                | ((resp[5] as u32) << 24);
+                            let version = (resp[8] as u16) | ((resp[9] as u16) << 8);
+                            let _ = result_tx.send(HidResult::UsbVersion { device_id, version });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "usb_version" });
+                        }
+                    }
+                    HidCommand::QueryProfile => {
+                        if let Some(resp) = device.query(cmd::GET_PROFILE) {
+                            let _ = result_tx.send(HidResult::Profile(resp[2]));
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "profile" });
+                        }
+                    }
+                    HidCommand::QueryDebounce => {
+                        if let Some(resp) = device.query(cmd::GET_DEBOUNCE) {
+                            let _ = result_tx.send(HidResult::Debounce(resp[2]));
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "debounce" });
+                        }
+                    }
+                    HidCommand::QueryPollingRate => {
+                        if let Some(hz) = device.get_polling_rate() {
+                            let _ = result_tx.send(HidResult::PollingRate(hz));
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "polling_rate" });
+                        }
+                    }
+                    HidCommand::QueryLedParams => {
+                        if let Some(resp) = device.query(cmd::GET_LEDPARAM) {
+                            let dazzle = (resp[5] & crate::protocol::LED_OPTIONS_MASK)
+                                == crate::protocol::LED_DAZZLE_ON;
+                            let _ = result_tx.send(HidResult::LedParams {
+                                mode: resp[2],
+                                brightness: resp[3],
+                                speed: resp[4],
+                                dazzle,
+                                r: resp[6],
+                                g: resp[7],
+                                b: resp[8],
+                            });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "led_params" });
+                        }
+                    }
+                    HidCommand::QuerySideLedParams => {
+                        if let Some(resp) = device.query(cmd::GET_SLEDPARAM) {
+                            let dazzle = (resp[5] & crate::protocol::LED_OPTIONS_MASK)
+                                == crate::protocol::LED_DAZZLE_ON;
+                            let _ = result_tx.send(HidResult::SideLedParams {
+                                mode: resp[2],
+                                brightness: resp[3],
+                                speed: resp[4],
+                                dazzle,
+                                r: resp[6],
+                                g: resp[7],
+                                b: resp[8],
+                            });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "side_led_params" });
+                        }
+                    }
+                    HidCommand::QueryKbOptions => {
+                        if let Some(resp) = device.query(cmd::GET_KBOPTION) {
+                            let _ = result_tx.send(HidResult::KbOptions {
+                                fn_layer: resp[3],
+                                wasd_swap: resp[6] != 0,
+                            });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "kb_options" });
+                        }
+                    }
+                    HidCommand::QueryFeatureList => {
+                        if let Some(resp) = device.query(cmd::GET_FEATURE_LIST) {
+                            let _ = result_tx.send(HidResult::FeatureList { precision: resp[3] });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "feature_list" });
+                        }
+                    }
+                    HidCommand::QuerySleepTime => {
+                        if let Some(resp) = device.query(cmd::GET_SLEEPTIME) {
+                            let sleep_seconds = (resp[2] as u16) | ((resp[3] as u16) << 8);
+                            let _ = result_tx.send(HidResult::SleepTime(sleep_seconds));
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "sleep_time" });
+                        }
+                    }
+                    HidCommand::QueryTriggers => {
+                        let triggers = device.get_all_triggers();
+                        let _ = result_tx.send(HidResult::Triggers(triggers));
+                    }
+                    HidCommand::QueryOptions => {
+                        if let Some(resp) = device.query(cmd::GET_KBOPTION) {
+                            let _ = result_tx.send(HidResult::Options {
+                                os_mode: resp[2],
+                                fn_layer: resp[3],
+                                anti_mistouch: resp[4] != 0,
+                                rt_stability: resp[5],
+                                wasd_swap: resp[6] != 0,
+                            });
+                        } else {
+                            let _ = result_tx.send(HidResult::QueryError { field: "options" });
+                        }
+                    }
+                    HidCommand::QueryMacros => {
+                        use crate::protocol::hid::key_name;
+                        let mut macros = Vec::new();
+                        for slot in 0..8u8 {
+                            if let Some(data) = device.get_macro(slot) {
+                                let mut macro_slot = MacroSlot::default();
+                                if data.len() >= 2 {
+                                    macro_slot.repeat_count = u16::from_le_bytes([data[0], data[1]]);
+                                    let events_data = &data[2..];
+                                    let mut text = String::new();
+                                    for chunk in events_data.chunks(2) {
+                                        if chunk.len() < 2 || (chunk[0] == 0 && chunk[1] == 0) {
+                                            break;
+                                        }
+                                        let keycode = chunk[0];
+                                        let flags = chunk[1];
+                                        let is_down = flags & 0x80 != 0;
+                                        let delay_ms = flags & 0x7F;
+                                        macro_slot.events.push(MacroEvent { keycode, is_down, delay_ms });
+                                        if is_down && keycode < 0xE0 {
+                                            let name = key_name(keycode);
+                                            if name.len() == 1 {
+                                                text.push_str(name);
+                                            } else if name == "Space" {
+                                                text.push(' ');
+                                            } else if name == "Enter" {
+                                                text.push('↵');
+                                            }
+                                        }
+                                    }
+                                    macro_slot.text_preview = if text.is_empty() {
+                                        format!("{} events", macro_slot.events.len())
+                                    } else {
+                                        text.chars().take(20).collect()
+                                    };
+                                }
+                                macros.push(macro_slot);
+                            } else {
+                                macros.push(MacroSlot::default());
+                            }
+                        }
+                        let _ = result_tx.send(HidResult::Macros(macros));
+                    }
+                    HidCommand::QueryBattery => {
+                        // Battery is queried via separate dongle interface, not the main device
+                        let _ = result_tx.send(HidResult::Battery(None));
+                    }
+                    HidCommand::SetProfile(profile) => {
+                        let ok = device.set_profile(profile);
+                        let _ = result_tx.send(HidResult::ProfileSet(ok));
+                    }
+                    HidCommand::SetDebounce(debounce) => {
+                        let ok = device.set_debounce(debounce);
+                        let _ = result_tx.send(HidResult::DebounceSet(ok));
+                    }
+                    HidCommand::SetPollingRate(rate) => {
+                        let ok = device.set_polling_rate(rate);
+                        let _ = result_tx.send(HidResult::PollingRateSet(ok));
+                    }
+                    HidCommand::SetLedParams { mode, brightness, speed, dazzle, r, g, b } => {
+                        let ok = device.set_led(mode, brightness, speed, r, g, b, dazzle);
+                        let _ = result_tx.send(HidResult::LedParamsSet(ok));
+                    }
+                    HidCommand::SetSideLedParams { mode, brightness, speed, dazzle, r, g, b } => {
+                        let ok = device.set_side_led(mode, brightness, speed, r, g, b, dazzle);
+                        let _ = result_tx.send(HidResult::SideLedParamsSet(ok));
+                    }
+                    HidCommand::SetTrigger { key_idx: _, act: _, deact: _, mode: _ } => {
+                        // Per-key trigger setting requires magnetism commands - not implemented yet
+                        let _ = result_tx.send(HidResult::TriggerSet(false));
+                    }
+                    HidCommand::SetTextMacro { slot, text, delay_ms, repeat } => {
+                        let ok = device.set_text_macro(slot, &text, delay_ms, repeat);
+                        let _ = result_tx.send(HidResult::MacroSet(ok));
+                    }
+                    HidCommand::ClearMacro(slot) => {
+                        let ok = device.set_macro(slot, &[], 1);
+                        let _ = result_tx.send(HidResult::MacroCleared(ok));
+                    }
+                    HidCommand::Shutdown => {
+                        break;
+                    }
+                }
+            }
+            Err(_) => {
+                // Channel closed, exit worker
+                break;
+            }
+        }
+    }
+}
+
 /// Run the TUI - called via 'iot_driver tui' command
 pub fn run() -> io::Result<()> {
     // Setup terminal
@@ -1048,7 +1511,8 @@ pub fn run() -> io::Result<()> {
     if let Err(e) = app.connect() {
         app.status_msg = e;
     } else {
-        app.refresh_info();
+        // Start async loading of device info (TUI starts on tab 0)
+        app.start_loading_info();
     }
 
     let tick_rate = Duration::from_millis(100);
@@ -1111,26 +1575,26 @@ pub fn run() -> io::Result<()> {
                             app.tab = (app.tab + 1) % 6;
                             app.selected = 0;
                             app.trigger_scroll = 0;
-                            // Auto-refresh when entering tabs
-                            if app.tab == 3 && app.triggers.is_none() {
-                                app.refresh_triggers();
-                            } else if app.tab == 4 && app.options.is_none() {
-                                app.refresh_options();
-                            } else if app.tab == 5 && app.macros.is_empty() {
-                                app.refresh_macros();
+                            // Auto-load when entering tabs
+                            if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                                app.start_loading_triggers();
+                            } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
+                                app.start_loading_options();
+                            } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
+                                app.start_loading_macros();
                             }
                         }
                         KeyCode::BackTab => {
                             app.tab = if app.tab == 0 { 5 } else { app.tab - 1 };
                             app.selected = 0;
                             app.trigger_scroll = 0;
-                            // Auto-refresh when entering tabs
-                            if app.tab == 3 && app.triggers.is_none() {
-                                app.refresh_triggers();
-                            } else if app.tab == 4 && app.options.is_none() {
-                                app.refresh_options();
-                            } else if app.tab == 5 && app.macros.is_empty() {
-                                app.refresh_macros();
+                            // Auto-load when entering tabs
+                            if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                                app.start_loading_triggers();
+                            } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
+                                app.start_loading_options();
+                            } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
+                                app.start_loading_macros();
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
@@ -1397,16 +1861,16 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('r') => {
-                            app.refresh_info();
+                            // Refresh current tab data
+                            app.start_loading_info();
                             if app.tab == 3 {
-                                app.refresh_triggers();
+                                app.start_loading_triggers();
                             } else if app.tab == 4 {
-                                app.refresh_options();
+                                app.start_loading_options();
                             } else if app.tab == 5 {
-                                app.refresh_macros();
-                            } else {
-                                app.status_msg = "Refreshed device info".to_string();
+                                app.start_loading_macros();
                             }
+                            app.status_msg = "Refreshing...".to_string();
                         }
                         KeyCode::Char('e') if app.tab == 5 => {
                             // Edit selected macro
@@ -1438,7 +1902,7 @@ pub fn run() -> io::Result<()> {
                             if let Err(e) = app.connect() {
                                 app.status_msg = e;
                             } else {
-                                app.refresh_info();
+                                app.start_loading_info();
                             }
                         }
                         // Profile switching with Ctrl+1-4
@@ -1541,6 +2005,12 @@ pub fn run() -> io::Result<()> {
         }
 
         if last_tick.elapsed() >= tick_rate {
+            // Process async loading results
+            app.process_load_results();
+
+            // Advance spinner animation
+            app.throbber_state.calc_next();
+
             app.read_input_reports();
             last_tick = Instant::now();
 
@@ -1800,12 +2270,25 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
 
 fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
     let info = &app.info;
+    let loading = &app.loading;
+    let spinner = app.spinner_char();
+
+    // Helper to create value span based on loading state
+    let value_span = |state: LoadState, value: String, color: Color| -> Span<'static> {
+        match state {
+            LoadState::NotLoaded => Span::styled("-".to_string(), Style::default().fg(Color::DarkGray)),
+            LoadState::Loading => Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow)),
+            LoadState::Loaded => Span::styled(value, Style::default().fg(color)),
+            LoadState::Error => Span::styled("!".to_string(), Style::default().fg(Color::Red)),
+        }
+    };
 
     let text = vec![
+        // Device name and key count are from device definition, not async loaded
         Line::from(vec![
             Span::raw("Device:         "),
             Span::styled(
-                &app.device_name,
+                app.device_name.clone(),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -1818,107 +2301,131 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Green),
             ),
         ]),
+        // USB version info (device_id + version)
         Line::from(vec![
             Span::raw("Device ID:      "),
-            Span::styled(
+            value_span(
+                loading.usb_version,
                 format!("{} (0x{:04X})", info.device_id, info.device_id),
-                Style::default().fg(Color::Yellow),
+                Color::Yellow,
             ),
         ]),
         Line::from(vec![
             Span::raw("Firmware:       "),
-            Span::styled(
+            value_span(
+                loading.usb_version,
                 format!("v{}.{:02}", info.version / 100, info.version % 100),
-                Style::default().fg(Color::Yellow),
+                Color::Yellow,
             ),
         ]),
+        // Profile
         Line::from(vec![
             Span::raw("Profile:        "),
-            Span::styled(
+            value_span(
+                loading.profile,
                 format!("{} (1-4)", info.profile + 1),
-                Style::default().fg(Color::Cyan),
+                Color::Cyan,
             ),
         ]),
+        // Debounce
         Line::from(vec![
             Span::raw("Debounce:       "),
-            Span::styled(
+            value_span(
+                loading.debounce,
                 format!("{} ms", info.debounce),
-                Style::default().fg(Color::Cyan),
+                Color::Cyan,
             ),
         ]),
+        // Polling rate
         Line::from(vec![
             Span::raw("Polling Rate:   "),
-            Span::styled(
+            value_span(
+                loading.polling_rate,
                 if info.polling_rate > 0 {
                     crate::protocol::polling_rate::name(info.polling_rate)
                 } else {
                     "N/A".to_string()
                 },
-                Style::default().fg(Color::Cyan),
+                Color::Cyan,
             ),
         ]),
+        // KB options (fn_layer, wasd_swap)
         Line::from(vec![
             Span::raw("Fn Layer:       "),
-            Span::styled(
+            value_span(
+                loading.kb_options_info,
                 format!("{}", info.fn_layer),
-                Style::default().fg(Color::Cyan),
+                Color::Cyan,
             ),
         ]),
         Line::from(vec![
             Span::raw("WASD Swap:      "),
-            Span::styled(
-                if info.wasd_swap { "Yes" } else { "No" },
-                Style::default().fg(Color::Cyan),
+            value_span(
+                loading.kb_options_info,
+                if info.wasd_swap { "Yes" } else { "No" }.to_string(),
+                Color::Cyan,
             ),
         ]),
+        // Feature list (precision)
         Line::from(vec![
             Span::raw("Precision:      "),
-            Span::styled(
-                MonsGeekDevice::precision_str(info.precision),
-                Style::default().fg(Color::Green),
+            value_span(
+                loading.feature_list,
+                MonsGeekDevice::precision_str(info.precision).to_string(),
+                Color::Green,
             ),
         ]),
+        // Sleep time
         Line::from(vec![
             Span::raw("Sleep:          "),
-            Span::styled(
+            value_span(
+                loading.sleep_time,
                 format!(
                     "{} sec ({} min)",
                     info.sleep_seconds,
                     info.sleep_seconds / 60
                 ),
-                Style::default().fg(Color::Cyan),
+                Color::Cyan,
             ),
         ]),
         Line::from(""),
+        // LED params
         Line::from(vec![
             Span::raw("LED Mode:       "),
-            Span::styled(
+            value_span(
+                loading.led_params,
                 format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
-                Style::default().fg(Color::Magenta),
+                Color::Magenta,
             ),
         ]),
         Line::from(vec![
             Span::raw("LED Color:      "),
-            Span::styled(
-                format!(
-                    "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
-                    info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
-                ),
-                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
-            ),
+            if loading.led_params == LoadState::Loaded {
+                Span::styled(
+                    format!(
+                        "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
+                        info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
+                    ),
+                    Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
+                )
+            } else {
+                value_span(loading.led_params, String::new(), Color::Magenta)
+            },
         ]),
         Line::from(vec![
             Span::raw("Brightness:     "),
-            Span::styled(
+            value_span(
+                loading.led_params,
                 format!("{}/4", info.led_brightness),
-                Style::default().fg(Color::Magenta),
+                Color::Magenta,
             ),
         ]),
         Line::from(vec![
             Span::raw("Speed:          "),
-            Span::styled(
+            value_span(
+                loading.led_params,
                 format!("{}/4", 4 - info.led_speed.min(4)),
-                Style::default().fg(Color::Magenta),
+                Color::Magenta,
             ),
         ]),
     ];
@@ -2395,6 +2902,42 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
+    // Check loading state first
+    if app.loading.triggers == LoadState::Loading {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Trigger Settings [v: toggle view, ↑/↓: select, ←/→: adjust]");
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let throbber = Throbber::default()
+            .label("Loading trigger settings...")
+            .throbber_style(Style::default().fg(Color::Yellow));
+        f.render_stateful_widget(throbber, inner, &mut app.throbber_state.clone());
+        return;
+    }
+
+    if app.triggers.is_none() {
+        let msg = if app.loading.triggers == LoadState::Error {
+            "Failed to load trigger settings"
+        } else {
+            "No trigger settings loaded"
+        };
+        let help = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(msg, Style::default().fg(Color::Red))),
+            Line::from(""),
+            Line::from("Press 'r' to load trigger settings from device"),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Trigger Settings"),
+        );
+        f.render_widget(help, area);
+        return;
+    }
+
     match app.trigger_view_mode {
         TriggerViewMode::List => render_trigger_list(f, app, area),
         TriggerViewMode::Layout => render_trigger_layout(f, app, area),
@@ -2890,11 +3433,28 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
         let mut state = ListState::default();
         state.select(Some(app.selected.min(3)));
         f.render_stateful_widget(list, area, &mut state);
+    } else if app.loading.options == LoadState::Loading {
+        // Show loading spinner
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Keyboard Options");
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let throbber = Throbber::default()
+            .label("Loading options...")
+            .throbber_style(Style::default().fg(Color::Yellow));
+        f.render_stateful_widget(throbber, inner, &mut app.throbber_state.clone());
     } else {
+        let msg = if app.loading.options == LoadState::Error {
+            "Failed to load options"
+        } else {
+            "No options loaded"
+        };
         let help = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "No options loaded",
+                msg,
                 Style::default().fg(Color::Red),
             )),
             Line::from(""),
@@ -2912,6 +3472,21 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
 fn render_macros(f: &mut Frame, app: &App, area: Rect) {
     use crate::protocol::hid::key_name;
 
+    // Check loading state first
+    if app.loading.macros == LoadState::Loading {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Macros [e: edit, c: clear, ↑/↓: select]");
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let throbber = Throbber::default()
+            .label("Loading macros...")
+            .throbber_style(Style::default().fg(Color::Yellow));
+        f.render_stateful_widget(throbber, inner, &mut app.throbber_state.clone());
+        return;
+    }
+
     // Split into macro list (left) and detail/edit area (right)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -2920,10 +3495,15 @@ fn render_macros(f: &mut Frame, app: &App, area: Rect) {
 
     // Left panel: Macro list
     if app.macros.is_empty() {
+        let msg = if app.loading.macros == LoadState::Error {
+            "Failed to load macros"
+        } else {
+            "No macros loaded"
+        };
         let help = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "No macros loaded",
+                msg,
                 Style::default().fg(Color::Yellow),
             )),
             Line::from(""),
