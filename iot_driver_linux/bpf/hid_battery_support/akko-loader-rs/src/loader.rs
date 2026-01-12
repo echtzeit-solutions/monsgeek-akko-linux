@@ -2,7 +2,7 @@
 //! BPF loader using Aya with struct_ops support
 
 use anyhow::{bail, Context, Result};
-use aya::maps::StructOpsMap;
+use aya::maps::{Array, StructOpsMap};
 use aya::programs::links::FdLink;
 use aya::{Btf, Ebpf};
 use std::path::{Path, PathBuf};
@@ -11,18 +11,30 @@ use tracing::{debug, info};
 use crate::Strategy;
 
 /// Get the BPF object path for the given strategy
-pub fn get_bpf_path(strategy: &Strategy) -> Result<PathBuf> {
+pub fn get_bpf_path(strategy: &Strategy, use_rust: bool) -> Result<PathBuf> {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
 
-    let relative = match strategy {
-        Strategy::Keyboard => "option_a_keyboard_inject/akko_keyboard_battery.bpf.o",
-        Strategy::Vendor => "option_b_bidirectional/akko_bidirectional.bpf.o",
-        Strategy::Wq => "option_b_wq_experimental/akko_wq.bpf.o",
+    // Use Rust BPF for ondemand strategy when --rust flag is set
+    let relative = if use_rust && matches!(strategy, Strategy::Ondemand) {
+        "akko-loader-rs/akko-ebpf.bpf.o"
+    } else {
+        match strategy {
+            Strategy::Keyboard => "option_a_keyboard_inject/akko_keyboard_battery.bpf.o",
+            Strategy::Vendor => "option_b_bidirectional/akko_bidirectional.bpf.o",
+            Strategy::Wq => "option_b_wq_experimental/akko_wq.bpf.o",
+            Strategy::Ondemand => "option_c_on_demand/akko_on_demand.bpf.o",
+        }
     };
 
     let path = base.join(relative);
 
     if !path.exists() {
+        if use_rust && matches!(strategy, Strategy::Ondemand) {
+            bail!(
+                "Rust BPF object not found: {:?}\nRun 'make akko-ebpf' in bpf/ directory first.",
+                path
+            );
+        }
         bail!(
             "BPF object not found: {:?}\nRun 'make {}' in bpf/ directory first.",
             path,
@@ -30,6 +42,7 @@ pub fn get_bpf_path(strategy: &Strategy) -> Result<PathBuf> {
                 Strategy::Keyboard => "option_a",
                 Strategy::Vendor => "option_b",
                 Strategy::Wq => "option_b_wq",
+                Strategy::Ondemand => "option_c",
             }
         );
     }
@@ -43,6 +56,7 @@ fn get_struct_ops_name(strategy: &Strategy) -> &'static str {
         Strategy::Keyboard => "akko_keyboard_battery",
         Strategy::Vendor => "akko_bidirectional",
         Strategy::Wq => "akko_wq",
+        Strategy::Ondemand => "akko_on_demand",
     }
 }
 
@@ -57,8 +71,11 @@ pub struct LoadedBpf {
 
 impl LoadedBpf {
     /// Load and register a BPF program for the given strategy
-    pub fn load(strategy: Strategy, hid_id: u32) -> Result<Self> {
-        let bpf_path = get_bpf_path(&strategy)?;
+    ///
+    /// For Ondemand strategy, throttle_secs configures the minimum interval
+    /// between F7 refresh commands.
+    pub fn load(strategy: Strategy, hid_id: u32, throttle_secs: u32, use_rust: bool) -> Result<Self> {
+        let bpf_path = get_bpf_path(&strategy, use_rust)?;
         info!("Loading BPF from {:?}", bpf_path);
 
         let mut bpf = Ebpf::load_file(&bpf_path)
@@ -79,6 +96,38 @@ impl LoadedBpf {
         info!("Calling load_struct_ops...");
         bpf.load_struct_ops(&btf)
             .context("Failed to load struct_ops programs")?;
+
+        // Configure maps for Ondemand strategy (must be after struct_ops loading)
+        if matches!(strategy, Strategy::Ondemand) {
+            let throttle_ns: u64 = u64::from(throttle_secs) * 1_000_000_000;
+            info!("Configuring throttle interval: {}s ({}ns)", throttle_secs, throttle_ns);
+
+            // Map names differ between C and Rust BPF
+            let config_map_name = if use_rust { "CONFIG_MAP" } else { "config_map" };
+
+            let mut config_map: Array<_, u64> = bpf
+                .map_mut(config_map_name)
+                .with_context(|| format!("{config_map_name} not found in BPF"))?
+                .try_into()
+                .context("Failed to convert config_map")?;
+
+            config_map.set(0, throttle_ns, 0).context("Failed to set throttle in config_map")?;
+
+            // For Rust BPF, set the vendor hid_id in VENDOR_HID_MAP
+            // This is needed because Rust BPF can't easily read hid_device.id from kernel struct
+            if use_rust {
+                let vendor_hid_id = hid_id + 2; // Vendor interface is keyboard + 2
+                info!("Setting VENDOR_HID_MAP: vendor_hid_id={} (keyboard={} + 2)", vendor_hid_id, hid_id);
+
+                let mut vendor_map: Array<_, u32> = bpf
+                    .map_mut("VENDOR_HID_MAP")
+                    .context("VENDOR_HID_MAP not found in Rust BPF")?
+                    .try_into()
+                    .context("Failed to convert VENDOR_HID_MAP")?;
+
+                vendor_map.set(0, vendor_hid_id, 0).context("Failed to set vendor_hid_id")?;
+            }
+        }
 
         let struct_ops_name = get_struct_ops_name(&strategy);
         debug!("Looking for struct_ops map: {}", struct_ops_name);

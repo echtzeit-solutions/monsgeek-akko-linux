@@ -7,6 +7,7 @@
 //! - keyboard: Inject battery into keyboard interface (recommended)
 //! - vendor: Use vendor interface with loader F7 refresh
 //! - wq: Use vendor interface with bpf_wq auto-refresh
+//! - ondemand: On-demand F7 refresh triggered by UPower reads (Option C)
 
 mod control;
 mod hid;
@@ -39,6 +40,10 @@ struct Cli {
     #[arg(short, long, default_value = "600")]
     refresh: u32,
 
+    /// Use Rust BPF (akko-ebpf) instead of C version for ondemand strategy
+    #[arg(long)]
+    rust: bool,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -53,13 +58,15 @@ enum Commands {
 }
 
 #[derive(Clone, Copy, ValueEnum, Debug)]
-enum Strategy {
+pub enum Strategy {
     /// Option A: Inject battery into keyboard interface (recommended)
     Keyboard,
     /// Option B: Use vendor interface with loader F7 refresh
     Vendor,
     /// Option B WQ: Use vendor interface with bpf_wq auto-refresh
     Wq,
+    /// Option C: On-demand F7 refresh triggered by UPower reads
+    Ondemand,
 }
 
 impl std::fmt::Display for Strategy {
@@ -68,6 +75,7 @@ impl std::fmt::Display for Strategy {
             Strategy::Keyboard => write!(f, "keyboard"),
             Strategy::Vendor => write!(f, "vendor"),
             Strategy::Wq => write!(f, "wq"),
+            Strategy::Ondemand => write!(f, "ondemand"),
         }
     }
 }
@@ -146,7 +154,7 @@ fn main() -> Result<()> {
     }
 
     // Load BPF program with Aya
-    let _bpf = loader::LoadedBpf::load(cli.strategy, hid_info.hid_id)?;
+    let _bpf = loader::LoadedBpf::load(cli.strategy, hid_info.hid_id, cli.refresh, cli.rust)?;
 
     // Write PID file for stop/status commands
     control::write_pid_file()?;
@@ -183,8 +191,11 @@ fn main() -> Result<()> {
             break;
         }
 
-        // Periodic F7 refresh to update battery data (all strategies except Wq)
-        if !matches!(cli.strategy, Strategy::Wq) && seconds_since_f7 >= cli.refresh {
+        // Periodic F7 refresh to update battery data (Keyboard and Vendor only)
+        // Wq uses bpf_wq, Ondemand sends F7 on-demand from BPF hook
+        if matches!(cli.strategy, Strategy::Keyboard | Strategy::Vendor)
+            && seconds_since_f7 >= cli.refresh
+        {
             if let Some(ref hidraw) = vendor_hidraw {
                 if let Ok(battery) = hid::send_f7_command(hidraw) {
                     info!("F7 refresh, battery={}%", battery);
