@@ -6,7 +6,7 @@ After=sys-subsystem-hid-devices.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/akko-loader --strategy ondemand
+ExecStart=/usr/local/bin/akko-loader
 ExecStop=/usr/local/bin/akko-loader unload
 
 # BPF loading requires root-equivalent capabilities

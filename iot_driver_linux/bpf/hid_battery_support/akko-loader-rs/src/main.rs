@@ -14,7 +14,7 @@ mod hid;
 mod loader;
 
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use tracing::{info, warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -26,21 +26,13 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Loading strategy
-    #[arg(short, long, value_enum, default_value = "keyboard")]
-    strategy: Strategy,
-
     /// Override auto-detected HID ID
     #[arg(short = 'i', long)]
     hid_id: Option<u32>,
 
-    /// F7 refresh interval in seconds (default: 10 minutes)
+    /// F7 refresh throttle interval in seconds (default: 10 minutes)
     #[arg(short, long, default_value = "600")]
-    refresh: u32,
-
-    /// Use C BPF instead of Rust (akko-ebpf) for ondemand strategy
-    #[arg(long)]
-    use_c: bool,
+    throttle: u32,
 
     /// Verbose output
     #[arg(short, long)]
@@ -53,29 +45,6 @@ enum Commands {
     Unload,
     /// Show loader status
     Status,
-}
-
-#[derive(Clone, Copy, ValueEnum, Debug)]
-pub enum Strategy {
-    /// Option A: Inject battery into keyboard interface (recommended)
-    Keyboard,
-    /// Option B: Use vendor interface with loader F7 refresh
-    Vendor,
-    /// Option B WQ: Use vendor interface with bpf_wq auto-refresh
-    Wq,
-    /// Option C: On-demand F7 refresh triggered by UPower reads
-    Ondemand,
-}
-
-impl std::fmt::Display for Strategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Strategy::Keyboard => write!(f, "keyboard"),
-            Strategy::Vendor => write!(f, "vendor"),
-            Strategy::Wq => write!(f, "wq"),
-            Strategy::Ondemand => write!(f, "ondemand"),
-        }
-    }
 }
 
 fn setup_logging(verbose: bool) {
@@ -100,24 +69,21 @@ fn do_status() -> Result<()> {
         return Ok(());
     }
 
-    let mut loaded = Vec::new();
+    let mut loaded = false;
     if let Ok(entries) = std::fs::read_dir(pin_dir) {
         for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with("_link") {
-                loaded.push(name.trim_end_matches("_link").to_string());
+            if entry.path().is_file() {
+                loaded = true;
+                break;
             }
         }
     }
 
-    if loaded.is_empty() {
+    if !loaded {
         println!("Status: Not loaded");
     } else {
         println!("Status: Loaded");
-        println!("Strategies: {}", loaded.join(", "));
         println!("Pin directory: {}", loader::BPF_PIN_DIR);
-
-        // Show battery info
         show_power_supplies();
     }
 
@@ -147,15 +113,11 @@ fn main() -> Result<()> {
     }
 
     info!("Akko/MonsGeek Keyboard Battery Loader v{}", VERSION);
-    info!("Strategy: {}", cli.strategy);
 
     // Unload any previous BPF programs first
     loader::unload_previous()?;
 
-    // Determine which interface to target
-    let want_vendor = matches!(cli.strategy, Strategy::Vendor | Strategy::Wq);
-
-    // Find HID interface
+    // Find keyboard HID interface
     let hid_info = if let Some(id) = cli.hid_id {
         info!("Using provided hid_id={}", id);
         hid::HidInfo {
@@ -164,7 +126,7 @@ fn main() -> Result<()> {
             hidraw_path: None,
         }
     } else {
-        hid::find_hid_interface(want_vendor)?
+        hid::find_hid_interface(false)?
     };
 
     info!(
@@ -187,8 +149,7 @@ fn main() -> Result<()> {
     }
 
     // Load BPF program (link will be pinned)
-    let use_rust = !cli.use_c;
-    loader::load(cli.strategy, hid_info.hid_id, cli.refresh, use_rust)?;
+    loader::load(hid_info.hid_id, cli.throttle)?;
 
     // Rebind device to activate BPF
     if !hid_info.device_name.is_empty() {

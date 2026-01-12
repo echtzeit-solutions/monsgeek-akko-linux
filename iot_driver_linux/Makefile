@@ -28,7 +28,7 @@ install-udev:
 
 # Build and install Rust BPF loader + BPF program
 install-bpf:
-	$(MAKE) -C bpf akko-loader-rs akko-ebpf
+	$(MAKE) -C bpf all
 	install -D -m 755 bpf/hid_battery_support/akko-loader-rs/target/release/akko-loader $(PREFIX)/bin/akko-loader
 	install -D -m 644 bpf/hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o $(PREFIX)/lib/akko/akko-ebpf.bpf.o
 	@echo "BPF loader installed to $(PREFIX)/bin/akko-loader"
