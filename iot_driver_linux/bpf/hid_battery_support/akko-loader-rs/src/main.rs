@@ -2,12 +2,12 @@
 //! Akko/MonsGeek HID-BPF Battery Loader
 //!
 //! Loads BPF programs to expose keyboard battery via kernel power_supply.
+//! The BPF link is pinned to /sys/fs/bpf/akko so it persists after the loader exits.
 //!
-//! Strategies:
-//! - keyboard: Inject battery into keyboard interface (recommended)
-//! - vendor: Use vendor interface with loader F7 refresh
-//! - wq: Use vendor interface with bpf_wq auto-refresh
-//! - ondemand: On-demand F7 refresh triggered by UPower reads (Option C)
+//! Usage:
+//!   akko-loader           # Load BPF and exit
+//!   akko-loader unload    # Unload BPF
+//!   akko-loader status    # Show status
 
 mod control;
 mod hid;
@@ -15,8 +15,6 @@ mod loader;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tracing::{info, warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -40,9 +38,9 @@ struct Cli {
     #[arg(short, long, default_value = "600")]
     refresh: u32,
 
-    /// Use Rust BPF (akko-ebpf) instead of C version for ondemand strategy
+    /// Use C BPF instead of Rust (akko-ebpf) for ondemand strategy
     #[arg(long)]
-    rust: bool,
+    use_c: bool,
 
     /// Verbose output
     #[arg(short, long)]
@@ -51,9 +49,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Stop running loader (no sudo needed)
-    Stop,
-    /// Show loader status (no sudo needed)
+    /// Unload BPF programs
+    Unload,
+    /// Show loader status
     Status,
 }
 
@@ -89,19 +87,55 @@ fn setup_logging(verbose: bool) {
         EnvFilter::new("info")
     };
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    fmt().with_env_filter(filter).with_target(false).init();
+}
+
+fn do_status() -> Result<()> {
+    use std::path::Path;
+
+    let pin_dir = Path::new(loader::BPF_PIN_DIR);
+
+    if !pin_dir.exists() {
+        println!("Status: Not loaded");
+        return Ok(());
+    }
+
+    let mut loaded = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(pin_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with("_link") {
+                loaded.push(name.trim_end_matches("_link").to_string());
+            }
+        }
+    }
+
+    if loaded.is_empty() {
+        println!("Status: Not loaded");
+    } else {
+        println!("Status: Loaded");
+        println!("Strategies: {}", loaded.join(", "));
+        println!("Pin directory: {}", loader::BPF_PIN_DIR);
+
+        // Show battery info
+        show_power_supplies();
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Handle subcommands that don't need root
+    // Handle subcommands
     match &cli.command {
-        Some(Commands::Stop) => return control::do_stop(),
-        Some(Commands::Status) => return control::do_status(),
+        Some(Commands::Unload) => {
+            setup_logging(cli.verbose);
+            return loader::unload();
+        }
+        Some(Commands::Status) => {
+            return do_status();
+        }
         None => {}
     }
 
@@ -115,8 +149,8 @@ fn main() -> Result<()> {
     info!("Akko/MonsGeek Keyboard Battery Loader v{}", VERSION);
     info!("Strategy: {}", cli.strategy);
 
-    // Kill any previous loaders
-    control::kill_previous_loaders()?;
+    // Unload any previous BPF programs first
+    loader::unload_previous()?;
 
     // Determine which interface to target
     let want_vendor = matches!(cli.strategy, Strategy::Vendor | Strategy::Wq);
@@ -138,8 +172,7 @@ fn main() -> Result<()> {
         hid_info.device_name, hid_info.hid_id
     );
 
-    // Find vendor hidraw for F7 commands (needed for ALL strategies)
-    // F7 refreshes battery data from keyboard via dongle's RF link
+    // Find vendor hidraw for F7 commands
     let vendor_hidraw = hid_info.hidraw_path.clone().or_else(hid::find_vendor_hidraw);
     if vendor_hidraw.is_none() {
         warn!("Could not find vendor hidraw - battery may show stale values");
@@ -153,13 +186,11 @@ fn main() -> Result<()> {
         }
     }
 
-    // Load BPF program with Aya
-    let _bpf = loader::LoadedBpf::load(cli.strategy, hid_info.hid_id, cli.refresh, cli.rust)?;
+    // Load BPF program (link will be pinned)
+    let use_rust = !cli.use_c;
+    loader::load(cli.strategy, hid_info.hid_id, cli.refresh, use_rust)?;
 
-    // Write PID file for stop/status commands
-    control::write_pid_file()?;
-
-    // Rebind device if we have a device name
+    // Rebind device to activate BPF
     if !hid_info.device_name.is_empty() {
         hid::rebind_device(&hid_info.device_name)?;
     }
@@ -167,48 +198,7 @@ fn main() -> Result<()> {
     // Show power supplies
     show_power_supplies();
 
-    // Setup signal handler
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
-
-    ctrlc::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
-    })
-    .ok();
-
-    // Main loop
-    info!("Running... Stop with: akko-loader stop (or Ctrl+C)");
-
-    let mut seconds_since_f7 = 0u32;
-
-    while running.load(Ordering::SeqCst) {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        seconds_since_f7 += 1;
-
-        // Check for stop file (non-root stop mechanism)
-        if control::check_stop_file() {
-            info!("Stop file detected, exiting...");
-            break;
-        }
-
-        // Periodic F7 refresh to update battery data (Keyboard and Vendor only)
-        // Wq uses bpf_wq, Ondemand sends F7 on-demand from BPF hook
-        if matches!(cli.strategy, Strategy::Keyboard | Strategy::Vendor)
-            && seconds_since_f7 >= cli.refresh
-        {
-            if let Some(ref hidraw) = vendor_hidraw {
-                if let Ok(battery) = hid::send_f7_command(hidraw) {
-                    info!("F7 refresh, battery={}%", battery);
-                }
-            }
-            seconds_since_f7 = 0;
-        }
-    }
-
-    info!("Unloading BPF program...");
-    control::cleanup_files();
-    // _bpf drops here, Aya handles cleanup
-    info!("Done");
+    info!("BPF loaded and pinned. Use 'akko-loader unload' to remove.");
 
     Ok(())
 }

@@ -12,6 +12,10 @@ ACTION=="add|change", SUBSYSTEM=="input", ATTRS{idVendor}=="3151", ATTRS{idProdu
     ENV{ID_INPUT_JOYSTICK}="0"
 
 # Start BPF battery loader when keyboard interface is detected
-# Only trigger on the keyboard interface (starts with 05 01 09 06)
+# Loader exits after pinning BPF links - service remains active via RemainAfterExit
 ACTION=="add", SUBSYSTEM=="hid", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5038", \
     TAG+="systemd", ENV{SYSTEMD_WANTS}="akko-bpf-battery.service"
+
+# Unload BPF when device is removed
+ACTION=="remove", SUBSYSTEM=="hid", ENV{ID_VENDOR_ID}=="3151", ENV{ID_MODEL_ID}=="5038", \
+    RUN+="/usr/bin/systemctl stop akko-bpf-battery.service"
