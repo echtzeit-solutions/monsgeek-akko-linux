@@ -65,13 +65,13 @@ impl AkkoBpfLoader {
                     local_path
                 } else {
                     return Err(anyhow!(
-                        "BPF object not found. Looked in:\n  - {}\n  - {}\nRun 'make' in bpf/ directory first.",
-                        DEFAULT_BPF_PATH,
-                        DEV_BPF_PATH
+                        "BPF object not found. Looked in:\n  - {DEFAULT_BPF_PATH}\n  - {DEV_BPF_PATH}\nRun 'make' in bpf/ directory first."
                     ));
                 }
             } else {
-                return Err(anyhow!("BPF object not found at {} or {}", DEFAULT_BPF_PATH, DEV_BPF_PATH));
+                return Err(anyhow!(
+                    "BPF object not found at {DEFAULT_BPF_PATH} or {DEV_BPF_PATH}"
+                ));
             }
         };
 
@@ -87,7 +87,7 @@ impl AkkoBpfLoader {
         }
 
         // Look for device matching 0003:3151:5038.*
-        let pattern = format!("0003:{:04X}:{:04X}", VID_AKKO, PID_DONGLE);
+        let pattern = format!("0003:{VID_AKKO:04X}:{PID_DONGLE:04X}");
 
         if let Ok(entries) = fs::read_dir(hid_devices) {
             for entry in entries.flatten() {
@@ -118,7 +118,7 @@ impl AkkoBpfLoader {
         }
 
         // Look for hid-0003:3151:5038* pattern
-        let pattern = format!("hid-0003:{:04X}:{:04X}", VID_AKKO, PID_DONGLE);
+        let pattern = format!("hid-0003:{VID_AKKO:04X}:{PID_DONGLE:04X}");
 
         if let Ok(entries) = fs::read_dir(power_supply_dir) {
             for entry in entries.flatten() {
@@ -173,25 +173,21 @@ impl AkkoBpfLoader {
             return Err(anyhow!("BPF object not found: {:?}", self.bpf_path));
         }
 
-        let dongle = Self::find_dongle()
-            .ok_or_else(|| anyhow!("Dongle not found. Is it plugged in?"))?;
+        let dongle =
+            Self::find_dongle().ok_or_else(|| anyhow!("Dongle not found. Is it plugged in?"))?;
 
         info!("Loading BPF program from {:?}", self.bpf_path);
         info!("Target device: {:?}", dongle);
 
         // Use bpftool to load struct_ops
         let output = Command::new("bpftool")
-            .args([
-                "struct_ops",
-                "register",
-                self.bpf_path.to_str().unwrap(),
-            ])
+            .args(["struct_ops", "register", self.bpf_path.to_str().unwrap()])
             .output()
             .context("Failed to run bpftool")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("bpftool failed: {}", stderr));
+            return Err(anyhow!("bpftool failed: {stderr}"));
         }
 
         self.loaded = true;
@@ -219,13 +215,12 @@ impl AkkoBpfLoader {
             return Err(anyhow!("BPF object not found: {:?}", self.bpf_path));
         }
 
-        let _dongle = Self::find_dongle()
-            .ok_or_else(|| anyhow!("Dongle not found. Is it plugged in?"))?;
+        let _dongle =
+            Self::find_dongle().ok_or_else(|| anyhow!("Dongle not found. Is it plugged in?"))?;
 
         info!("Loading BPF program from {:?} using Aya", self.bpf_path);
 
-        let mut bpf = Ebpf::load_file(&self.bpf_path)
-            .context("Failed to load BPF object with Aya")?;
+        let _bpf = Ebpf::load_file(&self.bpf_path).context("Failed to load BPF object with Aya")?;
 
         // Aya should automatically handle struct_ops maps
         // The hid_bpf_ops struct_ops will be registered
@@ -271,7 +266,7 @@ impl AkkoBpfLoader {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Don't error if already unloaded
             if !stderr.contains("not found") {
-                return Err(anyhow!("bpftool unregister failed: {}", stderr));
+                return Err(anyhow!("bpftool unregister failed: {stderr}"));
             }
         }
 
@@ -306,18 +301,37 @@ pub struct BpfStatus {
 impl std::fmt::Display for BpfStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "HID-BPF Battery Status:")?;
-        writeln!(f, "  BPF object: {:?} ({})",
-                 self.bpf_path,
-                 if self.bpf_exists { "exists" } else { "NOT FOUND" })?;
-        writeln!(f, "  Dongle: {}",
-                 if self.dongle_found { "connected" } else { "not found" })?;
-        writeln!(f, "  power_supply: {}",
-                 if self.power_supply_found { "created" } else { "not present" })?;
+        writeln!(
+            f,
+            "  BPF object: {:?} ({})",
+            self.bpf_path,
+            if self.bpf_exists {
+                "exists"
+            } else {
+                "NOT FOUND"
+            }
+        )?;
+        writeln!(
+            f,
+            "  Dongle: {}",
+            if self.dongle_found {
+                "connected"
+            } else {
+                "not found"
+            }
+        )?;
+        writeln!(
+            f,
+            "  power_supply: {}",
+            if self.power_supply_found {
+                "created"
+            } else {
+                "not present"
+            }
+        )?;
 
         if let Some(ref info) = self.battery_info {
-            writeln!(f, "  Battery: {}% ({})",
-                     info.capacity,
-                     info.status)?;
+            writeln!(f, "  Battery: {}% ({})", info.capacity, info.status)?;
         }
 
         Ok(())
@@ -332,12 +346,12 @@ mod tests {
     fn test_find_dongle() {
         // This will only pass if dongle is connected
         let result = AkkoBpfLoader::find_dongle();
-        println!("Dongle: {:?}", result);
+        println!("Dongle: {result:?}");
     }
 
     #[test]
     fn test_find_power_supply() {
         let result = AkkoBpfLoader::find_power_supply();
-        println!("power_supply: {:?}", result);
+        println!("power_supply: {result:?}");
     }
 }

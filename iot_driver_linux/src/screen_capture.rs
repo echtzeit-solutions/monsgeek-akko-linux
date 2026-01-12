@@ -119,7 +119,11 @@ fn run_screen_color_loop(
 
             let report = screen_color::build_report(r, g, b);
             // Use the standard send method with Bit7 checksum
-            device.send(cmd::SET_SCREEN_COLOR, &report[1..8], crate::protocol::ChecksumType::Bit7);
+            device.send(
+                cmd::SET_SCREEN_COLOR,
+                &report[1..8],
+                crate::protocol::ChecksumType::Bit7,
+            );
             last_color = (r, g, b);
         }
 
@@ -194,21 +198,23 @@ pub mod pipewire_capture {
     }
 
     /// Run PipeWire capture loop (blocking)
-    fn run_pipewire_capture(node_id: u32, state: Arc<ScreenColorState>, fps: u32) -> Result<(), String> {
+    fn run_pipewire_capture(
+        node_id: u32,
+        state: Arc<ScreenColorState>,
+        fps: u32,
+    ) -> Result<(), String> {
         use pipewire as pw;
-        use pipewire::context::Context;
-        use pipewire::main_loop::MainLoop;
-        use pipewire::stream::{Stream, StreamFlags};
+        use pipewire::context::ContextBox;
+        use pipewire::main_loop::MainLoopBox;
         use pipewire::spa::utils::Direction;
+        use pipewire::stream::{StreamBox, StreamFlags};
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        // Initialize PipeWire
-        pipewire::init();
-
-        let main_loop = MainLoop::new(None)
-            .map_err(|e| format!("Failed to create main loop: {e:?}"))?;
-        let context = Context::new(&main_loop)
+        // Initialize PipeWire (MainLoopBox::new does this automatically)
+        let main_loop =
+            MainLoopBox::new(None).map_err(|e| format!("Failed to create main loop: {e:?}"))?;
+        let context = ContextBox::new(main_loop.loop_(), None)
             .map_err(|e| format!("Failed to create context: {e:?}"))?;
         let core = context
             .connect(None)
@@ -222,7 +228,7 @@ pub mod pipewire_capture {
         };
 
         // Create stream
-        let stream = Stream::new(&core, "screen-color-capture", props)
+        let stream = StreamBox::new(&core, "screen-color-capture", props)
             .map_err(|e| format!("Failed to create stream: {e:?}"))?;
 
         // State for video format
@@ -301,9 +307,18 @@ pub mod pipewire_capture {
                 Choice,
                 Range,
                 Rectangle,
-                pw::spa::utils::Rectangle { width: 320, height: 240 },
-                pw::spa::utils::Rectangle { width: 1, height: 1 },
-                pw::spa::utils::Rectangle { width: 4096, height: 4096 }
+                pw::spa::utils::Rectangle {
+                    width: 320,
+                    height: 240
+                },
+                pw::spa::utils::Rectangle {
+                    width: 1,
+                    height: 1
+                },
+                pw::spa::utils::Rectangle {
+                    width: 4096,
+                    height: 4096
+                }
             ),
             pw::spa::pod::property!(
                 pw::spa::param::format::FormatProperties::VideoFramerate,
@@ -324,8 +339,7 @@ pub mod pipewire_capture {
         .0
         .into_inner();
 
-        let pod = pw::spa::pod::Pod::from_bytes(pod)
-            .ok_or("Failed to create pod from bytes")?;
+        let pod = pw::spa::pod::Pod::from_bytes(pod).ok_or("Failed to create pod from bytes")?;
 
         // Connect to the screencast node
         stream
@@ -415,8 +429,8 @@ pub fn run_screen_color_mode_sync(
     fps: u32,
 ) -> Result<(), String> {
     // Create a new tokio runtime for the async parts
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create runtime: {e}"))?;
+    let rt =
+        tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(run_screen_color_mode(device, running, fps))
 }

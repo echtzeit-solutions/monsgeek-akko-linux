@@ -9,15 +9,15 @@ use futures::{Stream, StreamExt};
 use hidapi::{HidApi, HidDevice};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_udev::{MonitorBuilder, EventType};
+use tokio_udev::{EventType, MonitorBuilder};
 use tonic::{Request, Response, Status};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use iot_driver::hal::{device_registry, HidInterface};
 use iot_driver::protocol::{self, cmd};
 
-#[allow(non_camel_case_types)]  // Proto types use camelCase to match original iot_driver.exe
-#[allow(clippy::enum_variant_names)]  // Proto enum variants have Yzw prefix
+#[allow(non_camel_case_types)] // Proto types use camelCase to match original iot_driver.exe
+#[allow(clippy::enum_variant_names)] // Proto enum variants have Yzw prefix
 pub mod driver {
     tonic::include_proto!("driver");
 }
@@ -136,7 +136,11 @@ impl DriverService {
                         let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
                         match connected.device.read_timeout(&mut buf, 10) {
                             Ok(len) if len > 0 => {
-                                debug!("Vendor event from {}: {:02x?}", path, &buf[..std::cmp::min(len, 16)]);
+                                debug!(
+                                    "Vendor event from {}: {:02x?}",
+                                    path,
+                                    &buf[..std::cmp::min(len, 16)]
+                                );
                                 let event = VenderMsg {
                                     msg: buf[..len].to_vec(),
                                 };
@@ -179,13 +183,19 @@ impl DriverService {
 
                 match device_info.open_device(&hidapi) {
                     Ok(device) => {
-                        info!("Auto-opened device for vendor polling: {} (usage=0x{:02x})", path, usage);
-                        devices.insert(path.clone(), ConnectedDevice {
-                            device,
-                            _vid: vid,
-                            _pid: pid,
-                            _path: path,
-                        });
+                        info!(
+                            "Auto-opened device for vendor polling: {} (usage=0x{:02x})",
+                            path, usage
+                        );
+                        devices.insert(
+                            path.clone(),
+                            ConnectedDevice {
+                                device,
+                                _vid: vid,
+                                _pid: pid,
+                                _path: path,
+                            },
+                        );
                     }
                     Err(e) => {
                         warn!("Failed to auto-open device: {}", e);
@@ -345,12 +355,15 @@ impl DriverService {
                             oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
                         });
 
-                        devs.insert(path.clone(), ConnectedDevice {
-                            device,
-                            _vid: vid,
-                            _pid: pid,
-                            _path: path,
-                        });
+                        devs.insert(
+                            path.clone(),
+                            ConnectedDevice {
+                                device,
+                                _vid: vid,
+                                _pid: pid,
+                                _path: path,
+                            },
+                        );
                     }
                     Err(e) => {
                         warn!("Hot-plug: failed to open device: {}", e);
@@ -386,7 +399,8 @@ impl DriverService {
         }
 
         // Remove devices no longer present
-        let to_remove: Vec<String> = devs.keys()
+        let to_remove: Vec<String> = devs
+            .keys()
             .filter(|path| !current_paths.contains(*path))
             .cloned()
             .collect();
@@ -406,12 +420,12 @@ impl DriverService {
     /// - byte[4] = is_online flag
     fn query_dongle_battery(device: &HidDevice) -> Option<(u32, bool)> {
         let mut buf = [0u8; 65];
-        buf[0] = 0x05;  // Report ID for vendor interface
+        buf[0] = 0x05; // Report ID for vendor interface
 
         match device.get_feature_report(&mut buf) {
             Ok(len) if len >= 5 => {
                 let battery = buf[1] as u32;
-                let online = buf[4] != 0;  // byte[4] = is_online (confirmed)
+                let online = buf[4] != 0; // byte[4] = is_online (confirmed)
 
                 // Sanity check battery level
                 if battery <= 100 {
@@ -440,9 +454,8 @@ impl DriverService {
         let mut response = [0u8; 65];
         match device.get_feature_report(&mut response) {
             Ok(len) if len >= 6 && response[1] == cmd::GET_USB_VERSION => {
-                let device_id = u32::from_le_bytes([
-                    response[2], response[3], response[4], response[5]
-                ]) as i32;
+                let device_id =
+                    u32::from_le_bytes([response[2], response[3], response[4], response[5]]) as i32;
                 Some(device_id)
             }
             _ => None,
@@ -475,9 +488,9 @@ impl DriverService {
         match device.get_feature_report(&mut response) {
             Ok(len) if len >= 6 => {
                 if response[1] == cmd::GET_USB_VERSION {
-                    let device_id = u32::from_le_bytes([
-                        response[2], response[3], response[4], response[5]
-                    ]) as i32;
+                    let device_id =
+                        u32::from_le_bytes([response[2], response[3], response[4], response[5]])
+                            as i32;
                     info!("Device ID: {}", device_id);
                     return Some(device_id);
                 }
@@ -511,7 +524,10 @@ impl DriverService {
                 let path = known.path_key();
                 let hid_path = device_info.path().to_string_lossy().to_string();
 
-                info!("Found device: VID={:04x} PID={:04x} path={}", vid, pid, hid_path);
+                info!(
+                    "Found device: VID={:04x} PID={:04x} path={}",
+                    vid, pid, hid_path
+                );
 
                 // Check if this is a 2.4GHz dongle
                 let is_dongle = pid == 0x5038;
@@ -522,10 +538,9 @@ impl DriverService {
 
                         // Query battery status for dongles
                         let (batt, online) = if is_dongle {
-                            Self::query_dongle_battery(&hid_device)
-                                .unwrap_or((100, true))
+                            Self::query_dongle_battery(&hid_device).unwrap_or((100, true))
                         } else {
-                            (100, true)  // Wired devices always "online" with "full" battery
+                            (100, true) // Wired devices always "online" with "full" battery
                         };
 
                         (id, batt, online)
@@ -573,7 +588,10 @@ impl DriverService {
                             _pid: pid,
                             _path: device_path.to_string(),
                         };
-                        self.devices.lock().unwrap().insert(device_path.to_string(), connected);
+                        self.devices
+                            .lock()
+                            .unwrap()
+                            .insert(device_path.to_string(), connected);
                         info!("Opened device: {}", device_path);
                         return Ok(());
                     }
@@ -599,13 +617,14 @@ impl DriverService {
         }
 
         let devices = self.devices.lock().unwrap();
-        let connected = devices.get(device_path)
+        let connected = devices
+            .get(device_path)
             .ok_or_else(|| Status::not_found("Device not connected"))?;
 
         let mut buf = vec![0u8; 65];
         buf[0] = 0;
         let len = std::cmp::min(data.len(), 64);
-        buf[1..1+len].copy_from_slice(&data[..len]);
+        buf[1..1 + len].copy_from_slice(&data[..len]);
 
         debug!("Sending feature report: {:02x?}", &buf[..9]);
 
@@ -629,7 +648,8 @@ impl DriverService {
         }
 
         let devices = self.devices.lock().unwrap();
-        let connected = devices.get(device_path)
+        let connected = devices
+            .get(device_path)
             .ok_or_else(|| Status::not_found("Device not connected"))?;
 
         let mut buf = vec![0u8; 65];
@@ -637,7 +657,11 @@ impl DriverService {
 
         match connected.device.get_feature_report(&mut buf) {
             Ok(len) => {
-                debug!("Received feature report ({} bytes): {:02x?}", len, &buf[..std::cmp::min(len, 9)]);
+                debug!(
+                    "Received feature report ({} bytes): {:02x?}",
+                    len,
+                    &buf[..std::cmp::min(len, 9)]
+                );
                 Ok(buf[1..].to_vec())
             }
             Err(e) => {
@@ -663,7 +687,10 @@ impl DriverGrpc for DriverService {
         info!("watch_dev_list called");
 
         let initial_devices = self.scan_devices();
-        info!("Sending {} initial devices to client", initial_devices.len());
+        info!(
+            "Sending {} initial devices to client",
+            initial_devices.len()
+        );
 
         let rx = self.device_tx.subscribe();
 
@@ -674,16 +701,15 @@ impl DriverGrpc for DriverService {
 
         let initial_stream = futures::stream::iter(std::iter::once(Ok(initial_list)));
 
-        let broadcast_stream = BroadcastStream::new(rx)
-            .filter_map(|result| async move {
-                match result {
-                    Ok(dev) => Some(Ok(DeviceList {
-                        dev_list: vec![dev],
-                        r#type: DeviceListChangeType::Add as i32,
-                    })),
-                    Err(_) => None,
-                }
-            });
+        let broadcast_stream = BroadcastStream::new(rx).filter_map(|result| async move {
+            match result {
+                Ok(dev) => Some(Ok(DeviceList {
+                    dev_list: vec![dev],
+                    r#type: DeviceListChangeType::Add as i32,
+                })),
+                Err(_) => None,
+            }
+        });
 
         let combined = initial_stream.chain(broadcast_stream);
         Ok(Response::new(Box::pin(combined)))
@@ -702,11 +728,17 @@ impl DriverGrpc for DriverService {
         request: Request<SendMsg>,
     ) -> Result<Response<ResSend>, Status> {
         let msg = request.into_inner();
-        debug!("send_raw_feature: path={}, {} bytes", msg.device_path, msg.msg.len());
+        debug!(
+            "send_raw_feature: path={}, {} bytes",
+            msg.device_path,
+            msg.msg.len()
+        );
 
         match self.send_feature(&msg.device_path, &msg.msg) {
             Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
-            Err(e) => Ok(Response::new(ResSend { err: e.message().to_string() })),
+            Err(e) => Ok(Response::new(ResSend {
+                err: e.message().to_string(),
+            })),
         }
     }
 
@@ -718,56 +750,65 @@ impl DriverGrpc for DriverService {
         debug!("read_raw_feature: path={}", msg.device_path);
 
         match self.read_feature(&msg.device_path) {
-            Ok(data) => Ok(Response::new(ResRead { err: String::new(), msg: data })),
-            Err(e) => Ok(Response::new(ResRead { err: e.message().to_string(), msg: vec![] })),
+            Ok(data) => Ok(Response::new(ResRead {
+                err: String::new(),
+                msg: data,
+            })),
+            Err(e) => Ok(Response::new(ResRead {
+                err: e.message().to_string(),
+                msg: vec![],
+            })),
         }
     }
 
-    async fn send_msg(
-        &self,
-        request: Request<SendMsg>,
-    ) -> Result<Response<ResSend>, Status> {
+    async fn send_msg(&self, request: Request<SendMsg>) -> Result<Response<ResSend>, Status> {
         let msg = request.into_inner();
-        debug!("send_msg: path={}, checksum={:?}", msg.device_path, msg.check_sum_type);
+        debug!(
+            "send_msg: path={}, checksum={:?}",
+            msg.device_path, msg.check_sum_type
+        );
 
         let mut data = msg.msg.clone();
         if data.len() < 64 {
             data.resize(64, 0);
         }
 
-        let checksum_type = CheckSumType::try_from(msg.check_sum_type).unwrap_or(CheckSumType::Bit7);
+        let checksum_type =
+            CheckSumType::try_from(msg.check_sum_type).unwrap_or(CheckSumType::Bit7);
         apply_checksum(&mut data, checksum_type);
 
         match self.send_feature(&msg.device_path, &data) {
             Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
-            Err(e) => Ok(Response::new(ResSend { err: e.message().to_string() })),
+            Err(e) => Ok(Response::new(ResSend {
+                err: e.message().to_string(),
+            })),
         }
     }
 
-    async fn read_msg(
-        &self,
-        request: Request<ReadMsg>,
-    ) -> Result<Response<ResRead>, Status> {
+    async fn read_msg(&self, request: Request<ReadMsg>) -> Result<Response<ResRead>, Status> {
         let msg = request.into_inner();
         debug!("read_msg: path={}", msg.device_path);
 
         match self.read_feature(&msg.device_path) {
-            Ok(data) => Ok(Response::new(ResRead { err: String::new(), msg: data })),
-            Err(e) => Ok(Response::new(ResRead { err: e.message().to_string(), msg: vec![] })),
+            Ok(data) => Ok(Response::new(ResRead {
+                err: String::new(),
+                msg: data,
+            })),
+            Err(e) => Ok(Response::new(ResRead {
+                err: e.message().to_string(),
+                msg: vec![],
+            })),
         }
     }
 
-    async fn get_item_from_db(
-        &self,
-        _request: Request<GetItem>,
-    ) -> Result<Response<Item>, Status> {
-        Ok(Response::new(Item { value: vec![], err_str: String::new() }))
+    async fn get_item_from_db(&self, _request: Request<GetItem>) -> Result<Response<Item>, Status> {
+        Ok(Response::new(Item {
+            value: vec![],
+            err_str: String::new(),
+        }))
     }
 
-    async fn insert_db(
-        &self,
-        _request: Request<InsertDb>,
-    ) -> Result<Response<ResSend>, Status> {
+    async fn insert_db(&self, _request: Request<InsertDb>) -> Result<Response<ResSend>, Status> {
         Ok(Response::new(ResSend { err: String::new() }))
     }
 
@@ -782,20 +823,23 @@ impl DriverGrpc for DriverService {
         &self,
         _request: Request<GetAll>,
     ) -> Result<Response<AllList>, Status> {
-        Ok(Response::new(AllList { data: vec![], err_str: String::new() }))
+        Ok(Response::new(AllList {
+            data: vec![],
+            err_str: String::new(),
+        }))
     }
 
     async fn get_all_values_from_db(
         &self,
         _request: Request<GetAll>,
     ) -> Result<Response<AllList>, Status> {
-        Ok(Response::new(AllList { data: vec![], err_str: String::new() }))
+        Ok(Response::new(AllList {
+            data: vec![],
+            err_str: String::new(),
+        }))
     }
 
-    async fn get_version(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Version>, Status> {
+    async fn get_version(&self, _request: Request<Empty>) -> Result<Response<Version>, Status> {
         Ok(Response::new(Version {
             base_version: "222".to_string(),
             time_stamp: "2024-12-29".to_string(),
@@ -820,14 +864,20 @@ impl DriverGrpc for DriverService {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<MicrophoneMuteStatus>, Status> {
-        Ok(Response::new(MicrophoneMuteStatus { is_mute: false, err: String::new() }))
+        Ok(Response::new(MicrophoneMuteStatus {
+            is_mute: false,
+            err: String::new(),
+        }))
     }
 
     async fn get_microphone_mute(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<MicrophoneMuteStatus>, Status> {
-        Ok(Response::new(MicrophoneMuteStatus { is_mute: false, err: String::new() }))
+        Ok(Response::new(MicrophoneMuteStatus {
+            is_mute: false,
+            err: String::new(),
+        }))
     }
 
     async fn change_wireless_loop_status(
@@ -837,10 +887,7 @@ impl DriverGrpc for DriverService {
         Ok(Response::new(ResSend { err: String::new() }))
     }
 
-    async fn set_light_type(
-        &self,
-        _request: Request<SetLight>,
-    ) -> Result<Response<Empty>, Status> {
+    async fn set_light_type(&self, _request: Request<SetLight>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 
@@ -853,13 +900,12 @@ impl DriverGrpc for DriverService {
         self.start_vendor_polling();
 
         let rx = self.vendor_tx.subscribe();
-        let stream = BroadcastStream::new(rx)
-            .filter_map(|result| async move {
-                match result {
-                    Ok(event) => Some(Ok(event)),
-                    Err(_) => None,
-                }
-            });
+        let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+            match result {
+                Ok(event) => Some(Ok(event)),
+                Err(_) => None,
+            }
+        });
 
         Ok(Response::new(Box::pin(stream)))
     }
@@ -868,6 +914,8 @@ impl DriverGrpc for DriverService {
         &self,
         _request: Request<WeatherReq>,
     ) -> Result<Response<WeatherRes>, Status> {
-        Ok(Response::new(WeatherRes { res: "{}".to_string() }))
+        Ok(Response::new(WeatherRes {
+            res: "{}".to_string(),
+        }))
     }
 }

@@ -86,15 +86,15 @@ impl From<JsonTravelSettings> for TravelSettings {
 impl JsonProfile {
     /// Load profile from a JSON file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, LoadError> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| LoadError::Io(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path.as_ref()).map_err(|e| LoadError::Io(e.to_string()))?;
         Self::load_from_json(&content)
     }
 
     /// Load profile from a JSON string
     pub fn load_from_json(json: &str) -> Result<Self, LoadError> {
-        let profile: JsonProfile = serde_json::from_str(json)
-            .map_err(|e| LoadError::Parse(e.to_string()))?;
+        let profile: JsonProfile =
+            serde_json::from_str(json).map_err(|e| LoadError::Parse(e.to_string()))?;
         profile.validate()?;
         Ok(profile)
     }

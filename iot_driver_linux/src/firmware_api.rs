@@ -1,9 +1,9 @@
 // Firmware API client for checking and downloading firmware updates
 // Uses the MonsGeek/Akko Cloud API
 
-use std::path::Path;
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 /// API base URL
 pub const API_BASE: &str = "https://api2.rongyuan.tech:3816/api/v2";
@@ -102,7 +102,12 @@ impl FirmwareVersions {
         let mut parts = Vec::new();
 
         if let Some(v) = self.usb {
-            parts.push(format!("USB: {}.{}.{}", (v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF));
+            parts.push(format!(
+                "USB: {}.{}.{}",
+                (v >> 8) & 0xF,
+                (v >> 4) & 0xF,
+                v & 0xF
+            ));
         }
         if let Some(v) = self.rf {
             parts.push(format!("RF: 0x{v:X}"));
@@ -220,25 +225,33 @@ pub fn check_firmware_blocking(device_id: u32) -> Result<FirmwareCheckResponse, 
     // Check error code
     if let Some(err_code) = json.get("errCode").and_then(|v| v.as_i64()) {
         if err_code != 0 {
-            return Err(ApiError::ServerError(err_code as i32, "API error".to_string()));
+            return Err(ApiError::ServerError(
+                err_code as i32,
+                "API error".to_string(),
+            ));
         }
     }
 
     // Parse data
-    let data = json.get("data").ok_or_else(|| ApiError::ParseError("No data in response".to_string()))?;
+    let data = json
+        .get("data")
+        .ok_or_else(|| ApiError::ParseError("No data in response".to_string()))?;
 
-    let version_str = data.get("version_str")
+    let version_str = data
+        .get("version_str")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
     let mut versions = FirmwareVersions::parse(version_str);
 
     // Get download path
-    versions.download_path = data.get("path")
+    versions.download_path = data
+        .get("path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let lowest_app_version = data.get("lowest_app_version_str")
+    let lowest_app_version = data
+        .get("lowest_app_version_str")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -293,7 +306,7 @@ pub async fn check_firmware(device_id: u32) -> Result<FirmwareCheckResponse, Api
         .build()
         .map_err(|e| ApiError::RequestError(e.to_string()))?;
 
-    let url = format!("{}/get_fw_version", API_BASE);
+    let url = format!("{API_BASE}/get_fw_version");
 
     let mut body = HashMap::new();
     body.insert("dev_id", device_id);
@@ -320,24 +333,32 @@ pub async fn check_firmware(device_id: u32) -> Result<FirmwareCheckResponse, Api
     // Check error code
     if let Some(err_code) = json.get("errCode").and_then(|v| v.as_i64()) {
         if err_code != 0 {
-            return Err(ApiError::ServerError(err_code as i32, "API error".to_string()));
+            return Err(ApiError::ServerError(
+                err_code as i32,
+                "API error".to_string(),
+            ));
         }
     }
 
     // Parse data
-    let data = json.get("data").ok_or_else(|| ApiError::ParseError("No data in response".to_string()))?;
+    let data = json
+        .get("data")
+        .ok_or_else(|| ApiError::ParseError("No data in response".to_string()))?;
 
-    let version_str = data.get("version_str")
+    let version_str = data
+        .get("version_str")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
     let mut versions = FirmwareVersions::parse(version_str);
 
-    versions.download_path = data.get("path")
+    versions.download_path = data
+        .get("path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let lowest_app_version = data.get("lowest_app_version_str")
+    let lowest_app_version = data
+        .get("lowest_app_version_str")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -358,7 +379,7 @@ pub async fn download_firmware<P: AsRef<Path>>(
         .build()
         .map_err(|e| ApiError::RequestError(e.to_string()))?;
 
-    let url = format!("{}{}", DOWNLOAD_BASE, download_path);
+    let url = format!("{DOWNLOAD_BASE}{download_path}");
 
     let response = client
         .get(&url)

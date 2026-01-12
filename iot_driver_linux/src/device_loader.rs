@@ -57,8 +57,8 @@ impl DeviceDatabase {
 
     /// Load devices from JSON string
     pub fn load_from_json(json: &str) -> Result<Self, String> {
-        let devices: Vec<JsonDeviceDefinition> = serde_json::from_str(json)
-            .map_err(|e| format!("Failed to parse JSON: {e}"))?;
+        let devices: Vec<JsonDeviceDefinition> =
+            serde_json::from_str(json).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
         let mut db = Self::new();
         for device in devices {
@@ -74,16 +74,10 @@ impl DeviceDatabase {
         let company = device.company.clone();
 
         // Index by VID/PID
-        self.devices_by_vid_pid
-            .entry(vid_pid)
-            .or_default()
-            .push(id);
+        self.devices_by_vid_pid.entry(vid_pid).or_default().push(id);
 
         // Index by company
-        self.devices_by_company
-            .entry(company)
-            .or_default()
-            .push(id);
+        self.devices_by_company.entry(company).or_default().push(id);
 
         // Store device
         self.devices_by_id.insert(id, device);
@@ -98,16 +92,28 @@ impl DeviceDatabase {
     pub fn find_by_vid_pid(&self, vid: u16, pid: u16) -> Vec<&JsonDeviceDefinition> {
         self.devices_by_vid_pid
             .get(&(vid, pid))
-            .map(|ids| ids.iter().filter_map(|id| self.devices_by_id.get(id)).collect())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.devices_by_id.get(id))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     /// Find first device with matching VID/PID (prioritize by company)
-    pub fn find_by_vid_pid_company(&self, vid: u16, pid: u16, preferred_company: &str) -> Option<&JsonDeviceDefinition> {
+    pub fn find_by_vid_pid_company(
+        &self,
+        vid: u16,
+        pid: u16,
+        preferred_company: &str,
+    ) -> Option<&JsonDeviceDefinition> {
         let matches = self.find_by_vid_pid(vid, pid);
 
         // Try to find matching company first
-        if let Some(dev) = matches.iter().find(|d| d.company.eq_ignore_ascii_case(preferred_company)) {
+        if let Some(dev) = matches
+            .iter()
+            .find(|d| d.company.eq_ignore_ascii_case(preferred_company))
+        {
             return Some(dev);
         }
 
@@ -119,7 +125,11 @@ impl DeviceDatabase {
     pub fn find_by_company(&self, company: &str) -> Vec<&JsonDeviceDefinition> {
         self.devices_by_company
             .get(company)
-            .map(|ids| ids.iter().filter_map(|id| self.devices_by_id.get(id)).collect())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.devices_by_id.get(id))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

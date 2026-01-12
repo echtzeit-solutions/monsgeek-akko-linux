@@ -1,27 +1,24 @@
 // MonsGeek M1 V5 HE TUI Application
 // Real-time monitoring and settings configuration
 
-use std::collections::{HashSet, VecDeque};
-use std::io::{self, stdout};
-use std::time::{Duration, Instant};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::{prelude::*, widgets::*};
+use std::collections::{HashSet, VecDeque};
+use std::io::{self, stdout};
+use std::time::{Duration, Instant};
 
 // Use shared library
-use crate::{cmd, MonsGeekDevice, DeviceInfo, TriggerSettings, magnetism, key_mode};
 use crate::hid::BatteryInfo;
+use crate::{cmd, key_mode, magnetism, DeviceInfo, MonsGeekDevice, TriggerSettings};
 
 /// Application state
 struct App {
     device: Option<MonsGeekDevice>,
-    input_device: Option<hidapi::HidDevice>,  // Separate INPUT interface for depth reports
+    input_device: Option<hidapi::HidDevice>, // Separate INPUT interface for depth reports
     info: DeviceInfo,
     tab: usize,
     selected: usize,
@@ -36,7 +33,7 @@ struct App {
     triggers: Option<TriggerSettings>,
     trigger_scroll: usize,
     trigger_view_mode: TriggerViewMode,
-    trigger_selected_key: usize,  // Selected key in layout view
+    trigger_selected_key: usize, // Selected key in layout view
     precision_factor: f32,
     // Keyboard options
     options: Option<KeyboardOptions>,
@@ -47,11 +44,11 @@ struct App {
     macro_edit_text: String,
     // Key depth visualization
     depth_view_mode: DepthViewMode,
-    depth_history: Vec<VecDeque<f32>>,  // Per-key history for time series
-    active_keys: HashSet<usize>,         // Keys with recent activity
-    selected_keys: HashSet<usize>,       // Keys selected for time series view
-    depth_cursor: usize,                 // Cursor for key selection
-    depth_sample_idx: usize,             // Global sample counter for time axis
+    depth_history: Vec<VecDeque<f32>>, // Per-key history for time series
+    active_keys: HashSet<usize>,       // Keys with recent activity
+    selected_keys: HashSet<usize>,     // Keys selected for time series view
+    depth_cursor: usize,               // Cursor for key selection
+    depth_sample_idx: usize,           // Global sample counter for time axis
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
     last_battery_check: Instant,
@@ -90,16 +87,16 @@ struct KeyboardOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum DepthViewMode {
     #[default]
-    BarChart,    // Bar chart of all active keys
-    TimeSeries,  // Time series graph of selected keys
+    BarChart, // Bar chart of all active keys
+    TimeSeries, // Time series graph of selected keys
 }
 
 /// Trigger settings view mode
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum TriggerViewMode {
     #[default]
-    List,        // Scrollable list of keys
-    Layout,      // Visual keyboard layout
+    List, // Scrollable list of keys
+    Layout, // Visual keyboard layout
 }
 
 /// History length for time series (samples)
@@ -112,11 +109,11 @@ const DEPTH_HISTORY_LEN: usize = 100;
 /// Context in which a keybind is active
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum KeyContext {
-    Global,      // Available everywhere
-    Led,         // LED Settings tab (1)
-    Depth,       // Key Depth tab (2)
-    Triggers,    // Trigger Settings tab (3)
-    Macros,      // Macros tab (5)
+    Global,   // Available everywhere
+    Led,      // LED Settings tab (1)
+    Depth,    // Key Depth tab (2)
+    Triggers, // Trigger Settings tab (3)
+    Macros,   // Macros tab (5)
 }
 
 /// A single keybinding definition
@@ -129,35 +126,135 @@ struct Keybind {
 /// All TUI keybindings - single source of truth
 const TUI_KEYBINDS: &[Keybind] = &[
     // Global keybindings
-    Keybind { keys: "q / Esc", description: "Quit application", context: KeyContext::Global },
-    Keybind { keys: "? / F1", description: "Toggle this help", context: KeyContext::Global },
-    Keybind { keys: "Tab", description: "Next tab", context: KeyContext::Global },
-    Keybind { keys: "Shift+Tab", description: "Previous tab", context: KeyContext::Global },
-    Keybind { keys: "↑ / k", description: "Navigate up", context: KeyContext::Global },
-    Keybind { keys: "↓ / j", description: "Navigate down", context: KeyContext::Global },
-    Keybind { keys: "← / h", description: "Navigate left / decrease", context: KeyContext::Global },
-    Keybind { keys: "→ / l", description: "Navigate right / increase", context: KeyContext::Global },
-    Keybind { keys: "r", description: "Refresh device info", context: KeyContext::Global },
-    Keybind { keys: "c", description: "Connect to device", context: KeyContext::Global },
-    Keybind { keys: "m", description: "Toggle depth monitoring", context: KeyContext::Global },
-    Keybind { keys: "Ctrl+1-4", description: "Switch profile 1-4", context: KeyContext::Global },
-    Keybind { keys: "PgUp/PgDn", description: "Fast scroll (15 items)", context: KeyContext::Global },
+    Keybind {
+        keys: "q / Esc",
+        description: "Quit application",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "? / F1",
+        description: "Toggle this help",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "Tab",
+        description: "Next tab",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "Shift+Tab",
+        description: "Previous tab",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "↑ / k",
+        description: "Navigate up",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "↓ / j",
+        description: "Navigate down",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "← / h",
+        description: "Navigate left / decrease",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "→ / l",
+        description: "Navigate right / increase",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "r",
+        description: "Refresh device info",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "c",
+        description: "Connect to device",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "m",
+        description: "Toggle depth monitoring",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "Ctrl+1-4",
+        description: "Switch profile 1-4",
+        context: KeyContext::Global,
+    },
+    Keybind {
+        keys: "PgUp/PgDn",
+        description: "Fast scroll (15 items)",
+        context: KeyContext::Global,
+    },
     // LED tab
-    Keybind { keys: "p", description: "Apply LED settings", context: KeyContext::Led },
-    Keybind { keys: "Shift+←/→", description: "Adjust by ±10", context: KeyContext::Led },
+    Keybind {
+        keys: "p",
+        description: "Apply LED settings",
+        context: KeyContext::Led,
+    },
+    Keybind {
+        keys: "Shift+←/→",
+        description: "Adjust by ±10",
+        context: KeyContext::Led,
+    },
     // Depth tab
-    Keybind { keys: "v", description: "Toggle visualization mode", context: KeyContext::Depth },
-    Keybind { keys: "x", description: "Clear depth data", context: KeyContext::Depth },
-    Keybind { keys: "Space", description: "Pause/resume monitoring", context: KeyContext::Depth },
+    Keybind {
+        keys: "v",
+        description: "Toggle visualization mode",
+        context: KeyContext::Depth,
+    },
+    Keybind {
+        keys: "x",
+        description: "Clear depth data",
+        context: KeyContext::Depth,
+    },
+    Keybind {
+        keys: "Space",
+        description: "Pause/resume monitoring",
+        context: KeyContext::Depth,
+    },
     // Triggers tab
-    Keybind { keys: "v", description: "Toggle list/layout view", context: KeyContext::Triggers },
-    Keybind { keys: "n / N", description: "Actuation -/+ 0.1mm", context: KeyContext::Triggers },
-    Keybind { keys: "t / T", description: "RT press sens -/+ 0.1mm", context: KeyContext::Triggers },
-    Keybind { keys: "d / D", description: "RT release sens -/+ 0.1mm", context: KeyContext::Triggers },
-    Keybind { keys: "s / S", description: "DKS sensitivity -/+ 0.1mm", context: KeyContext::Triggers },
+    Keybind {
+        keys: "v",
+        description: "Toggle list/layout view",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
+        keys: "n / N",
+        description: "Actuation -/+ 0.1mm",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
+        keys: "t / T",
+        description: "RT press sens -/+ 0.1mm",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
+        keys: "d / D",
+        description: "RT release sens -/+ 0.1mm",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
+        keys: "s / S",
+        description: "DKS sensitivity -/+ 0.1mm",
+        context: KeyContext::Triggers,
+    },
     // Macros tab
-    Keybind { keys: "e", description: "Edit selected macro", context: KeyContext::Macros },
-    Keybind { keys: "c", description: "Clear selected macro", context: KeyContext::Macros },
+    Keybind {
+        keys: "e",
+        description: "Edit selected macro",
+        context: KeyContext::Macros,
+    },
+    Keybind {
+        keys: "c",
+        description: "Clear selected macro",
+        context: KeyContext::Macros,
+    },
 ];
 
 /// Physical keyboard shortcuts from the manual
@@ -252,7 +349,8 @@ impl App {
                 // Initialize key depths array based on actual key count
                 self.key_depths = vec![0.0; self.key_count as usize];
                 // Initialize depth history for time series
-                self.depth_history = vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
+                self.depth_history =
+                    vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
                 self.active_keys.clear();
                 self.selected_keys.clear();
 
@@ -282,7 +380,8 @@ impl App {
     fn refresh_info(&mut self) {
         if let Some(ref device) = self.device {
             self.info = device.read_info();
-            self.precision_factor = MonsGeekDevice::precision_factor_from_version(self.info.version);
+            self.precision_factor =
+                MonsGeekDevice::precision_factor_from_version(self.info.version);
             self.last_refresh = Instant::now();
         }
     }
@@ -412,7 +511,9 @@ impl App {
                 self.info.led_mode,
                 self.info.led_brightness,
                 4 - self.info.led_speed.min(4),
-                r, g, b,
+                r,
+                g,
+                b,
                 self.info.led_dazzle,
             ) {
                 self.info.led_r = r;
@@ -501,7 +602,9 @@ impl App {
                 self.info.side_mode,
                 self.info.side_brightness,
                 4 - self.info.side_speed.min(4),
-                r, g, b,
+                r,
+                g,
+                b,
                 self.info.side_dazzle,
             ) {
                 self.info.side_r = r;
@@ -552,7 +655,12 @@ impl App {
             }
             if device.set_single_key_mode(&mut triggers.key_modes, key_index, mode) {
                 let key_name = get_key_label(key_index);
-                self.status_msg = format!("Key {} ({}) set to {}", key_index, key_name, magnetism::mode_name(mode));
+                self.status_msg = format!(
+                    "Key {} ({}) set to {}",
+                    key_index,
+                    key_name,
+                    magnetism::mode_name(mode)
+                );
             } else {
                 self.status_msg = format!("Failed to set key {key_index} mode");
             }
@@ -583,7 +691,9 @@ impl App {
 
     fn refresh_options(&mut self) {
         if let Some(ref device) = self.device {
-            if let Some((os_mode, fn_layer, anti_mistouch, rt_stability, wasd_swap)) = device.get_options() {
+            if let Some((os_mode, fn_layer, anti_mistouch, rt_stability, wasd_swap)) =
+                device.get_options()
+            {
                 self.options = Some(KeyboardOptions {
                     os_mode,
                     fn_layer,
@@ -600,7 +710,12 @@ impl App {
 
     fn save_options(&mut self) {
         if let (Some(ref device), Some(ref opts)) = (&self.device, &self.options) {
-            if device.set_options(opts.fn_layer, opts.anti_mistouch, opts.rt_stability, opts.wasd_swap) {
+            if device.set_options(
+                opts.fn_layer,
+                opts.anti_mistouch,
+                opts.rt_stability,
+                opts.wasd_swap,
+            ) {
                 self.status_msg = "Options saved".to_string();
             } else {
                 self.status_msg = "Failed to save options".to_string();
@@ -627,7 +742,11 @@ impl App {
     }
 
     fn toggle_anti_mistouch(&mut self) {
-        let new_val = self.options.as_ref().map(|o| !o.anti_mistouch).unwrap_or(false);
+        let new_val = self
+            .options
+            .as_ref()
+            .map(|o| !o.anti_mistouch)
+            .unwrap_or(false);
         if let Some(ref mut opts) = self.options {
             opts.anti_mistouch = new_val;
         }
@@ -671,7 +790,11 @@ impl App {
                             let is_down = flags & 0x80 != 0;
                             let delay_ms = flags & 0x7F;
 
-                            slot.events.push(MacroEvent { keycode, is_down, delay_ms });
+                            slot.events.push(MacroEvent {
+                                keycode,
+                                is_down,
+                                delay_ms,
+                            });
 
                             // Build text preview (only on key down, skip modifiers)
                             if is_down && keycode < 0xE0 {
@@ -822,7 +945,9 @@ impl App {
     /// Navigate to next valid key in layout view (Tab key)
     #[allow(dead_code)]
     fn layout_key_next(&mut self) {
-        let max_key = self.triggers.as_ref()
+        let max_key = self
+            .triggers
+            .as_ref()
             .map(|t| t.key_modes.len().saturating_sub(1))
             .unwrap_or(125);
 
@@ -891,7 +1016,8 @@ impl App {
     fn layout_key_right(&mut self) {
         let col = self.trigger_selected_key / 6;
         let row = self.trigger_selected_key % 6;
-        if col < 20 {  // 21 columns total
+        if col < 20 {
+            // 21 columns total
             let new_pos = (col + 1) * 6 + row;
             if new_pos < 126 && self.is_valid_key_position(new_pos) {
                 self.trigger_selected_key = new_pos;
@@ -1012,12 +1138,15 @@ pub fn run() -> io::Result<()> {
                                 // Move cursor up one row in depth bar chart
                                 // Row sizes: 15, 15, 13, 13, 10
                                 let row_starts = [0, 15, 30, 43, 56];
-                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
+                                if let Some(row) =
+                                    row_starts.iter().rposition(|&s| s <= app.depth_cursor)
+                                {
                                     if row > 0 {
                                         let col = app.depth_cursor - row_starts[row];
                                         let prev_row_start = row_starts[row - 1];
                                         let prev_row_size = row_starts[row] - prev_row_start;
-                                        app.depth_cursor = prev_row_start + col.min(prev_row_size - 1);
+                                        app.depth_cursor =
+                                            prev_row_start + col.min(prev_row_size - 1);
                                     }
                                 }
                             } else if app.tab == 3 {
@@ -1040,12 +1169,16 @@ pub fn run() -> io::Result<()> {
                             if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
                                 // Move cursor down one row in depth bar chart
                                 let row_starts = [0, 15, 30, 43, 56, 66]; // last is end sentinel
-                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
-                                    if row < 4 { // 5 rows total
+                                if let Some(row) =
+                                    row_starts.iter().rposition(|&s| s <= app.depth_cursor)
+                                {
+                                    if row < 4 {
+                                        // 5 rows total
                                         let col = app.depth_cursor - row_starts[row];
                                         let next_row_start = row_starts[row + 1];
                                         let next_row_size = row_starts[row + 2] - next_row_start;
-                                        app.depth_cursor = next_row_start + col.min(next_row_size - 1);
+                                        app.depth_cursor =
+                                            next_row_start + col.min(next_row_size - 1);
                                     }
                                 }
                             } else if app.tab == 3 {
@@ -1054,7 +1187,9 @@ pub fn run() -> io::Result<()> {
                                     app.layout_key_down();
                                 } else {
                                     // Scroll trigger list
-                                    let max_scroll = app.triggers.as_ref()
+                                    let max_scroll = app
+                                        .triggers
+                                        .as_ref()
                                         .map(|t| t.key_modes.len().saturating_sub(15))
                                         .unwrap_or(0);
                                     if app.trigger_scroll < max_scroll {
@@ -1076,51 +1211,72 @@ pub fn run() -> io::Result<()> {
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
-                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                            } else if app.tab == 3
+                                && app.trigger_view_mode == TriggerViewMode::Layout
+                            {
                                 app.layout_key_left();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
+                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT)
+                                {
+                                    10
+                                } else {
+                                    1
+                                };
                                 match app.selected {
                                     // Main LED
-                                    0 if app.info.led_mode > 0 => app.set_led_mode(app.info.led_mode - 1),
-                                    1 if app.info.led_brightness > 0 => app.set_brightness(app.info.led_brightness - 1),
+                                    0 if app.info.led_mode > 0 => {
+                                        app.set_led_mode(app.info.led_mode - 1)
+                                    }
+                                    1 if app.info.led_brightness > 0 => {
+                                        app.set_brightness(app.info.led_brightness - 1)
+                                    }
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
                                         if current > 0 {
                                             app.set_speed(current - 1);
                                         }
                                     }
-                                    3 => { // Red
+                                    3 => {
+                                        // Red
                                         let r = app.info.led_r.saturating_sub(step);
                                         app.set_color(r, app.info.led_g, app.info.led_b);
                                     }
-                                    4 => { // Green
+                                    4 => {
+                                        // Green
                                         let g = app.info.led_g.saturating_sub(step);
                                         app.set_color(app.info.led_r, g, app.info.led_b);
                                     }
-                                    5 => { // Blue
+                                    5 => {
+                                        // Blue
                                         let b = app.info.led_b.saturating_sub(step);
                                         app.set_color(app.info.led_r, app.info.led_g, b);
                                     }
                                     7 => app.toggle_dazzle(), // Dazzle
                                     // Side LED (8 is separator)
-                                    9 if app.info.side_mode > 0 => app.set_side_mode(app.info.side_mode - 1),
-                                    10 if app.info.side_brightness > 0 => app.set_side_brightness(app.info.side_brightness - 1),
+                                    9 if app.info.side_mode > 0 => {
+                                        app.set_side_mode(app.info.side_mode - 1)
+                                    }
+                                    10 if app.info.side_brightness > 0 => {
+                                        app.set_side_brightness(app.info.side_brightness - 1)
+                                    }
                                     11 => {
                                         let current = 4 - app.info.side_speed.min(4);
                                         if current > 0 {
                                             app.set_side_speed(current - 1);
                                         }
                                     }
-                                    12 => { // Side Red
+                                    12 => {
+                                        // Side Red
                                         let r = app.info.side_r.saturating_sub(step);
                                         app.set_side_color(r, app.info.side_g, app.info.side_b);
                                     }
-                                    13 => { // Side Green
+                                    13 => {
+                                        // Side Green
                                         let g = app.info.side_g.saturating_sub(step);
                                         app.set_side_color(app.info.side_r, g, app.info.side_b);
                                     }
-                                    14 => { // Side Blue
+                                    14 => {
+                                        // Side Blue
                                         let b = app.info.side_b.saturating_sub(step);
                                         app.set_side_color(app.info.side_r, app.info.side_g, b);
                                     }
@@ -1131,10 +1287,14 @@ pub fn run() -> io::Result<()> {
                                 // Options tab
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer > 0 => app.set_fn_layer(opts.fn_layer - 1),
+                                        0 if opts.fn_layer > 0 => {
+                                            app.set_fn_layer(opts.fn_layer - 1)
+                                        }
                                         1 => app.toggle_wasd_swap(),
                                         2 => app.toggle_anti_mistouch(),
-                                        3 if opts.rt_stability >= 25 => app.set_rt_stability(opts.rt_stability - 25),
+                                        3 if opts.rt_stability >= 25 => {
+                                            app.set_rt_stability(opts.rt_stability - 25)
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1147,51 +1307,72 @@ pub fn run() -> io::Result<()> {
                                 if app.depth_cursor < max_key {
                                     app.depth_cursor += 1;
                                 }
-                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                            } else if app.tab == 3
+                                && app.trigger_view_mode == TriggerViewMode::Layout
+                            {
                                 app.layout_key_right();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT) { 10 } else { 1 };
+                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT)
+                                {
+                                    10
+                                } else {
+                                    1
+                                };
                                 match app.selected {
                                     // Main LED
-                                    0 if app.info.led_mode < cmd::LED_MODE_MAX => app.set_led_mode(app.info.led_mode + 1),
-                                    1 if app.info.led_brightness < 4 => app.set_brightness(app.info.led_brightness + 1),
+                                    0 if app.info.led_mode < cmd::LED_MODE_MAX => {
+                                        app.set_led_mode(app.info.led_mode + 1)
+                                    }
+                                    1 if app.info.led_brightness < 4 => {
+                                        app.set_brightness(app.info.led_brightness + 1)
+                                    }
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
                                         if current < 4 {
                                             app.set_speed(current + 1);
                                         }
                                     }
-                                    3 => { // Red
+                                    3 => {
+                                        // Red
                                         let r = app.info.led_r.saturating_add(step);
                                         app.set_color(r, app.info.led_g, app.info.led_b);
                                     }
-                                    4 => { // Green
+                                    4 => {
+                                        // Green
                                         let g = app.info.led_g.saturating_add(step);
                                         app.set_color(app.info.led_r, g, app.info.led_b);
                                     }
-                                    5 => { // Blue
+                                    5 => {
+                                        // Blue
                                         let b = app.info.led_b.saturating_add(step);
                                         app.set_color(app.info.led_r, app.info.led_g, b);
                                     }
                                     7 => app.toggle_dazzle(), // Dazzle
                                     // Side LED (8 is separator)
-                                    9 if app.info.side_mode < cmd::LED_MODE_MAX => app.set_side_mode(app.info.side_mode + 1),
-                                    10 if app.info.side_brightness < 4 => app.set_side_brightness(app.info.side_brightness + 1),
+                                    9 if app.info.side_mode < cmd::LED_MODE_MAX => {
+                                        app.set_side_mode(app.info.side_mode + 1)
+                                    }
+                                    10 if app.info.side_brightness < 4 => {
+                                        app.set_side_brightness(app.info.side_brightness + 1)
+                                    }
                                     11 => {
                                         let current = 4 - app.info.side_speed.min(4);
                                         if current < 4 {
                                             app.set_side_speed(current + 1);
                                         }
                                     }
-                                    12 => { // Side Red
+                                    12 => {
+                                        // Side Red
                                         let r = app.info.side_r.saturating_add(step);
                                         app.set_side_color(r, app.info.side_g, app.info.side_b);
                                     }
-                                    13 => { // Side Green
+                                    13 => {
+                                        // Side Green
                                         let g = app.info.side_g.saturating_add(step);
                                         app.set_side_color(app.info.side_r, g, app.info.side_b);
                                     }
-                                    14 => { // Side Blue
+                                    14 => {
+                                        // Side Blue
                                         let b = app.info.side_b.saturating_add(step);
                                         app.set_side_color(app.info.side_r, app.info.side_g, b);
                                     }
@@ -1202,10 +1383,14 @@ pub fn run() -> io::Result<()> {
                                 // Options tab
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer < 3 => app.set_fn_layer(opts.fn_layer + 1),
+                                        0 if opts.fn_layer < 3 => {
+                                            app.set_fn_layer(opts.fn_layer + 1)
+                                        }
                                         1 => app.toggle_wasd_swap(),
                                         2 => app.toggle_anti_mistouch(),
-                                        3 if opts.rt_stability < 125 => app.set_rt_stability(opts.rt_stability + 25),
+                                        3 if opts.rt_stability < 125 => {
+                                            app.set_rt_stability(opts.rt_stability + 25)
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1230,10 +1415,14 @@ pub fn run() -> io::Result<()> {
                                 app.macro_edit_text.clear();
                                 // Pre-fill with existing text preview if available
                                 let m = &app.macros[app.macro_selected];
-                                if !m.text_preview.is_empty() && !m.text_preview.contains("events") {
+                                if !m.text_preview.is_empty() && !m.text_preview.contains("events")
+                                {
                                     app.macro_edit_text = m.text_preview.clone();
                                 }
-                                app.status_msg = format!("Editing macro {} - type text and press Enter", app.macro_selected);
+                                app.status_msg = format!(
+                                    "Editing macro {} - type text and press Enter",
+                                    app.macro_selected
+                                );
                             }
                         }
                         KeyCode::Char('c') if app.tab == 5 => {
@@ -1253,10 +1442,26 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         // Profile switching with Ctrl+1-4
-                        KeyCode::Char('1') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(0),
-                        KeyCode::Char('2') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(1),
-                        KeyCode::Char('3') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(2),
-                        KeyCode::Char('4') if key.modifiers.contains(event::KeyModifiers::CONTROL) => app.set_profile(3),
+                        KeyCode::Char('1')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            app.set_profile(0)
+                        }
+                        KeyCode::Char('2')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            app.set_profile(1)
+                        }
+                        KeyCode::Char('3')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            app.set_profile(2)
+                        }
+                        KeyCode::Char('4')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            app.set_profile(3)
+                        }
                         // Page up/down for fast trigger scrolling
                         KeyCode::PageUp => {
                             if app.tab == 3 {
@@ -1265,7 +1470,9 @@ pub fn run() -> io::Result<()> {
                         }
                         KeyCode::PageDown => {
                             if app.tab == 3 {
-                                let max_scroll = app.triggers.as_ref()
+                                let max_scroll = app
+                                    .triggers
+                                    .as_ref()
                                     .map(|t| t.key_modes.len().saturating_sub(15))
                                     .unwrap_or(0);
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
@@ -1320,7 +1527,8 @@ pub fn run() -> io::Result<()> {
                                 app.toggle_key_selection(app.depth_cursor);
                                 let label = get_key_label(app.depth_cursor);
                                 if app.selected_keys.contains(&app.depth_cursor) {
-                                    app.status_msg = format!("Selected Key {label} for time series");
+                                    app.status_msg =
+                                        format!("Selected Key {label} for time series");
                                 } else {
                                     app.status_msg = format!("Deselected Key {label}");
                                 }
@@ -1358,10 +1566,10 @@ fn ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Title
-            Constraint::Length(3),  // Tabs
-            Constraint::Min(10),    // Content
-            Constraint::Length(3),  // Status bar
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Tabs
+            Constraint::Min(10),   // Content
+            Constraint::Length(3), // Status bar
         ])
         .split(f.area());
 
@@ -1372,17 +1580,36 @@ fn ui(f: &mut Frame, app: &App) {
         "MonsGeek/Akko Keyboard - Configuration Tool".to_string()
     };
     let title = Paragraph::new(title_text)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
     // Tabs
-    let tabs = Tabs::new(vec!["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Macros"])
-        .select(app.tab)
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::ALL).title("Tabs [Tab/Shift+Tab]"));
+    let tabs = Tabs::new(vec![
+        "Device Info",
+        "LED Settings",
+        "Key Depth",
+        "Triggers",
+        "Options",
+        "Macros",
+    ])
+    .select(app.tab)
+    .style(Style::default().fg(Color::White))
+    .highlight_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Tabs [Tab/Shift+Tab]"),
+    );
     f.render_widget(tabs, chunks[1]);
 
     // Content based on tab
@@ -1397,8 +1624,16 @@ fn ui(f: &mut Frame, app: &App) {
     }
 
     // Status bar
-    let status_color = if app.connected { Color::Green } else { Color::Red };
-    let conn_status = if app.connected { "Connected" } else { "Disconnected" };
+    let status_color = if app.connected {
+        Color::Green
+    } else {
+        Color::Red
+    };
+    let conn_status = if app.connected {
+        "Connected"
+    } else {
+        "Disconnected"
+    };
     let profile_str = if app.connected {
         format!(" Profile {}", app.info.profile + 1)
     } else {
@@ -1427,7 +1662,11 @@ fn ui(f: &mut Frame, app: &App) {
         String::new()
     };
 
-    let monitoring_str = if app.depth_monitoring { " MONITORING" } else { "" };
+    let monitoring_str = if app.depth_monitoring {
+        " MONITORING"
+    } else {
+        ""
+    };
 
     let status = Paragraph::new(format!(
         " [{}{}{}] {} | ?:Help q:Quit{}",
@@ -1462,9 +1701,12 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
         .split(popup_area);
 
     // Left column: TUI Keybindings
-    let mut tui_lines: Vec<Line> = vec![
-        Line::from(Span::styled("── Global ──", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-    ];
+    let mut tui_lines: Vec<Line> = vec![Line::from(Span::styled(
+        "── Global ──",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ))];
 
     let mut current_context = KeyContext::Global;
     for kb in TUI_KEYBINDS {
@@ -1480,7 +1722,9 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
             tui_lines.push(Line::from(""));
             tui_lines.push(Line::from(Span::styled(
                 format!("── {section_name} ──"),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
         tui_lines.push(Line::from(vec![
@@ -1491,17 +1735,26 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
     }
 
     let tui_help = Paragraph::new(tui_lines)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .title(" TUI Shortcuts [? to close] ")
-            .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" TUI Shortcuts [? to close] ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        )
         .wrap(Wrap { trim: false });
     f.render_widget(tui_help, columns[0]);
 
     // Right column: Physical Keyboard Shortcuts
-    let mut kb_lines: Vec<Line> = vec![
-        Line::from(Span::styled("── Profiles ──", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-    ];
+    let mut kb_lines: Vec<Line> = vec![Line::from(Span::styled(
+        "── Profiles ──",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ))];
 
     let sections = [
         (0, 4, "Profiles"),
@@ -1516,12 +1769,14 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
             kb_lines.push(Line::from(""));
             kb_lines.push(Line::from(Span::styled(
                 format!("── {name} ──"),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
         for (key, desc) in &KEYBOARD_SHORTCUTS[start..end] {
             kb_lines.push(Line::from(vec![
-                Span::styled(format!("{:14}", key), Style::default().fg(Color::Magenta)),
+                Span::styled(format!("{key:14}"), Style::default().fg(Color::Magenta)),
                 Span::raw(" "),
                 Span::raw(*desc),
             ]));
@@ -1529,10 +1784,16 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
     }
 
     let kb_help = Paragraph::new(kb_lines)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .title(" Physical Keyboard (Fn+key) ")
-            .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Physical Keyboard (Fn+key) ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        )
         .wrap(Wrap { trim: false });
     f.render_widget(kb_help, columns[1]);
 }
@@ -1543,27 +1804,47 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
     let text = vec![
         Line::from(vec![
             Span::raw("Device:         "),
-            Span::styled(&app.device_name, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &app.device_name,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Key Count:      "),
-            Span::styled(format!("{}", app.key_count), Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("{}", app.key_count),
+                Style::default().fg(Color::Green),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Device ID:      "),
-            Span::styled(format!("{} (0x{:04X})", info.device_id, info.device_id), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("{} (0x{:04X})", info.device_id, info.device_id),
+                Style::default().fg(Color::Yellow),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Firmware:       "),
-            Span::styled(format!("v{}.{:02}", info.version / 100, info.version % 100), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("v{}.{:02}", info.version / 100, info.version % 100),
+                Style::default().fg(Color::Yellow),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Profile:        "),
-            Span::styled(format!("{} (1-4)", info.profile + 1), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} (1-4)", info.profile + 1),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Debounce:       "),
-            Span::styled(format!("{} ms", info.debounce), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} ms", info.debounce),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Polling Rate:   "),
@@ -1573,54 +1854,80 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     "N/A".to_string()
                 },
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(Color::Cyan),
             ),
         ]),
         Line::from(vec![
             Span::raw("Fn Layer:       "),
-            Span::styled(format!("{}", info.fn_layer), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{}", info.fn_layer),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::raw("WASD Swap:      "),
-            Span::styled(if info.wasd_swap { "Yes" } else { "No" }, Style::default().fg(Color::Cyan)),
+            Span::styled(
+                if info.wasd_swap { "Yes" } else { "No" },
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Precision:      "),
-            Span::styled(MonsGeekDevice::precision_str(info.precision), Style::default().fg(Color::Green)),
+            Span::styled(
+                MonsGeekDevice::precision_str(info.precision),
+                Style::default().fg(Color::Green),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Sleep:          "),
-            Span::styled(format!("{} sec ({} min)", info.sleep_seconds, info.sleep_seconds / 60), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!(
+                    "{} sec ({} min)",
+                    info.sleep_seconds,
+                    info.sleep_seconds / 60
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::raw("LED Mode:       "),
             Span::styled(
                 format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
-                Style::default().fg(Color::Magenta)
+                Style::default().fg(Color::Magenta),
             ),
         ]),
         Line::from(vec![
             Span::raw("LED Color:      "),
             Span::styled(
-                format!("RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
-                    info.led_r, info.led_g, info.led_b,
-                    info.led_r, info.led_g, info.led_b),
-                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b))
+                format!(
+                    "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
+                    info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
+                ),
+                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
             ),
         ]),
         Line::from(vec![
             Span::raw("Brightness:     "),
-            Span::styled(format!("{}/4", info.led_brightness), Style::default().fg(Color::Magenta)),
+            Span::styled(
+                format!("{}/4", info.led_brightness),
+                Style::default().fg(Color::Magenta),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Speed:          "),
-            Span::styled(format!("{}/4", 4 - info.led_speed.min(4)), Style::default().fg(Color::Magenta)),
+            Span::styled(
+                format!("{}/4", 4 - info.led_speed.min(4)),
+                Style::default().fg(Color::Magenta),
+            ),
         ]),
     ];
 
-    let para = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Device Information [r to refresh]"));
+    let para = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Device Information [r to refresh]"),
+    );
     f.render_widget(para, area);
 }
 
@@ -1638,117 +1945,165 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
         ListItem::new(Line::from(vec![
             Span::raw("Mode:       "),
             Span::styled(
-                format!("< {} ({}) >", info.led_mode, cmd::led_mode_name(info.led_mode)),
-                Style::default().fg(Color::Yellow)
+                format!(
+                    "< {} ({}) >",
+                    info.led_mode,
+                    cmd::led_mode_name(info.led_mode)
+                ),
+                Style::default().fg(Color::Yellow),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Brightness: "),
             Span::styled(
-                format!("< {}/4 >  {}", info.led_brightness, "█".repeat(info.led_brightness as usize)),
-                Style::default().fg(Color::Yellow)
+                format!(
+                    "< {}/4 >  {}",
+                    info.led_brightness,
+                    "█".repeat(info.led_brightness as usize)
+                ),
+                Style::default().fg(Color::Yellow),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Speed:      "),
             Span::styled(
                 format!("< {}/4 >  {}", speed, "█".repeat(speed as usize)),
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(Color::Yellow),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Red:        "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.led_r)),
-                Style::default().fg(Color::Red)
+                Style::default().fg(Color::Red),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Green:      "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.led_g)),
-                Style::default().fg(Color::Green)
+                Style::default().fg(Color::Green),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Blue:       "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.led_b)),
-                Style::default().fg(Color::Blue)
+                Style::default().fg(Color::Blue),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Preview:    "),
             Span::styled(
-                format!("████████ #{:02X}{:02X}{:02X}", info.led_r, info.led_g, info.led_b),
-                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b))
+                format!(
+                    "████████ #{:02X}{:02X}{:02X}",
+                    info.led_r, info.led_g, info.led_b
+                ),
+                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Dazzle:     "),
             Span::styled(
-                if info.led_dazzle { "< ON (rainbow) >" } else { "< OFF >" },
-                Style::default().fg(if info.led_dazzle { Color::Magenta } else { Color::Gray })
+                if info.led_dazzle {
+                    "< ON (rainbow) >"
+                } else {
+                    "< OFF >"
+                },
+                Style::default().fg(if info.led_dazzle {
+                    Color::Magenta
+                } else {
+                    Color::Gray
+                }),
             ),
         ])),
         // Side LED section
-        ListItem::new(Line::from(vec![
-            Span::styled("─── Side LEDs (Side Lights) ───", Style::default().fg(Color::DarkGray)),
-        ])),
+        ListItem::new(Line::from(vec![Span::styled(
+            "─── Side LEDs (Side Lights) ───",
+            Style::default().fg(Color::DarkGray),
+        )])),
         ListItem::new(Line::from(vec![
             Span::raw("Mode:       "),
             Span::styled(
-                format!("< {} ({}) >", info.side_mode, cmd::led_mode_name(info.side_mode)),
-                Style::default().fg(Color::Cyan)
+                format!(
+                    "< {} ({}) >",
+                    info.side_mode,
+                    cmd::led_mode_name(info.side_mode)
+                ),
+                Style::default().fg(Color::Cyan),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Brightness: "),
             Span::styled(
-                format!("< {}/4 >  {}", info.side_brightness, "█".repeat(info.side_brightness as usize)),
-                Style::default().fg(Color::Cyan)
+                format!(
+                    "< {}/4 >  {}",
+                    info.side_brightness,
+                    "█".repeat(info.side_brightness as usize)
+                ),
+                Style::default().fg(Color::Cyan),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Speed:      "),
             Span::styled(
-                format!("< {}/4 >  {}", 4 - info.side_speed.min(4), "█".repeat((4 - info.side_speed.min(4)) as usize)),
-                Style::default().fg(Color::Cyan)
+                format!(
+                    "< {}/4 >  {}",
+                    4 - info.side_speed.min(4),
+                    "█".repeat((4 - info.side_speed.min(4)) as usize)
+                ),
+                Style::default().fg(Color::Cyan),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Red:        "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_r)),
-                Style::default().fg(Color::Red)
+                Style::default().fg(Color::Red),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Green:      "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_g)),
-                Style::default().fg(Color::Green)
+                Style::default().fg(Color::Green),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Blue:       "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_b)),
-                Style::default().fg(Color::Blue)
+                Style::default().fg(Color::Blue),
             ),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Dazzle:     "),
             Span::styled(
-                if info.side_dazzle { "< ON (rainbow) >" } else { "< OFF >" },
-                Style::default().fg(if info.side_dazzle { Color::Magenta } else { Color::Gray })
+                if info.side_dazzle {
+                    "< ON (rainbow) >"
+                } else {
+                    "< OFF >"
+                },
+                Style::default().fg(if info.side_dazzle {
+                    Color::Magenta
+                } else {
+                    Color::Gray
+                }),
             ),
         ])),
     ];
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("LED Settings [←/→ adjust, ↑/↓ select, p=per-key mode]"))
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("LED Settings [←/→ adjust, ↑/↓ select, p=per-key mode]"),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
@@ -1759,7 +2114,11 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
 fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
     let inner = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(5), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(5),
+            Constraint::Length(3),
+        ])
         .split(area);
 
     // Status and mode indicator
@@ -1770,24 +2129,41 @@ fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
     let status_text = if app.depth_monitoring {
         vec![
             Line::from(vec![
-                Span::styled("MONITORING ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "MONITORING ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("| View: "),
                 Span::styled(mode_str, Style::default().fg(Color::Cyan)),
                 Span::raw(" | Active keys: "),
-                Span::styled(format!("{}", app.active_keys.len()), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}", app.active_keys.len()),
+                    Style::default().fg(Color::Yellow),
+                ),
                 Span::raw(" | Selected: "),
-                Span::styled(format!("{}", app.selected_keys.len()), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    format!("{}", app.selected_keys.len()),
+                    Style::default().fg(Color::Magenta),
+                ),
             ]),
             Line::from("Press 'v' to switch view, Space to select key, 'x' to clear data"),
         ]
     } else {
         vec![
-            Line::from(Span::styled("Key depth monitoring is OFF - press 'm' to start", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled(
+                "Key depth monitoring is OFF - press 'm' to start",
+                Style::default().fg(Color::Yellow),
+            )),
             Line::from(""),
         ]
     };
-    let status = Paragraph::new(status_text)
-        .block(Block::default().borders(Borders::ALL).title("Monitor Status"));
+    let status = Paragraph::new(status_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Monitor Status"),
+    );
     f.render_widget(status, inner[0]);
 
     // Main visualization area
@@ -1842,12 +2218,17 @@ fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
     if bar_data.is_empty() {
         let text = vec![
             Line::from(""),
-            Line::from(Span::styled("No keys pressed", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled(
+                "No keys pressed",
+                Style::default().fg(Color::DarkGray),
+            )),
             Line::from("Press keys to see their depth"),
         ];
-        let para = Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(format!("Key Depths (max: {max_depth:.1}mm)")));
+        let para = Paragraph::new(text).alignment(Alignment::Center).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Key Depths (max: {max_depth:.1}mm)")),
+        );
         f.render_widget(para, area);
         return;
     }
@@ -1856,11 +2237,19 @@ fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
     let bar_refs: Vec<(&str, u64)> = bar_data.iter().map(|(s, v)| (s.as_str(), *v)).collect();
 
     let chart = BarChart::default()
-        .block(Block::default().borders(Borders::ALL).title(format!("Key Depths (max: {max_depth:.2}mm)")))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Key Depths (max: {max_depth:.2}mm)")),
+        )
         .bar_width(3)
         .bar_gap(1)
         .bar_style(Style::default().fg(Color::Cyan))
-        .value_style(Style::default().fg(Color::White).add_modifier(Modifier::DIM))
+        .value_style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::DIM),
+        )
         .data(&bar_refs);
 
     f.render_widget(chart, area);
@@ -1868,7 +2257,8 @@ fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
     // Find all keys with history data (any non-empty history)
-    let mut active_keys: Vec<usize> = app.depth_history
+    let mut active_keys: Vec<usize> = app
+        .depth_history
         .iter()
         .enumerate()
         .filter(|(_, h)| !h.is_empty())
@@ -1882,7 +2272,10 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
     if active_keys.is_empty() {
         let text = vec![
             Line::from(""),
-            Line::from(Span::styled("No key activity recorded yet", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled(
+                "No key activity recorded yet",
+                Style::default().fg(Color::Yellow),
+            )),
             Line::from(""),
             Line::from("Press keys while monitoring to see their depth over time"),
         ];
@@ -1895,8 +2288,14 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
 
     // Colors for different keys
     let colors = [
-        Color::Cyan, Color::Yellow, Color::Green, Color::Magenta,
-        Color::Red, Color::Blue, Color::LightCyan, Color::LightYellow,
+        Color::Cyan,
+        Color::Yellow,
+        Color::Green,
+        Color::Magenta,
+        Color::Red,
+        Color::Blue,
+        Color::LightCyan,
+        Color::LightYellow,
     ];
 
     // Build datasets for Chart widget
@@ -1930,7 +2329,7 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
                     .name(label)
                     .marker(symbols::Marker::Braille)
                     .graph_type(GraphType::Line)
-                    .style(Style::default().fg(color))
+                    .style(Style::default().fg(color)),
             );
         }
     }
@@ -1948,8 +2347,14 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, &k)| {
             let color_char = match i {
-                0 => "C", 1 => "Y", 2 => "G", 3 => "M",
-                4 => "R", 5 => "B", 6 => "c", 7 => "y",
+                0 => "C",
+                1 => "Y",
+                2 => "G",
+                3 => "M",
+                4 => "R",
+                5 => "B",
+                6 => "c",
+                7 => "y",
                 _ => "?",
             };
             format!("[{}]K{}", color_char, get_key_label(k))
@@ -1962,13 +2367,15 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
     let x_min = x_max - DEPTH_HISTORY_LEN as f64;
 
     let chart = Chart::new(datasets)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Time Series: {legend}")))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Time Series: {legend}")),
+        )
         .x_axis(
             Axis::default()
                 .style(Style::default().fg(Color::Gray))
-                .bounds([x_min.max(0.0), x_max])
+                .bounds([x_min.max(0.0), x_max]),
         )
         .y_axis(
             Axis::default()
@@ -1981,7 +2388,7 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
                     Span::raw("2"),
                     Span::raw("3"),
                     Span::raw("4"),
-                ])
+                ]),
         );
 
     f.render_widget(chart, area);
@@ -2000,16 +2407,20 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),   // Summary
-            Constraint::Min(10),     // Key list
+            Constraint::Length(8), // Summary
+            Constraint::Min(10),   // Key list
         ])
         .split(area);
 
     // Summary section
     let factor = app.precision_factor;
-    let precision_str = if factor >= 200.0 { "0.005mm" }
-        else if factor >= 100.0 { "0.01mm" }
-        else { "0.1mm" };
+    let precision_str = if factor >= 200.0 {
+        "0.005mm"
+    } else if factor >= 100.0 {
+        "0.01mm"
+    } else {
+        "0.1mm"
+    };
 
     let summary = if let Some(ref triggers) = app.triggers {
         // Decode first key values
@@ -2025,7 +2436,10 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
         let first_rt_press = decode_u16(&triggers.rt_press, 0);
         let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
         let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
-        let num_keys = triggers.key_modes.len().min(triggers.press_travel.len() / 2);
+        let num_keys = triggers
+            .key_modes
+            .len()
+            .min(triggers.press_travel.len() / 2);
 
         vec![
             Line::from(vec![
@@ -2039,36 +2453,58 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(" (v to toggle)", Style::default().fg(Color::DarkGray)),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Global Settings (all keys same): ", Style::default().add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "Global Settings (all keys same): ",
+                Style::default().add_modifier(Modifier::BOLD),
+            )]),
             Line::from(vec![
                 Span::raw("  Actuation: "),
-                Span::styled(format!("{:.2}mm", first_press as f32 / factor), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{:.2}mm", first_press as f32 / factor),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::raw("  |  Release: "),
-                Span::styled(format!("{:.2}mm", first_lift as f32 / factor), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{:.2}mm", first_lift as f32 / factor),
+                    Style::default().fg(Color::Cyan),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("  RT Press: "),
-                Span::styled(format!("{:.2}mm", first_rt_press as f32 / factor), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:.2}mm", first_rt_press as f32 / factor),
+                    Style::default().fg(Color::Yellow),
+                ),
                 Span::raw("   |  RT Release: "),
-                Span::styled(format!("{:.2}mm", first_rt_lift as f32 / factor), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:.2}mm", first_rt_lift as f32 / factor),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("  Mode: "),
-                Span::styled(magnetism::mode_name(first_mode), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    magnetism::mode_name(first_mode),
+                    Style::default().fg(Color::Magenta),
+                ),
             ]),
         ]
     } else {
         vec![
-            Line::from(Span::styled("No trigger data loaded", Style::default().fg(Color::Red))),
+            Line::from(Span::styled(
+                "No trigger data loaded",
+                Style::default().fg(Color::Red),
+            )),
             Line::from(""),
             Line::from("Press 'r' to load trigger settings from device"),
         ]
     };
 
-    let summary_block = Paragraph::new(summary)
-        .block(Block::default().borders(Borders::ALL).title("Trigger Settings Summary"));
+    let summary_block = Paragraph::new(summary).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Trigger Settings Summary"),
+    );
     f.render_widget(summary_block, chunks[0]);
 
     // Key list section
@@ -2081,7 +2517,10 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
             }
         };
 
-        let num_keys = triggers.key_modes.len().min(triggers.press_travel.len() / 2);
+        let num_keys = triggers
+            .key_modes
+            .len()
+            .min(triggers.press_travel.len() / 2);
 
         // Build rows for table
         let rows: Vec<Row> = (0..num_keys)
@@ -2097,7 +2536,11 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
 
                 Row::new(vec![
                     Cell::from(format!("{i:3}")),
-                    Cell::from(if key_name.is_empty() { "-".to_string() } else { key_name }),
+                    Cell::from(if key_name.is_empty() {
+                        "-".to_string()
+                    } else {
+                        key_name
+                    }),
                     Cell::from(format!("{:.2}", press as f32 / factor)),
                     Cell::from(format!("{:.2}", lift as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_p as f32 / factor)),
@@ -2107,18 +2550,24 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
             })
             .collect();
 
-        let header = Row::new(vec!["#", "Key", "Act", "Rel", "RT↓", "RT↑", "Mode"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan));
+        let header = Row::new(vec!["#", "Key", "Act", "Rel", "RT↓", "RT↑", "Mode"]).style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
+        );
 
-        let table = Table::new(rows, [
-            Constraint::Length(4),
-            Constraint::Length(7),
-            Constraint::Length(6),
-            Constraint::Length(6),
-            Constraint::Length(6),
-            Constraint::Length(6),
-            Constraint::Length(14),
-        ])
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(4),
+                Constraint::Length(7),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(14),
+            ],
+        )
         .header(header)
         .block(Block::default().borders(Borders::ALL).title(format!(
             "Per-Key [{}-{}] n/t/d/s:SetAll v:Layout",
@@ -2130,18 +2579,28 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
     } else {
         let help = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("Controls:", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Controls:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from("  r - Reload trigger settings from device"),
             Line::from("  v - Toggle layout/list view"),
             Line::from("  ↑/↓ - Scroll through keys"),
             Line::from(""),
-            Line::from(Span::styled("Mode Switching (all keys):", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Mode Switching (all keys):",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from("  n - Normal mode"),
             Line::from("  t - Rapid Trigger mode"),
             Line::from("  d - DKS mode"),
             Line::from("  s - SnapTap mode"),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Per-Key Settings"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Per-Key Settings"),
+        );
         f.render_widget(help, chunks[1]);
     }
 }
@@ -2152,8 +2611,8 @@ fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10),      // Keyboard layout
-            Constraint::Length(9),    // Selected key details
+            Constraint::Min(10),   // Keyboard layout
+            Constraint::Length(9), // Selected key details
         ])
         .split(area);
 
@@ -2167,14 +2626,16 @@ fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
         .inner(layout_area);
 
     f.render_widget(
-        Block::default().borders(Borders::ALL).title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]"),
-        layout_area
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]"),
+        layout_area,
     );
 
     // Calculate key cell dimensions
     // Layout is 16 main columns + nav cluster (5 more columns) = ~21 columns
     // 6 rows
-    let key_width = 5u16;  // Width of each key cell
+    let key_width = 5u16; // Width of each key cell
     let key_height = 2u16; // Height of each key cell
 
     // Draw each key in the matrix (column-major order: 21 cols × 6 rows)
@@ -2201,20 +2662,25 @@ fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
 
         // Determine key style based on selection and mode
         let is_selected = pos == app.trigger_selected_key;
-        let mode = app.triggers.as_ref()
+        let mode = app
+            .triggers
+            .as_ref()
             .and_then(|t| t.key_modes.get(pos).copied())
             .unwrap_or(0);
 
         let mode_color = match key_mode::base_mode(mode) {
-            0 => Color::White,      // Normal
-            0x80 => Color::Yellow,  // RT
-            2 => Color::Magenta,    // DKS
-            7 => Color::Cyan,       // SnapTap
+            0 => Color::White,     // Normal
+            0x80 => Color::Yellow, // RT
+            2 => Color::Magenta,   // DKS
+            7 => Color::Cyan,      // SnapTap
             _ => Color::Gray,
         };
 
         let style = if is_selected {
-            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(mode_color)
         };
@@ -2263,41 +2729,73 @@ fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
         let details = vec![
             Line::from(vec![
                 Span::styled(format!("Key {pos}: "), Style::default().fg(Color::Gray)),
-                Span::styled(&key_name, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &key_name,
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  |  Mode: "),
-                Span::styled(magnetism::mode_name(mode), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    magnetism::mode_name(mode),
+                    Style::default().fg(Color::Magenta),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Actuation: "),
-                Span::styled(format!("{:.2}mm", press as f32 / factor), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{:.2}mm", press as f32 / factor),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::raw("  |  Release: "),
-                Span::styled(format!("{:.2}mm", lift as f32 / factor), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{:.2}mm", lift as f32 / factor),
+                    Style::default().fg(Color::Cyan),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("RT Press: "),
-                Span::styled(format!("{:.2}mm", rt_press as f32 / factor), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:.2}mm", rt_press as f32 / factor),
+                    Style::default().fg(Color::Yellow),
+                ),
                 Span::raw("   |  RT Release: "),
-                Span::styled(format!("{:.2}mm", rt_lift as f32 / factor), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:.2}mm", rt_lift as f32 / factor),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Deadzone: Bottom "),
-                Span::styled(format!("{:.2}mm", bottom_dz as f32 / factor), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{:.2}mm", bottom_dz as f32 / factor),
+                    Style::default().fg(Color::Green),
+                ),
                 Span::raw("  |  Top "),
-                Span::styled(format!("{:.2}mm", top_dz as f32 / factor), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{:.2}mm", top_dz as f32 / factor),
+                    Style::default().fg(Color::Green),
+                ),
             ]),
             Line::from(""),
             Line::from(Span::styled(
                 "n/t/d/s: Set this key  |  N/T/D/S: Set ALL keys",
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(Color::DarkGray),
             )),
         ];
 
-        let detail_block = Paragraph::new(details)
-            .block(Block::default().borders(Borders::ALL).title(format!("Selected Key Details [{key_name}]")));
+        let detail_block = Paragraph::new(details).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Selected Key Details [{key_name}]")),
+        );
         f.render_widget(detail_block, chunks[1]);
     } else {
-        let help = Paragraph::new("Press 'r' to load trigger settings")
-            .block(Block::default().borders(Borders::ALL).title("Selected Key Details"));
+        let help = Paragraph::new("Press 'r' to load trigger settings").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Selected Key Details"),
+        );
         f.render_widget(help, chunks[1]);
     }
 }
@@ -2316,7 +2814,7 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw("Fn Layer:       "),
                 Span::styled(
                     format!("< {} >", opts.fn_layer),
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(Color::Yellow),
                 ),
                 Span::styled("  (0-3)", Style::default().fg(Color::DarkGray)),
             ])),
@@ -2324,30 +2822,52 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw("WASD Swap:      "),
                 Span::styled(
                     if opts.wasd_swap { "< ON >" } else { "< OFF >" },
-                    Style::default().fg(if opts.wasd_swap { Color::Green } else { Color::Gray })
+                    Style::default().fg(if opts.wasd_swap {
+                        Color::Green
+                    } else {
+                        Color::Gray
+                    }),
                 ),
-                Span::styled("  (swap WASD/Arrow keys)", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "  (swap WASD/Arrow keys)",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ])),
             ListItem::new(Line::from(vec![
                 Span::raw("Anti-Mistouch:  "),
                 Span::styled(
-                    if opts.anti_mistouch { "< ON >" } else { "< OFF >" },
-                    Style::default().fg(if opts.anti_mistouch { Color::Green } else { Color::Gray })
+                    if opts.anti_mistouch {
+                        "< ON >"
+                    } else {
+                        "< OFF >"
+                    },
+                    Style::default().fg(if opts.anti_mistouch {
+                        Color::Green
+                    } else {
+                        Color::Gray
+                    }),
                 ),
-                Span::styled("  (prevent accidental key presses)", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "  (prevent accidental key presses)",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ])),
             ListItem::new(Line::from(vec![
                 Span::raw("RT Stability:   "),
                 Span::styled(
                     format!("< {}ms >", opts.rt_stability),
-                    Style::default().fg(Color::Cyan)
+                    Style::default().fg(Color::Cyan),
                 ),
-                Span::styled("  (0-125ms, delay for stability)", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "  (0-125ms, delay for stability)",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ])),
             ListItem::new(Line::from("")),
-            ListItem::new(Line::from(vec![
-                Span::styled("Read-Only Info:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "Read-Only Info:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new(Line::from(vec![
                 Span::raw("OS Mode:        "),
                 Span::styled(os_mode_str, Style::default().fg(Color::Magenta)),
@@ -2355,8 +2875,16 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
         ];
 
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Keyboard Options [←/→ adjust, ↑/↓ select, Enter to toggle]"))
-            .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Keyboard Options [←/→ adjust, ↑/↓ select, Enter to toggle]"),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("> ");
 
         let mut state = ListState::default();
@@ -2365,11 +2893,18 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
     } else {
         let help = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("No options loaded", Style::default().fg(Color::Red))),
+            Line::from(Span::styled(
+                "No options loaded",
+                Style::default().fg(Color::Red),
+            )),
             Line::from(""),
             Line::from("Press 'r' to load keyboard options from device"),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Keyboard Options"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Keyboard Options"),
+        );
         f.render_widget(help, area);
     }
 }
@@ -2387,35 +2922,53 @@ fn render_macros(f: &mut Frame, app: &App, area: Rect) {
     if app.macros.is_empty() {
         let help = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("No macros loaded", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled(
+                "No macros loaded",
+                Style::default().fg(Color::Yellow),
+            )),
             Line::from(""),
             Line::from("Press 'r' to load macros from device"),
         ])
         .block(Block::default().borders(Borders::ALL).title("Macros"));
         f.render_widget(help, chunks[0]);
     } else {
-        let items: Vec<ListItem> = app.macros.iter().enumerate().map(|(i, m)| {
-            let status = if m.events.is_empty() {
-                Span::styled("(empty)", Style::default().fg(Color::DarkGray))
-            } else {
-                Span::styled(
-                    format!("{} (x{})", &m.text_preview, m.repeat_count),
-                    Style::default().fg(Color::Green)
-                )
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("M{i}: "), Style::default().fg(Color::Cyan)),
-                status,
-            ]))
-        }).collect();
+        let items: Vec<ListItem> = app
+            .macros
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let status = if m.events.is_empty() {
+                    Span::styled("(empty)", Style::default().fg(Color::DarkGray))
+                } else {
+                    Span::styled(
+                        format!("{} (x{})", &m.text_preview, m.repeat_count),
+                        Style::default().fg(Color::Green),
+                    )
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("M{i}: "), Style::default().fg(Color::Cyan)),
+                    status,
+                ]))
+            })
+            .collect();
 
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Macros [↑/↓ select]"))
-            .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Macros [↑/↓ select]"),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("> ");
 
         let mut state = ListState::default();
-        state.select(Some(app.macro_selected.min(app.macros.len().saturating_sub(1))));
+        state.select(Some(
+            app.macro_selected.min(app.macros.len().saturating_sub(1)),
+        ));
         f.render_stateful_widget(list, chunks[0], &mut state);
     }
 
@@ -2431,37 +2984,64 @@ fn render_macros(f: &mut Frame, app: &App, area: Rect) {
             Line::from(""),
             Line::from(vec![
                 Span::raw("Text: "),
-                Span::styled(&app.macro_edit_text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &app.macro_edit_text,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("█", Style::default().fg(Color::White)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("Type your macro text, then press Enter to save", Style::default().fg(Color::DarkGray))),
-            Line::from(Span::styled("Press Escape to cancel", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled(
+                "Type your macro text, then press Enter to save",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "Press Escape to cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Edit Macro (typing mode)"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Edit Macro (typing mode)"),
+        );
         f.render_widget(edit_text, right_chunks[0]);
     } else if !app.macros.is_empty() && app.macro_selected < app.macros.len() {
         // Detail view
         let m = &app.macros[app.macro_selected];
         let mut lines = vec![
-            Line::from(vec![
-                Span::styled(format!("Macro {}", app.macro_selected), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                format!("Macro {}", app.macro_selected),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::raw("Repeat: "),
-                Span::styled(format!("{}", m.repeat_count), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}", m.repeat_count),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Events: "),
-                Span::styled(format!("{}", m.events.len()), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}", m.events.len()),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(""),
         ];
 
         // Show events (up to 10)
         if !m.events.is_empty() {
-            lines.push(Line::from(Span::styled("Events:", Style::default().add_modifier(Modifier::BOLD))));
+            lines.push(Line::from(Span::styled(
+                "Events:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
             for (i, evt) in m.events.iter().take(12).enumerate() {
                 let arrow = if evt.is_down { "↓" } else { "↑" };
                 let delay_str = if evt.delay_ms > 0 {
@@ -2471,7 +3051,14 @@ fn render_macros(f: &mut Frame, app: &App, area: Rect) {
                 };
                 lines.push(Line::from(vec![
                     Span::styled(format!("{i:2}: "), Style::default().fg(Color::DarkGray)),
-                    Span::styled(arrow, Style::default().fg(if evt.is_down { Color::Green } else { Color::Red })),
+                    Span::styled(
+                        arrow,
+                        Style::default().fg(if evt.is_down {
+                            Color::Green
+                        } else {
+                            Color::Red
+                        }),
+                    ),
                     Span::raw(" "),
                     Span::styled(key_name(evt.keycode), Style::default().fg(Color::Yellow)),
                     Span::styled(delay_str, Style::default().fg(Color::DarkGray)),
@@ -2480,43 +3067,48 @@ fn render_macros(f: &mut Frame, app: &App, area: Rect) {
             if m.events.len() > 12 {
                 lines.push(Line::from(Span::styled(
                     format!("... and {} more", m.events.len() - 12),
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(Color::DarkGray),
                 )));
             }
         } else {
-            lines.push(Line::from(Span::styled("(empty)", Style::default().fg(Color::DarkGray))));
+            lines.push(Line::from(Span::styled(
+                "(empty)",
+                Style::default().fg(Color::DarkGray),
+            )));
         }
 
-        let detail = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Macro Details"));
+        let detail = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Macro Details"),
+        );
         f.render_widget(detail, right_chunks[0]);
     } else {
-        let empty = Paragraph::new("Select a macro")
-            .block(Block::default().borders(Borders::ALL).title("Macro Details"));
+        let empty = Paragraph::new("Select a macro").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Macro Details"),
+        );
         f.render_widget(empty, right_chunks[0]);
     }
 
     // Help text at bottom
     let help_lines = if app.macro_editing {
-        vec![
-            Line::from(vec![
-                Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                Span::raw(" Save  "),
-                Span::styled("Escape", Style::default().fg(Color::Yellow)),
-                Span::raw(" Cancel"),
-            ]),
-        ]
+        vec![Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(" Save  "),
+            Span::styled("Escape", Style::default().fg(Color::Yellow)),
+            Span::raw(" Cancel"),
+        ])]
     } else {
-        vec![
-            Line::from(vec![
-                Span::styled("e", Style::default().fg(Color::Yellow)),
-                Span::raw(" Edit macro  "),
-                Span::styled("c", Style::default().fg(Color::Yellow)),
-                Span::raw(" Clear macro  "),
-                Span::styled("r", Style::default().fg(Color::Yellow)),
-                Span::raw(" Refresh"),
-            ]),
-        ]
+        vec![Line::from(vec![
+            Span::styled("e", Style::default().fg(Color::Yellow)),
+            Span::raw(" Edit macro  "),
+            Span::styled("c", Style::default().fg(Color::Yellow)),
+            Span::raw(" Clear macro  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(" Refresh"),
+        ])]
     };
     let help = Paragraph::new(help_lines)
         .alignment(Alignment::Center)

@@ -7,9 +7,9 @@ pub const VENDOR_ID: u16 = 0x3151;
 
 /// Product IDs for known devices
 pub const PRODUCT_ID_M1_V5_WIRED: u16 = 0x5030;
-pub const PRODUCT_ID_M1_V5_WIRELESS: u16 = 0x5038;  // 2.4GHz dongle
-pub const PRODUCT_ID_DONGLE_LEGACY_1: u16 = 0x503A;  // possibly other model
-pub const PRODUCT_ID_DONGLE_LEGACY_2: u16 = 0x503D;  // possibly other model
+pub const PRODUCT_ID_M1_V5_WIRELESS: u16 = 0x5038; // 2.4GHz dongle
+pub const PRODUCT_ID_DONGLE_LEGACY_1: u16 = 0x503A; // possibly other model
+pub const PRODUCT_ID_DONGLE_LEGACY_2: u16 = 0x503D; // possibly other model
 
 /// Vendor-specific HID usage page (0xFFFF)
 pub const USAGE_PAGE: u16 = 0xFFFF;

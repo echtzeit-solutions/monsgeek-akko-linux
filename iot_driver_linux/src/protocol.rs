@@ -13,10 +13,10 @@ pub mod cmd {
     pub const SET_KBOPTION: u8 = 0x09;
     pub const SET_KEYMATRIX: u8 = 0x0A;
     pub const SET_MACRO: u8 = 0x0B;
-    pub const SET_USERPIC: u8 = 0x0C;  // Per-key RGB colors (static)
-    pub const SET_AUDIO_VIZ: u8 = 0x0D;  // Audio visualizer frequency bands (16 bands, values 0-6)
-    pub const SET_SCREEN_COLOR: u8 = 0x0E;  // Screen color RGB (streamed, for mode 21)
-    pub const SET_USERGIF: u8 = 0x12;  // Per-key RGB animation (dynamic)
+    pub const SET_USERPIC: u8 = 0x0C; // Per-key RGB colors (static)
+    pub const SET_AUDIO_VIZ: u8 = 0x0D; // Audio visualizer frequency bands (16 bands, values 0-6)
+    pub const SET_SCREEN_COLOR: u8 = 0x0E; // Screen color RGB (streamed, for mode 21)
+    pub const SET_USERGIF: u8 = 0x12; // Per-key RGB animation (dynamic)
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
     pub const SET_AUTOOS_EN: u8 = 0x17;
@@ -51,23 +51,23 @@ pub mod cmd {
     pub const SET_FLASHCHIPERASSE: u8 = 0xAC;
 
     // GET commands (0x80 - 0xE6)
-    pub const GET_REV: u8 = 0x80;           // Get firmware revision
-    pub const GET_REPORT: u8 = 0x83;        // Get report rate
-    pub const GET_PROFILE: u8 = 0x84;       // Get active profile
-    pub const GET_DEBOUNCE: u8 = 0x86;      // Get debounce settings
-    pub const GET_LEDPARAM: u8 = 0x87;      // Get LED parameters
-    pub const GET_SLEDPARAM: u8 = 0x88;     // Get secondary LED params
-    pub const GET_KBOPTION: u8 = 0x89;      // Get keyboard options
-    pub const GET_USERPIC: u8 = 0x8C;       // Get per-key RGB colors
-    pub const GET_KEYMATRIX: u8 = 0x8A;     // Get key mappings
-    pub const GET_MACRO: u8 = 0x8B;         // Get macros
-    pub const GET_USB_VERSION: u8 = 0x8F;   // Get USB version
-    pub const GET_FN: u8 = 0x90;            // Get Fn layer
-    pub const GET_SLEEPTIME: u8 = 0x91;     // Get sleep timeout
-    pub const GET_AUTOOS_EN: u8 = 0x97;     // Get auto-OS setting
+    pub const GET_REV: u8 = 0x80; // Get firmware revision
+    pub const GET_REPORT: u8 = 0x83; // Get report rate
+    pub const GET_PROFILE: u8 = 0x84; // Get active profile
+    pub const GET_DEBOUNCE: u8 = 0x86; // Get debounce settings
+    pub const GET_LEDPARAM: u8 = 0x87; // Get LED parameters
+    pub const GET_SLEDPARAM: u8 = 0x88; // Get secondary LED params
+    pub const GET_KBOPTION: u8 = 0x89; // Get keyboard options
+    pub const GET_USERPIC: u8 = 0x8C; // Get per-key RGB colors
+    pub const GET_KEYMATRIX: u8 = 0x8A; // Get key mappings
+    pub const GET_MACRO: u8 = 0x8B; // Get macros
+    pub const GET_USB_VERSION: u8 = 0x8F; // Get USB version
+    pub const GET_FN: u8 = 0x90; // Get Fn layer
+    pub const GET_SLEEPTIME: u8 = 0x91; // Get sleep timeout
+    pub const GET_AUTOOS_EN: u8 = 0x97; // Get auto-OS setting
     pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
-    pub const GET_MULTI_MAGNETISM: u8 = 0xE5;  // Get RT/DKS per-key settings
-    pub const GET_FEATURE_LIST: u8 = 0xE6;     // Get supported features
+    pub const GET_MULTI_MAGNETISM: u8 = 0xE5; // Get RT/DKS per-key settings
+    pub const GET_FEATURE_LIST: u8 = 0xE6; // Get supported features
 
     // Undocumented/variant-specific GET commands (from firmware analysis)
     /// LED on/off state
@@ -93,32 +93,32 @@ pub mod cmd {
     /// LED effect mode names (from Akko Cloud LightList)
     /// Music modes use command 0x0D for audio data, Screen Sync uses 0x0E for RGB
     pub const LED_MODES: &[&str] = &[
-        "Off",              // 0  - LEDs off
-        "Constant",         // 1  - Static color
-        "Breathing",        // 2  - Breathing/pulsing effect
-        "Neon",             // 3  - Neon glow
-        "Wave",             // 4  - Color wave
-        "Ripple",           // 5  - Ripple from keypress
-        "Raindrop",         // 6  - Raindrops falling
-        "Snake",            // 7  - Snake pattern
-        "Reactive",         // 8  - React to keypress (keep lit)
-        "Converge",         // 9  - Converging pattern
-        "Sine Wave",        // 10 - Sine wave pattern
-        "Kaleidoscope",     // 11 - Kaleidoscope effect
-        "Line Wave",        // 12 - Line wave pattern
-        "User Picture",     // 13 - Custom per-key colors (4 layers)
-        "Laser",            // 14 - Laser effect
-        "Circle Wave",      // 15 - Circular wave
-        "Rainbow",          // 16 - Rainbow/dazzle effect
-        "Rain Down",        // 17 - Rain downward
-        "Meteor",           // 18 - Meteor shower
-        "Reactive Off",     // 19 - React to keypress (brief flash)
-        "Music Patterns",   // 20 - LightMusicFollow3: audio reactive with preset patterns (1-5)
-        "Screen Sync",      // 21 - LightScreenColor: ambient RGB from 0x0E command
-        "Music Bars",       // 22 - LightMusicFollow2: audio reactive bars (upright/separate/intersect)
-        "Train",            // 23 - Train pattern
-        "Fireworks",        // 24 - Fireworks effect
-        "Per-Key Color",    // 25 - Dynamic per-key animation (GIF)
+        "Off",            // 0  - LEDs off
+        "Constant",       // 1  - Static color
+        "Breathing",      // 2  - Breathing/pulsing effect
+        "Neon",           // 3  - Neon glow
+        "Wave",           // 4  - Color wave
+        "Ripple",         // 5  - Ripple from keypress
+        "Raindrop",       // 6  - Raindrops falling
+        "Snake",          // 7  - Snake pattern
+        "Reactive",       // 8  - React to keypress (keep lit)
+        "Converge",       // 9  - Converging pattern
+        "Sine Wave",      // 10 - Sine wave pattern
+        "Kaleidoscope",   // 11 - Kaleidoscope effect
+        "Line Wave",      // 12 - Line wave pattern
+        "User Picture",   // 13 - Custom per-key colors (4 layers)
+        "Laser",          // 14 - Laser effect
+        "Circle Wave",    // 15 - Circular wave
+        "Rainbow",        // 16 - Rainbow/dazzle effect
+        "Rain Down",      // 17 - Rain downward
+        "Meteor",         // 18 - Meteor shower
+        "Reactive Off",   // 19 - React to keypress (brief flash)
+        "Music Patterns", // 20 - LightMusicFollow3: audio reactive with preset patterns (1-5)
+        "Screen Sync",    // 21 - LightScreenColor: ambient RGB from 0x0E command
+        "Music Bars", // 22 - LightMusicFollow2: audio reactive bars (upright/separate/intersect)
+        "Train",      // 23 - Train pattern
+        "Fireworks",  // 24 - Fireworks effect
+        "Per-Key Color", // 25 - Dynamic per-key animation (GIF)
     ];
 
     pub fn led_mode_name(mode: u8) -> &'static str {
@@ -145,7 +145,7 @@ pub mod cmd {
         SineWave = 10,
         Kaleidoscope = 11,
         LineWave = 12,
-        UserPicture = 13,   // Static per-key colors (4 layers)
+        UserPicture = 13, // Static per-key colors (4 layers)
         Laser = 14,
         CircleWave = 15,
         Rainbow = 16,
@@ -162,7 +162,7 @@ pub mod cmd {
         MusicBars = 22,
         Train = 23,
         Fireworks = 24,
-        UserColor = 25,     // Dynamic per-key animation (GIF)
+        UserColor = 25, // Dynamic per-key animation (GIF)
     }
 
     // Backwards compatibility aliases (deprecated, use the enum variants directly)
@@ -261,7 +261,10 @@ pub mod cmd {
 
         /// List all modes with their names
         pub fn list_all() -> impl Iterator<Item = (u8, &'static str)> {
-            LED_MODES.iter().enumerate().map(|(i, name)| (i as u8, *name))
+            LED_MODES
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (i as u8, *name))
         }
     }
 
@@ -343,8 +346,8 @@ pub mod cmd {
 /// Checksum types used by the protocol
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChecksumType {
-    Bit7,  // Checksum at byte 7 (most common)
-    Bit8,  // Checksum at byte 8 (for LED commands)
+    Bit7, // Checksum at byte 7 (most common)
+    Bit8, // Checksum at byte 8 (for LED commands)
     None,
 }
 
@@ -384,7 +387,7 @@ pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
 // Use hal::VENDOR_ID, hal::PRODUCT_ID_*, etc.
 
 /// HID report sizes
-pub const REPORT_SIZE: usize = 65;       // Feature report size (with report ID)
+pub const REPORT_SIZE: usize = 65; // Feature report size (with report ID)
 pub const INPUT_REPORT_SIZE: usize = 64; // Input report size
 
 /// HID communication timing constants
@@ -507,30 +510,18 @@ pub mod matrix {
     /// Use the device profile system for accurate mappings.
     const KEY_NAMES: &[&str] = &[
         // Col 0 (0-5): Esc column
-        "Esc", "`", "Tab", "Caps", "LShf", "LCtl",
-        // Col 1 (6-11): 1/Q/A/Z column
-        "F1", "1", "Q", "A", "Z", "Win",
-        // Col 2 (12-17): 2/W/S/X column
-        "F2", "2", "W", "S", "X", "LAlt",
-        // Col 3 (18-23): 3/E/D/C column
-        "F3", "3", "E", "D", "C", "Spc",
-        // Col 4 (24-29): 4/R/F/V column
-        "F4", "4", "R", "F", "V", "Spc",
-        // Col 5 (30-35): 5/T/G/B column
-        "F5", "5", "T", "G", "B", "Spc",
-        // Col 6 (36-41): 6/Y/H/N column
-        "F6", "6", "Y", "H", "N", "Spc",
-        // Col 7 (42-47): 7/U/J/M column
-        "F7", "7", "U", "J", "M", "Spc",
-        // Col 8 (48-53): 8/I/K/, column
-        "F8", "8", "I", "K", ",", "RAlt",
-        // Col 9 (54-59): 9/O/L/. column
-        "F9", "9", "O", "L", ".", "Fn",
-        // Col 10 (60-65): 0/P/;// column
-        "F10", "0", "P", ";", "/", "RCtl",
-        // Col 11 (66-71): -/[/'/RShf column
-        "F11", "-", "[", "'", "RShf", "Left",
-        // Col 12 (72-77): =/]/Enter/Up column
+        "Esc", "`", "Tab", "Caps", "LShf", "LCtl", // Col 1 (6-11): 1/Q/A/Z column
+        "F1", "1", "Q", "A", "Z", "Win", // Col 2 (12-17): 2/W/S/X column
+        "F2", "2", "W", "S", "X", "LAlt", // Col 3 (18-23): 3/E/D/C column
+        "F3", "3", "E", "D", "C", "Spc", // Col 4 (24-29): 4/R/F/V column
+        "F4", "4", "R", "F", "V", "Spc", // Col 5 (30-35): 5/T/G/B column
+        "F5", "5", "T", "G", "B", "Spc", // Col 6 (36-41): 6/Y/H/N column
+        "F6", "6", "Y", "H", "N", "Spc", // Col 7 (42-47): 7/U/J/M column
+        "F7", "7", "U", "J", "M", "Spc", // Col 8 (48-53): 8/I/K/, column
+        "F8", "8", "I", "K", ",", "RAlt", // Col 9 (54-59): 9/O/L/. column
+        "F9", "9", "O", "L", ".", "Fn", // Col 10 (60-65): 0/P/;// column
+        "F10", "0", "P", ";", "/", "RCtl", // Col 11 (66-71): -/[/'/RShf column
+        "F11", "-", "[", "'", "RShf", "Left", // Col 12 (72-77): =/]/Enter/Up column
         "F12", "=", "]", "Ent", "Up", "Down",
         // Col 13 (78-83): Bksp/\/PgDn/End/Right column
         "Del", "Bksp", "\\", "PgUp", "PgDn", "Right",
@@ -623,7 +614,11 @@ pub mod polling_rate {
 
         // Plain number
         let hz: u16 = s.parse().ok()?;
-        if RATES.contains(&hz) { Some(hz) } else { None }
+        if RATES.contains(&hz) {
+            Some(hz)
+        } else {
+            None
+        }
     }
 }
 
@@ -656,15 +651,16 @@ pub mod depth_report {
     pub fn parse(buf: &[u8]) -> Option<DepthReport> {
         if buf.len() >= 5 {
             // Check for report ID prefix (Linux HID includes report ID as byte 0)
-            let (depth_lo, depth_hi, key_idx) = if buf[0] == REPORT_ID && buf[1] == cmd::SET_MAGNETISM_REPORT {
-                // Format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, ...]
-                (buf[2], buf[3], buf[4])
-            } else if buf[0] == cmd::SET_MAGNETISM_REPORT {
-                // Format without report ID: [cmd(0x1B), depth_lo, depth_hi, key_index, ...]
-                (buf[1], buf[2], buf[3])
-            } else {
-                return None;
-            };
+            let (depth_lo, depth_hi, key_idx) =
+                if buf[0] == REPORT_ID && buf[1] == cmd::SET_MAGNETISM_REPORT {
+                    // Format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, ...]
+                    (buf[2], buf[3], buf[4])
+                } else if buf[0] == cmd::SET_MAGNETISM_REPORT {
+                    // Format without report ID: [cmd(0x1B), depth_lo, depth_hi, key_index, ...]
+                    (buf[1], buf[2], buf[3])
+                } else {
+                    return None;
+                };
 
             Some(DepthReport {
                 key_index: key_idx,
@@ -682,38 +678,115 @@ pub mod hid {
     pub fn key_name(code: u8) -> &'static str {
         match code {
             0x00 => "None",
-            0x04 => "A", 0x05 => "B", 0x06 => "C", 0x07 => "D",
-            0x08 => "E", 0x09 => "F", 0x0A => "G", 0x0B => "H",
-            0x0C => "I", 0x0D => "J", 0x0E => "K", 0x0F => "L",
-            0x10 => "M", 0x11 => "N", 0x12 => "O", 0x13 => "P",
-            0x14 => "Q", 0x15 => "R", 0x16 => "S", 0x17 => "T",
-            0x18 => "U", 0x19 => "V", 0x1A => "W", 0x1B => "X",
-            0x1C => "Y", 0x1D => "Z",
-            0x1E => "1", 0x1F => "2", 0x20 => "3", 0x21 => "4",
-            0x22 => "5", 0x23 => "6", 0x24 => "7", 0x25 => "8",
-            0x26 => "9", 0x27 => "0",
-            0x28 => "Enter", 0x29 => "Escape", 0x2A => "Backspace",
-            0x2B => "Tab", 0x2C => "Space", 0x2D => "-", 0x2E => "=",
-            0x2F => "[", 0x30 => "]", 0x31 => "\\", 0x32 => "#",
-            0x33 => ";", 0x34 => "'", 0x35 => "`", 0x36 => ",",
-            0x37 => ".", 0x38 => "/", 0x39 => "CapsLock",
-            0x3A => "F1", 0x3B => "F2", 0x3C => "F3", 0x3D => "F4",
-            0x3E => "F5", 0x3F => "F6", 0x40 => "F7", 0x41 => "F8",
-            0x42 => "F9", 0x43 => "F10", 0x44 => "F11", 0x45 => "F12",
-            0x46 => "PrintScr", 0x47 => "ScrollLock", 0x48 => "Pause",
-            0x49 => "Insert", 0x4A => "Home", 0x4B => "PageUp",
-            0x4C => "Delete", 0x4D => "End", 0x4E => "PageDown",
-            0x4F => "Right", 0x50 => "Left", 0x51 => "Down", 0x52 => "Up",
-            0x53 => "NumLock", 0x54 => "KP/", 0x55 => "KP*", 0x56 => "KP-",
-            0x57 => "KP+", 0x58 => "KPEnter",
-            0x59 => "KP1", 0x5A => "KP2", 0x5B => "KP3", 0x5C => "KP4",
-            0x5D => "KP5", 0x5E => "KP6", 0x5F => "KP7", 0x60 => "KP8",
-            0x61 => "KP9", 0x62 => "KP0", 0x63 => "KP.",
-            0x64 => "NonUS\\", 0x65 => "App", 0x66 => "Power",
+            0x04 => "A",
+            0x05 => "B",
+            0x06 => "C",
+            0x07 => "D",
+            0x08 => "E",
+            0x09 => "F",
+            0x0A => "G",
+            0x0B => "H",
+            0x0C => "I",
+            0x0D => "J",
+            0x0E => "K",
+            0x0F => "L",
+            0x10 => "M",
+            0x11 => "N",
+            0x12 => "O",
+            0x13 => "P",
+            0x14 => "Q",
+            0x15 => "R",
+            0x16 => "S",
+            0x17 => "T",
+            0x18 => "U",
+            0x19 => "V",
+            0x1A => "W",
+            0x1B => "X",
+            0x1C => "Y",
+            0x1D => "Z",
+            0x1E => "1",
+            0x1F => "2",
+            0x20 => "3",
+            0x21 => "4",
+            0x22 => "5",
+            0x23 => "6",
+            0x24 => "7",
+            0x25 => "8",
+            0x26 => "9",
+            0x27 => "0",
+            0x28 => "Enter",
+            0x29 => "Escape",
+            0x2A => "Backspace",
+            0x2B => "Tab",
+            0x2C => "Space",
+            0x2D => "-",
+            0x2E => "=",
+            0x2F => "[",
+            0x30 => "]",
+            0x31 => "\\",
+            0x32 => "#",
+            0x33 => ";",
+            0x34 => "'",
+            0x35 => "`",
+            0x36 => ",",
+            0x37 => ".",
+            0x38 => "/",
+            0x39 => "CapsLock",
+            0x3A => "F1",
+            0x3B => "F2",
+            0x3C => "F3",
+            0x3D => "F4",
+            0x3E => "F5",
+            0x3F => "F6",
+            0x40 => "F7",
+            0x41 => "F8",
+            0x42 => "F9",
+            0x43 => "F10",
+            0x44 => "F11",
+            0x45 => "F12",
+            0x46 => "PrintScr",
+            0x47 => "ScrollLock",
+            0x48 => "Pause",
+            0x49 => "Insert",
+            0x4A => "Home",
+            0x4B => "PageUp",
+            0x4C => "Delete",
+            0x4D => "End",
+            0x4E => "PageDown",
+            0x4F => "Right",
+            0x50 => "Left",
+            0x51 => "Down",
+            0x52 => "Up",
+            0x53 => "NumLock",
+            0x54 => "KP/",
+            0x55 => "KP*",
+            0x56 => "KP-",
+            0x57 => "KP+",
+            0x58 => "KPEnter",
+            0x59 => "KP1",
+            0x5A => "KP2",
+            0x5B => "KP3",
+            0x5C => "KP4",
+            0x5D => "KP5",
+            0x5E => "KP6",
+            0x5F => "KP7",
+            0x60 => "KP8",
+            0x61 => "KP9",
+            0x62 => "KP0",
+            0x63 => "KP.",
+            0x64 => "NonUS\\",
+            0x65 => "App",
+            0x66 => "Power",
             0x67 => "KP=",
             0x68..=0x73 => "F13-F24",
-            0xE0 => "LCtrl", 0xE1 => "LShift", 0xE2 => "LAlt", 0xE3 => "LGUI",
-            0xE4 => "RCtrl", 0xE5 => "RShift", 0xE6 => "RAlt", 0xE7 => "RGUI",
+            0xE0 => "LCtrl",
+            0xE1 => "LShift",
+            0xE2 => "LAlt",
+            0xE3 => "LGUI",
+            0xE4 => "RCtrl",
+            0xE5 => "RShift",
+            0xE6 => "RAlt",
+            0xE7 => "RGUI",
             _ => "?",
         }
     }
@@ -729,7 +802,7 @@ pub mod hid {
             '1'..='9' => Some((0x1E + (ch as u8 - b'1'), false)),
             '0' => Some((0x27, false)),
             // Special characters (unshifted)
-            ' ' => Some((0x2C, false)),  // Space
+            ' ' => Some((0x2C, false)), // Space
             '-' => Some((0x2D, false)),
             '=' => Some((0x2E, false)),
             '[' => Some((0x2F, false)),
@@ -744,27 +817,27 @@ pub mod hid {
             '\n' => Some((0x28, false)), // Enter
             '\t' => Some((0x2B, false)), // Tab
             // Shifted characters
-            '!' => Some((0x1E, true)),  // Shift+1
-            '@' => Some((0x1F, true)),  // Shift+2
-            '#' => Some((0x20, true)),  // Shift+3
-            '$' => Some((0x21, true)),  // Shift+4
-            '%' => Some((0x22, true)),  // Shift+5
-            '^' => Some((0x23, true)),  // Shift+6
-            '&' => Some((0x24, true)),  // Shift+7
-            '*' => Some((0x25, true)),  // Shift+8
-            '(' => Some((0x26, true)),  // Shift+9
-            ')' => Some((0x27, true)),  // Shift+0
-            '_' => Some((0x2D, true)),  // Shift+-
-            '+' => Some((0x2E, true)),  // Shift+=
-            '{' => Some((0x2F, true)),  // Shift+[
-            '}' => Some((0x30, true)),  // Shift+]
-            '|' => Some((0x31, true)),  // Shift+\
-            ':' => Some((0x33, true)),  // Shift+;
-            '"' => Some((0x34, true)),  // Shift+'
-            '~' => Some((0x35, true)),  // Shift+`
-            '<' => Some((0x36, true)),  // Shift+,
-            '>' => Some((0x37, true)),  // Shift+.
-            '?' => Some((0x38, true)),  // Shift+/
+            '!' => Some((0x1E, true)), // Shift+1
+            '@' => Some((0x1F, true)), // Shift+2
+            '#' => Some((0x20, true)), // Shift+3
+            '$' => Some((0x21, true)), // Shift+4
+            '%' => Some((0x22, true)), // Shift+5
+            '^' => Some((0x23, true)), // Shift+6
+            '&' => Some((0x24, true)), // Shift+7
+            '*' => Some((0x25, true)), // Shift+8
+            '(' => Some((0x26, true)), // Shift+9
+            ')' => Some((0x27, true)), // Shift+0
+            '_' => Some((0x2D, true)), // Shift+-
+            '+' => Some((0x2E, true)), // Shift+=
+            '{' => Some((0x2F, true)), // Shift+[
+            '}' => Some((0x30, true)), // Shift+]
+            '|' => Some((0x31, true)), // Shift+\
+            ':' => Some((0x33, true)), // Shift+;
+            '"' => Some((0x34, true)), // Shift+'
+            '~' => Some((0x35, true)), // Shift+`
+            '<' => Some((0x36, true)), // Shift+,
+            '>' => Some((0x37, true)), // Shift+.
+            '?' => Some((0x38, true)), // Shift+/
             _ => None,
         }
     }
@@ -789,10 +862,10 @@ pub mod firmware_update {
 
     /// Boot mode VID/PIDs - device uses these when in bootloader mode
     pub const BOOT_VID_PIDS: [(u16, u16); 4] = [
-        (0x3141, 0x504A),  // USB boot mode 1
-        (0x3141, 0x404A),  // USB boot mode 2
-        (0x046A, 0x012E),  // RF boot mode 1
-        (0x046A, 0x0130),  // RF boot mode 2
+        (0x3141, 0x504A), // USB boot mode 1
+        (0x3141, 0x404A), // USB boot mode 2
+        (0x046A, 0x012E), // RF boot mode 1
+        (0x046A, 0x0130), // RF boot mode 2
     ];
 
     /// Firmware data chunk size
@@ -927,7 +1000,11 @@ pub mod music_viz {
     /// Encode music mode option byte
     /// option = (style << 4) | dazzle_flag
     pub fn encode_option(style: u8, dazzle: bool) -> u8 {
-        let dazzle_flag = if dazzle { super::LED_DAZZLE_ON } else { super::LED_DAZZLE_OFF };
+        let dazzle_flag = if dazzle {
+            super::LED_DAZZLE_ON
+        } else {
+            super::LED_DAZZLE_OFF
+        };
         (style << 4) | dazzle_flag
     }
 
@@ -953,22 +1030,22 @@ pub mod audio_viz {
     pub const UPDATE_INTERVAL_MS: u64 = 20;
 
     /// Band frequency ranges (approximate)
-    pub const BAND_BASS_START: usize = 0;      // Bands 0-3: Bass (20-250 Hz)
+    pub const BAND_BASS_START: usize = 0; // Bands 0-3: Bass (20-250 Hz)
     pub const BAND_BASS_END: usize = 3;
-    pub const BAND_LOWMID_START: usize = 4;    // Bands 4-7: Low-mid (250-1000 Hz)
+    pub const BAND_LOWMID_START: usize = 4; // Bands 4-7: Low-mid (250-1000 Hz)
     pub const BAND_LOWMID_END: usize = 7;
-    pub const BAND_HIGHMID_START: usize = 8;   // Bands 8-11: High-mid (1-4 kHz)
+    pub const BAND_HIGHMID_START: usize = 8; // Bands 8-11: High-mid (1-4 kHz)
     pub const BAND_HIGHMID_END: usize = 11;
-    pub const BAND_TREBLE_START: usize = 12;   // Bands 12-15: Treble (4-20 kHz)
+    pub const BAND_TREBLE_START: usize = 12; // Bands 12-15: Treble (4-20 kHz)
     pub const BAND_TREBLE_END: usize = 15;
 
     /// Build an audio visualizer HID report
     /// `bands` must be 16 values, each 0-6
     pub fn build_report(bands: &[u8; NUM_BANDS]) -> [u8; 64] {
         let mut buf = [0u8; 64];
-        buf[0] = super::cmd::SET_AUDIO_VIZ;  // 0x0D
-        // Bytes 1-6 are padding (zeros)
-        // Byte 7 is checksum
+        buf[0] = super::cmd::SET_AUDIO_VIZ; // 0x0D
+                                            // Bytes 1-6 are padding (zeros)
+                                            // Byte 7 is checksum
         let sum: u32 = buf[0..7].iter().map(|&b| b as u32).sum();
         buf[7] = (255 - (sum & 0xFF)) as u8;
         // Bytes 8-23 are the 16 frequency bands
@@ -1010,7 +1087,7 @@ pub mod screen_color {
     /// Sends RGB values to keyboard for mode 21 (Screen Color)
     pub fn build_report(r: u8, g: u8, b: u8) -> [u8; 64] {
         let mut buf = [0u8; 64];
-        buf[0] = super::cmd::SET_SCREEN_COLOR;  // 0x0E
+        buf[0] = super::cmd::SET_SCREEN_COLOR; // 0x0E
         buf[1] = r;
         buf[2] = g;
         buf[3] = b;

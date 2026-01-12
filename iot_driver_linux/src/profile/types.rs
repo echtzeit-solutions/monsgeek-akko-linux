@@ -23,7 +23,12 @@ pub struct RangeConfig {
 
 impl RangeConfig {
     pub fn new(min: f32, max: f32, step: f32, default: f32) -> Self {
-        Self { min, max, step, default }
+        Self {
+            min,
+            max,
+            step,
+            default,
+        }
     }
 
     /// Check if a value is within the valid range

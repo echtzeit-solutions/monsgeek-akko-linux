@@ -61,7 +61,9 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
 
 /// Find device definition by VID/PID
 pub fn find_device(vid: u16, pid: u16) -> Option<&'static DeviceDefinition> {
-    SUPPORTED_DEVICES.iter().find(|d| d.vid == vid && d.pid == pid)
+    SUPPORTED_DEVICES
+        .iter()
+        .find(|d| d.vid == vid && d.pid == pid)
 }
 
 /// Check if a VID/PID combination is supported
@@ -80,7 +82,9 @@ pub fn get_pids_for_vid(vid: u16) -> Vec<u16> {
 
 /// Check if device has magnetism (hall effect switches)
 pub fn has_magnetism(vid: u16, pid: u16) -> bool {
-    find_device(vid, pid).map(|d| d.has_magnetism).unwrap_or(false)
+    find_device(vid, pid)
+        .map(|d| d.has_magnetism)
+        .unwrap_or(false)
 }
 
 /// Get key count for device (0 for dongles)
@@ -99,121 +103,119 @@ pub fn key_count(vid: u16, pid: u16) -> u8 {
 /// 98 active keys + empty positions = 126 total matrix positions
 pub const M1_V5_HE_LED_MATRIX: [u8; 126] = [
     // Col 0: Esc row down to Ctrl
-     41,  // 0: Esc
-     53,  // 1: `
-     43,  // 2: Tab
-     57,  // 3: CapsLock
-    225,  // 4: LShift
-    224,  // 5: LCtrl
+    41,  // 0: Esc
+    53,  // 1: `
+    43,  // 2: Tab
+    57,  // 3: CapsLock
+    225, // 4: LShift
+    224, // 5: LCtrl
     // Col 1: F1 column
-     58,  // 6: F1
-     30,  // 7: 1
-     20,  // 8: Q
-      4,  // 9: A
-      0,  // 10: (empty)
-    227,  // 11: LWin
+    58,  // 6: F1
+    30,  // 7: 1
+    20,  // 8: Q
+    4,   // 9: A
+    0,   // 10: (empty)
+    227, // 11: LWin
     // Col 2: F2 column
-     59,  // 12: F2
-     31,  // 13: 2
-     26,  // 14: W
-     22,  // 15: S
-     29,  // 16: Z
-    226,  // 17: LAlt
+    59,  // 12: F2
+    31,  // 13: 2
+    26,  // 14: W
+    22,  // 15: S
+    29,  // 16: Z
+    226, // 17: LAlt
     // Col 3: F3 column
-     60,  // 18: F3
-     32,  // 19: 3
-      8,  // 20: E
-      7,  // 21: D
-     27,  // 22: X
-      0,  // 23: (empty)
+    60, // 18: F3
+    32, // 19: 3
+    8,  // 20: E
+    7,  // 21: D
+    27, // 22: X
+    0,  // 23: (empty)
     // Col 4: F4 column
-     61,  // 24: F4
-     33,  // 25: 4
-     21,  // 26: R
-      9,  // 27: F
-      6,  // 28: C
-      0,  // 29: (empty)
+    61, // 24: F4
+    33, // 25: 4
+    21, // 26: R
+    9,  // 27: F
+    6,  // 28: C
+    0,  // 29: (empty)
     // Col 5: F5 column
-     62,  // 30: F5
-     34,  // 31: 5
-     23,  // 32: T
-     10,  // 33: G
-     25,  // 34: V
-      0,  // 35: (empty)
+    62, // 30: F5
+    34, // 31: 5
+    23, // 32: T
+    10, // 33: G
+    25, // 34: V
+    0,  // 35: (empty)
     // Col 6: F6 column
-     63,  // 36: F6
-     35,  // 37: 6
-     28,  // 38: Y
-     11,  // 39: H
-      5,  // 40: B
-     44,  // 41: Space
+    63, // 36: F6
+    35, // 37: 6
+    28, // 38: Y
+    11, // 39: H
+    5,  // 40: B
+    44, // 41: Space
     // Col 7: F7 column
-     64,  // 42: F7
-     36,  // 43: 7
-     24,  // 44: U
-     13,  // 45: J
-     17,  // 46: N
-      0,  // 47: (empty)
+    64, // 42: F7
+    36, // 43: 7
+    24, // 44: U
+    13, // 45: J
+    17, // 46: N
+    0,  // 47: (empty)
     // Col 8: F8 column
-     65,  // 48: F8
-     37,  // 49: 8
-     12,  // 50: I
-     14,  // 51: K
-     16,  // 52: M
-      0,  // 53: (empty)
+    65, // 48: F8
+    37, // 49: 8
+    12, // 50: I
+    14, // 51: K
+    16, // 52: M
+    0,  // 53: (empty)
     // Col 9: F9 column
-     66,  // 54: F9
-     38,  // 55: 9
-     18,  // 56: O
-     15,  // 57: L
-     54,  // 58: ,
-    230,  // 59: RAlt
+    66,  // 54: F9
+    38,  // 55: 9
+    18,  // 56: O
+    15,  // 57: L
+    54,  // 58: ,
+    230, // 59: RAlt
     // Col 10: F10 column
-     67,  // 60: F10
-     39,  // 61: 0
-     19,  // 62: P
-     51,  // 63: ;
-     55,  // 64: .
-      0,  // 65: (Fn - special)
+    67, // 60: F10
+    39, // 61: 0
+    19, // 62: P
+    51, // 63: ;
+    55, // 64: .
+    0,  // 65: (Fn - special)
     // Col 11: F11 column
-     68,  // 66: F11
-     45,  // 67: -
-     47,  // 68: [
-     52,  // 69: '
-     56,  // 70: /
-    228,  // 71: RCtrl
+    68,  // 66: F11
+    45,  // 67: -
+    47,  // 68: [
+    52,  // 69: '
+    56,  // 70: /
+    228, // 71: RCtrl
     // Col 12: F12 column
-     69,  // 72: F12
-     46,  // 73: =
-     48,  // 74: ]
-      0,  // 75: (empty)
-    229,  // 76: RShift
-     80,  // 77: Left
+    69,  // 72: F12
+    46,  // 73: =
+    48,  // 74: ]
+    0,   // 75: (empty)
+    229, // 76: RShift
+    80,  // 77: Left
     // Col 13: Delete column
-     76,  // 78: Delete
-     42,  // 79: Backspace
-     49,  // 80: Backslash
-     40,  // 81: Enter
-     82,  // 82: Up
-     81,  // 83: Down
+    76, // 78: Delete
+    42, // 79: Backspace
+    49, // 80: Backslash
+    40, // 81: Enter
+    82, // 82: Up
+    81, // 83: Down
     // Col 14: Nav cluster
-      0,  // 84: (empty)
-     74,  // 85: Home
-     75,  // 86: PgUp
-     78,  // 87: PgDn
-     77,  // 88: End
-     79,  // 89: Right
+    0,  // 84: (empty)
+    74, // 85: Home
+    75, // 86: PgUp
+    78, // 87: PgDn
+    77, // 88: End
+    79, // 89: Right
     // Col 15: Media keys
-    233,  // 90: VolUp (special: 0x03, 0x00, 0xE9)
-    234,  // 91: VolDn (special: 0x03, 0x00, 0xEA)
-      0,  // 92: (Mute - special)
-      0,  // 93-95: empty
-      0,
-      0,
-    // Remaining positions (96-125) are empty or special
-      1,   2,   0,   0,   0,   0,   0,   0,   0,   0,  // 96-105
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,  // 106-115
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,  // 116-125
+    233, // 90: VolUp (special: 0x03, 0x00, 0xE9)
+    234, // 91: VolDn (special: 0x03, 0x00, 0xEA)
+    0,   // 92: (Mute - special)
+    0,   // 93-95: empty
+    0, 0, // Remaining positions (96-125) are empty or special
+    1, 2, 0, 0, 0, 0, 0, 0, 0, 0, // 96-105
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 106-115
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 116-125
 ];
 
 /// Common HID keycodes for reference
@@ -359,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_is_supported() {
-        assert!(is_supported(0x3151, 0x5030));  // Wired
-        assert!(is_supported(0x3151, 0x5038));  // 2.4GHz dongle
+        assert!(is_supported(0x3151, 0x5030)); // Wired
+        assert!(is_supported(0x3151, 0x5038)); // 2.4GHz dongle
         assert!(!is_supported(0x1234, 0x5678));
     }
 
@@ -368,7 +370,7 @@ mod tests {
     fn test_get_pids() {
         let pids = get_pids_for_vid(0x3151);
         assert_eq!(pids.len(), 4);
-        assert!(pids.contains(&0x5030));  // Wired
-        assert!(pids.contains(&0x5038));  // 2.4GHz dongle
+        assert!(pids.contains(&0x5030)); // Wired
+        assert!(pids.contains(&0x5038)); // 2.4GHz dongle
     }
 }

@@ -49,7 +49,10 @@ impl ProfileRegistry {
         let id = profile.id();
 
         // Add to VID/PID index
-        self.by_vid_pid.entry(vid_pid).or_default().push(profile.clone());
+        self.by_vid_pid
+            .entry(vid_pid)
+            .or_default()
+            .push(profile.clone());
 
         // Add to ID index
         self.by_id.insert(id, profile);
@@ -133,7 +136,10 @@ impl ProfileRegistry {
     pub fn load_from_directory<P: AsRef<Path>>(&mut self, dir: P) -> Result<usize, LoadError> {
         let dir = dir.as_ref();
         if !dir.is_dir() {
-            return Err(LoadError::Io(format!("{} is not a directory", dir.display())));
+            return Err(LoadError::Io(format!(
+                "{} is not a directory",
+                dir.display()
+            )));
         }
 
         let mut count = 0;
@@ -145,7 +151,11 @@ impl ProfileRegistry {
                 match self.load_from_file(&path) {
                     Ok(()) => count += 1,
                     Err(e) => {
-                        eprintln!("Warning: Failed to load profile from {}: {}", path.display(), e);
+                        eprintln!(
+                            "Warning: Failed to load profile from {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }

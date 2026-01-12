@@ -1,9 +1,9 @@
 // Firmware file handling and dry-run simulation
 // This module is for ANALYSIS ONLY - no actual firmware flashing
 
-use std::path::Path;
 use std::fs;
 use std::io::{self, Read};
+use std::path::Path;
 use zip::ZipArchive;
 
 use crate::protocol::firmware_update;
@@ -89,7 +89,8 @@ impl FirmwareFile {
     /// Load a firmware file from disk
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, FirmwareError> {
         let path = path.as_ref();
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("firmware.bin")
             .to_string();
@@ -173,7 +174,9 @@ impl FirmwareFile {
             }
         }
 
-        Err(FirmwareError::InvalidFormat("No firmware file found in ZIP".to_string()))
+        Err(FirmwareError::InvalidFormat(
+            "No firmware file found in ZIP".to_string(),
+        ))
     }
 
     /// Detect firmware type from content
@@ -212,11 +215,15 @@ impl FirmwareFile {
 
         // Check for empty data patterns
         if self.data.iter().all(|&b| b == 0xFF) {
-            return Err(FirmwareError::InvalidFormat("File contains only 0xFF bytes".to_string()));
+            return Err(FirmwareError::InvalidFormat(
+                "File contains only 0xFF bytes".to_string(),
+            ));
         }
 
         if self.data.iter().all(|&b| b == 0x00) {
-            return Err(FirmwareError::InvalidFormat("File contains only 0x00 bytes".to_string()));
+            return Err(FirmwareError::InvalidFormat(
+                "File contains only 0x00 bytes".to_string(),
+            ));
         }
 
         Ok(())
@@ -237,9 +244,7 @@ impl FirmwareFile {
         let mut archive = ZipArchive::new(file)?;
 
         let names: Vec<String> = (0..archive.len())
-            .filter_map(|i| {
-                archive.by_index(i).ok().map(|e| e.name().to_string())
-            })
+            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
             .collect();
 
         Ok(names)
@@ -250,20 +255,11 @@ impl FirmwareFile {
 #[derive(Debug, Clone)]
 pub enum DryRunCommand {
     /// Enter bootloader mode
-    EnterBootMode {
-        mode: &'static str,
-        bytes: Vec<u8>,
-    },
+    EnterBootMode { mode: &'static str, bytes: Vec<u8> },
     /// Wait for device reconnection
-    WaitReconnect {
-        vid: u16,
-        pid: u16,
-        timeout_ms: u64,
-    },
+    WaitReconnect { vid: u16, pid: u16, timeout_ms: u64 },
     /// Start firmware transfer
-    StartTransfer {
-        header: Vec<u8>,
-    },
+    StartTransfer { header: Vec<u8> },
     /// Send data chunk
     DataChunk {
         index: usize,
@@ -271,10 +267,7 @@ pub enum DryRunCommand {
         size: usize,
     },
     /// Complete transfer with verification
-    CompleteTransfer {
-        header: Vec<u8>,
-        checksum: u32,
-    },
+    CompleteTransfer { header: Vec<u8>, checksum: u32 },
 }
 
 impl DryRunCommand {
@@ -282,24 +275,53 @@ impl DryRunCommand {
     pub fn display(&self) -> String {
         match self {
             Self::EnterBootMode { mode, bytes } => {
-                format!("Enter {} boot mode: [{}] (NOT SENT)",
+                format!(
+                    "Enter {} boot mode: [{}] (NOT SENT)",
                     mode,
-                    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
+                    bytes
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
             }
-            Self::WaitReconnect { vid, pid, timeout_ms } => {
-                format!("Wait for device reconnect at {vid:04X}:{pid:04X} (timeout: {timeout_ms}ms)")
+            Self::WaitReconnect {
+                vid,
+                pid,
+                timeout_ms,
+            } => {
+                format!(
+                    "Wait for device reconnect at {vid:04X}:{pid:04X} (timeout: {timeout_ms}ms)"
+                )
             }
             Self::StartTransfer { header } => {
-                format!("Start transfer: [{}]",
-                    header.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
+                format!(
+                    "Start transfer: [{}]",
+                    header
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
             }
-            Self::DataChunk { index, offset, size } => {
+            Self::DataChunk {
+                index,
+                offset,
+                size,
+            } => {
                 format!("Send chunk {index}: {size} bytes at offset 0x{offset:X}")
             }
             Self::CompleteTransfer { header, checksum } => {
-                format!("Complete transfer: [{}...] checksum=0x{:08X}",
-                    header.iter().take(4).map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
-                    checksum)
+                format!(
+                    "Complete transfer: [{}...] checksum=0x{:08X}",
+                    header
+                        .iter()
+                        .take(4)
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    checksum
+                )
             }
         }
     }
@@ -328,7 +350,11 @@ impl DryRunResult {
 
         println!("Firmware file: {}", self.firmware.filename);
         println!("  Type: {}", self.firmware.firmware_type);
-        println!("  Size: {} bytes ({} KB)", self.firmware.size, self.firmware.size / 1024);
+        println!(
+            "  Size: {} bytes ({} KB)",
+            self.firmware.size,
+            self.firmware.size / 1024
+        );
         println!("  Checksum: 0x{:08X}", self.firmware.checksum);
         println!("  Chunks: {} (64 bytes each)", self.firmware.chunk_count);
         println!();
@@ -348,14 +374,22 @@ impl DryRunResult {
             }
             println!();
         } else {
-            println!("Would send {} commands ({} data chunks)",
+            println!(
+                "Would send {} commands ({} data chunks)",
                 self.commands.len(),
-                self.commands.iter().filter(|c| matches!(c, DryRunCommand::DataChunk { .. })).count());
+                self.commands
+                    .iter()
+                    .filter(|c| matches!(c, DryRunCommand::DataChunk { .. }))
+                    .count()
+            );
             println!("Use --verbose to see detailed command list");
             println!();
         }
 
-        println!("Estimated transfer time: {:.1} seconds", self.estimated_time_secs);
+        println!(
+            "Estimated transfer time: {:.1} seconds",
+            self.estimated_time_secs
+        );
         println!();
         println!("=== DRY RUN COMPLETE - DEVICE UNCHANGED ===");
     }

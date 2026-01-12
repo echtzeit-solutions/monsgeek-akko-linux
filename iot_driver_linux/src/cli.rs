@@ -305,6 +305,7 @@ pub enum Commands {
 
     // === Screen Color Commands ===
     /// Run screen color reactive LED mode (streams average screen color to keyboard)
+    #[cfg(feature = "screen-capture")]
     #[command(visible_alias = "screencolor")]
     Screen {
         /// Capture framerate (1-60, default 2)

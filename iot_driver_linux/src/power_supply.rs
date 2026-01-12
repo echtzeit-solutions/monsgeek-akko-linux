@@ -8,7 +8,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::hid::BatteryInfo;
@@ -245,7 +245,7 @@ impl PowerSupply {
             .create(true)
             .truncate(true)
             .open(&path)?;
-        writeln!(file, "{}", value)?;
+        writeln!(file, "{value}")?;
         Ok(())
     }
 

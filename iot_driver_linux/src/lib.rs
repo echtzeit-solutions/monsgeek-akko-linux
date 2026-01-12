@@ -14,15 +14,21 @@ pub mod hid;
 pub mod power_supply;
 pub mod profile;
 pub mod protocol;
+#[cfg(feature = "screen-capture")]
 pub mod screen_capture;
 pub mod tui;
 
+pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
 pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
 pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES};
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
-pub use hid::{BatteryInfo, ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings, VendorEventType, key_mode};
-pub use power_supply::{BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration};
-pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
+pub use hid::{
+    key_mode, BatteryInfo, ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings,
+    VendorEventType,
+};
+pub use power_supply::{
+    BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration,
+};
 pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
 pub use protocol::cmd;
 pub use protocol::magnetism;

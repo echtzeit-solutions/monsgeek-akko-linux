@@ -240,7 +240,13 @@ impl MonsGeekDevice {
                         .open_device(&hidapi)
                         .map_err(|e| format!("Failed to open device: {e}"))?;
                     let path = dev_info.path().to_string_lossy().to_string();
-                    return Ok(Self { device, vid, pid, path, definition });
+                    return Ok(Self {
+                        device,
+                        vid,
+                        pid,
+                        path,
+                        definition,
+                    });
                 }
             }
         }
@@ -264,7 +270,13 @@ impl MonsGeekDevice {
                     .open_device(&hidapi)
                     .map_err(|e| format!("Failed to open device: {e}"))?;
                 let path = dev_info.path().to_string_lossy().to_string();
-                return Ok(Self { device, vid, pid, path, definition });
+                return Ok(Self {
+                    device,
+                    vid,
+                    pid,
+                    path,
+                    definition,
+                });
             }
         }
         Err(format!("Device {vid:04x}:{pid:04x} not connected"))
@@ -281,7 +293,8 @@ impl MonsGeekDevice {
                 && dev_info.usage_page() == hal::USAGE_PAGE
                 && dev_info.usage() == hal::USAGE_INPUT
             {
-                println!("Opening INPUT interface: {} (usage {:04x}, page {:04x})",
+                println!(
+                    "Opening INPUT interface: {} (usage {:04x}, page {:04x})",
                     dev_info.path().to_string_lossy(),
                     dev_info.usage(),
                     dev_info.usage_page()
@@ -401,7 +414,13 @@ impl MonsGeekDevice {
     }
 
     /// Send command with custom delay (for streaming/fast updates)
-    pub fn send_with_delay(&self, cmd: u8, data: &[u8], checksum: ChecksumType, delay_ms: u64) -> bool {
+    pub fn send_with_delay(
+        &self,
+        cmd: u8,
+        data: &[u8],
+        checksum: ChecksumType,
+        delay_ms: u64,
+    ) -> bool {
         let mut buf = vec![0u8; protocol::REPORT_SIZE];
         buf[0] = 0; // Report ID
         buf[1] = cmd;
@@ -425,7 +444,12 @@ impl MonsGeekDevice {
         }
 
         // Debug: print first 16 bytes for SET_USERPIC page 0 (only if RUST_LOG=trace)
-        if cmd == cmd::SET_USERPIC && buf[4] == 0 && std::env::var("RUST_LOG").map(|v| v.contains("trace")).unwrap_or(false) {
+        if cmd == cmd::SET_USERPIC
+            && buf[4] == 0
+            && std::env::var("RUST_LOG")
+                .map(|v| v.contains("trace"))
+                .unwrap_or(false)
+        {
             eprintln!(
                 "[TRACE] SET_USERPIC page 0: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
                 buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
@@ -517,7 +541,16 @@ impl MonsGeekDevice {
     /// For mode 13 (LightUserPicture), option selects which custom layer (0-3) to display.
     /// The option value is shifted left by 4 bits in the protocol.
     #[allow(clippy::too_many_arguments)]
-    pub fn set_led(&self, mode: u8, brightness: u8, speed: u8, r: u8, g: u8, b: u8, dazzle: bool) -> bool {
+    pub fn set_led(
+        &self,
+        mode: u8,
+        brightness: u8,
+        speed: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        dazzle: bool,
+    ) -> bool {
         self.set_led_with_option(mode, brightness, speed, r, g, b, dazzle, 0)
     }
 
@@ -526,12 +559,26 @@ impl MonsGeekDevice {
     /// - layer: which custom color layer to display (0-3)
     /// - RGB should be (0, 200, 200) per official driver
     #[allow(clippy::too_many_arguments)]
-    pub fn set_led_with_option(&self, mode: u8, brightness: u8, speed: u8, r: u8, g: u8, b: u8, dazzle: bool, layer: u8) -> bool {
+    pub fn set_led_with_option(
+        &self,
+        mode: u8,
+        brightness: u8,
+        speed: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        dazzle: bool,
+        layer: u8,
+    ) -> bool {
         let (option, r_val, g_val, b_val) = if mode == 13 {
             // For LightUserPicture: option = layer << 4, RGB = (0, 200, 200)
             (layer << 4, 0u8, 200u8, 200u8)
         } else {
-            let opt = if dazzle { protocol::LED_DAZZLE_ON } else { protocol::LED_DAZZLE_OFF };
+            let opt = if dazzle {
+                protocol::LED_DAZZLE_ON
+            } else {
+                protocol::LED_DAZZLE_OFF
+            };
             (opt, r, g, b)
         };
 
@@ -540,7 +587,9 @@ impl MonsGeekDevice {
             protocol::LED_SPEED_MAX - speed.min(protocol::LED_SPEED_MAX), // Speed is inverted
             brightness.min(protocol::LED_BRIGHTNESS_MAX),
             option,
-            r_val, g_val, b_val,
+            r_val,
+            g_val,
+            b_val,
         ];
         self.send(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)
     }
@@ -551,14 +600,29 @@ impl MonsGeekDevice {
     /// speed: 0-4
     /// dazzle: rainbow color cycling
     #[allow(clippy::too_many_arguments)]
-    pub fn set_side_led(&self, mode: u8, brightness: u8, speed: u8, r: u8, g: u8, b: u8, dazzle: bool) -> bool {
-        let dazzle_flag = if dazzle { protocol::LED_DAZZLE_ON } else { protocol::LED_DAZZLE_OFF };
+    pub fn set_side_led(
+        &self,
+        mode: u8,
+        brightness: u8,
+        speed: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        dazzle: bool,
+    ) -> bool {
+        let dazzle_flag = if dazzle {
+            protocol::LED_DAZZLE_ON
+        } else {
+            protocol::LED_DAZZLE_OFF
+        };
         let data = [
             mode,
             protocol::LED_SPEED_MAX - speed.min(protocol::LED_SPEED_MAX), // Speed is inverted
             brightness.min(protocol::LED_BRIGHTNESS_MAX),
             dazzle_flag,
-            r, g, b,
+            r,
+            g,
+            b,
         ];
         self.send(cmd::SET_SLEDPARAM, &data, ChecksumType::Bit8)
     }
@@ -593,10 +657,12 @@ impl MonsGeekDevice {
     /// This may be required before sending per-key colors
     pub fn start_user_gif(&self) -> bool {
         // Official driver: _e[0] = CMD, _e[3] = 0, send with Bit7 checksum
-        let data = [0, 0, 0];  // data[2] will be byte[3] in the message = 0
+        let data = [0, 0, 0]; // data[2] will be byte[3] in the message = 0
         if self.send(cmd::SET_USERGIF, &data, ChecksumType::Bit7) {
             // Official driver waits after start
-            std::thread::sleep(std::time::Duration::from_millis(timing::ANIMATION_START_DELAY_MS));
+            std::thread::sleep(std::time::Duration::from_millis(
+                timing::ANIMATION_START_DELAY_MS,
+            ));
             true
         } else {
             false
@@ -618,7 +684,12 @@ impl MonsGeekDevice {
     /// - Page 6: 42 bytes of RGB data, is_last=1
     ///
     /// Total: 378 bytes = 126 key positions * 3 bytes RGB
-    pub fn set_per_key_colors_fast(&self, colors: &[(u8, u8, u8)], page_delay_ms: u64, inter_delay_ms: u64) -> bool {
+    pub fn set_per_key_colors_fast(
+        &self,
+        colors: &[(u8, u8, u8)],
+        page_delay_ms: u64,
+        inter_delay_ms: u64,
+    ) -> bool {
         self.set_per_key_colors_to_layer_internal(colors, 0, page_delay_ms, inter_delay_ms)
     }
 
@@ -627,7 +698,13 @@ impl MonsGeekDevice {
         self.set_per_key_colors_to_layer_internal(colors, layer, 50, 10)
     }
 
-    fn set_per_key_colors_to_layer_internal(&self, colors: &[(u8, u8, u8)], layer: u8, page_delay_ms: u64, inter_delay_ms: u64) -> bool {
+    fn set_per_key_colors_to_layer_internal(
+        &self,
+        colors: &[(u8, u8, u8)],
+        layer: u8,
+        page_delay_ms: u64,
+        inter_delay_ms: u64,
+    ) -> bool {
         // Build RGB byte array - fill with colors, pad with zeros
         let mut rgb_data = vec![0u8; rgb::TOTAL_RGB_SIZE];
         for (i, (r, g, b)) in colors.iter().enumerate() {
@@ -651,13 +728,13 @@ impl MonsGeekDevice {
 
             // Build message: [profile/layer, magic, page, length, is_last, pad, pad, ...rgb_data]
             let mut data = vec![
-                layer,             // layer/profile (0-3)
-                rgb::MAGIC_VALUE,  // magic value
-                page as u8,        // page number (0-6)
-                page_size as u8,   // fixed length: 56 or 42
-                is_last,           // is_last flag: 0 or 1
-                0,                 // padding byte 1
-                0,                 // padding byte 2
+                layer,            // layer/profile (0-3)
+                rgb::MAGIC_VALUE, // magic value
+                page as u8,       // page number (0-6)
+                page_size as u8,  // fixed length: 56 or 42
+                is_last,          // is_last flag: 0 or 1
+                0,                // padding byte 1
+                0,                // padding byte 2
             ];
             data.extend_from_slice(&rgb_data[start..end.min(rgb_data.len())]);
 
@@ -685,9 +762,9 @@ impl MonsGeekDevice {
         let mut buf = vec![0u8; protocol::REPORT_SIZE];
         buf[0] = 0; // Report ID
         buf[1] = cmd::GET_USERPIC; // 0x8C
-        buf[2] = 0;   // profile
+        buf[2] = 0; // profile
         buf[3] = 255; // magic
-        buf[4] = 0;   // page 0
+        buf[4] = 0; // page 0
 
         // Apply Bit7 checksum
         let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
@@ -716,7 +793,7 @@ impl MonsGeekDevice {
         // The response might have RGB data starting at different offsets
         // Let's try to find where non-zero data starts
         for i in 0..10 {
-            let base = 8 + i * 3;  // Try offset 8 (after checksum)
+            let base = 8 + i * 3; // Try offset 8 (after checksum)
             if base + 2 < resp.len() {
                 colors.push((resp[base], resp[base + 1], resp[base + 2]));
             }
@@ -809,19 +886,23 @@ impl MonsGeekDevice {
         // Send pages for this frame
         // Header format: [cmd, frame_idx, page, 1, total_frames, delay_lo, delay_hi]
         for page in 0..rgb::NUM_PAGES {
-            let page_size = if page == rgb::NUM_PAGES - 1 { rgb::LAST_PAGE_SIZE } else { rgb::PAGE_SIZE };
+            let page_size = if page == rgb::NUM_PAGES - 1 {
+                rgb::LAST_PAGE_SIZE
+            } else {
+                rgb::PAGE_SIZE
+            };
             let start = page * rgb::PAGE_SIZE;
             let end = start + page_size;
 
             // Build message data (after cmd byte)
             let mut data = vec![
-                frame_idx,                        // current frame index
-                page as u8,                       // page number (0-6)
-                1,                                // data flag (1 = frame data, 0 = start)
-                total_frames,                     // total number of frames
-                (frame_delay_ms & 0xFF) as u8,    // delay low byte
+                frame_idx,                            // current frame index
+                page as u8,                           // page number (0-6)
+                1,                                    // data flag (1 = frame data, 0 = start)
+                total_frames,                         // total number of frames
+                (frame_delay_ms & 0xFF) as u8,        // delay low byte
                 ((frame_delay_ms >> 8) & 0xFF) as u8, // delay high byte
-                0,                                // padding
+                0,                                    // padding
             ];
             data.extend_from_slice(&rgb_data[start..end.min(rgb_data.len())]);
 
@@ -887,13 +968,21 @@ impl MonsGeekDevice {
     /// Start/stop minimum travel calibration (released position)
     /// Procedure: start -> wait 2s -> stop
     pub fn calibrate_min(&self, start: bool) -> bool {
-        self.send(cmd::SET_MAGNETISM_CAL, &[if start { 1 } else { 0 }], ChecksumType::Bit7)
+        self.send(
+            cmd::SET_MAGNETISM_CAL,
+            &[if start { 1 } else { 0 }],
+            ChecksumType::Bit7,
+        )
     }
 
     /// Start/stop maximum travel calibration (fully pressed position)
     /// Procedure: start -> press all keys -> stop
     pub fn calibrate_max(&self, start: bool) -> bool {
-        self.send(cmd::SET_MAGNETISM_MAX_CAL, &[if start { 1 } else { 0 }], ChecksumType::Bit7)
+        self.send(
+            cmd::SET_MAGNETISM_MAX_CAL,
+            &[if start { 1 } else { 0 }],
+            ChecksumType::Bit7,
+        )
     }
 
     /// Set keyboard options
@@ -901,14 +990,20 @@ impl MonsGeekDevice {
     /// anti_mistouch: Anti-mistouch switch
     /// rt_stability: Rapid Trigger stability (0-125ms, steps of 25ms)
     /// wasd_swap: Swap WASD and arrow keys
-    pub fn set_options(&self, fn_layer: u8, anti_mistouch: bool, rt_stability: u8, wasd_swap: bool) -> bool {
+    pub fn set_options(
+        &self,
+        fn_layer: u8,
+        anti_mistouch: bool,
+        rt_stability: u8,
+        wasd_swap: bool,
+    ) -> bool {
         // JS format: [cmd, _, fnIndex, anti_mistouch, RTStab/25, wasd_swap]
         let data = [
-            0,  // byte 1 (unused)
-            fn_layer,  // byte 2 - fn layer index
-            if anti_mistouch { 1 } else { 0 },  // byte 3 - anti-mistouch
-            rt_stability / 25,  // byte 4 - RT stability (0-5 = 0-125ms)
-            if wasd_swap { 1 } else { 0 },  // byte 5 - WASD swap
+            0,                                 // byte 1 (unused)
+            fn_layer,                          // byte 2 - fn layer index
+            if anti_mistouch { 1 } else { 0 }, // byte 3 - anti-mistouch
+            rt_stability / 25,                 // byte 4 - RT stability (0-5 = 0-125ms)
+            if wasd_swap { 1 } else { 0 },     // byte 5 - WASD swap
         ];
         self.send(cmd::SET_KBOPTION, &data, ChecksumType::Bit7)
     }
@@ -943,7 +1038,7 @@ impl MonsGeekDevice {
             buf[0] = 0; // Report ID
             buf[1] = cmd::GET_KEYMATRIX;
             buf[2] = profile;
-            buf[3] = 255;  // magic value
+            buf[3] = 255; // magic value
             buf[4] = 0;
             buf[5] = page as u8;
 
@@ -989,18 +1084,29 @@ impl MonsGeekDevice {
     /// layer: Fn layer (0 = base layer)
     ///
     /// Format: [cmd, profile, key_index, 0, 0, enabled, layer, checksum, code[0], code[1], code[2], code[3]]
-    pub fn set_keymatrix(&self, profile: u8, key_index: u8, hid_code: u8, enabled: bool, layer: u8) -> bool {
+    pub fn set_keymatrix(
+        &self,
+        profile: u8,
+        key_index: u8,
+        hid_code: u8,
+        enabled: bool,
+        layer: u8,
+    ) -> bool {
         // Key code format for simple key: [0, 0, hid_code, 0]
         let key_data = [0u8, 0, hid_code, 0];
 
         let data = [
-            profile,                        // byte 1: profile
-            key_index,                      // byte 2: key index in matrix
-            0, 0,                           // bytes 3-4: unused
-            if enabled { 1 } else { 0 },    // byte 5: enabled flag
-            layer,                          // byte 6: layer
-            0,                              // byte 7: padding (checksum will be at byte 8)
-            key_data[0], key_data[1], key_data[2], key_data[3], // bytes 8-11: key code
+            profile,   // byte 1: profile
+            key_index, // byte 2: key index in matrix
+            0,
+            0,                           // bytes 3-4: unused
+            if enabled { 1 } else { 0 }, // byte 5: enabled flag
+            layer,                       // byte 6: layer
+            0,                           // byte 7: padding (checksum will be at byte 8)
+            key_data[0],
+            key_data[1],
+            key_data[2],
+            key_data[3], // bytes 8-11: key code
         ];
 
         self.send(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
@@ -1041,9 +1147,9 @@ impl MonsGeekDevice {
         for &(keycode, is_down, delay) in events {
             data.push(keycode);
             let flags = if is_down {
-                0x80 | (delay.min(127))  // bit 7 set = down, bits 0-6 = delay
+                0x80 | (delay.min(127)) // bit 7 set = down, bits 0-6 = delay
             } else {
-                delay.min(127)  // bit 7 clear = up
+                delay.min(127) // bit 7 clear = up
             };
             data.push(flags);
         }
@@ -1097,18 +1203,18 @@ impl MonsGeekDevice {
     pub fn set_text_macro(&self, macro_index: u8, text: &str, delay_ms: u8, repeat: u16) -> bool {
         use crate::protocol::hid::char_to_hid;
 
-        const LSHIFT: u8 = 0xE1;  // Left Shift HID code
+        const LSHIFT: u8 = 0xE1; // Left Shift HID code
         let mut events = Vec::new();
 
         for ch in text.chars() {
             if let Some((keycode, needs_shift)) = char_to_hid(ch) {
                 if needs_shift {
-                    events.push((LSHIFT, true, 0));          // Shift down
-                    events.push((keycode, true, delay_ms));  // Key down
-                    events.push((keycode, false, 0));        // Key up
-                    events.push((LSHIFT, false, delay_ms));  // Shift up
+                    events.push((LSHIFT, true, 0)); // Shift down
+                    events.push((keycode, true, delay_ms)); // Key down
+                    events.push((keycode, false, 0)); // Key up
+                    events.push((LSHIFT, false, delay_ms)); // Shift up
                 } else {
-                    events.push((keycode, true, delay_ms));  // Key down
+                    events.push((keycode, true, delay_ms)); // Key down
                     events.push((keycode, false, delay_ms)); // Key up
                 }
             }
@@ -1147,7 +1253,11 @@ impl MonsGeekDevice {
                 resp[0] = 0;
                 if self.device.get_feature_report(&mut resp).is_ok() {
                     // Skip report ID and command echo
-                    let data = if resp[1] == cmd::GET_MACRO { &resp[2..] } else { &resp[1..] };
+                    let data = if resp[1] == cmd::GET_MACRO {
+                        &resp[2..]
+                    } else {
+                        &resp[1..]
+                    };
                     all_data.extend_from_slice(data);
 
                     // Check for 4 consecutive zeros (end marker)
@@ -1239,9 +1349,11 @@ impl MonsGeekDevice {
         let rt_lift = self.get_magnetism(protocol::magnetism::RT_LIFT, 2)?;
 
         // Deadzones - may fail on older firmware, use empty vecs as fallback
-        let bottom_dz = self.get_magnetism(protocol::magnetism::BOTTOM_DEADZONE, 2)
+        let bottom_dz = self
+            .get_magnetism(protocol::magnetism::BOTTOM_DEADZONE, 2)
             .unwrap_or_default();
-        let top_dz = self.get_magnetism(protocol::magnetism::TOP_DEADZONE, 2)
+        let top_dz = self
+            .get_magnetism(protocol::magnetism::TOP_DEADZONE, 2)
             .unwrap_or_default();
 
         Some(TriggerSettings {
@@ -1274,7 +1386,8 @@ impl MonsGeekDevice {
     pub fn set_magnetism_u16(&self, sub_cmd: u8, values: &[u16]) -> bool {
         // Convert u16 values to bytes (little-endian)
         let key_count = self.key_count() as usize;
-        let bytes: Vec<u8> = values.iter()
+        let bytes: Vec<u8> = values
+            .iter()
             .take(key_count)
             .flat_map(|&v| v.to_le_bytes())
             .collect();
@@ -1303,7 +1416,9 @@ impl MonsGeekDevice {
                 1,                           // flag = 1 for bulk mode
                 page as u8,                  // page number
                 if is_last { 1 } else { 0 }, // commit flag on last page
-                0, 0, 0,                     // padding: 2 zeros + checksum placeholder
+                0,
+                0,
+                0, // padding: 2 zeros + checksum placeholder
             ];
             data.extend_from_slice(chunk);
             if !self.send(cmd::SET_MULTI_MAGNETISM, &data, ChecksumType::Bit7) {
@@ -1405,15 +1520,9 @@ impl MonsGeekDevice {
     pub fn read_input_verbose(&self, timeout_ms: i32) -> (Option<Vec<u8>>, String) {
         let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
         match self.device.read_timeout(&mut buf, timeout_ms) {
-            Ok(len) if len > 0 => {
-                (Some(buf[..len].to_vec()), format!("OK: {len} bytes"))
-            }
-            Ok(len) => {
-                (None, format!("Timeout/empty: {len} bytes"))
-            }
-            Err(e) => {
-                (None, format!("Error: {e:?}"))
-            }
+            Ok(len) if len > 0 => (Some(buf[..len].to_vec()), format!("OK: {len} bytes")),
+            Ok(len) => (None, format!("Timeout/empty: {len} bytes")),
+            Err(e) => (None, format!("Error: {e:?}")),
         }
     }
 
@@ -1496,9 +1605,9 @@ impl MonsGeekDevice {
     /// Legacy precision factor (deprecated, use precision_factor_from_version)
     pub fn precision_factor(precision: u8) -> f32 {
         match precision {
-            0 => 10.0,   // 0.1mm
-            1 => 20.0,   // 0.05mm
-            2 => 100.0,  // 0.01mm
+            0 => 10.0,  // 0.1mm
+            1 => 20.0,  // 0.05mm
+            2 => 100.0, // 0.01mm
             _ => 10.0,
         }
     }
@@ -1543,7 +1652,7 @@ impl MonsGeekDevice {
     /// Uses the keyboard's built-in music reactive mode (0x0D command)
     /// `bands` must be 16 values, each 0-6 representing frequency intensity
     pub fn set_audio_viz_bands(&self, bands: &[u8; 16]) -> bool {
-        use crate::protocol::{cmd, audio_viz, ChecksumType};
+        use crate::protocol::{audio_viz, cmd, ChecksumType};
         // Build data: 6 bytes padding + 16 bytes band levels
         let mut data = [0u8; 22];
         // Bytes 0-5 are padding (zeros)

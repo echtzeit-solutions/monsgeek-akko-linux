@@ -113,16 +113,16 @@ impl DeviceRegistry {
 
     /// Find the FEATURE interface for a device
     pub fn find_feature_interface(&self, vid: u16, pid: u16) -> Option<&HidInterface> {
-        self.interfaces.iter().find(|i| {
-            i.vid == vid && i.pid == pid && i.interface_type == InterfaceType::Feature
-        })
+        self.interfaces
+            .iter()
+            .find(|i| i.vid == vid && i.pid == pid && i.interface_type == InterfaceType::Feature)
     }
 
     /// Find the INPUT interface for a device
     pub fn find_input_interface(&self, vid: u16, pid: u16) -> Option<&HidInterface> {
-        self.interfaces.iter().find(|i| {
-            i.vid == vid && i.pid == pid && i.interface_type == InterfaceType::Input
-        })
+        self.interfaces
+            .iter()
+            .find(|i| i.vid == vid && i.pid == pid && i.interface_type == InterfaceType::Input)
     }
 
     /// Check if a VID/PID is a known device
@@ -137,11 +137,7 @@ impl DeviceRegistry {
 
     /// Get all known VID/PID pairs (unique)
     pub fn known_vid_pids(&self) -> Vec<(u16, u16)> {
-        let mut pairs: Vec<(u16, u16)> = self
-            .interfaces
-            .iter()
-            .map(|i| (i.vid, i.pid))
-            .collect();
+        let mut pairs: Vec<(u16, u16)> = self.interfaces.iter().map(|i| (i.vid, i.pid)).collect();
         pairs.sort();
         pairs.dedup();
         pairs
@@ -197,6 +193,8 @@ mod tests {
         let reg = device_registry();
         let client_facing: Vec<_> = reg.client_facing_interfaces().collect();
         // Should have Feature interfaces only
-        assert!(client_facing.iter().all(|i| i.interface_type == InterfaceType::Feature));
+        assert!(client_facing
+            .iter()
+            .all(|i| i.interface_type == InterfaceType::Feature));
     }
 }

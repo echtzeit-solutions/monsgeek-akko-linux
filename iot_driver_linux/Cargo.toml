@@ -53,8 +53,8 @@ cpal = { version = "0.15", features = ["jack"] }
 spectrum-analyzer = "1.4"
 
 # Screen color reactive mode (PipeWire screencast)
-ashpd = "0.10"
-pipewire = "0.8"
+ashpd = { version = "0.10", optional = true }
+pipewire = { version = "0.9", optional = true }
 
 # Signal handling
 ctrlc = "3.4"
@@ -77,6 +77,7 @@ default = ["firmware-api"]
 firmware-api = ["dep:reqwest"]
 firmware-api-async = ["dep:reqwest"]
 bpf = ["dep:aya"]
+screen-capture = ["dep:ashpd", "dep:pipewire"]
 
 [build-dependencies]
 tonic-build = "0.12"

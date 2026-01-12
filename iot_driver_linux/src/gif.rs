@@ -279,10 +279,18 @@ pub fn print_animation_info(anim: &GifAnimation) {
         let total_duration: u32 = delays.iter().map(|&d| d as u32).sum();
 
         println!("  Avg frame delay: {avg_delay:.1}ms");
-        println!("  Total duration: {}ms ({:.1}s)", total_duration, total_duration as f32 / 1000.0);
+        println!(
+            "  Total duration: {}ms ({:.1}s)",
+            total_duration,
+            total_duration as f32 / 1000.0
+        );
 
         // Count active LEDs in first frame
-        let active = anim.frames[0].colors.iter().filter(|&&(r, g, b)| r > 0 || g > 0 || b > 0).count();
+        let active = anim.frames[0]
+            .colors
+            .iter()
+            .filter(|&&(r, g, b)| r > 0 || g > 0 || b > 0)
+            .count();
         println!("  Active LEDs (frame 0): {active}/{MATRIX_SIZE}");
     }
 }

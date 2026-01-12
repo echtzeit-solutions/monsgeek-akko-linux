@@ -103,7 +103,8 @@ impl AudioCapture {
         let sample_rate = audio_config.sample_rate().0;
         state.sample_rate.store(sample_rate, Ordering::SeqCst);
 
-        let sample_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(FFT_SIZE * 2)));
+        let sample_buffer: Arc<Mutex<Vec<f32>>> =
+            Arc::new(Mutex::new(Vec::with_capacity(FFT_SIZE * 2)));
         let sample_buffer_clone = Arc::clone(&sample_buffer);
 
         let stream = audio_device
@@ -125,7 +126,9 @@ impl AudioCapture {
             )
             .map_err(|e| format!("Failed to build audio stream: {e}"))?;
 
-        stream.play().map_err(|e| format!("Failed to start audio stream: {e}"))?;
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start audio stream: {e}"))?;
         state.running.store(true, Ordering::SeqCst);
 
         // Start FFT processing thread
@@ -154,7 +157,7 @@ impl AudioCapture {
                 };
 
                 // Debug: check audio data every 5 seconds (300 loops at ~60fps)
-                if loop_count % 300 == 0 && std::env::var("RUST_LOG").is_ok() {
+                if loop_count.is_multiple_of(300) && std::env::var("RUST_LOG").is_ok() {
                     let max_sample = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
                     eprintln!("[Audio] buf={buf_len}, peak={max_sample:.3}");
                 }
@@ -162,7 +165,8 @@ impl AudioCapture {
                 let raw_bands = analyze_spectrum(&samples, sample_rate);
 
                 for i in 0..NUM_BANDS {
-                    smoothed_bands[i] = smoothed_bands[i] * config.smoothing + raw_bands[i] * (1.0 - config.smoothing);
+                    smoothed_bands[i] = smoothed_bands[i] * config.smoothing
+                        + raw_bands[i] * (1.0 - config.smoothing);
                 }
 
                 state_clone.set_bands(smoothed_bands);
@@ -296,13 +300,13 @@ fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
     // Frequency band ranges (Hz) - logarithmic scale for better visualization
     // Each band also has a weight to compensate for frequency distribution
     let band_ranges = [
-        (20.0, 60.0, 2.0),      // Sub-bass (boost - fewer bins)
-        (60.0, 150.0, 1.5),     // Bass
-        (150.0, 400.0, 1.2),    // Low-mids
-        (400.0, 1000.0, 1.0),   // Mids (reference)
-        (1000.0, 2500.0, 1.0),  // Upper-mids
-        (2500.0, 6000.0, 1.2),  // Presence
-        (6000.0, 12000.0, 1.5), // Brilliance
+        (20.0, 60.0, 2.0),       // Sub-bass (boost - fewer bins)
+        (60.0, 150.0, 1.5),      // Bass
+        (150.0, 400.0, 1.2),     // Low-mids
+        (400.0, 1000.0, 1.0),    // Mids (reference)
+        (1000.0, 2500.0, 1.0),   // Upper-mids
+        (2500.0, 6000.0, 1.2),   // Presence
+        (6000.0, 12000.0, 1.5),  // Brilliance
         (12000.0, 20000.0, 2.0), // Air (boost - often quiet)
     ];
 
@@ -425,11 +429,17 @@ pub fn run_rgb_loop(
 
         // Debug output every 5 seconds (only if RUST_LOG is set)
         frame_count += 1;
-        if frame_count % (TARGET_FPS * 5) == 0 && std::env::var("RUST_LOG").is_ok() {
+        if frame_count.is_multiple_of(TARGET_FPS * 5) && std::env::var("RUST_LOG").is_ok() {
             let avg: f32 = bands.iter().sum::<f32>() / NUM_BANDS as f32;
-            let first_color = if colors.is_empty() { (0,0,0) } else { colors[0] };
-            eprintln!("[RGB] avg={:.2} bass={:.2} color0=({},{},{})",
-                avg, bands[1], first_color.0, first_color.1, first_color.2);
+            let first_color = if colors.is_empty() {
+                (0, 0, 0)
+            } else {
+                colors[0]
+            };
+            eprintln!(
+                "[RGB] avg={:.2} bass={:.2} color0=({},{},{})",
+                avg, bands[1], first_color.0, first_color.1, first_color.2
+            );
         }
 
         // Send to keyboard (10ms page delay, 3ms inter-page = ~88ms per frame = ~11fps)
@@ -509,10 +519,7 @@ fn get_pulseaudio_monitor() -> Result<String, String> {
 }
 
 /// Run a simple rainbow animation to test RGB without audio
-pub fn run_rainbow_test(
-    device: &MonsGeekDevice,
-    running: Arc<AtomicBool>,
-) -> Result<(), String> {
+pub fn run_rainbow_test(device: &MonsGeekDevice, running: Arc<AtomicBool>) -> Result<(), String> {
     println!("Starting rainbow test mode...");
 
     // Set LED mode to per-key colors (LightUserPicture with layer 0)
@@ -591,7 +598,11 @@ pub fn test_audio_levels() -> Result<(), String> {
         .map_err(|e| format!("Config error: {e}"))?;
 
     let sample_rate = config.sample_rate().0;
-    println!("Sample rate: {} Hz, channels: {}", sample_rate, config.channels());
+    println!(
+        "Sample rate: {} Hz, channels: {}",
+        sample_rate,
+        config.channels()
+    );
 
     let callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let callback_count_clone = Arc::clone(&callback_count);
@@ -625,12 +636,21 @@ pub fn test_audio_levels() -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(1));
         let callbacks = callback_count.load(Ordering::Relaxed);
         let peak = *max_sample.lock().unwrap();
-        print!("  Second {}: {} callbacks, peak: {:.4}", i + 1, callbacks, peak);
+        print!(
+            "  Second {}: {} callbacks, peak: {:.4}",
+            i + 1,
+            callbacks,
+            peak
+        );
         // Visual level meter
         let bars = (peak * 50.0).min(50.0) as usize;
         print!(" [");
-        for _ in 0..bars { print!("#"); }
-        for _ in bars..50 { print!(" "); }
+        for _ in 0..bars {
+            print!("#");
+        }
+        for _ in bars..50 {
+            print!(" ");
+        }
         println!("]");
         std::io::stdout().flush().ok();
 
@@ -639,6 +659,9 @@ pub fn test_audio_levels() -> Result<(), String> {
     }
 
     drop(stream);
-    println!("\nDone. Total callbacks: {}", callback_count.load(Ordering::Relaxed));
+    println!(
+        "\nDone. Total callbacks: {}",
+        callback_count.load(Ordering::Relaxed)
+    );
     Ok(())
 }
