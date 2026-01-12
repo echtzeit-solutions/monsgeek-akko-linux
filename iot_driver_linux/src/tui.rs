@@ -61,6 +61,18 @@ struct App {
     throbber_state: ThrobberState,
     cmd_tx: Option<Sender<HidCommand>>,
     result_rx: Option<Receiver<HidResult>>,
+    // Hex color input
+    hex_editing: bool,
+    hex_input: String,
+    hex_target: HexColorTarget,
+}
+
+/// Which color is being edited with hex input
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum HexColorTarget {
+    #[default]
+    MainLed,
+    SideLed,
 }
 
 /// Macro slot data
@@ -434,6 +446,10 @@ impl App {
             throbber_state: ThrobberState::default(),
             cmd_tx: None,
             result_rx: None,
+            // Hex color input
+            hex_editing: false,
+            hex_input: String::new(),
+            hex_target: HexColorTarget::default(),
         }
     }
 
@@ -670,6 +686,40 @@ impl App {
                 self.status_msg = format!("Dazzle: {}", if new_dazzle { "ON" } else { "OFF" });
             }
         }
+    }
+
+    /// Start hex color input mode
+    fn start_hex_input(&mut self, target: HexColorTarget) {
+        self.hex_editing = true;
+        self.hex_target = target;
+        // Pre-fill with current color
+        let (r, g, b) = match target {
+            HexColorTarget::MainLed => (self.info.led_r, self.info.led_g, self.info.led_b),
+            HexColorTarget::SideLed => (self.info.side_r, self.info.side_g, self.info.side_b),
+        };
+        self.hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+        self.status_msg = "Enter hex color (e.g. FF0000): ".to_string();
+    }
+
+    /// Cancel hex input mode
+    fn cancel_hex_input(&mut self) {
+        self.hex_editing = false;
+        self.hex_input.clear();
+        self.status_msg.clear();
+    }
+
+    /// Apply hex color input
+    fn apply_hex_input(&mut self) {
+        if let Some((r, g, b)) = parse_hex_color(&self.hex_input) {
+            match self.hex_target {
+                HexColorTarget::MainLed => self.set_color(r, g, b),
+                HexColorTarget::SideLed => self.set_side_color(r, g, b),
+            }
+        } else {
+            self.status_msg = format!("Invalid hex color: {}", self.hex_input);
+        }
+        self.hex_editing = false;
+        self.hex_input.clear();
     }
 
     // Side LED methods
@@ -1291,6 +1341,18 @@ impl App {
     }
 }
 
+/// Parse hex color string (supports #RRGGBB, RRGGBB formats)
+fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
 /// HID worker thread - owns the device and processes commands
 fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: Sender<HidResult>) {
     loop {
@@ -1559,6 +1621,24 @@ pub fn run() -> io::Result<()> {
                         match key.code {
                             KeyCode::Char('?') | KeyCode::Esc | KeyCode::F(1) => {
                                 app.show_help = false;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    // Hex color input mode
+                    if app.hex_editing {
+                        match key.code {
+                            KeyCode::Esc => app.cancel_hex_input(),
+                            KeyCode::Enter => app.apply_hex_input(),
+                            KeyCode::Backspace => {
+                                app.hex_input.pop();
+                            }
+                            KeyCode::Char(c) if c.is_ascii_hexdigit() => {
+                                if app.hex_input.len() < 6 {
+                                    app.hex_input.push(c.to_ascii_uppercase());
+                                }
                             }
                             _ => {}
                         }
@@ -1872,6 +1952,15 @@ pub fn run() -> io::Result<()> {
                             }
                             app.status_msg = "Refreshing...".to_string();
                         }
+                        KeyCode::Char('#') if app.tab == 1 => {
+                            // Hex color input for LED tab
+                            // Main LED colors are at indices 3-5, Side LED at 12-14
+                            if app.selected >= 3 && app.selected <= 6 {
+                                app.start_hex_input(HexColorTarget::MainLed);
+                            } else if app.selected >= 12 && app.selected <= 14 {
+                                app.start_hex_input(HexColorTarget::SideLed);
+                            }
+                        }
                         KeyCode::Char('e') if app.tab == 5 => {
                             // Edit selected macro
                             if !app.macros.is_empty() {
@@ -2138,10 +2227,18 @@ fn ui(f: &mut Frame, app: &App) {
         ""
     };
 
-    let status = Paragraph::new(format!(
-        " [{}{}{}] {} | ?:Help q:Quit{}",
-        conn_status, profile_str, battery_str, app.status_msg, monitoring_str
-    ))
+    let status_text = if app.hex_editing {
+        format!(
+            " [{}{}{}] Enter hex color: #{} | Esc:Cancel Enter:Apply",
+            conn_status, profile_str, battery_str, app.hex_input
+        )
+    } else {
+        format!(
+            " [{}{}{}] {} | ?:Help q:Quit{}",
+            conn_status, profile_str, battery_str, app.status_msg, monitoring_str
+        )
+    };
+    let status = Paragraph::new(status_text)
     .style(Style::default().fg(status_color))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(status, chunks[3]);
