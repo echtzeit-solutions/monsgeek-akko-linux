@@ -50,6 +50,15 @@ pub mod cmd {
     /// Flash chip erase - DANGEROUS
     pub const SET_FLASHCHIPERASSE: u8 = 0xAC;
 
+    // Dongle-specific commands (undocumented, discovered via analysis)
+    /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
+    /// Response contains battery %, charging state, online status
+    pub const BATTERY_REFRESH: u8 = 0xF7;
+    /// Flush/NOP - undefined command used to flush dongle response buffer
+    /// Returns 0xFF (no data) but pushes out pending responses without overwriting them
+    /// Used after real commands to retrieve their responses from the delayed buffer
+    pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
+
     // GET commands (0x80 - 0xE6)
     pub const GET_REV: u8 = 0x80; // Get firmware revision
     pub const GET_REPORT: u8 = 0x83; // Get report rate
@@ -437,8 +446,8 @@ pub mod firmware {
 }
 
 /// LED dazzle (rainbow color cycle) option values
-pub const LED_DAZZLE_OFF: u8 = 7;
-pub const LED_DAZZLE_ON: u8 = 8;
+pub const LED_DAZZLE_OFF: u8 = 8;
+pub const LED_DAZZLE_ON: u8 = 7;
 pub const LED_OPTIONS_MASK: u8 = 0x0F;
 
 /// LED brightness/speed range (0-4)

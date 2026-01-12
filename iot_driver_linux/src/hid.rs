@@ -436,10 +436,11 @@ impl MonsGeekDevice {
         }
         std::thread::sleep(Duration::from_millis(150));
 
-        // Send FC (0xFC) as flush command to push out the response
+        // Send DONGLE_FLUSH_NOP to push out the response
+        // This is an undefined command that returns 0xFF but doesn't overwrite the buffer
         buf.fill(0);
         buf[0] = 0; // Report ID
-        buf[1] = 0xFC;
+        buf[1] = protocol::cmd::DONGLE_FLUSH_NOP;
         let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
         buf[8] = (255 - (sum & 0xFF)) as u8;
 
@@ -987,11 +988,8 @@ impl MonsGeekDevice {
     /// Returns None if query fails or response is invalid
     pub fn get_polling_rate(&self) -> Option<u16> {
         let resp = self.query(cmd::GET_REPORT)?;
-        if resp[0] == cmd::GET_REPORT {
-            protocol::polling_rate::decode(resp[1])
-        } else {
-            None
-        }
+        // resp[1] is command echo (already validated by query), resp[2] is the rate code
+        protocol::polling_rate::decode(resp[2])
     }
 
     /// Set polling rate in Hz

@@ -64,10 +64,10 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                 device.send_feature_report(&buf)?;
                 std::thread::sleep(std::time::Duration::from_millis(150));
 
-                // Send FC (0xFC) as flush command
+                // Send DONGLE_FLUSH_NOP to push out the response
                 let mut fc_buf = vec![0u8; 65];
                 fc_buf[0] = 0; // Report ID
-                fc_buf[1] = 0xFC;
+                fc_buf[1] = cmd::DONGLE_FLUSH_NOP;
                 let sum: u32 = fc_buf[1..8].iter().map(|&b| b as u32).sum();
                 fc_buf[8] = (255 - (sum & 0xFF)) as u8;
 
