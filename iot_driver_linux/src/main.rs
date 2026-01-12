@@ -52,37 +52,69 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
             println!("Sending command 0x{:02x} ({})...", cmd, cmd::name(cmd));
             println!("  TX: {:02x?}", &buf[1..12]);
 
-            // Linux HID feature reports have buffering - need retry pattern
-            // Send command, wait, then retry reading until we get our response
-            const MAX_RETRIES: usize = 5;
+            // 2.4GHz dongle (PID 0x5038) has a delayed response buffer:
+            // GET_FEATURE returns the PREVIOUS response, not the current one.
+            // We need to send a "flush" command (0xFC) to push the actual response out.
+            let is_dongle = pid == 0x5038;
             let mut resp = vec![0u8; 65];
             let mut success = false;
 
-            for attempt in 0..MAX_RETRIES {
-                // Send the command
+            if is_dongle {
+                // Dongle pattern: send command, then FC flush, then read
                 device.send_feature_report(&buf)?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+
+                // Send FC (0xFC) as flush command
+                let mut fc_buf = vec![0u8; 65];
+                fc_buf[0] = 0; // Report ID
+                fc_buf[1] = 0xFC;
+                let sum: u32 = fc_buf[1..8].iter().map(|&b| b as u32).sum();
+                fc_buf[8] = (255 - (sum & 0xFF)) as u8;
+
+                device.send_feature_report(&fc_buf)?;
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                // Read response
+                // Read response - should be the response to our original command
                 resp[0] = 0;
                 let _len = device.get_feature_report(&mut resp)?;
 
                 let cmd_echo = resp[1];
                 println!(
-                    "  Attempt {}: echo=0x{:02x} data={:02x?}",
-                    attempt + 1,
+                    "  Dongle response: echo=0x{:02x} data={:02x?}",
                     cmd_echo,
                     &resp[1..12]
                 );
 
                 if cmd_echo == cmd {
                     success = true;
-                    break;
+                }
+            } else {
+                // Wired pattern: retry until we get the response
+                const MAX_RETRIES: usize = 5;
+                for attempt in 0..MAX_RETRIES {
+                    device.send_feature_report(&buf)?;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+
+                    resp[0] = 0;
+                    let _len = device.get_feature_report(&mut resp)?;
+
+                    let cmd_echo = resp[1];
+                    println!(
+                        "  Attempt {}: echo=0x{:02x} data={:02x?}",
+                        attempt + 1,
+                        cmd_echo,
+                        &resp[1..12]
+                    );
+
+                    if cmd_echo == cmd {
+                        success = true;
+                        break;
+                    }
                 }
             }
 
             if !success {
-                println!("\nFailed to get response after {MAX_RETRIES} attempts");
+                println!("\nFailed to get response");
                 return Err("No valid response".into());
             }
 

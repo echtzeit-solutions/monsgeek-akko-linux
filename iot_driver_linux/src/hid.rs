@@ -293,12 +293,6 @@ impl MonsGeekDevice {
                 && dev_info.usage_page() == hal::USAGE_PAGE
                 && dev_info.usage() == hal::USAGE_INPUT
             {
-                println!(
-                    "Opening INPUT interface: {} (usage {:04x}, page {:04x})",
-                    dev_info.path().to_string_lossy(),
-                    dev_info.usage(),
-                    dev_info.usage_page()
-                );
                 return dev_info
                     .open_device(&hidapi)
                     .map_err(|e| format!("Failed to open input interface: {e}"));
@@ -380,6 +374,13 @@ impl MonsGeekDevice {
 
     /// Send a command with additional data bytes
     pub fn query_with_data(&self, cmd: u8, data: &[u8]) -> Option<Vec<u8>> {
+        // 2.4GHz dongle (PID 0x5038) has a delayed response buffer:
+        // GET_FEATURE returns the PREVIOUS response, not the current one.
+        // We need to send a "flush" command (0xFC) to push the actual response out.
+        if self.pid == hal::PRODUCT_ID_M1_V5_WIRELESS {
+            return self.query_dongle(cmd, data);
+        }
+
         let mut buf = vec![0u8; protocol::REPORT_SIZE];
         buf[0] = 0; // Report ID
         buf[1] = cmd;
@@ -405,6 +406,63 @@ impl MonsGeekDevice {
                 return Some(resp);
             }
         }
+        None
+    }
+
+    /// Query command on 2.4GHz dongle with FC flush pattern
+    ///
+    /// The dongle has a delayed response buffer where GET_FEATURE returns the
+    /// PREVIOUS response. To get the actual command response:
+    /// 1. Send the command
+    /// 2. Wait 150ms
+    /// 3. Send FC (wireless status) as a "flush" command
+    /// 4. Wait 100ms
+    /// 5. Read response - this returns the response to the original command
+    fn query_dongle(&self, cmd: u8, data: &[u8]) -> Option<Vec<u8>> {
+        // Build and send the actual command
+        let mut buf = vec![0u8; protocol::REPORT_SIZE];
+        buf[0] = 0; // Report ID
+        buf[1] = cmd;
+        for (i, &b) in data.iter().enumerate() {
+            if i + 2 < protocol::REPORT_SIZE {
+                buf[i + 2] = b;
+            }
+        }
+        let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+        buf[8] = (255 - (sum & 0xFF)) as u8;
+
+        if self.device.send_feature_report(&buf).is_err() {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+
+        // Send FC (0xFC) as flush command to push out the response
+        buf.fill(0);
+        buf[0] = 0; // Report ID
+        buf[1] = 0xFC;
+        let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+        buf[8] = (255 - (sum & 0xFF)) as u8;
+
+        if self.device.send_feature_report(&buf).is_err() {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Read response - should be the response to our original command
+        let mut resp = vec![0u8; protocol::REPORT_SIZE];
+        resp[0] = 0;
+        if self.device.get_feature_report(&mut resp).is_ok() && resp[1] == cmd {
+            return Some(resp);
+        }
+
+        // If first read fails, try one more time (in case buffer needed more flushing)
+        std::thread::sleep(Duration::from_millis(50));
+        resp.fill(0);
+        resp[0] = 0;
+        if self.device.get_feature_report(&mut resp).is_ok() && resp[1] == cmd {
+            return Some(resp);
+        }
+
         None
     }
 
