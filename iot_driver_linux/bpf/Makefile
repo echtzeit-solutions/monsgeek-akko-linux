@@ -18,7 +18,7 @@ LOADER_LDFLAGS := -lbpf
 SRCS := akko_dongle.bpf.c
 OBJS := $(SRCS:.bpf.c=.bpf.o)
 
-.PHONY: all clean vmlinux option_a option_b option_b_wq akko-loader akko-loader-rs akko-ebpf
+.PHONY: all clean vmlinux option_a option_b option_b_wq option_c akko-loader akko-loader-rs akko-ebpf
 
 all: $(OBJS) loader
 
@@ -61,6 +61,14 @@ option_b_wq:
 	$(CLANG) $(BPF_CFLAGS) -I../common -c akko_wq.bpf.c -o akko_wq.bpf.o && \
 	$(BPFTOOL) gen skeleton akko_wq.bpf.o > akko_wq.skel.h && \
 	$(CC) $(LOADER_CFLAGS) -o loader_wq loader_wq.c $(LOADER_LDFLAGS)
+
+# Build Option C (on-demand F7 refresh)
+option_c:
+	@echo "Building Option C in hid_battery_support/option_c_on_demand/"
+	cd hid_battery_support/option_c_on_demand && \
+	$(CLANG) $(BPF_CFLAGS) -I../common -c akko_on_demand.bpf.c -o akko_on_demand.bpf.o && \
+	$(BPFTOOL) gen skeleton akko_on_demand.bpf.o > akko_on_demand.skel.h
+	@echo "Built: hid_battery_support/option_c_on_demand/akko_on_demand.bpf.o"
 
 # Build unified loader with all strategies
 # Note: Requires skeletons to exist (run option_a, option_b, option_b_wq first if needed)
