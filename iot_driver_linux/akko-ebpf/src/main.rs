@@ -13,6 +13,8 @@
 
 #![no_std]
 #![no_main]
+// BPF struct_ops callbacks receive raw pointers from kernel - always valid in this context
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use aya_ebpf::btf_maps::Array;
 use aya_ebpf::macros::btf_map;

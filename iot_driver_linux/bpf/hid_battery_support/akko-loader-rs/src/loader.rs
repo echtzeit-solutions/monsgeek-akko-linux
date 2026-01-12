@@ -69,7 +69,7 @@ pub fn unload() -> Result<()> {
                 found = true;
                 info!("Unloading: {:?}", path);
                 std::fs::remove_file(&path)
-                    .with_context(|| format!("Failed to remove {:?}", path))?;
+                    .with_context(|| format!("Failed to remove {path:?}"))?;
             }
         }
     }
@@ -105,8 +105,7 @@ fn get_bpf_path() -> Result<PathBuf> {
     }
 
     bail!(
-        "BPF object not found.\nSearched:\n  - {:?}\n  - {:?}\nRun 'make akko-ebpf' in bpf/ directory or 'make install-bpf'.",
-        installed_path, dev_path
+        "BPF object not found.\nSearched:\n  - {installed_path:?}\n  - {dev_path:?}\nRun 'make akko-ebpf' in bpf/ directory or 'make install-bpf'."
     );
 }
 
@@ -209,7 +208,7 @@ pub fn load(hid_id: u32, throttle_secs: u32) -> Result<()> {
         let pin_path = get_pin_path();
         info!("Pinning BPF link to {:?}", pin_path);
         link.pin(&pin_path)
-            .with_context(|| format!("Failed to pin link to {:?}", pin_path))?;
+            .with_context(|| format!("Failed to pin link to {pin_path:?}"))?;
 
         info!("BPF program loaded and pinned successfully!");
     } else {
