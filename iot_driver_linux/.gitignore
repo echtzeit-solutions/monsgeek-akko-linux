@@ -1,3 +1,6 @@
 /target
 *.pcapng
 *.pcap
+
+# Local development aya patches (created by scripts/setup-local-aya.sh)
+/.cargo/

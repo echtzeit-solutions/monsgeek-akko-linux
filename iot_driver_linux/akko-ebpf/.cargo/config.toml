@@ -10,3 +10,6 @@ linker = "bpf-linker"
 
 [target.bpfeb-unknown-none]
 linker = "bpf-linker"
+
+# For local development with a local aya checkout, run: scripts/setup-local-aya.sh
+# This creates .cargo/config.toml at the repo root with path overrides

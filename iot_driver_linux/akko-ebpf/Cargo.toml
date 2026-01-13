@@ -6,8 +6,8 @@ description = "HID-BPF driver for Akko/MonsGeek 2.4GHz dongle battery integratio
 license = "GPL-2.0-only"
 
 [dependencies]
-# Using local aya from the modified repo with struct_ops support
-aya-ebpf = { path = "../../../aya/aya-main/ebpf/aya-ebpf" }
+# Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/struct_ops)
+aya-ebpf = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
 
 [build-dependencies]
 which = "7"
