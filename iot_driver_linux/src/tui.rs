@@ -99,6 +99,7 @@ struct KeyboardOptions {
     anti_mistouch: bool,
     rt_stability: u8,
     wasd_swap: bool,
+    sleep_time: u16, // seconds, 0 = never sleep
 }
 
 /// Key depth visualization mode
@@ -219,6 +220,7 @@ enum HidCommand {
         rt_stability: u8,
         wasd_swap: bool,
     },
+    SetSleepTime(u16),
     Shutdown,
 }
 
@@ -286,6 +288,7 @@ enum HidResult {
         mode: u8,
     },
     AllKeysColorSet(bool),
+    SleepTimeSet(bool),
     // Errors
     QueryError {
         field: &'static str,
@@ -979,6 +982,19 @@ impl App {
         self.status_msg = format!("RT stability: {value}ms");
     }
 
+    fn set_sleep_time(&mut self, seconds: u16) {
+        if let Some(ref mut opts) = self.options {
+            opts.sleep_time = seconds;
+        }
+        self.info.sleep_seconds = seconds;
+        self.send_command(HidCommand::SetSleepTime(seconds));
+        if seconds == 0 {
+            self.status_msg = "Sleep: Never".to_string();
+        } else {
+            self.status_msg = format!("Sleep: {seconds}s");
+        }
+    }
+
     /// Start async loading of macros (tab 5)
     fn start_loading_macros(&mut self) {
         self.loading.macros = LoadState::Loading;
@@ -1093,6 +1109,7 @@ impl App {
                         anti_mistouch,
                         rt_stability,
                         wasd_swap,
+                        sleep_time: self.info.sleep_seconds,
                     });
                     self.loading.options = LoadState::Loaded;
                     self.status_msg = "Keyboard options loaded".to_string();
@@ -1193,6 +1210,13 @@ impl App {
                         self.status_msg = format!("Per-key color set: #{r:02X}{g:02X}{b:02X}");
                     } else {
                         self.status_msg = "Failed to set per-key colors".to_string();
+                    }
+                }
+                HidResult::SleepTimeSet(ok) => {
+                    if ok {
+                        self.status_msg = "Sleep time saved".to_string();
+                    } else {
+                        self.status_msg = "Failed to set sleep time".to_string();
                     }
                 }
                 HidResult::QueryError { field } => {
@@ -1702,6 +1726,10 @@ fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: S
                 let ok = device.set_options(fn_layer, anti_mistouch, rt_stability, wasd_swap);
                 let _ = result_tx.send(HidResult::KbOptionsSet(ok));
             }
+            HidCommand::SetSleepTime(seconds) => {
+                let ok = device.set_sleep(seconds, seconds);
+                let _ = result_tx.send(HidResult::SleepTimeSet(ok));
+            }
             HidCommand::Shutdown => {
                 break;
             }
@@ -1993,6 +2021,12 @@ pub fn run() -> io::Result<()> {
                                         3 if opts.rt_stability >= 25 => {
                                             app.set_rt_stability(opts.rt_stability - 25)
                                         }
+                                        4 if opts.sleep_time >= 60 => {
+                                            app.set_sleep_time(opts.sleep_time - 60)
+                                        }
+                                        4 if opts.sleep_time > 0 && opts.sleep_time < 60 => {
+                                            app.set_sleep_time(0)
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -2088,6 +2122,9 @@ pub fn run() -> io::Result<()> {
                                         2 => app.toggle_anti_mistouch(),
                                         3 if opts.rt_stability < 125 => {
                                             app.set_rt_stability(opts.rt_stability + 25)
+                                        }
+                                        4 if opts.sleep_time < 3600 => {
+                                            app.set_sleep_time(opts.sleep_time + 60)
                                         }
                                         _ => {}
                                     }
@@ -3661,6 +3698,21 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray),
                 ),
             ])),
+            ListItem::new(Line::from(vec![
+                Span::raw("Sleep Time:     "),
+                Span::styled(
+                    if opts.sleep_time == 0 {
+                        "< Never >".to_string()
+                    } else {
+                        format!("< {}s >", opts.sleep_time)
+                    },
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    "  (0=never, auto-sleep timeout)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])),
             ListItem::new(Line::from("")),
             ListItem::new(Line::from(vec![Span::styled(
                 "Read-Only Info:",
@@ -3686,7 +3738,7 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
             .highlight_symbol("> ");
 
         let mut state = ListState::default();
-        state.select(Some(app.selected.min(3)));
+        state.select(Some(app.selected.min(4)));
         f.render_stateful_widget(list, area, &mut state);
     } else if app.loading.options == LoadState::Loading {
         // Show loading spinner
