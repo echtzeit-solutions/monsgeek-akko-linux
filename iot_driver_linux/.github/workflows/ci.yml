@@ -1,0 +1,285 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # ============================================
+  # Format check - runs first, fails fast
+  # ============================================
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+  # ============================================
+  # Clippy linting for main crate
+  # ============================================
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    needs: format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libhidapi-dev \
+            protobuf-compiler \
+                        libasound2-dev \
+            libdbus-1-dev \
+            libjack-jackd2-dev \
+            libclang-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: clippy
+
+      - name: Clippy
+        run: cargo clippy --features firmware-api -- -D warnings
+
+  # ============================================
+  # Tests for main crate
+  # ============================================
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libhidapi-dev \
+            protobuf-compiler \
+                        libasound2-dev \
+            libdbus-1-dev \
+            libjack-jackd2-dev \
+            libclang-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: test
+
+      - name: Run tests
+        run: cargo test --features firmware-api
+
+  # ============================================
+  # Build release binary
+  # ============================================
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: [clippy, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libhidapi-dev \
+            protobuf-compiler \
+                        libasound2-dev \
+            libdbus-1-dev \
+            libjack-jackd2-dev \
+            libclang-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: release
+
+      - name: Build release
+        run: cargo build --release --features firmware-api
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iot_driver-linux-x86_64
+          path: target/release/iot_driver
+          if-no-files-found: error
+
+  # ============================================
+  # Build C BPF programs
+  # ============================================
+  bpf-build:
+    name: Build BPF Programs
+    runs-on: ubuntu-latest
+    needs: format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            llvm \
+            libbpf-dev \
+            linux-tools-common \
+            linux-tools-generic
+
+      - name: Generate vmlinux.h from BTF
+        continue-on-error: true
+        run: |
+          if [ -f /sys/kernel/btf/vmlinux ]; then
+            bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+            echo "Generated vmlinux.h from kernel BTF"
+          else
+            echo "BTF not available - using existing vmlinux.h from repo"
+          fi
+
+      - name: Build main BPF object
+        continue-on-error: true
+        run: make -C bpf akko_dongle.bpf.o
+
+      - name: Build Option A (keyboard inject)
+        run: |
+          cd bpf/hid_battery_support/option_a_keyboard_inject
+          clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I.. -I../common \
+            -c akko_keyboard_battery.bpf.c -o akko_keyboard_battery.bpf.o
+        continue-on-error: true
+
+      - name: Build Option B (bidirectional)
+        run: |
+          cd bpf/hid_battery_support/option_b_bidirectional
+          clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I.. -I../common \
+            -c akko_bidirectional.bpf.c -o akko_bidirectional.bpf.o
+        continue-on-error: true
+
+      - name: Build Option B WQ (experimental)
+        run: |
+          cd bpf/hid_battery_support/option_b_wq_experimental
+          clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I.. -I../common \
+            -c akko_wq.bpf.c -o akko_wq.bpf.o
+        continue-on-error: true
+
+      - name: Verify BPF objects
+        run: |
+          echo "=== BPF Objects Built ==="
+          find bpf -name "*.bpf.o" -exec file {} \;
+
+      - name: Upload BPF artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpf-objects
+          path: |
+            bpf/*.bpf.o
+            bpf/hid_battery_support/**/*.bpf.o
+          if-no-files-found: warn
+
+  # ============================================
+  # akko-ebpf crate (Rust eBPF program using aya)
+  # Uses heeen/aya fork with HID-BPF struct_ops support
+  # ============================================
+  akko-ebpf:
+    name: Build akko-ebpf
+    runs-on: ubuntu-latest
+    needs: format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly Rust with rust-src
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: akko-ebpf
+          workspaces: akko-ebpf
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Build akko-ebpf
+        run: |
+          cd akko-ebpf
+          cargo +nightly build --release -Z build-std=core
+
+      - name: Verify eBPF object
+        run: |
+          file akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf
+          ls -la akko-ebpf/target/bpfel-unknown-none/release/
+
+      - name: Upload akko-ebpf artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: akko-ebpf
+          path: akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf
+          if-no-files-found: error
+
+  # ============================================
+  # akko-loader-rs crate (userspace BPF loader)
+  # Uses heeen/aya fork with HID-BPF struct_ops support
+  # ============================================
+  akko-loader:
+    name: Build akko-loader
+    runs-on: ubuntu-latest
+    needs: format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libelf-dev zlib1g-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: akko-loader
+          workspaces: bpf/hid_battery_support/akko-loader-rs
+
+      - name: Build akko-loader
+        run: |
+          cd bpf/hid_battery_support/akko-loader-rs
+          cargo build --release
+
+      - name: Upload akko-loader artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: akko-loader-linux-x86_64
+          path: bpf/hid_battery_support/akko-loader-rs/target/release/akko-loader
+          if-no-files-found: error
