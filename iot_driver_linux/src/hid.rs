@@ -220,6 +220,8 @@ pub struct MonsGeekDevice {
     pub pid: u16,
     pub path: String,
     pub definition: &'static DeviceDefinition,
+    /// Cache for out-of-order responses from wireless dongle
+    response_cache: std::cell::RefCell<Vec<Vec<u8>>>,
 }
 
 impl MonsGeekDevice {
@@ -246,6 +248,7 @@ impl MonsGeekDevice {
                         pid,
                         path,
                         definition,
+                        response_cache: std::cell::RefCell::new(Vec::new()),
                     });
                 }
             }
@@ -276,6 +279,7 @@ impl MonsGeekDevice {
                     pid,
                     path,
                     definition,
+                    response_cache: std::cell::RefCell::new(Vec::new()),
                 });
             }
         }
@@ -341,6 +345,11 @@ impl MonsGeekDevice {
     /// Get key count from device definition
     pub fn key_count(&self) -> u8 {
         self.definition.key_count
+    }
+
+    /// Check if this is a wireless dongle (2.4GHz)
+    pub fn is_wireless(&self) -> bool {
+        self.pid == hal::PRODUCT_ID_M1_V5_WIRELESS
     }
 
     /// Check if device has magnetism support
@@ -409,16 +418,23 @@ impl MonsGeekDevice {
         None
     }
 
-    /// Query command on 2.4GHz dongle with FC flush pattern
+    /// Query command on 2.4GHz dongle with response correlation
     ///
-    /// The dongle has a delayed response buffer where GET_FEATURE returns the
-    /// PREVIOUS response. To get the actual command response:
-    /// 1. Send the command
-    /// 2. Wait 150ms
-    /// 3. Send FC (wireless status) as a "flush" command
-    /// 4. Wait 100ms
-    /// 5. Read response - this returns the response to the original command
+    /// The dongle has a delayed response buffer where GET_FEATURE may return
+    /// responses out of order. This implementation:
+    /// 1. Checks cached responses first (from previous out-of-order reads)
+    /// 2. Sends command with FC flush pattern
+    /// 3. Caches any mismatched responses for later correlation
+    /// 4. Retries up to max_attempts times
     fn query_dongle(&self, cmd: u8, data: &[u8]) -> Option<Vec<u8>> {
+        // First check if we have a cached response for this command
+        {
+            let mut cache = self.response_cache.borrow_mut();
+            if let Some(idx) = cache.iter().position(|r| r.len() > 1 && r[1] == cmd) {
+                return Some(cache.remove(idx));
+            }
+        }
+
         // Build and send the actual command
         let mut buf = vec![0u8; protocol::REPORT_SIZE];
         buf[0] = 0; // Report ID
@@ -436,32 +452,37 @@ impl MonsGeekDevice {
         }
         std::thread::sleep(Duration::from_millis(150));
 
-        // Send DONGLE_FLUSH_NOP to push out the response
-        // This is an undefined command that returns 0xFF but doesn't overwrite the buffer
-        buf.fill(0);
-        buf[0] = 0; // Report ID
-        buf[1] = protocol::cmd::DONGLE_FLUSH_NOP;
-        let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
-        buf[8] = (255 - (sum & 0xFF)) as u8;
+        // Try to read response with flush/retry pattern
+        const MAX_ATTEMPTS: usize = 5;
+        for attempt in 0..MAX_ATTEMPTS {
+            // Send DONGLE_FLUSH_NOP to push out the response
+            buf.fill(0);
+            buf[0] = 0; // Report ID
+            buf[1] = protocol::cmd::DONGLE_FLUSH_NOP;
+            let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
+            buf[8] = (255 - (sum & 0xFF)) as u8;
 
-        if self.device.send_feature_report(&buf).is_err() {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+            if self.device.send_feature_report(&buf).is_err() {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(if attempt == 0 { 100 } else { 50 }));
 
-        // Read response - should be the response to our original command
-        let mut resp = vec![0u8; protocol::REPORT_SIZE];
-        resp[0] = 0;
-        if self.device.get_feature_report(&mut resp).is_ok() && resp[1] == cmd {
-            return Some(resp);
-        }
-
-        // If first read fails, try one more time (in case buffer needed more flushing)
-        std::thread::sleep(Duration::from_millis(50));
-        resp.fill(0);
-        resp[0] = 0;
-        if self.device.get_feature_report(&mut resp).is_ok() && resp[1] == cmd {
-            return Some(resp);
+            // Read response
+            let mut resp = vec![0u8; protocol::REPORT_SIZE];
+            resp[0] = 0;
+            if self.device.get_feature_report(&mut resp).is_ok() {
+                if resp[1] == cmd {
+                    // Got our response!
+                    return Some(resp);
+                } else if resp[1] != 0 && resp[1] != protocol::cmd::DONGLE_FLUSH_NOP {
+                    // Got a valid response for a different command - cache it
+                    let mut cache = self.response_cache.borrow_mut();
+                    // Limit cache size to prevent memory growth
+                    if cache.len() < 16 {
+                        cache.push(resp);
+                    }
+                }
+            }
         }
 
         None

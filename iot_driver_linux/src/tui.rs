@@ -1706,6 +1706,11 @@ fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: S
                 break;
             }
         }
+
+        // Add delay between commands for wireless dongle to prevent response desync
+        if device.is_wireless() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 
