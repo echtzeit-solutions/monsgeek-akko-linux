@@ -17,6 +17,9 @@ jobs:
   format:
     name: Format Check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
@@ -35,17 +38,21 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     needs: format
+    defaults:
+      run:
+        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-                        libasound2-dev \
+            libasound2-dev \
             libdbus-1-dev \
             libjack-jackd2-dev \
             libclang-dev
@@ -59,6 +66,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: clippy
+          workspaces: iot_driver_linux
 
       - name: Clippy
         run: cargo clippy --features firmware-api -- -D warnings
@@ -70,17 +78,21 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     needs: format
+    defaults:
+      run:
+        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-                        libasound2-dev \
+            libasound2-dev \
             libdbus-1-dev \
             libjack-jackd2-dev \
             libclang-dev
@@ -92,6 +104,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: test
+          workspaces: iot_driver_linux
 
       - name: Run tests
         run: cargo test --features firmware-api
@@ -103,17 +116,21 @@ jobs:
     name: Build Release
     runs-on: ubuntu-latest
     needs: [clippy, test]
+    defaults:
+      run:
+        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-                        libasound2-dev \
+            libasound2-dev \
             libdbus-1-dev \
             libjack-jackd2-dev \
             libclang-dev
@@ -125,6 +142,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: release
+          workspaces: iot_driver_linux
 
       - name: Build release
         run: cargo build --release --features firmware-api
@@ -133,7 +151,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iot_driver-linux-x86_64
-          path: target/release/iot_driver
+          path: iot_driver_linux/target/release/iot_driver
           if-no-files-found: error
 
   # ============================================
@@ -143,10 +161,14 @@ jobs:
     name: Build BPF Programs
     runs-on: ubuntu-latest
     needs: format
+    defaults:
+      run:
+        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install BPF build dependencies
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -201,8 +223,8 @@ jobs:
         with:
           name: bpf-objects
           path: |
-            bpf/*.bpf.o
-            bpf/hid_battery_support/**/*.bpf.o
+            iot_driver_linux/bpf/*.bpf.o
+            iot_driver_linux/bpf/hid_battery_support/**/*.bpf.o
           if-no-files-found: warn
 
   # ============================================
@@ -213,6 +235,9 @@ jobs:
     name: Build akko-ebpf
     runs-on: ubuntu-latest
     needs: format
+    defaults:
+      run:
+        working-directory: iot_driver_linux/akko-ebpf
     steps:
       - uses: actions/checkout@v4
 
@@ -225,26 +250,25 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: akko-ebpf
-          workspaces: akko-ebpf
+          workspaces: iot_driver_linux/akko-ebpf
 
       - name: Install bpf-linker
+        working-directory: .
         run: cargo install bpf-linker --locked
 
       - name: Build akko-ebpf
-        run: |
-          cd akko-ebpf
-          cargo +nightly build --release -Z build-std=core
+        run: cargo +nightly build --release -Z build-std=core
 
       - name: Verify eBPF object
         run: |
-          file akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf
-          ls -la akko-ebpf/target/bpfel-unknown-none/release/
+          file target/bpfel-unknown-none/release/akko-ebpf
+          ls -la target/bpfel-unknown-none/release/
 
       - name: Upload akko-ebpf artifact
         uses: actions/upload-artifact@v4
         with:
           name: akko-ebpf
-          path: akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf
+          path: iot_driver_linux/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf
           if-no-files-found: error
 
   # ============================================
@@ -255,10 +279,14 @@ jobs:
     name: Build akko-loader
     runs-on: ubuntu-latest
     needs: format
+    defaults:
+      run:
+        working-directory: iot_driver_linux/bpf/hid_battery_support/akko-loader-rs
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y libelf-dev zlib1g-dev
@@ -270,16 +298,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: akko-loader
-          workspaces: bpf/hid_battery_support/akko-loader-rs
+          workspaces: iot_driver_linux/bpf/hid_battery_support/akko-loader-rs
 
       - name: Build akko-loader
-        run: |
-          cd bpf/hid_battery_support/akko-loader-rs
-          cargo build --release
+        run: cargo build --release
 
       - name: Upload akko-loader artifact
         uses: actions/upload-artifact@v4
         with:
           name: akko-loader-linux-x86_64
-          path: bpf/hid_battery_support/akko-loader-rs/target/release/akko-loader
+          path: iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/target/release/akko-loader
           if-no-files-found: error
