@@ -25,15 +25,75 @@ A Linux userspace driver for MonsGeek, Akko, and other magnetic keyboards using 
 
 ### Prerequisites
 
+**Rust Toolchain** (if not already installed):
 ```bash
-# Debian/Ubuntu
-sudo apt install libudev-dev libhidapi-dev
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
 
-# Fedora
-sudo dnf install systemd-devel hidapi-devel
+### Host Dependencies
 
-# Arch
-sudo pacman -S hidapi
+#### Debian/Ubuntu
+
+```bash
+# Core dependencies (required)
+sudo apt install build-essential pkg-config libudev-dev libhidapi-dev protobuf-compiler
+
+# Audio reactive mode (required for audio features)
+sudo apt install libasound2-dev
+
+# Optional: JACK audio support
+sudo apt install libjack-jackd2-dev
+
+# Optional: Screen capture/sync (PipeWire)
+sudo apt install libpipewire-0.3-dev libclang-dev
+```
+
+#### Arch Linux
+
+```bash
+# Core dependencies (required)
+sudo pacman -S base-devel pkgconf hidapi protobuf
+
+# Audio reactive mode (required for audio features)
+sudo pacman -S alsa-lib
+
+# Optional: JACK audio support
+sudo pacman -S jack2
+
+# Optional: Screen capture/sync (PipeWire)
+sudo pacman -S pipewire clang
+```
+
+#### Fedora / RHEL / CentOS
+
+```bash
+# Core dependencies (required)
+sudo dnf install gcc make pkgconf-pkg-config systemd-devel hidapi-devel protobuf-compiler
+
+# Audio reactive mode (required for audio features)
+sudo dnf install alsa-lib-devel
+
+# Optional: JACK audio support
+sudo dnf install jack-audio-connection-kit-devel
+
+# Optional: Screen capture/sync (PipeWire)
+sudo dnf install pipewire-devel clang-devel
+```
+
+#### openSUSE
+
+```bash
+# Core dependencies (required)
+sudo zypper install gcc make pkg-config systemd-devel hidapi-devel protobuf-devel
+
+# Audio reactive mode (required for audio features)
+sudo zypper install alsa-devel
+
+# Optional: JACK audio support
+sudo zypper install libjack-devel
+
+# Optional: Screen capture/sync (PipeWire)
+sudo zypper install pipewire-devel clang-devel
 ```
 
 ### Build
@@ -43,6 +103,23 @@ git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
 cd monsgeek-akko-linux
 cargo build --release
 ```
+
+**With optional features:**
+
+```bash
+# Build with screen capture support (requires PipeWire)
+cargo build --release --features screen-capture
+
+# Build with all optional features
+cargo build --release --features "screen-capture,bpf"
+```
+
+**Available features:**
+| Feature | Description | Extra Dependencies |
+|---------|-------------|-------------------|
+| `firmware-api` | Download firmware from cloud (default: enabled) | None |
+| `screen-capture` | Screen color sync via PipeWire | `pipewire`, `clang` |
+| `bpf` | HID-BPF battery integration | `libbpf`, kernel headers |
 
 ### udev Rules (Required for non-root access)
 
