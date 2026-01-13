@@ -13,7 +13,7 @@ all: akko-ebpf akko-loader
 # Requires: rustup +nightly, bpf-linker
 akko-ebpf:
 	@echo "Building Rust BPF program (requires nightly + bpf-linker)..."
-	cd ../akko-ebpf && cargo +nightly build --release
+	cd ../akko-ebpf && cargo +nightly build --release -Z build-std=core
 	cp ../akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf \
 		hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o
 	@echo "Built: hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o"

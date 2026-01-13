@@ -41,6 +41,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Load BPF programs (default if no subcommand)
+    Load,
     /// Unload BPF programs
     Unload,
     /// Show loader status
@@ -102,7 +104,9 @@ fn main() -> Result<()> {
         Some(Commands::Status) => {
             return do_status();
         }
-        None => {}
+        Some(Commands::Load) | None => {
+            // Fall through to load logic below
+        }
     }
 
     setup_logging(cli.verbose);
