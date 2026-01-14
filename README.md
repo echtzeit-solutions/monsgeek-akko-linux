@@ -125,6 +125,8 @@ cargo build --release --features "screen-capture,bpf"
 
 The `akko-loader` BPF program exposes wireless keyboard battery level to the Linux power subsystem. **Requires kernel 6.12 or newer** due to HID-BPF struct_ops verifier requirements.
 
+![KDE Power and Battery showing MonsGeek keyboard at 88%](docs/kde-power-menu.png)
+
 ```bash
 # Check kernel version
 uname -r
