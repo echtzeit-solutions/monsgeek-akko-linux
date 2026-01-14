@@ -252,12 +252,19 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: akko-ebpf-v4
+          prefix-key: akko-ebpf-v5
           workspaces: iot_driver_linux/akko-ebpf
 
       - name: Install bpf-linker
         working-directory: .
         run: cargo install bpf-linker --locked
+
+      - name: Verify aya-ebpf version from Cargo.lock
+        run: |
+          echo "=== aya-ebpf version from Cargo.lock ==="
+          grep -A1 'name = "aya-ebpf"' Cargo.lock | head -5
+          echo ""
+          echo "=== Expected commit: 6471c1da ==="
 
       - name: Build akko-ebpf
         # Override global RUSTFLAGS to include --btf for BTF generation (required for BPF loading)
