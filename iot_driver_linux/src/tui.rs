@@ -583,13 +583,12 @@ impl App {
 
                 // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
                 if self.is_wireless {
-                    self.battery_source = if let Some(path) =
-                        find_hid_battery_power_supply(vid, pid)
-                    {
-                        Some(BatterySource::Kernel(path))
-                    } else {
-                        Some(BatterySource::Vendor)
-                    };
+                    self.battery_source =
+                        if let Some(path) = find_hid_battery_power_supply(vid, pid) {
+                            Some(BatterySource::Kernel(path))
+                        } else {
+                            Some(BatterySource::Vendor)
+                        };
                 }
 
                 // Create channels for worker communication
