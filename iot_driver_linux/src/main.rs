@@ -1805,9 +1805,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 FirmwareCommands::Check { device_id } => {
                     #[cfg(feature = "firmware-api")]
                     {
-                        use iot_driver::firmware_api::{
-                            check_firmware_blocking, device_ids, ApiError,
-                        };
+                        use iot_driver::firmware_api::{check_firmware, device_ids, ApiError};
 
                         // Try to get device ID from connected device or argument
                         let api_device_id = device_id.or_else(|| {
@@ -1832,7 +1830,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         println!("Checking for firmware updates for device ID {api_device_id}...");
 
-                        match check_firmware_blocking(api_device_id) {
+                        match check_firmware(api_device_id).await {
                             Ok(response) => {
                                 println!("\nServer Firmware Versions");
                                 println!("========================");
@@ -1885,8 +1883,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     #[cfg(feature = "firmware-api")]
                     {
                         use iot_driver::firmware_api::{
-                            check_firmware_blocking, device_ids, download_firmware_blocking,
+                            check_firmware, device_ids, download_firmware,
                         };
+                        let output = output.clone();
 
                         // Try to get device ID from connected device or argument
                         let api_device_id = device_id.or_else(|| {
@@ -1911,11 +1910,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         println!("Getting firmware info for device ID {api_device_id}...");
 
-                        match check_firmware_blocking(api_device_id) {
+                        match check_firmware(api_device_id).await {
                             Ok(response) => {
                                 if let Some(path) = response.versions.download_path {
                                     println!("Downloading from: {path}");
-                                    match download_firmware_blocking(&path, &output) {
+                                    match download_firmware(&path, &output).await {
                                         Ok(size) => {
                                             println!(
                                                 "Downloaded {} bytes to {}",

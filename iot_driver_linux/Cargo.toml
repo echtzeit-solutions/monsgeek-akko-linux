@@ -75,7 +75,7 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [features]
 default = ["firmware-api"]
-firmware-api = ["dep:reqwest"]
+firmware-api = ["dep:reqwest", "firmware-api-async"]
 firmware-api-async = ["dep:reqwest"]
 bpf = ["dep:aya"]
 screen-capture = ["dep:ashpd", "dep:pipewire"]
