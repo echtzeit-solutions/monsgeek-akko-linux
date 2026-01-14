@@ -718,7 +718,7 @@ impl MonsGeekDevice {
         let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
         buf[8] = (255 - (sum & 0xFF)) as u8;
 
-        println!("set_magnetism_report({enable}) sending: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x}",
+        tracing::trace!("set_magnetism_report({enable}) sending: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x}",
             buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8]);
 
         match self.device.send_feature_report(&buf) {
@@ -727,7 +727,7 @@ impl MonsGeekDevice {
                 true
             }
             Err(e) => {
-                eprintln!("set_magnetism_report failed: {e}");
+                tracing::warn!("set_magnetism_report failed: {e}");
                 false
             }
         }
