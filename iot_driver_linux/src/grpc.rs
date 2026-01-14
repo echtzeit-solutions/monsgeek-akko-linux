@@ -463,7 +463,11 @@ impl DriverService {
     }
 
     /// Query device ID using GET_USB_VERSION (0x8F) command
-    fn query_device_id(&self, device: &HidDevice) -> Option<i32> {
+    fn query_device_id(&self, device: &HidDevice, is_dongle: bool) -> Option<i32> {
+        if is_dongle {
+            return self.query_device_id_dongle(device);
+        }
+
         let mut cmd_buf = [0u8; 65];
         cmd_buf[0] = 0;
         cmd_buf[1] = cmd::GET_USB_VERSION;
@@ -493,6 +497,13 @@ impl DriverService {
                             as i32;
                     info!("Device ID: {}", device_id);
                     return Some(device_id);
+                } else {
+                    warn!(
+                        "Device ID query: unexpected response cmd 0x{:02x} (expected 0x{:02x}), data: {:02x?}",
+                        response[1],
+                        cmd::GET_USB_VERSION,
+                        &response[..std::cmp::min(len, 16)]
+                    );
                 }
             }
             Ok(len) => {
@@ -502,6 +513,84 @@ impl DriverService {
                 warn!("Failed to read device ID: {}", e);
             }
         }
+        None
+    }
+
+    /// Query device ID from 2.4GHz dongle using flush pattern
+    /// The dongle has a delayed response buffer - we need to send 0xFC flush to push out responses
+    fn query_device_id_dongle(&self, device: &HidDevice) -> Option<i32> {
+        let mut cmd_buf = [0u8; 65];
+        cmd_buf[0] = 0;
+        cmd_buf[1] = cmd::GET_USB_VERSION;
+
+        let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
+        cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+
+        // Send the command
+        if device.send_feature_report(&cmd_buf).is_err() {
+            warn!("Failed to send device ID query to dongle");
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // Try to read response with flush/retry pattern
+        const MAX_ATTEMPTS: usize = 5;
+        for attempt in 0..MAX_ATTEMPTS {
+            // Send DONGLE_FLUSH_NOP (0xFC) to push out the response
+            cmd_buf.fill(0);
+            cmd_buf[0] = 0;
+            cmd_buf[1] = cmd::DONGLE_FLUSH_NOP;
+            let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
+            cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+
+            if device.send_feature_report(&cmd_buf).is_err() {
+                warn!("Failed to send flush command to dongle");
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(if attempt == 0 {
+                100
+            } else {
+                50
+            }));
+
+            // Read response
+            let mut response = [0u8; 65];
+            match device.get_feature_report(&mut response) {
+                Ok(len) if len >= 6 => {
+                    if response[1] == cmd::GET_USB_VERSION {
+                        let device_id = u32::from_le_bytes([
+                            response[2],
+                            response[3],
+                            response[4],
+                            response[5],
+                        ]) as i32;
+                        info!("Device ID (dongle): {}", device_id);
+                        return Some(device_id);
+                    }
+                    // Got a different response, continue flushing
+                    debug!(
+                        "Dongle flush attempt {}: got cmd 0x{:02x} instead of 0x{:02x}",
+                        attempt,
+                        response[1],
+                        cmd::GET_USB_VERSION
+                    );
+                }
+                Ok(len) => {
+                    debug!(
+                        "Dongle flush attempt {}: short response {} bytes",
+                        attempt, len
+                    );
+                }
+                Err(e) => {
+                    debug!("Dongle flush attempt {}: read error: {}", attempt, e);
+                }
+            }
+        }
+
+        warn!(
+            "Failed to get device ID from dongle after {} attempts",
+            MAX_ATTEMPTS
+        );
         None
     }
 
@@ -534,7 +623,12 @@ impl DriverService {
 
                 let (device_id, battery, is_online) = match device_info.open_device(&hidapi) {
                     Ok(hid_device) => {
-                        let id = self.query_device_id(&hid_device).unwrap_or(0);
+                        debug!(
+                            "Opened device (is_dongle={}), querying device ID...",
+                            is_dongle
+                        );
+                        let id = self.query_device_id(&hid_device, is_dongle).unwrap_or(0);
+                        debug!("Device ID query returned: {}", id);
 
                         // Query battery status for dongles
                         let (batt, online) = if is_dongle {
@@ -551,20 +645,45 @@ impl DriverService {
                     }
                 };
 
-                let device = Device {
-                    dev_type: DeviceType::YzwKeyboard as i32,
-                    is24: is_dongle,
-                    path: path.clone(),
-                    id: device_id,
-                    battery,
-                    is_online,
-                    vid: vid as u32,
-                    pid: pid as u32,
-                };
-
-                found.push(DjDev {
-                    oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
-                });
+                if is_dongle {
+                    // 2.4GHz dongle - use DangleCommon format
+                    let keyboard_status = DangleStatus {
+                        dangle_dev: Some(dangle_status::DangleDev::Status(Status24 {
+                            battery,
+                            is_online,
+                        })),
+                    };
+                    let mouse_status = DangleStatus {
+                        dangle_dev: Some(dangle_status::DangleDev::Empty(Empty {})),
+                    };
+                    let dongle = DangleCommon {
+                        keyboard: Some(keyboard_status),
+                        mouse: Some(mouse_status),
+                        path: path.clone(),
+                        keyboard_id: device_id as u32,
+                        mouse_id: 0,
+                        vid: vid as u32,
+                        pid: pid as u32,
+                    };
+                    found.push(DjDev {
+                        oneof_dev: Some(dj_dev::OneofDev::DangleCommonDev(dongle)),
+                    });
+                } else {
+                    // Wired device - use Device format
+                    let device = Device {
+                        dev_type: DeviceType::YzwKeyboard as i32,
+                        is24: false,
+                        path: path.clone(),
+                        id: device_id,
+                        battery,
+                        is_online,
+                        vid: vid as u32,
+                        pid: pid as u32,
+                    };
+                    found.push(DjDev {
+                        oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
+                    });
+                }
             }
         }
 
