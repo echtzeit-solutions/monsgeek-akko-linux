@@ -765,7 +765,7 @@ impl App {
             HexColorTarget::SideLed => (self.info.side_r, self.info.side_g, self.info.side_b),
         };
         self.hex_input = format!("{r:02X}{g:02X}{b:02X}");
-        self.status_msg = "Enter hex color (e.g. FF0000): ".to_string();
+        self.status_msg = "Type hex color, Enter to apply, Esc to cancel".to_string();
     }
 
     /// Cancel hex input mode
@@ -2006,7 +2006,7 @@ pub fn run() -> io::Result<()> {
                                         let b = app.info.side_b.saturating_sub(step);
                                         app.set_side_color(app.info.side_r, app.info.side_g, b);
                                     }
-                                    15 => app.toggle_side_dazzle(), // Side Dazzle
+                                    16 => app.toggle_side_dazzle(), // Side Dazzle
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
@@ -2108,7 +2108,7 @@ pub fn run() -> io::Result<()> {
                                         let b = app.info.side_b.saturating_add(step);
                                         app.set_side_color(app.info.side_r, app.info.side_g, b);
                                     }
-                                    15 => app.toggle_side_dazzle(), // Side Dazzle
+                                    16 => app.toggle_side_dazzle(), // Side Dazzle
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
@@ -2143,14 +2143,36 @@ pub fn run() -> io::Result<()> {
                             }
                             app.status_msg = "Refreshing...".to_string();
                         }
-                        KeyCode::Char('#') if app.tab == 1 => {
-                            // Hex color input for LED tab
-                            // Main LED colors are at indices 3-5, Side LED at 12-14
-                            if app.selected >= 3 && app.selected <= 6 {
+                        KeyCode::Enter if app.tab == 1 => {
+                            // Enter starts hex editing on Color rows
+                            if app.selected == 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
-                            } else if app.selected >= 12 && app.selected <= 14 {
+                            } else if app.selected == 15 {
                                 app.start_hex_input(HexColorTarget::SideLed);
                             }
+                        }
+                        KeyCode::Char('#') if app.tab == 1 => {
+                            // Hex color input for LED tab - on RGB or Color rows
+                            if app.selected >= 3 && app.selected <= 6 {
+                                app.start_hex_input(HexColorTarget::MainLed);
+                            } else if app.selected >= 12 && app.selected <= 15 {
+                                app.start_hex_input(HexColorTarget::SideLed);
+                            }
+                        }
+                        KeyCode::Char(c)
+                            if app.tab == 1
+                                && (app.selected == 6 || app.selected == 15)
+                                && c.is_ascii_hexdigit() =>
+                        {
+                            // Typing hex digit on Color row starts editing
+                            let target = if app.selected == 6 {
+                                HexColorTarget::MainLed
+                            } else {
+                                HexColorTarget::SideLed
+                            };
+                            app.start_hex_input(target);
+                            app.hex_input.clear(); // Clear prefilled value
+                            app.hex_input.push(c.to_ascii_uppercase());
                         }
                         KeyCode::Char('e') if app.tab == 5 => {
                             // Edit selected macro
@@ -2792,14 +2814,26 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
             ),
         ])),
         ListItem::new(Line::from(vec![
-            Span::raw("Preview:    "),
-            Span::styled(
-                format!(
-                    "████████ #{:02X}{:02X}{:02X}",
-                    info.led_r, info.led_g, info.led_b
-                ),
-                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
-            ),
+            Span::raw("Color:      "),
+            if app.hex_editing && app.hex_target == HexColorTarget::MainLed {
+                // Show editable textbox
+                Span::styled(
+                    format!("████████ [#{}_]", app.hex_input),
+                    Style::default()
+                        .fg(Color::Rgb(info.led_r, info.led_g, info.led_b))
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                // Show static preview
+                Span::styled(
+                    format!(
+                        "████████ [#{:02X}{:02X}{:02X}]",
+                        info.led_r, info.led_g, info.led_b
+                    ),
+                    Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
+                )
+            },
+            Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
         ])),
         ListItem::new(Line::from(vec![
             Span::raw("Dazzle:     "),
@@ -2876,6 +2910,28 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
             ),
         ])),
         ListItem::new(Line::from(vec![
+            Span::raw("Color:      "),
+            if app.hex_editing && app.hex_target == HexColorTarget::SideLed {
+                // Show editable textbox
+                Span::styled(
+                    format!("████████ [#{}_]", app.hex_input),
+                    Style::default()
+                        .fg(Color::Rgb(info.side_r, info.side_g, info.side_b))
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                // Show static preview
+                Span::styled(
+                    format!(
+                        "████████ [#{:02X}{:02X}{:02X}]",
+                        info.side_r, info.side_g, info.side_b
+                    ),
+                    Style::default().fg(Color::Rgb(info.side_r, info.side_g, info.side_b)),
+                )
+            },
+            Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
+        ])),
+        ListItem::new(Line::from(vec![
             Span::raw("Dazzle:     "),
             Span::styled(
                 if info.side_dazzle {
@@ -2906,7 +2962,7 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    state.select(Some(app.selected.min(15)));
+    state.select(Some(app.selected.min(16)));
     f.render_stateful_widget(list, area, &mut state);
 }
 
