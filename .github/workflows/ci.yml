@@ -252,7 +252,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: akko-ebpf-v2
+          prefix-key: akko-ebpf-v3
           workspaces: iot_driver_linux/akko-ebpf
 
       - name: Install bpf-linker
