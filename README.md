@@ -96,28 +96,39 @@ sudo zypper install libjack-devel
 sudo zypper install pipewire-devel clang-devel
 ```
 
-### Build
+### Build and Install
 
 ```bash
 git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
-cd monsgeek-akko-linux
-cargo build --release
+cd monsgeek-akko-linux/iot_driver_linux
+
+# Build
+cargo build --release --features firmware-api
+
+# Install (to /usr/local/bin)
+sudo install -m 755 target/release/iot_driver /usr/local/bin/
+
+# Install udev rules (required for non-root access)
+sudo install -m 644 udev/99-monsgeek.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
 
-**With optional features:**
+Then unplug and replug your keyboard.
+
+**Optional features:**
 
 ```bash
 # Build with screen capture support (requires PipeWire)
-cargo build --release --features screen-capture
+cargo build --release --features "firmware-api,screen-capture"
 
 # Build with all optional features
-cargo build --release --features "screen-capture,bpf"
+cargo build --release --features "firmware-api,screen-capture,bpf"
 ```
 
-**Available features:**
 | Feature | Description | Extra Dependencies |
 |---------|-------------|-------------------|
-| `firmware-api` | Download firmware from cloud (default: enabled) | None |
+| `firmware-api` | Download firmware from cloud (default) | None |
 | `screen-capture` | Screen color sync via PipeWire | `pipewire`, `clang` |
 | `bpf` | HID-BPF battery integration | `libbpf`, kernel headers |
 
@@ -127,32 +138,49 @@ The `akko-loader` BPF program exposes wireless keyboard battery level to the Lin
 
 ![KDE Power and Battery showing MonsGeek keyboard at 88%](docs/kde-power-menu.png)
 
+**Build and install:**
+
 ```bash
-# Check kernel version
+# Check kernel version (must be 6.12+)
 uname -r
 
-# Build and install
-cd bpf/hid_battery_support/akko-loader-rs
+# Build akko-ebpf (requires nightly Rust and bpf-linker)
+rustup install nightly
+cargo install bpf-linker
+cd iot_driver_linux/akko-ebpf
+cargo +nightly build --release -Z build-std=core
+
+# Build akko-loader
+cd ../bpf/hid_battery_support/akko-loader-rs
 cargo build --release
 
+# Install
+sudo install -m 755 target/release/akko-loader /usr/local/bin/
+sudo install -d /usr/local/lib/akko
+sudo install -m 644 ../../../akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf /usr/local/lib/akko/akko-ebpf.bpf.o
+
+# Install systemd service (optional - auto-loads on device connect)
+sudo install -m 644 ../../../systemd/akko-bpf-battery.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+**Usage:**
+
+```bash
+# Check status
+akko-loader
+
 # Load BPF (requires root)
-sudo ./target/release/akko-loader -v
+sudo akko-loader load
 
 # Check battery
 cat /sys/class/power_supply/hid-*/capacity
+
+# Unload BPF
+sudo akko-loader unload
 ```
 
-The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded with `akko-loader unload`.
-
-### udev Rules (Required for non-root access)
-
-```bash
-sudo cp udev/99-monsgeek.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-Then unplug and replug your keyboard.
+The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded.
 
 ## Usage
 
