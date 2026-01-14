@@ -362,8 +362,16 @@ jobs:
           mv /tmp/bpf/akko-ebpf iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o
           ls -la iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/
 
+      - name: Dump BTF types from BPF object
+        run: |
+          echo "=== BTF types for hid_bpf_ctx and hid_device ==="
+          bpftool btf dump file iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o | grep -A5 -E "hid_bpf_ctx|hid_device" | head -30
+
       - name: Verify BPF loads through kernel verifier
         run: |
+          echo "=== Kernel version ==="
+          uname -r
+          echo ""
           echo "=== Loading BPF through kernel verifier ==="
           # Use fake hid_id=1 since no real device is connected
           # This still runs the BPF through the kernel verifier
