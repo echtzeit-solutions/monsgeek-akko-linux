@@ -341,16 +341,17 @@ jobs:
       - name: Prepare artifacts
         run: |
           chmod +x /tmp/bpf/akko-loader
-          mv /tmp/bpf/akko-ebpf /tmp/bpf/akko-ebpf.bpf.o
-          ls -la /tmp/bpf/
+          # Loader expects akko-ebpf.bpf.o in the source tree or /usr/local/lib/akko/
+          mkdir -p iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/
+          mv /tmp/bpf/akko-ebpf iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/akko-ebpf.bpf.o
+          ls -la iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/
 
       - name: Verify BPF loads through kernel verifier
-        working-directory: /tmp/bpf
         run: |
           echo "=== Loading BPF through kernel verifier ==="
           # Use fake hid_id=1 since no real device is connected
           # This still runs the BPF through the kernel verifier
-          sudo ./akko-loader -v -i 1 2>&1 | tee loader.log
+          sudo /tmp/bpf/akko-loader -v -i 1 2>&1 | tee /tmp/loader.log
 
           echo ""
           echo "=== Verifying struct_ops registered ==="
@@ -358,7 +359,7 @@ jobs:
             echo "✓ BPF verification passed - struct_ops registered"
           else
             echo "✗ ERROR: struct_ops not registered"
-            cat loader.log
+            cat /tmp/loader.log
             exit 1
           fi
 
