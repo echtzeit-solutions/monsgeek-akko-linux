@@ -1,9 +1,9 @@
 //! Power supply sysfs integration for Akko/Monsgeek keyboards
 //!
 //! Provides battery status via:
-//! 1. Simple file export (/run/akko-keyboard/battery)
-//! 2. Kernel test_power module (if loaded) - appears in UPower
-//! 3. Custom kernel power_supply module (future)
+//! 1. Kernel HID power_supply (when eBPF filter loaded) - preferred
+//! 2. Simple file export (/run/akko-keyboard/battery)
+//! 3. Kernel test_power module (if loaded) - appears in UPower
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -18,6 +18,62 @@ const TEST_POWER_PARAMS: &str = "/sys/module/test_power/parameters";
 
 /// Runtime directory for battery status files
 const RUNTIME_DIR: &str = "/run/akko-keyboard";
+
+/// Kernel power_supply sysfs base path
+const POWER_SUPPLY_PATH: &str = "/sys/class/power_supply";
+
+// ============================================================================
+// Kernel HID Power Supply (via eBPF)
+// ============================================================================
+
+/// Find the kernel power_supply path for a HID device by VID/PID.
+///
+/// When the eBPF filter is loaded, it creates a standard HID battery device
+/// which the kernel exposes at `/sys/class/power_supply/hid-0003:VVVV:PPPP.NNNN-battery/`
+///
+/// Returns the path if found, None otherwise.
+pub fn find_hid_battery_power_supply(vid: u16, pid: u16) -> Option<PathBuf> {
+    // Pattern: hid-0003:VVVV:PPPP.NNNN-battery (lowercase hex)
+    let pattern = format!("hid-0003:{vid:04x}:{pid:04x}");
+
+    let entries = fs::read_dir(POWER_SUPPLY_PATH).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with(&pattern) && name_str.ends_with("-battery") {
+            return Some(PathBuf::from(POWER_SUPPLY_PATH).join(name));
+        }
+    }
+    None
+}
+
+/// Read battery info from a kernel power_supply sysfs path.
+///
+/// Reads capacity, status, and present from the standard sysfs interface.
+pub fn read_kernel_battery(path: &Path) -> Option<BatteryInfo> {
+    let capacity = fs::read_to_string(path.join("capacity"))
+        .ok()?
+        .trim()
+        .parse::<u8>()
+        .ok()?;
+
+    let status = fs::read_to_string(path.join("status"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let present = fs::read_to_string(path.join("present"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u8>().ok())
+        .map(|v| v == 1)
+        .unwrap_or(true);
+
+    Some(BatteryInfo {
+        level: capacity,
+        online: present,
+        charging: status == "Charging",
+    })
+}
 
 /// Power supply status file paths (mimics sysfs structure)
 const STATUS_FILE: &str = "status";

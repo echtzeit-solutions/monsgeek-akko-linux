@@ -229,11 +229,29 @@ fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Get battery status from 2.4GHz dongle
 ///
-/// Byte offsets confirmed via Windows iot_driver.exe decompilation:
-/// - byte[1] = battery level (0-100)
-/// - byte[4] = is_online (keyboard connected)
-/// - Charging status is NOT available via this protocol
+/// Checks kernel power_supply first (when eBPF filter loaded), falls back to vendor protocol.
 fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
+    use iot_driver::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
+
+    // Check for kernel power_supply (eBPF filter loaded)
+    if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+        println!("Battery Status (kernel)");
+        println!("-----------------------");
+        println!("  Source: {}", path.display());
+        if let Some(info) = read_kernel_battery(&path) {
+            println!("  Level:     {}%", info.level);
+            println!("  Connected: {}", if info.online { "Yes" } else { "No" });
+            println!("  Charging:  {}", if info.charging { "Yes" } else { "No" });
+        } else {
+            println!("  Failed to read battery status");
+        }
+        return Ok(());
+    }
+
+    // Fall back to vendor protocol
+    println!("Battery Status (vendor)");
+    println!("-----------------------");
+
     let mut found_any = false;
     let mut best_battery: Option<(u8, bool, [u8; 7])> = None;
 
@@ -333,8 +351,26 @@ fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
 /// Also updates test_power module if loaded (appears in UPower)
 fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> {
     use iot_driver::hid::BatteryInfo;
-    use iot_driver::power_supply::{PowerSupply, TestPowerIntegration};
+    use iot_driver::power_supply::{
+        find_hid_battery_power_supply, read_kernel_battery, PowerSupply, TestPowerIntegration,
+    };
     use std::time::{Duration, Instant};
+
+    // Check for kernel power_supply (eBPF filter loaded)
+    if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+        println!("Kernel power_supply detected at: {}", path.display());
+        println!("Battery is already available via kernel - no monitoring needed.");
+        println!("UPower and other tools can read directly from:");
+        println!("  {}/capacity", path.display());
+        println!("  {}/status", path.display());
+        println!("\nCurrent status:");
+        if let Some(info) = read_kernel_battery(&path) {
+            println!("  Level:     {}%", info.level);
+            println!("  Connected: {}", if info.online { "Yes" } else { "No" });
+            println!("  Charging:  {}", if info.charging { "Yes" } else { "No" });
+        }
+        return Ok(());
+    }
 
     println!("Starting battery monitor (polling every {interval}s)...");
     println!("Press Ctrl+C to stop\n");

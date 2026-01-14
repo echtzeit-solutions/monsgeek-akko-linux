@@ -13,9 +13,21 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
 
+use std::path::PathBuf;
+
 // Use shared library
 use crate::hid::BatteryInfo;
+use crate::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
 use crate::{cmd, key_mode, magnetism, DeviceInfo, MonsGeekDevice, TriggerSettings};
+
+/// Battery data source
+#[derive(Debug, Clone)]
+enum BatterySource {
+    /// Kernel power_supply sysfs (via eBPF filter)
+    Kernel(PathBuf),
+    /// Direct vendor protocol (HID feature report)
+    Vendor,
+}
 
 /// Application state
 struct App {
@@ -52,6 +64,7 @@ struct App {
     depth_sample_idx: usize,           // Global sample counter for time axis
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
+    battery_source: Option<BatterySource>,
     last_battery_check: Instant,
     is_wireless: bool,
     // Help popup
@@ -528,6 +541,7 @@ impl App {
             depth_sample_idx: 0,
             // Battery status
             battery: None,
+            battery_source: None,
             last_battery_check: Instant::now(),
             is_wireless: false,
             // Help popup
@@ -567,6 +581,17 @@ impl App {
                 // Check if this is a wireless dongle
                 self.is_wireless = pid == 0x5038;
 
+                // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
+                if self.is_wireless {
+                    self.battery_source = if let Some(path) =
+                        find_hid_battery_power_supply(vid, pid)
+                    {
+                        Some(BatterySource::Kernel(path))
+                    } else {
+                        Some(BatterySource::Vendor)
+                    };
+                }
+
                 // Create channels for worker communication
                 let (cmd_tx, cmd_rx) = mpsc::channel::<HidCommand>();
                 let (result_tx, result_rx) = mpsc::channel::<HidResult>();
@@ -582,9 +607,9 @@ impl App {
                 self.connected = true;
                 self.status_msg = format!("Connected to {}", self.device_name);
 
-                // Request battery status for wireless devices
+                // Request battery status immediately for wireless devices
                 if self.is_wireless {
-                    self.send_command(HidCommand::QueryBattery);
+                    self.refresh_battery();
                 }
 
                 Ok(())
@@ -639,27 +664,43 @@ impl App {
             return;
         }
 
-        // Query battery from 2.4GHz dongle
-        if let Ok(hidapi) = hidapi::HidApi::new() {
-            for device_info in hidapi.device_list() {
-                let vid = device_info.vendor_id();
-                let pid = device_info.product_id();
+        // Re-detect battery source (allows hot-switching when eBPF loads/unloads)
+        self.battery_source = if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+            Some(BatterySource::Kernel(path))
+        } else {
+            Some(BatterySource::Vendor)
+        };
 
-                // Only match dongle (PID 0x5038) vendor interface
-                if vid != 0x3151 || pid != 0x5038 || device_info.usage_page() != 0xFFFF {
-                    continue;
-                }
+        match &self.battery_source {
+            Some(BatterySource::Kernel(path)) => {
+                // Read from kernel power_supply sysfs
+                self.battery = read_kernel_battery(path);
+            }
+            Some(BatterySource::Vendor) => {
+                // Query battery from 2.4GHz dongle vendor interface
+                if let Ok(hidapi) = hidapi::HidApi::new() {
+                    for device_info in hidapi.device_list() {
+                        let vid = device_info.vendor_id();
+                        let pid = device_info.product_id();
 
-                if let Ok(device) = device_info.open_device(&hidapi) {
-                    let mut buf = [0u8; 65];
-                    buf[0] = 0x05; // Report ID
+                        // Only match dongle (PID 0x5038) vendor interface
+                        if vid != 0x3151 || pid != 0x5038 || device_info.usage_page() != 0xFFFF {
+                            continue;
+                        }
 
-                    if let Ok(_len) = device.get_feature_report(&mut buf) {
-                        self.battery = BatteryInfo::from_feature_report(&buf);
+                        if let Ok(device) = device_info.open_device(&hidapi) {
+                            let mut buf = [0u8; 65];
+                            buf[0] = 0x05; // Report ID
+
+                            if let Ok(_len) = device.get_feature_report(&mut buf) {
+                                self.battery = BatteryInfo::from_feature_report(&buf);
+                            }
+                            break;
+                        }
                     }
-                    break;
                 }
             }
+            None => {}
         }
         self.last_battery_check = Instant::now();
     }
@@ -2426,7 +2467,13 @@ fn ui(f: &mut Frame, app: &App) {
             } else {
                 "▁"
             };
-            format!(" {}{}%", icon, batt.level)
+            // Show source indicator: (k)ernel or (v)endor
+            let src = match &app.battery_source {
+                Some(BatterySource::Kernel(_)) => "k",
+                Some(BatterySource::Vendor) => "v",
+                None => "?",
+            };
+            format!(" {}{}%({src})", icon, batt.level)
         } else {
             " ?%".to_string()
         }
