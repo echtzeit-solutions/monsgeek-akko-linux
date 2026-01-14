@@ -19,7 +19,6 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "aya-build"
 version = "0.1.3"
-source = "git+https://github.com/heeen/aya.git?branch=struct_ops#6471c1dace4fc97a77885e4494efd03e41483b9b"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -28,7 +27,6 @@ dependencies = [
 [[package]]
 name = "aya-ebpf"
 version = "0.1.2"
-source = "git+https://github.com/heeen/aya.git?branch=struct_ops#6471c1dace4fc97a77885e4494efd03e41483b9b"
 dependencies = [
  "aya-build",
  "aya-ebpf-bindings",
@@ -40,7 +38,6 @@ dependencies = [
 [[package]]
 name = "aya-ebpf-bindings"
 version = "0.1.2"
-source = "git+https://github.com/heeen/aya.git?branch=struct_ops#6471c1dace4fc97a77885e4494efd03e41483b9b"
 dependencies = [
  "aya-build",
  "aya-ebpf-cty",
@@ -49,7 +46,6 @@ dependencies = [
 [[package]]
 name = "aya-ebpf-cty"
 version = "0.2.3"
-source = "git+https://github.com/heeen/aya.git?branch=struct_ops#6471c1dace4fc97a77885e4494efd03e41483b9b"
 dependencies = [
  "aya-build",
 ]
@@ -57,7 +53,6 @@ dependencies = [
 [[package]]
 name = "aya-ebpf-macros"
 version = "0.1.2"
-source = "git+https://github.com/heeen/aya.git?branch=struct_ops#6471c1dace4fc97a77885e4494efd03e41483b9b"
 dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
@@ -333,3 +328,11 @@ name = "zmij"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd8f3f50b848df28f887acb68e41201b5aea6bc8a8dacc00fb40635ff9a72fea"
+
+[[patch.unused]]
+name = "aya"
+version = "0.13.2"
+
+[[patch.unused]]
+name = "aya-obj"
+version = "0.2.2"
