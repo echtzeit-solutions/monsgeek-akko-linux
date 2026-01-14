@@ -266,6 +266,8 @@ Launch the terminal user interface for interactive control:
 iot_driver tui
 ```
 
+<video src="iot_driver_linux/tui-demo.webm" controls width="100%"></video>
+
 **TUI Features:**
 - Tab navigation between Device Info, LED Settings, Key Depth, Triggers, Options, Macros
 - Real-time key depth visualization (bar chart and time series)
