@@ -173,7 +173,15 @@ fn show_power_supplies() {
     if let Ok(entries) = std::fs::read_dir(ps_dir) {
         println!("\n=== Power supplies ===");
         for entry in entries.flatten() {
-            println!("{}", entry.file_name().to_string_lossy());
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Read capacity if available
+            let capacity_path = entry.path().join("capacity");
+            if let Ok(capacity) = std::fs::read_to_string(&capacity_path) {
+                let capacity = capacity.trim();
+                println!("{}: {}%", name, capacity);
+            } else {
+                println!("{}", name);
+            }
         }
     }
 }
