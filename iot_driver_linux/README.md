@@ -121,6 +121,27 @@ cargo build --release --features "screen-capture,bpf"
 | `screen-capture` | Screen color sync via PipeWire | `pipewire`, `clang` |
 | `bpf` | HID-BPF battery integration | `libbpf`, kernel headers |
 
+### HID-BPF Battery Support (Kernel 6.12+)
+
+The `akko-loader` BPF program exposes wireless keyboard battery level to the Linux power subsystem. **Requires kernel 6.12 or newer** due to HID-BPF struct_ops verifier requirements.
+
+```bash
+# Check kernel version
+uname -r
+
+# Build and install
+cd bpf/hid_battery_support/akko-loader-rs
+cargo build --release
+
+# Load BPF (requires root)
+sudo ./target/release/akko-loader -v
+
+# Check battery
+cat /sys/class/power_supply/hid-*/capacity
+```
+
+The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded with `akko-loader unload`.
+
 ### udev Rules (Required for non-root access)
 
 ```bash
