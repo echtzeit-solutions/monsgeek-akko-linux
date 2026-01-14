@@ -164,7 +164,7 @@ sudo install -m 644 ../../../systemd/akko-bpf-battery.service /etc/systemd/syste
 sudo systemctl daemon-reload
 ```
 
-**Usage:**
+**Manual usage:**
 
 ```bash
 # Check status
@@ -181,6 +181,34 @@ sudo akko-loader unload
 ```
 
 The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded.
+
+**Automatic loading with udev/systemd:**
+
+For automatic battery support when the keyboard connects, install the udev rules and systemd service:
+
+```bash
+# Install udev rules (triggers systemd service on device connect)
+sudo install -m 644 udev/99-monsgeek.rules /etc/udev/rules.d/
+
+# Install systemd service
+sudo install -m 644 systemd/akko-bpf-battery.service /etc/systemd/system/
+
+# Reload configurations
+sudo udevadm control --reload-rules
+sudo systemctl daemon-reload
+```
+
+How it works:
+- When the keyboard connects, udev detects the device (VID:3151 PID:5038)
+- udev triggers `akko-bpf-battery.service` via `SYSTEMD_WANTS`
+- The service runs `akko-loader load` to attach the BPF program
+- Battery level appears in `/sys/class/power_supply/` and desktop battery monitors
+- When the keyboard disconnects, udev stops the service which runs `akko-loader unload`
+
+Check service status:
+```bash
+systemctl status akko-bpf-battery.service
+```
 
 ## Usage
 
