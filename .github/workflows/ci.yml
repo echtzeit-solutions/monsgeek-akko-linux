@@ -246,10 +246,13 @@ jobs:
         with:
           components: rust-src
 
+      - name: Install bpftool
+        run: sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: akko-ebpf
+          prefix-key: akko-ebpf-v2
           workspaces: iot_driver_linux/akko-ebpf
 
       - name: Install bpf-linker
@@ -263,6 +266,9 @@ jobs:
         run: |
           file target/bpfel-unknown-none/release/akko-ebpf
           ls -la target/bpfel-unknown-none/release/
+          # Verify BTF is present
+          echo "=== BTF verification ==="
+          bpftool btf dump file target/bpfel-unknown-none/release/akko-ebpf | head -20 || echo "WARNING: No BTF in object!"
 
       - name: Upload akko-ebpf artifact
         uses: actions/upload-artifact@v4
