@@ -309,3 +309,57 @@ jobs:
           name: akko-loader-linux-x86_64
           path: iot_driver_linux/bpf/hid_battery_support/akko-loader-rs/target/release/akko-loader
           if-no-files-found: error
+
+  # ============================================
+  # Verify BPF loads through kernel verifier
+  # This catches BTF/verifier errors before production
+  # ============================================
+  bpf-verify:
+    name: Verify BPF Loads
+    runs-on: ubuntu-latest
+    needs: [akko-ebpf, akko-loader]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bpftool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-common linux-tools-generic
+
+      - name: Download akko-ebpf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: akko-ebpf
+          path: /tmp/bpf/
+
+      - name: Download akko-loader artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: akko-loader-linux-x86_64
+          path: /tmp/bpf/
+
+      - name: Prepare artifacts
+        run: |
+          chmod +x /tmp/bpf/akko-loader
+          mv /tmp/bpf/akko-ebpf /tmp/bpf/akko-ebpf.bpf.o
+          ls -la /tmp/bpf/
+
+      - name: Verify BPF loads through kernel verifier
+        working-directory: /tmp/bpf
+        run: |
+          echo "=== Loading BPF through kernel verifier ==="
+          sudo ./akko-loader -v 2>&1 | tee loader.log
+
+          echo ""
+          echo "=== Verifying struct_ops registered ==="
+          if sudo bpftool struct_ops show | grep -q akko; then
+            echo "✓ BPF verification passed - struct_ops registered"
+          else
+            echo "✗ ERROR: struct_ops not registered"
+            cat loader.log
+            exit 1
+          fi
+
+      - name: Cleanup BPF
+        if: always()
+        run: sudo /tmp/bpf/akko-loader unload 2>/dev/null || true
