@@ -10,6 +10,12 @@
 //! 4. Throttle prevents excessive F7 commands
 //!
 //! Dongle: VID 0x3151 / PID 0x5038
+//!
+//! Limitations:
+//! - Charging status is NOT available. The keyboard's HID protocol does not
+//!   expose charging state - USB packet analysis confirmed the F7 response
+//!   bytes are identical whether charger is connected or not. Only battery
+//!   percentage is available. Power supply will always show "Discharging".
 
 #![no_std]
 #![no_main]

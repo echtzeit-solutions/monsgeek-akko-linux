@@ -187,6 +187,10 @@ sudo akko-loader unload
 
 The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded.
 
+**Known limitations:**
+
+- **Charging status not available**: The keyboard's HID protocol does not expose charging status to the host. The power supply will always show "Discharging" regardless of whether the keyboard is plugged in. The firmware has charging detection internally (for the LED indicator) but this information is not sent via USB. Only battery percentage is available.
+
 **Automatic loading with udev/systemd:**
 
 For automatic battery support when the keyboard connects, install the systemd service (included in `make install-all` or separately via `make install-systemd`).

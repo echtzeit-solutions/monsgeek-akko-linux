@@ -58,16 +58,20 @@ impl BatteryInfo {
     /// The driver uses protobuf Status24 { battery: u32, is_online: bool }
     ///
     /// HID response format from 2.4GHz dongle (VID:3151 PID:5038):
-    /// - byte[0] = 0x00 (response report ID)
-    /// - byte[1] = battery level (0-100) - CONFIRMED
+    /// - byte[0] = 0x01 (status byte, always 0x01)
+    /// - byte[1] = battery level (0-100) - CONFIRMED via USB capture
     /// - byte[2] = 0x00 (unknown)
     /// - byte[3] = 0x00 (unknown)
-    /// - byte[4] = is_online (0=disconnected, 1=connected) - CONFIRMED
-    /// - byte[5] = unknown flag (NOT charging - verified by user)
-    /// - byte[6] = unknown flag
+    /// - byte[4] = 0x01 (unknown flag, always 0x01 in captures)
+    /// - byte[5] = 0x01 (unknown flag, always 0x01 in captures)
+    /// - byte[6] = 0x01 (unknown flag, always 0x01 in captures)
+    /// - byte[7] = 0x00 (unknown)
     ///
     /// Note: Charging status is NOT available via this protocol.
-    /// The Windows driver's Status24 proto only has battery + is_online.
+    /// USB packet analysis confirmed bytes 0-7 are identical whether charger
+    /// is plugged in or not - only battery percentage changes. The firmware
+    /// has charging detection internally (led_state_flags bit 4) but this
+    /// is not exposed via USB HID.
     pub fn from_feature_report(data: &[u8]) -> Option<Self> {
         if data.len() < 5 {
             return None;
