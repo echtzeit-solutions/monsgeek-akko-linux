@@ -5,9 +5,37 @@ PREFIX ?= /usr/local
 UDEV_DIR ?= /etc/udev/rules.d
 SYSTEMD_DIR ?= /etc/systemd/system
 
-.PHONY: all build release clean install install-bin install-udev install-bpf install-systemd uninstall test clippy fmt
+.PHONY: all build release clean install install-bin install-udev install-bpf install-systemd install-all uninstall test clippy fmt help
 
-all: build
+all: release
+
+help:
+	@echo "MonsGeek/Akko Linux Driver - Build and Install"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  make              - Build release binary"
+	@echo "  make build        - Build debug binary"
+	@echo "  make release      - Build release binary"
+	@echo "  make clean        - Clean build artifacts"
+	@echo ""
+	@echo "Install targets (require sudo):"
+	@echo "  make install      - Install driver + udev rules"
+	@echo "  make install-all  - Install everything (driver + BPF + systemd)"
+	@echo "  make install-bin  - Install driver binary only"
+	@echo "  make install-udev - Install udev rules"
+	@echo "  make install-bpf  - Build and install BPF battery support"
+	@echo "  make install-systemd - Install systemd service for auto-load"
+	@echo "  make uninstall    - Remove all installed files"
+	@echo ""
+	@echo "Development:"
+	@echo "  make test         - Run tests"
+	@echo "  make clippy       - Run clippy linter"
+	@echo "  make fmt          - Format code"
+	@echo ""
+	@echo "Variables:"
+	@echo "  PREFIX=$(PREFIX)"
+	@echo "  UDEV_DIR=$(UDEV_DIR)"
+	@echo "  SYSTEMD_DIR=$(SYSTEMD_DIR)"
 
 build:
 	cargo build
@@ -46,10 +74,14 @@ install-systemd:
 install-bin: release
 	install -D -m 755 target/release/iot_driver $(PREFIX)/bin/iot_driver
 
-# Full install
+# Full install (driver + udev)
 install: install-bin install-udev
 	@echo "Installation complete."
 	@echo "Run 'sudo make install-bpf install-systemd' for HID-BPF battery support."
+
+# Full install with BPF battery support
+install-all: install-bin install-udev install-bpf install-systemd
+	@echo "Full installation complete (driver + BPF battery support)."
 
 uninstall:
 	-systemctl stop akko-bpf-battery.service 2>/dev/null

@@ -102,29 +102,30 @@ sudo zypper install pipewire-devel clang-devel
 git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
 cd monsgeek-akko-linux/iot_driver_linux
 
-# Build
-cargo build --release --features firmware-api
-
-# Install (to /usr/local/bin)
-sudo install -m 755 target/release/iot_driver /usr/local/bin/
-
-# Install udev rules (required for non-root access)
-sudo install -m 644 udev/99-monsgeek.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+# Build and install driver + udev rules
+make
+sudo make install
 ```
 
 Then unplug and replug your keyboard.
 
-**Optional features:**
+Run `make help` to see all available targets:
 
-```bash
-# Build with screen capture support (requires PipeWire)
-cargo build --release --features "firmware-api,screen-capture"
-
-# Build with all optional features
-cargo build --release --features "firmware-api,screen-capture,bpf"
 ```
+Build targets:
+  make              - Build release binary
+  make build        - Build debug binary
+  make release      - Build release binary
+
+Install targets (require sudo):
+  make install      - Install driver + udev rules
+  make install-all  - Install everything (driver + BPF + systemd)
+  make install-bpf  - Build and install BPF battery support
+  make install-systemd - Install systemd service for auto-load
+  make uninstall    - Remove all installed files
+```
+
+**Optional Cargo features:**
 
 | Feature | Description | Extra Dependencies |
 |---------|-------------|-------------------|
@@ -132,36 +133,39 @@ cargo build --release --features "firmware-api,screen-capture,bpf"
 | `screen-capture` | Screen color sync via PipeWire | `pipewire`, `clang` |
 | `bpf` | HID-BPF battery integration | `libbpf`, kernel headers |
 
+To build with optional features:
+```bash
+cargo build --release --features "firmware-api,screen-capture"
+```
+
 ### HID-BPF Battery Support (Kernel 6.12+)
 
 The `akko-loader` BPF program exposes wireless keyboard battery level to the Linux power subsystem. **Requires kernel 6.12 or newer** due to HID-BPF struct_ops verifier requirements.
 
 ![KDE Power and Battery showing MonsGeek keyboard at 88%](docs/kde-power-menu.png)
 
-**Build and install:**
+**Prerequisites:**
 
 ```bash
 # Check kernel version (must be 6.12+)
 uname -r
 
-# Build akko-ebpf (requires nightly Rust and bpf-linker)
+# Install nightly Rust and bpf-linker (one-time setup)
 rustup install nightly
 cargo install bpf-linker
-cd iot_driver_linux/akko-ebpf
-cargo +nightly build --release -Z build-std=core
+```
 
-# Build akko-loader
-cd ../bpf/hid_battery_support/akko-loader-rs
-cargo build --release
+**Build and install:**
 
-# Install
-sudo install -m 755 target/release/akko-loader /usr/local/bin/
-sudo install -d /usr/local/lib/akko
-sudo install -m 644 ../../../akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf /usr/local/lib/akko/akko-ebpf.bpf.o
+```bash
+cd iot_driver_linux
 
-# Install systemd service (optional - auto-loads on device connect)
-sudo install -m 644 ../../../systemd/akko-bpf-battery.service /etc/systemd/system/
-sudo systemctl daemon-reload
+# Install driver, BPF loader, and systemd service
+sudo make install-all
+
+# Or install BPF components separately:
+sudo make install-bpf      # Build and install akko-loader + BPF program
+sudo make install-systemd  # Install systemd service for auto-load
 ```
 
 **Manual usage:**
@@ -184,19 +188,7 @@ The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded.
 
 **Automatic loading with udev/systemd:**
 
-For automatic battery support when the keyboard connects, install the udev rules and systemd service:
-
-```bash
-# Install udev rules (triggers systemd service on device connect)
-sudo install -m 644 udev/99-monsgeek.rules /etc/udev/rules.d/
-
-# Install systemd service
-sudo install -m 644 systemd/akko-bpf-battery.service /etc/systemd/system/
-
-# Reload configurations
-sudo udevadm control --reload-rules
-sudo systemctl daemon-reload
-```
+For automatic battery support when the keyboard connects, install the systemd service (included in `make install-all` or separately via `make install-systemd`).
 
 How it works:
 - When the keyboard connects, udev detects the device (VID:3151 PID:5038)
