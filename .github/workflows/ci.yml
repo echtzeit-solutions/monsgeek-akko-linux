@@ -260,6 +260,9 @@ jobs:
         run: cargo install bpf-linker --locked
 
       - name: Build akko-ebpf
+        # Override global RUSTFLAGS to include --btf for BTF generation (required for BPF loading)
+        env:
+          RUSTFLAGS: "-C debuginfo=2 -C link-arg=--btf"
         run: cargo +nightly build --release -Z build-std=core
 
       - name: Verify eBPF object
