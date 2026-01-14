@@ -1,4 +1,5 @@
 # MonsGeek/Akko Linux Driver
+[tui-demo.webm](https://github.com/user-attachments/assets/3eeb464e-2593-4b6a-abe0-6e11d946288a)
 
 [![CI](https://github.com/echtzeit-solutions/monsgeek-akko-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/echtzeit-solutions/monsgeek-akko-linux/actions/workflows/ci.yml)
 
