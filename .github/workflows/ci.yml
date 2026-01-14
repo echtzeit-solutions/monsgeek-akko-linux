@@ -348,7 +348,9 @@ jobs:
         working-directory: /tmp/bpf
         run: |
           echo "=== Loading BPF through kernel verifier ==="
-          sudo ./akko-loader -v 2>&1 | tee loader.log
+          # Use fake hid_id=1 since no real device is connected
+          # This still runs the BPF through the kernel verifier
+          sudo ./akko-loader -v -i 1 2>&1 | tee loader.log
 
           echo ""
           echo "=== Verifying struct_ops registered ==="
