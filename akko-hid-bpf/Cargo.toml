@@ -1,0 +1,9 @@
+[workspace]
+members = ["akko-loader"]
+# Note: akko-ebpf requires special build (nightly + bpf target)
+# It's built separately via: cargo +nightly build -p akko-ebpf --release -Z build-std=core --target bpfel-unknown-none
+resolver = "2"
+
+[profile.release]
+lto = true
+strip = true

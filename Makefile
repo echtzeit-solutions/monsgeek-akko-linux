@@ -3,110 +3,152 @@
 
 CARGO ?= cargo
 INSTALL ?= install
+PREFIX ?= /usr/local
 UDEV_RULES_DIR ?= /etc/udev/rules.d
-BIN_DIR ?= /usr/local/bin
-BPF_DIR ?= /usr/share/akko-keyboard
+SYSTEMD_DIR ?= /etc/systemd/system
+BIN_DIR ?= $(PREFIX)/bin
+LIB_DIR ?= $(PREFIX)/lib/akko
 
-# Rust project directory
-RUST_DIR := iot_driver_linux
-BPF_SRC_DIR := $(RUST_DIR)/bpf
+# Project directories
+DRIVER_DIR := iot_driver_linux
+BPF_DIR := akko-hid-bpf
 
-# Binary name
-BINARY := iot_driver
+# Binary names
+DRIVER_BIN := iot_driver
+LOADER_BIN := akko-loader
 
-.PHONY: all build build-debug clean install install-udev install-bin uninstall \
-        bpf install-bpf clean-bpf install-tray uninstall-tray run-tray help test check
+.PHONY: all driver driver-debug bpf clean clean-driver clean-bpf \
+        install install-driver install-udev install-bpf install-systemd install-all \
+        uninstall uninstall-driver uninstall-bpf \
+        test check fmt help \
+        install-tray uninstall-tray run-tray
 
 # Tray app directory
 TRAY_DIR := plasma-tray
-TRAY_INSTALL_DIR := /usr/share/akko-keyboard/tray
+TRAY_INSTALL_DIR := $(PREFIX)/share/akko-keyboard/tray
 AUTOSTART_DIR := $(HOME)/.config/autostart
 
 # Default target
-all: build
+all: driver
 
 # ============================================================================
-# Rust Build Targets
+# Build Targets
 # ============================================================================
 
-## Build release binary
-build:
-	cd $(RUST_DIR) && $(CARGO) build --release
+## Build driver release binary
+driver:
+	cd $(DRIVER_DIR) && $(CARGO) build --release
 
-## Build debug binary
-build-debug:
-	cd $(RUST_DIR) && $(CARGO) build
+## Build driver debug binary
+driver-debug:
+	cd $(DRIVER_DIR) && $(CARGO) build
+
+## Build BPF loader (akko-ebpf requires nightly + special target)
+bpf:
+	cd $(BPF_DIR) && $(CARGO) build -p akko-loader --release
+
+## Build BPF eBPF program (requires nightly toolchain)
+bpf-ebpf:
+	cd $(BPF_DIR) && cargo +nightly build -p akko-ebpf --release \
+		-Z build-std=core --target bpfel-unknown-none
 
 ## Run tests
 test:
-	cd $(RUST_DIR) && $(CARGO) test
+	cd $(DRIVER_DIR) && $(CARGO) test --workspace
 
 ## Run clippy lints
 check:
-	cd $(RUST_DIR) && $(CARGO) clippy --release
+	cd $(DRIVER_DIR) && $(CARGO) clippy --workspace
 
-## Clean build artifacts
-clean:
-	cd $(RUST_DIR) && $(CARGO) clean
+## Format code
+fmt:
+	cd $(DRIVER_DIR) && $(CARGO) fmt --all
+
+## Clean all build artifacts
+clean: clean-driver clean-bpf
+
+clean-driver:
+	cd $(DRIVER_DIR) && $(CARGO) clean
+
+clean-bpf:
+	cd $(BPF_DIR) && $(CARGO) clean
 
 # ============================================================================
-# Installation Targets (require sudo)
+# Install Targets (require sudo, run 'make driver' first as regular user)
 # ============================================================================
 
-## Install udev rules for HID device access
+## Install driver binary (must run 'make driver' first)
+install-driver:
+	@test -f $(DRIVER_DIR)/target/release/$(DRIVER_BIN) || \
+		{ echo "Error: Binary not found. Run 'make driver' first (as regular user)."; exit 1; }
+	$(INSTALL) -D -m 755 $(DRIVER_DIR)/target/release/$(DRIVER_BIN) $(BIN_DIR)/$(DRIVER_BIN)
+	@echo "Installed $(DRIVER_BIN) to $(BIN_DIR)"
+
+## Install udev rules
 install-udev:
 	@echo "Installing udev rules..."
-	$(INSTALL) -D -m 644 $(RUST_DIR)/udev/99-monsgeek.rules $(UDEV_RULES_DIR)/99-monsgeek.rules
+	$(INSTALL) -D -m 644 udev/99-monsgeek.rules $(UDEV_RULES_DIR)/99-monsgeek.rules
 	udevadm control --reload-rules
-	udevadm trigger
+	udevadm trigger --subsystem-match=hidraw --subsystem-match=input
 	@echo "Udev rules installed. You may need to reconnect your keyboard."
 
-## Install binary to /usr/local/bin
-install-bin: build
-	@echo "Installing binary..."
-	$(INSTALL) -D -m 755 $(RUST_DIR)/target/release/$(BINARY) $(BIN_DIR)/$(BINARY)
-	@echo "Installed $(BINARY) to $(BIN_DIR)"
+## Install BPF loader binary (must run 'make bpf' first)
+install-bpf:
+	@test -f $(BPF_DIR)/target/release/$(LOADER_BIN) || \
+		{ echo "Error: Loader not found. Run 'make bpf' first (as regular user)."; exit 1; }
+	$(INSTALL) -D -m 755 $(BPF_DIR)/target/release/$(LOADER_BIN) $(BIN_DIR)/$(LOADER_BIN)
+	@echo "Installed $(LOADER_BIN) to $(BIN_DIR)"
+	@# Install pre-built eBPF object if available
+	@if [ -f $(BPF_DIR)/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf ]; then \
+		$(INSTALL) -D -m 644 $(BPF_DIR)/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf \
+			$(LIB_DIR)/akko-ebpf.bpf.o; \
+		echo "Installed eBPF object to $(LIB_DIR)"; \
+	fi
 
-## Install everything (binary + udev rules)
-install: install-bin install-udev
+## Install systemd service for BPF auto-load
+install-systemd:
+	@echo "Installing systemd service..."
+	sed 's|/usr/local|$(PREFIX)|g' systemd/akko-bpf-battery.service > /tmp/akko-bpf-battery.service
+	$(INSTALL) -D -m 644 /tmp/akko-bpf-battery.service $(SYSTEMD_DIR)/akko-bpf-battery.service
+	rm /tmp/akko-bpf-battery.service
+	systemctl daemon-reload
+	@echo "Systemd service installed. BPF loader will auto-start on device plug-in."
+
+## Install driver + udev rules (standard install)
+install: install-driver install-udev
 	@echo ""
 	@echo "Installation complete!"
-	@echo "Run '$(BINARY) --help' to get started."
+	@echo "Run '$(DRIVER_BIN) --help' to get started."
+	@echo ""
+	@echo "For HID-BPF battery support (2.4GHz dongle), run:"
+	@echo "  make bpf && sudo make install-bpf install-systemd"
+
+## Install everything (driver + BPF + systemd)
+install-all: install-driver install-udev install-bpf install-systemd
+	@echo ""
+	@echo "Full installation complete!"
+
+## Uninstall driver
+uninstall-driver:
+	rm -f $(BIN_DIR)/$(DRIVER_BIN)
+	rm -f $(UDEV_RULES_DIR)/99-monsgeek.rules
+	udevadm control --reload-rules
+	@echo "Driver uninstalled."
+
+## Uninstall BPF components
+uninstall-bpf:
+	-systemctl stop akko-bpf-battery.service 2>/dev/null
+	-systemctl disable akko-bpf-battery.service 2>/dev/null
+	rm -f $(SYSTEMD_DIR)/akko-bpf-battery.service
+	systemctl daemon-reload
+	rm -f $(BIN_DIR)/$(LOADER_BIN)
+	rm -rf $(LIB_DIR)
+	-rm -rf /sys/fs/bpf/akko
+	@echo "BPF components uninstalled."
 
 ## Uninstall everything
-uninstall:
-	@echo "Removing installed files..."
-	rm -f $(BIN_DIR)/$(BINARY)
-	rm -f $(UDEV_RULES_DIR)/99-monsgeek.rules
-	rm -rf $(BPF_DIR)
-	udevadm control --reload-rules
-	@echo "Uninstalled."
-
-# ============================================================================
-# BPF Targets (optional, for battery integration via HID-BPF)
-# ============================================================================
-
-## Build BPF objects
-bpf:
-	@if [ -d "$(BPF_SRC_DIR)" ]; then \
-		echo "Building BPF objects..."; \
-		$(MAKE) -C $(BPF_SRC_DIR); \
-	else \
-		echo "BPF source directory not found: $(BPF_SRC_DIR)"; \
-		exit 1; \
-	fi
-
-## Install BPF objects
-install-bpf: bpf
-	@echo "Installing BPF objects..."
-	$(INSTALL) -D -m 644 $(BPF_SRC_DIR)/akko_dongle.bpf.o $(BPF_DIR)/akko_dongle.bpf.o
-	@echo "BPF object installed to $(BPF_DIR)"
-
-## Clean BPF build artifacts
-clean-bpf:
-	@if [ -d "$(BPF_SRC_DIR)" ]; then \
-		$(MAKE) -C $(BPF_SRC_DIR) clean; \
-	fi
+uninstall: uninstall-driver uninstall-bpf
+	@echo "All components uninstalled."
 
 # ============================================================================
 # Tray App Targets (KDE Plasma system tray)
@@ -126,11 +168,9 @@ install-tray:
 	$(INSTALL) -d $(AUTOSTART_DIR)
 	$(INSTALL) -m 644 $(TRAY_DIR)/akko-tray.desktop $(AUTOSTART_DIR)/akko-tray.desktop
 	@echo "Tray app installed. It will start automatically on login."
-	@echo "Run 'make run-tray' to test now."
 
 ## Uninstall tray app
 uninstall-tray:
-	@echo "Removing tray app..."
 	rm -rf $(TRAY_INSTALL_DIR)
 	rm -f $(AUTOSTART_DIR)/akko-tray.desktop
 	@echo "Tray app uninstalled."
@@ -139,29 +179,30 @@ uninstall-tray:
 # Help
 # ============================================================================
 
-## Show this help
 help:
 	@echo "MonsGeek/Akko Keyboard Linux Driver"
 	@echo ""
-	@echo "Usage: make [target]"
+	@echo "Quick start:"
+	@echo "  make driver && sudo make install"
 	@echo ""
-	@echo "Build targets:"
-	@echo "  build        Build release binary (default)"
-	@echo "  build-debug  Build debug binary"
+	@echo "Build targets (run as regular user):"
+	@echo "  driver       Build driver release binary (default)"
+	@echo "  driver-debug Build driver debug binary"
+	@echo "  bpf          Build BPF loader"
+	@echo "  bpf-ebpf     Build BPF eBPF program (requires nightly)"
 	@echo "  test         Run tests"
 	@echo "  check        Run clippy lints"
-	@echo "  clean        Clean build artifacts"
+	@echo "  fmt          Format code"
+	@echo "  clean        Clean all build artifacts"
 	@echo ""
-	@echo "Install targets (require sudo):"
-	@echo "  install      Install binary + udev rules"
-	@echo "  install-bin  Install binary only"
-	@echo "  install-udev Install udev rules only"
-	@echo "  uninstall    Remove all installed files"
-	@echo ""
-	@echo "BPF targets (optional, for HID-BPF battery integration):"
-	@echo "  bpf          Build BPF objects"
-	@echo "  install-bpf  Install BPF objects"
-	@echo "  clean-bpf    Clean BPF build artifacts"
+	@echo "Install targets (run with sudo, after building):"
+	@echo "  install         Install driver + udev rules"
+	@echo "  install-all     Install everything (driver + BPF + systemd)"
+	@echo "  install-driver  Install driver binary only"
+	@echo "  install-udev    Install udev rules only"
+	@echo "  install-bpf     Install BPF loader"
+	@echo "  install-systemd Install systemd service for BPF auto-load"
+	@echo "  uninstall       Remove all installed files"
 	@echo ""
 	@echo "Tray app targets (KDE Plasma system tray):"
 	@echo "  run-tray       Run tray app for testing"
@@ -169,6 +210,6 @@ help:
 	@echo "  uninstall-tray Remove tray app"
 	@echo ""
 	@echo "Variables:"
+	@echo "  PREFIX=$(PREFIX)"
 	@echo "  BIN_DIR=$(BIN_DIR)"
 	@echo "  UDEV_RULES_DIR=$(UDEV_RULES_DIR)"
-	@echo "  BPF_DIR=$(BPF_DIR)"

@@ -5,6 +5,9 @@ edition = "2021"
 description = "HID-BPF driver for Akko/MonsGeek 2.4GHz dongle battery integration"
 license = "GPL-2.0-only"
 
+# Prevent cargo from discovering parent workspace - this crate builds separately
+[workspace]
+
 [dependencies]
 # Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/struct_ops)
 aya-ebpf = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
@@ -21,6 +24,3 @@ lto = true
 [profile.release]
 panic = "abort"
 lto = true
-
-# Prevent auto-discovery as part of parent workspace
-[workspace]
