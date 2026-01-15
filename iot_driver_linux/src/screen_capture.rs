@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use tracing::trace;
 
-use crate::hid::MonsGeekDevice;
 use crate::protocol::{cmd, screen_color};
+use monsgeek_keyboard::SyncKeyboard;
 
 /// Screen color state shared between capture and main loop
 pub struct ScreenColorState {
@@ -98,7 +98,7 @@ pub fn compute_average_color(data: &[u8], width: u32, height: u32, is_bgra: bool
 /// Run the screen color streaming loop
 /// Sends RGB to keyboard at ~50Hz
 fn run_screen_color_loop(
-    device: &MonsGeekDevice,
+    keyboard: &SyncKeyboard,
     state: &Arc<ScreenColorState>,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -118,12 +118,8 @@ fn run_screen_color_loop(
             trace!("Screen color: RGB({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
 
             let report = screen_color::build_report(r, g, b);
-            // Use the standard send method with Bit7 checksum
-            device.send(
-                cmd::SET_SCREEN_COLOR,
-                &report[1..8],
-                crate::protocol::ChecksumType::Bit7,
-            );
+            // Use send_raw_cmd with the screen color data
+            let _ = keyboard.send_raw_cmd(cmd::SET_SCREEN_COLOR, &report[1..8]);
             last_color = (r, g, b);
         }
 
@@ -393,14 +389,14 @@ pub mod pipewire_capture {
 
 /// Run screen color reactive mode (async entry point)
 pub async fn run_screen_color_mode(
-    device: &MonsGeekDevice,
+    keyboard: &SyncKeyboard,
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {
     println!("Starting screen color mode ({fps}fps)...");
 
     // Set LED mode to Screen Color (mode 21)
-    device.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
+    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
     std::thread::sleep(Duration::from_millis(200));
 
     // Create shared state
@@ -415,7 +411,7 @@ pub async fn run_screen_color_mode(
 
     // Run the color streaming loop (blocking)
     println!("Streaming screen colors to keyboard...");
-    run_screen_color_loop(device, &state, running)?;
+    run_screen_color_loop(keyboard, &state, running)?;
 
     state.stop();
     println!("Screen color mode stopped");
@@ -424,7 +420,7 @@ pub async fn run_screen_color_mode(
 
 /// Synchronous wrapper for running screen color mode
 pub fn run_screen_color_mode_sync(
-    device: &MonsGeekDevice,
+    keyboard: &SyncKeyboard,
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {
@@ -432,5 +428,5 @@ pub fn run_screen_color_mode_sync(
     let rt =
         tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
-    rt.block_on(run_screen_color_mode(device, running, fps))
+    rt.block_on(run_screen_color_mode(keyboard, running, fps))
 }

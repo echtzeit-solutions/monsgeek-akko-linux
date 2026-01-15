@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::hid::MonsGeekDevice;
 use crate::protocol::cmd;
+use monsgeek_keyboard::SyncKeyboard;
 
 /// Number of frequency bands to analyze
 const NUM_BANDS: usize = 8;
@@ -380,7 +380,7 @@ pub fn list_audio_devices() -> Vec<String> {
 /// Run audio reactive mode (blocking)
 /// This starts audio capture in a background thread and runs the RGB update loop
 pub fn run_audio_reactive(
-    device: &MonsGeekDevice,
+    keyboard: &SyncKeyboard,
     config: AudioConfig,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -392,11 +392,12 @@ pub fn run_audio_reactive(
     println!("Audio capture started, setting LED mode...");
 
     // Set LED mode to per-key colors (LightUserPicture with layer 0)
-    device.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
+    let _ =
+        keyboard.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
     thread::sleep(Duration::from_millis(200));
 
     // Run the RGB rendering loop
-    run_rgb_loop(device, &audio_capture.state, &config, running)?;
+    run_rgb_loop(keyboard, &audio_capture.state, &config, running)?;
 
     // Stop audio capture
     audio_capture.stop();
@@ -407,12 +408,12 @@ pub fn run_audio_reactive(
 
 /// RGB rendering loop - reads from AudioState and sends colors to keyboard
 pub fn run_rgb_loop(
-    device: &MonsGeekDevice,
+    keyboard: &SyncKeyboard,
     audio_state: &Arc<AudioState>,
     config: &AudioConfig,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let key_count = device.key_count() as usize;
+    let key_count = keyboard.key_count() as usize;
     let frame_duration = Duration::from_millis(1000 / TARGET_FPS as u64);
     let mut frame_count = 0u32;
 
@@ -442,8 +443,8 @@ pub fn run_rgb_loop(
             );
         }
 
-        // Send to keyboard (10ms page delay, 3ms inter-page = ~88ms per frame = ~11fps)
-        device.set_per_key_colors_fast(&colors, 10, 3);
+        // Send to keyboard (repeat=1, layer=0 for real-time effects)
+        let _ = keyboard.set_per_key_colors_fast(&colors, 1, 0);
 
         // Maintain target FPS
         let elapsed = frame_start.elapsed();
@@ -519,14 +520,15 @@ fn get_pulseaudio_monitor() -> Result<String, String> {
 }
 
 /// Run a simple rainbow animation to test RGB without audio
-pub fn run_rainbow_test(device: &MonsGeekDevice, running: Arc<AtomicBool>) -> Result<(), String> {
+pub fn run_rainbow_test(keyboard: &SyncKeyboard, running: Arc<AtomicBool>) -> Result<(), String> {
     println!("Starting rainbow test mode...");
 
     // Set LED mode to per-key colors (LightUserPicture with layer 0)
-    device.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
+    let _ =
+        keyboard.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
     std::thread::sleep(Duration::from_millis(200));
 
-    let key_count = device.key_count() as usize;
+    let key_count = keyboard.key_count() as usize;
     let frame_duration = Duration::from_millis(1000 / 30); // 30 FPS
     let mut hue_offset = 0.0f32;
 
@@ -542,7 +544,7 @@ pub fn run_rainbow_test(device: &MonsGeekDevice, running: Arc<AtomicBool>) -> Re
             colors.push(hsv_to_rgb(hue, 1.0, 1.0));
         }
 
-        device.set_per_key_colors_fast(&colors, 10, 5);
+        let _ = keyboard.set_per_key_colors_fast(&colors, 1, 0);
 
         hue_offset = (hue_offset + 5.0) % 360.0;
 

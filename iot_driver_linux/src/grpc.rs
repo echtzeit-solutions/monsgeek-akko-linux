@@ -84,6 +84,10 @@ pub struct DriverService {
     vendor_tx: broadcast::Sender<VenderMsg>,
     vendor_polling: Arc<Mutex<bool>>,
     hotplug_running: Arc<Mutex<bool>>,
+    /// Tracks the expected response command byte for each device path (for dongle correlation)
+    pending_commands: Arc<Mutex<HashMap<String, u8>>>,
+    /// Cache of out-of-order responses from dongle (responses that arrived for different commands)
+    response_cache: Arc<Mutex<HashMap<String, Vec<Vec<u8>>>>>,
 }
 
 impl DriverService {
@@ -99,6 +103,8 @@ impl DriverService {
             vendor_tx,
             vendor_polling: Arc::new(Mutex::new(false)),
             hotplug_running: Arc::new(Mutex::new(false)),
+            pending_commands: Arc::new(Mutex::new(HashMap::new())),
+            response_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -725,6 +731,31 @@ impl DriverService {
         Err(Status::not_found("Device not found"))
     }
 
+    /// Check if a device path corresponds to a 2.4GHz dongle
+    fn is_dongle_path(device_path: &str) -> bool {
+        // Path format: "vid-pid-usage_page-usage-interface"
+        // Dongle PID is 0x5038 = 20536
+        if let Some((_, pid, _, _, _)) = HidInterface::parse_path_key(device_path) {
+            pid == 0x5038
+        } else {
+            false
+        }
+    }
+
+    /// Delay after sending a command to dongle before it processes it (ms)
+    const DONGLE_POST_SEND_DELAY_MS: u64 = 150;
+
+    /// Send the DONGLE_FLUSH_NOP command to push buffered response out
+    fn send_dongle_flush(device: &HidDevice) -> Result<(), hidapi::HidError> {
+        let mut flush_buf = [0u8; 65];
+        flush_buf[0] = 0;
+        flush_buf[1] = cmd::DONGLE_FLUSH_NOP;
+        let sum: u16 = flush_buf[1..8].iter().map(|&x| x as u16).sum();
+        flush_buf[8] = 255 - (sum & 0xFF) as u8;
+        debug!("Sending dongle flush (0xFC)");
+        device.send_feature_report(&flush_buf)
+    }
+
     #[allow(clippy::result_large_err)]
     fn send_feature(&self, device_path: &str, data: &[u8]) -> Result<(), Status> {
         {
@@ -735,6 +766,7 @@ impl DriverService {
             }
         }
 
+        let is_dongle = Self::is_dongle_path(device_path);
         let devices = self.devices.lock().unwrap();
         let connected = devices
             .get(device_path)
@@ -747,8 +779,26 @@ impl DriverService {
 
         debug!("Sending feature report: {:02x?}", &buf[..9]);
 
+        // For dongles: track the expected response command for correlation
+        if is_dongle && !data.is_empty() {
+            let cmd = data[0];
+            debug!("Tracking pending command 0x{:02x} for {}", cmd, device_path);
+            self.pending_commands
+                .lock()
+                .unwrap()
+                .insert(device_path.to_string(), cmd);
+        }
+
         match connected.device.send_feature_report(&buf) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                // Dongles need time to process command
+                if is_dongle {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        Self::DONGLE_POST_SEND_DELAY_MS,
+                    ));
+                }
+                Ok(())
+            }
             Err(e) => {
                 error!("Failed to send feature report: {}", e);
                 Err(Status::internal(format!("HID error: {e}")))
@@ -766,6 +816,7 @@ impl DriverService {
             }
         }
 
+        let is_dongle = Self::is_dongle_path(device_path);
         let devices = self.devices.lock().unwrap();
         let connected = devices
             .get(device_path)
@@ -773,6 +824,94 @@ impl DriverService {
 
         let mut buf = vec![0u8; 65];
         buf[0] = 0;
+
+        // For dongles: use response caching and correlation pattern (like TUI)
+        // The dongle's delayed response buffer can return responses out of order.
+        if is_dongle {
+            // Get the expected command byte from pending_commands
+            let expected_cmd = self
+                .pending_commands
+                .lock()
+                .unwrap()
+                .get(device_path)
+                .copied();
+
+            if let Some(cmd) = expected_cmd {
+                debug!("Looking for response to command 0x{:02x}", cmd);
+
+                // First check if we have a cached response for this command
+                {
+                    let mut cache = self.response_cache.lock().unwrap();
+                    if let Some(device_cache) = cache.get_mut(device_path) {
+                        if let Some(idx) = device_cache.iter().position(|r| r.first() == Some(&cmd))
+                        {
+                            let resp = device_cache.remove(idx);
+                            debug!(
+                                "Found cached response for 0x{:02x}: {:02x?}",
+                                cmd,
+                                &resp[..9.min(resp.len())]
+                            );
+                            return Ok(resp);
+                        }
+                    }
+                }
+
+                // Send flush and read with correlation
+                const MAX_READ_ATTEMPTS: usize = 5;
+                for attempt in 0..MAX_READ_ATTEMPTS {
+                    // Send flush to push response out
+                    let _ = Self::send_dongle_flush(&connected.device);
+                    std::thread::sleep(std::time::Duration::from_millis(if attempt == 0 {
+                        100
+                    } else {
+                        50
+                    }));
+
+                    // Read response
+                    buf.fill(0);
+                    buf[0] = 0;
+                    if let Ok(len) = connected.device.get_feature_report(&mut buf) {
+                        if len > 0 {
+                            let resp_cmd = buf[1];
+                            debug!(
+                                "Dongle read attempt {}: cmd=0x{:02x} (want 0x{:02x}) data={:02x?}",
+                                attempt,
+                                resp_cmd,
+                                cmd,
+                                &buf[..9]
+                            );
+
+                            if resp_cmd == cmd {
+                                // Got our response!
+                                return Ok(buf[1..].to_vec());
+                            } else if resp_cmd != 0 && resp_cmd != cmd::DONGLE_FLUSH_NOP {
+                                // Got a valid response for a different command - cache it
+                                debug!("Caching out-of-order response for 0x{:02x}", resp_cmd);
+                                let mut cache = self.response_cache.lock().unwrap();
+                                let device_cache =
+                                    cache.entry(device_path.to_string()).or_default();
+                                // Limit cache size to prevent memory growth
+                                if device_cache.len() < 16 {
+                                    device_cache.push(buf[1..].to_vec());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Return last read even if not matching
+                debug!(
+                    "Dongle read: giving up after {} attempts, returning: {:02x?}",
+                    MAX_READ_ATTEMPTS,
+                    &buf[..9]
+                );
+                return Ok(buf[1..].to_vec());
+            } else {
+                // No pending command - just read directly
+                debug!("No pending command, reading directly");
+                let _ = connected.device.get_feature_report(&mut buf);
+                return Ok(buf[1..].to_vec());
+            }
+        }
 
         match connected.device.get_feature_report(&mut buf) {
             Ok(len) => {
