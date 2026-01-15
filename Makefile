@@ -49,7 +49,7 @@ bpf:
 
 ## Build BPF eBPF program (requires nightly toolchain)
 bpf-ebpf:
-	cd $(BPF_DIR) && cargo +nightly build -p akko-ebpf --release \
+	cd $(BPF_DIR)/akko-ebpf && cargo +nightly build --release \
 		-Z build-std=core --target bpfel-unknown-none
 
 ## Run tests

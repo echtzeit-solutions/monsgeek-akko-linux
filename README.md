@@ -101,10 +101,10 @@ sudo zypper install pipewire-devel clang-devel
 
 ```bash
 git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
-cd monsgeek-akko-linux/iot_driver_linux
+cd monsgeek-akko-linux
 
 # Build and install driver + udev rules
-make
+make driver
 sudo make install
 ```
 
@@ -113,17 +113,24 @@ Then unplug and replug your keyboard.
 Run `make help` to see all available targets:
 
 ```
-Build targets:
-  make              - Build release binary
-  make build        - Build debug binary
-  make release      - Build release binary
+Build targets (run as regular user):
+  driver       Build driver release binary (default)
+  driver-debug Build driver debug binary
+  bpf          Build BPF loader
+  bpf-ebpf     Build BPF eBPF program (requires nightly)
+  test         Run tests
+  check        Run clippy lints
+  fmt          Format code
+  clean        Clean all build artifacts
 
-Install targets (require sudo):
-  make install      - Install driver + udev rules
-  make install-all  - Install everything (driver + BPF + systemd)
-  make install-bpf  - Build and install BPF battery support
-  make install-systemd - Install systemd service for auto-load
-  make uninstall    - Remove all installed files
+Install targets (run with sudo, after building):
+  install         Install driver + udev rules
+  install-all     Install everything (driver + BPF + systemd)
+  install-driver  Install driver binary only
+  install-udev    Install udev rules only
+  install-bpf     Install BPF loader
+  install-systemd Install systemd service for BPF auto-load
+  uninstall       Remove all installed files
 ```
 
 **Optional Cargo features:**
@@ -132,10 +139,10 @@ Install targets (require sudo):
 |---------|-------------|-------------------|
 | `firmware-api` | Download firmware from cloud (default) | None |
 | `screen-capture` | Screen color sync via PipeWire | `pipewire`, `clang` |
-| `bpf` | HID-BPF battery integration | `libbpf`, kernel headers |
 
 To build with optional features:
 ```bash
+cd iot_driver_linux
 cargo build --release --features "firmware-api,screen-capture"
 ```
 
@@ -159,13 +166,15 @@ cargo install bpf-linker
 **Build and install:**
 
 ```bash
-cd iot_driver_linux
+# Build driver and BPF loader first (as regular user)
+make driver
+make bpf
 
-# Install driver, BPF loader, and systemd service
+# Install driver, BPF loader, and systemd service (as root)
 sudo make install-all
 
 # Or install BPF components separately:
-sudo make install-bpf      # Build and install akko-loader + BPF program
+sudo make install-bpf      # Install akko-loader + BPF program
 sudo make install-systemd  # Install systemd service for auto-load
 ```
 
