@@ -239,7 +239,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: akko-loader-v2
-          workspaces: akko-hid-bpf/akko-loader
+          workspaces: akko-hid-bpf
 
       - name: Build akko-loader
         run: cargo build --release
@@ -248,5 +248,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: akko-loader-linux-x86_64
-          path: akko-hid-bpf/akko-loader/target/release/akko-loader
+          path: akko-hid-bpf/target/release/akko-loader
           if-no-files-found: error
