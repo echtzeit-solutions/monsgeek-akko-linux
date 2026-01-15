@@ -195,39 +195,7 @@ jobs:
           uname -r
           echo ""
           echo "=== HID-BPF kernel config ==="
-          cat /boot/config-$(uname -r) 2>/dev/null | grep -E "CONFIG_HID|CONFIG_BPF" | grep -v "^#" | sort || echo "Config not available"
-          echo ""
-          echo "=== HID-BPF kfuncs in vmlinux BTF ==="
-          bpftool btf dump file /sys/kernel/btf/vmlinux 2>/dev/null | grep -i "hid_bpf" | head -20 || echo "No HID-BPF symbols in vmlinux BTF"
-
-      - name: Verify BPF programs with kernel verifier
-        working-directory: akko-hid-bpf/akko-ebpf
-        run: |
-          # Try to load struct_ops BPF programs through the kernel verifier
-          # This validates the bytecode without needing actual HID hardware
-          OUTPUT=$(sudo bpftool struct_ops register target/bpfel-unknown-none/release/akko-ebpf 2>&1) && {
-            echo "struct_ops registered successfully"
-            sudo bpftool struct_ops unregister name akko_on_demand || true
-          } || {
-            echo "$OUTPUT"
-            # Check if failure is due to missing HID-BPF support (expected on GH runners)
-            # vs actual code errors (verifier rejection)
-            if echo "$OUTPUT" | grep -q "failed to find BTF for extern"; then
-              echo "::warning::bpftool cannot resolve Rust kfunc format - skipping verifier check"
-              echo "Rust generates VAR entries in .ksyms instead of FUNC entries that libbpf expects."
-              echo "The BPF loads correctly via aya loader which handles this format."
-              exit 0
-            elif echo "$OUTPUT" | grep -q "must point to scalar"; then
-              echo "::error::BPF verifier rejected program - struct_ops context handling error"
-              exit 1
-            elif echo "$OUTPUT" | grep -q "invalid func"; then
-              echo "::error::BPF verifier rejected program - invalid function call"
-              exit 1
-            else
-              echo "::warning::struct_ops register failed with unknown error - treating as kernel limitation"
-              exit 0
-            fi
-          }
+          cat /boot/config-$(uname -r) 2>/dev/null | grep -E "CONFIG_HID_BPF" || echo "CONFIG_HID_BPF not found"
 
       - name: Upload akko-ebpf artifact
         uses: actions/upload-artifact@v4
@@ -270,3 +238,41 @@ jobs:
           name: akko-loader-linux-x86_64
           path: akko-hid-bpf/target/release/akko-loader
           if-no-files-found: error
+
+  # ============================================
+  # BPF Kernel Verifier Check
+  # Uses akko-loader verify to run BPF through kernel verifier
+  # ============================================
+  bpf-verify:
+    name: Verify BPF (kernel)
+    # Use Ubuntu 24.04 for kernel 6.11+ which has HID-BPF support
+    runs-on: ubuntu-24.04
+    needs: [akko-ebpf, akko-loader]
+    steps:
+      - name: Download akko-ebpf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: akko-ebpf
+          path: bpf
+
+      - name: Download akko-loader artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: akko-loader-linux-x86_64
+          path: loader
+
+      - name: Check kernel HID-BPF support
+        run: |
+          echo "=== Kernel version ==="
+          uname -r
+          echo "=== HID-BPF config ==="
+          grep CONFIG_HID_BPF /boot/config-$(uname -r) || echo "Not found in config"
+
+      - name: Verify BPF with kernel verifier
+        run: |
+          chmod +x loader/akko-loader
+          # Create expected path structure
+          sudo mkdir -p /usr/local/lib/akko
+          sudo cp bpf/akko-ebpf /usr/local/lib/akko/akko-ebpf.bpf.o
+          # Run verification - this loads BPF through kernel verifier without registering
+          sudo loader/akko-loader verify

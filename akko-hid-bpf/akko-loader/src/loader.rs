@@ -109,6 +109,37 @@ fn get_bpf_path() -> Result<PathBuf> {
     );
 }
 
+/// Verify BPF programs through the kernel verifier (CI mode)
+///
+/// This loads and verifies all BPF programs without registering them.
+/// Used in CI to catch verifier errors without requiring actual hardware.
+pub fn verify() -> Result<()> {
+    let bpf_path = get_bpf_path()?;
+    info!("Verifying BPF from {:?}", bpf_path);
+
+    let mut bpf = Ebpf::load_file(&bpf_path)
+        .with_context(|| format!("Failed to load BPF object: {bpf_path:?}"))?;
+
+    info!("BPF object loaded, running kernel verifier...");
+
+    // Load kernel BTF and populate struct_ops with program FDs
+    // This triggers the kernel verifier for all programs
+    let btf = Btf::from_sys_fs().context("Failed to load kernel BTF")?;
+    bpf.load_struct_ops(&btf)
+        .context("Failed to load struct_ops programs")?;
+
+    info!("All BPF programs passed kernel verification!");
+
+    // List verified programs
+    info!("Verified programs:");
+    for (name, _prog) in bpf.programs() {
+        info!("  ✓ {}", name);
+    }
+
+    // Don't register or pin - just verify
+    Ok(())
+}
+
 /// Load and register the BPF program
 ///
 /// The BPF link is pinned to the filesystem so it persists after the loader exits.

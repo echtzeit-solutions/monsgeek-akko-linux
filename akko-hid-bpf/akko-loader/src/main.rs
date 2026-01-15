@@ -46,6 +46,8 @@ enum Commands {
     Load,
     /// Unload BPF programs
     Unload,
+    /// Verify BPF programs through kernel verifier (CI mode, no hardware required)
+    Verify,
 }
 
 fn setup_logging(verbose: bool) {
@@ -99,6 +101,10 @@ fn main() -> Result<()> {
         Some(Commands::Unload) => {
             setup_logging(cli.verbose);
             return loader::unload();
+        }
+        Some(Commands::Verify) => {
+            setup_logging(cli.verbose);
+            return loader::verify();
         }
         Some(Commands::Load) => {
             // Fall through to load logic below
