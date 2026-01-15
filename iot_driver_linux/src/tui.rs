@@ -18,7 +18,12 @@ use std::path::PathBuf;
 // Use shared library
 use crate::hid::BatteryInfo;
 use crate::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
-use crate::{cmd, key_mode, magnetism, DeviceInfo, MonsGeekDevice, TriggerSettings};
+use crate::{cmd, devices, hal, key_mode, magnetism, DeviceInfo, TriggerSettings};
+
+// New keyboard abstraction layer
+use monsgeek_keyboard::{
+    KeyboardOptions as KbOptions, LedMode, LedParams, PollingRate, RgbColor, SyncKeyboard,
+};
 
 /// Battery data source
 #[derive(Debug, Clone)]
@@ -31,7 +36,6 @@ enum BatterySource {
 
 /// Application state
 struct App {
-    device: Option<MonsGeekDevice>,
     input_device: Option<hidapi::HidDevice>, // Separate INPUT interface for depth reports
     info: DeviceInfo,
     tab: usize,
@@ -62,6 +66,7 @@ struct App {
     selected_keys: HashSet<usize>,     // Keys selected for time series view
     depth_cursor: usize,               // Cursor for key selection
     depth_sample_idx: usize,           // Global sample counter for time axis
+    max_observed_depth: f32,           // Max depth observed during session (for bar scaling)
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
     battery_source: Option<BatterySource>,
@@ -511,7 +516,6 @@ const KEYBOARD_SHORTCUTS: &[(&str, &str)] = &[
 impl App {
     fn new() -> Self {
         Self {
-            device: None,
             input_device: None,
             info: DeviceInfo::default(),
             tab: 0,
@@ -539,6 +543,7 @@ impl App {
             selected_keys: HashSet::new(),
             depth_cursor: 0,
             depth_sample_idx: 0,
+            max_observed_depth: 0.1, // Will grow as keys are pressed
             // Battery status
             battery: None,
             battery_source: None,
@@ -559,65 +564,71 @@ impl App {
     }
 
     fn connect(&mut self) -> Result<(), String> {
-        match MonsGeekDevice::open() {
-            Ok(dev) => {
-                // Get device info from definition before moving device to worker
-                self.device_name = dev.display_name().to_string();
-                self.key_count = dev.key_count();
-                let vid = dev.vid;
-                let pid = dev.pid;
+        // Use new unified keyboard abstraction
+        let keyboard =
+            SyncKeyboard::open_any().map_err(|e| format!("Failed to open keyboard: {e}"))?;
 
-                // Initialize key depths array based on actual key count
-                self.key_depths = vec![0.0; self.key_count as usize];
-                // Initialize depth history for time series
-                self.depth_history =
-                    vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
-                self.active_keys.clear();
-                self.selected_keys.clear();
+        let key_count = keyboard.key_count();
+        let is_wireless = keyboard.is_wireless();
 
-                // Also open the INPUT interface for depth reports (separate from worker)
-                self.input_device = MonsGeekDevice::open_input_interface(vid, pid).ok();
+        // Get device name from definitions based on transport info
+        let transport_info = keyboard.inner().transport().device_info();
+        let vid = transport_info.vid;
+        let pid = transport_info.pid;
 
-                // Check if this is a wireless dongle
-                self.is_wireless = pid == 0x5038;
+        let device_name = if let Some(def) = devices::find_device(vid, pid) {
+            def.display_name.to_string()
+        } else {
+            transport_info
+                .product_name
+                .clone()
+                .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"))
+        };
 
-                // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
-                if self.is_wireless {
-                    self.battery_source =
-                        if let Some(path) = find_hid_battery_power_supply(vid, pid) {
-                            Some(BatterySource::Kernel(path))
-                        } else {
-                            Some(BatterySource::Vendor)
-                        };
-                }
+        self.device_name = device_name;
+        self.key_count = key_count;
+        self.is_wireless = is_wireless;
 
-                // Create channels for worker communication
-                let (cmd_tx, cmd_rx) = mpsc::channel::<HidCommand>();
-                let (result_tx, result_rx) = mpsc::channel::<HidResult>();
+        // Initialize key depths array based on actual key count
+        self.key_depths = vec![0.0; self.key_count as usize];
+        // Initialize depth history for time series
+        self.depth_history =
+            vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
+        self.active_keys.clear();
+        self.selected_keys.clear();
 
-                // Spawn worker thread that owns the device
-                std::thread::spawn(move || {
-                    hid_worker(dev, cmd_rx, result_tx);
-                });
+        // Also open the INPUT interface for depth reports (separate from worker)
+        self.input_device = open_input_interface(vid, pid).ok();
 
-                self.cmd_tx = Some(cmd_tx);
-                self.result_rx = Some(result_rx);
-                self.device = None; // Device now owned by worker
-                self.connected = true;
-                self.status_msg = format!("Connected to {}", self.device_name);
-
-                // Request battery status immediately for wireless devices
-                if self.is_wireless {
-                    self.refresh_battery();
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                self.connected = false;
-                Err(e)
-            }
+        // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
+        if self.is_wireless {
+            self.battery_source = if let Some(path) = find_hid_battery_power_supply(vid, pid) {
+                Some(BatterySource::Kernel(path))
+            } else {
+                Some(BatterySource::Vendor)
+            };
         }
+
+        // Create channels for worker communication
+        let (cmd_tx, cmd_rx) = mpsc::channel::<HidCommand>();
+        let (result_tx, result_rx) = mpsc::channel::<HidResult>();
+
+        // Spawn worker thread using the unified keyboard interface
+        std::thread::spawn(move || {
+            hid_worker_keyboard(keyboard, cmd_rx, result_tx);
+        });
+
+        self.cmd_tx = Some(cmd_tx);
+        self.result_rx = Some(result_rx);
+        self.connected = true;
+        self.status_msg = format!("Connected to {}", self.device_name);
+
+        // Request battery status immediately for wireless devices
+        if self.is_wireless {
+            self.refresh_battery();
+        }
+
+        Ok(())
     }
 
     /// Send a command to the HID worker
@@ -1059,7 +1070,8 @@ impl App {
                 HidResult::UsbVersion { device_id, version } => {
                     self.info.device_id = device_id;
                     self.info.version = version;
-                    self.precision_factor = MonsGeekDevice::precision_factor_from_version(version);
+                    self.precision_factor =
+                        monsgeek_keyboard::FirmwareVersion::new(version).precision_factor() as f32;
                     self.loading.usb_version = LoadState::Loaded;
                 }
                 HidResult::Profile(profile) => {
@@ -1308,7 +1320,8 @@ impl App {
             return;
         }
 
-        let precision = MonsGeekDevice::precision_factor_from_version(self.info.version);
+        let precision =
+            monsgeek_keyboard::FirmwareVersion::new(self.info.version).precision_factor() as f32;
 
         // Read from INPUT interface (where depth reports come from)
         if let Some(ref input_dev) = self.input_device {
@@ -1322,6 +1335,10 @@ impl App {
                     let key_index = report.key_index as usize;
                     if key_index < self.key_depths.len() {
                         self.key_depths[key_index] = depth_mm;
+                        // Track max observed depth for bar chart scaling
+                        if depth_mm > self.max_observed_depth {
+                            self.max_observed_depth = depth_mm;
+                        }
                         if depth_mm > 0.1 {
                             self.active_keys.insert(key_index);
                         }
@@ -1488,194 +1505,191 @@ fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// HID worker thread - owns the device and processes commands
-fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: Sender<HidResult>) {
+/// HID worker thread using unified keyboard interface
+fn hid_worker_keyboard(
+    keyboard: SyncKeyboard,
+    cmd_rx: Receiver<HidCommand>,
+    result_tx: Sender<HidResult>,
+) {
+    let is_wireless = keyboard.is_wireless();
+
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             HidCommand::QueryUsbVersion => {
-                if let Some(resp) = device.query(cmd::GET_USB_VERSION) {
-                    let device_id = (resp[2] as u32)
-                        | ((resp[3] as u32) << 8)
-                        | ((resp[4] as u32) << 16)
-                        | ((resp[5] as u32) << 24);
-                    let version = (resp[8] as u16) | ((resp[9] as u16) << 8);
-                    let _ = result_tx.send(HidResult::UsbVersion { device_id, version });
-                } else {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "usb_version",
-                    });
+                match (keyboard.get_device_id(), keyboard.get_version()) {
+                    (Ok(device_id), Ok(ver)) => {
+                        let _ = result_tx.send(HidResult::UsbVersion {
+                            device_id,
+                            version: ver.raw,
+                        });
+                    }
+                    _ => {
+                        let _ = result_tx.send(HidResult::QueryError {
+                            field: "usb_version",
+                        });
+                    }
                 }
             }
-            HidCommand::QueryProfile => {
-                if let Some(resp) = device.query(cmd::GET_PROFILE) {
-                    let _ = result_tx.send(HidResult::Profile(resp[2]));
-                } else {
+            HidCommand::QueryProfile => match keyboard.get_profile() {
+                Ok(p) => {
+                    let _ = result_tx.send(HidResult::Profile(p));
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError { field: "profile" });
                 }
-            }
-            HidCommand::QueryDebounce => {
-                if let Some(resp) = device.query(cmd::GET_DEBOUNCE) {
-                    let _ = result_tx.send(HidResult::Debounce(resp[2]));
-                } else {
+            },
+            HidCommand::QueryDebounce => match keyboard.get_debounce() {
+                Ok(d) => {
+                    let _ = result_tx.send(HidResult::Debounce(d));
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError { field: "debounce" });
                 }
-            }
-            HidCommand::QueryPollingRate => {
-                if let Some(hz) = device.get_polling_rate() {
+            },
+            HidCommand::QueryPollingRate => match keyboard.get_polling_rate() {
+                Ok(rate) => {
+                    let hz = rate as u16;
                     let _ = result_tx.send(HidResult::PollingRate(hz));
-                } else {
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "polling_rate",
                     });
                 }
-            }
-            HidCommand::QueryLedParams => {
-                if let Some(resp) = device.query(cmd::GET_LEDPARAM) {
-                    let dazzle = (resp[5] & crate::protocol::LED_OPTIONS_MASK)
-                        == crate::protocol::LED_DAZZLE_ON;
+            },
+            HidCommand::QueryLedParams => match keyboard.get_led_params() {
+                Ok(params) => {
                     let _ = result_tx.send(HidResult::LedParams {
-                        mode: resp[2],
-                        brightness: resp[3],
-                        speed: resp[4],
-                        dazzle,
-                        r: resp[6],
-                        g: resp[7],
-                        b: resp[8],
+                        mode: params.mode as u8,
+                        brightness: params.brightness,
+                        speed: params.speed,
+                        dazzle: params.direction != 0,
+                        r: params.color.r,
+                        g: params.color.g,
+                        b: params.color.b,
                     });
-                } else {
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "led_params",
                     });
                 }
-            }
-            HidCommand::QuerySideLedParams => {
-                if let Some(resp) = device.query(cmd::GET_SLEDPARAM) {
-                    let dazzle = (resp[5] & crate::protocol::LED_OPTIONS_MASK)
-                        == crate::protocol::LED_DAZZLE_ON;
+            },
+            HidCommand::QuerySideLedParams => match keyboard.get_side_led_params() {
+                Ok(params) => {
                     let _ = result_tx.send(HidResult::SideLedParams {
-                        mode: resp[2],
-                        brightness: resp[3],
-                        speed: resp[4],
-                        dazzle,
-                        r: resp[6],
-                        g: resp[7],
-                        b: resp[8],
+                        mode: params.mode as u8,
+                        brightness: params.brightness,
+                        speed: params.speed,
+                        dazzle: params.direction != 0,
+                        r: params.color.r,
+                        g: params.color.g,
+                        b: params.color.b,
                     });
-                } else {
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "side_led_params",
                     });
                 }
-            }
-            HidCommand::QueryKbOptions => {
-                if let Some(resp) = device.query(cmd::GET_KBOPTION) {
+            },
+            HidCommand::QueryKbOptions => match keyboard.get_kb_options() {
+                Ok(opts) => {
                     let _ = result_tx.send(HidResult::KbOptions {
-                        fn_layer: resp[3],
-                        wasd_swap: resp[6] != 0,
+                        fn_layer: opts.fn_layer,
+                        wasd_swap: opts.wasd_swap,
                     });
-                } else {
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "kb_options",
                     });
                 }
-            }
-            HidCommand::QueryFeatureList => {
-                if let Some(resp) = device.query(cmd::GET_FEATURE_LIST) {
-                    let _ = result_tx.send(HidResult::FeatureList { precision: resp[3] });
-                } else {
+            },
+            HidCommand::QueryFeatureList => match keyboard.get_feature_list() {
+                Ok(features) => {
+                    let _ = result_tx.send(HidResult::FeatureList {
+                        precision: features.precision,
+                    });
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "feature_list",
                     });
                 }
-            }
-            HidCommand::QuerySleepTime => {
-                if let Some(resp) = device.query(cmd::GET_SLEEPTIME) {
-                    let sleep_seconds = (resp[2] as u16) | ((resp[3] as u16) << 8);
-                    let _ = result_tx.send(HidResult::SleepTime(sleep_seconds));
-                } else {
+            },
+            HidCommand::QuerySleepTime => match keyboard.get_sleep_time() {
+                Ok(s) => {
+                    let _ = result_tx.send(HidResult::SleepTime(s));
+                }
+                Err(_) => {
                     let _ = result_tx.send(HidResult::QueryError {
                         field: "sleep_time",
                     });
                 }
-            }
+            },
             HidCommand::QueryTriggers => {
-                let triggers = device.get_all_triggers();
-                let _ = result_tx.send(HidResult::Triggers(triggers));
-            }
-            HidCommand::QueryOptions => {
-                if let Some(resp) = device.query(cmd::GET_KBOPTION) {
-                    let _ = result_tx.send(HidResult::Options {
-                        os_mode: resp[2],
-                        fn_layer: resp[3],
-                        anti_mistouch: resp[4] != 0,
-                        rt_stability: resp[5],
-                        wasd_swap: resp[6] != 0,
-                    });
-                } else {
-                    let _ = result_tx.send(HidResult::QueryError { field: "options" });
-                }
-            }
-            HidCommand::QueryMacros => {
-                use crate::protocol::hid::key_name;
-                let mut macros = Vec::new();
-                for slot in 0..8u8 {
-                    if let Some(data) = device.get_macro(slot) {
-                        let mut macro_slot = MacroSlot::default();
-                        if data.len() >= 2 {
-                            macro_slot.repeat_count = u16::from_le_bytes([data[0], data[1]]);
-                            let events_data = &data[2..];
-                            let mut text = String::new();
-                            for chunk in events_data.chunks(2) {
-                                if chunk.len() < 2 || (chunk[0] == 0 && chunk[1] == 0) {
-                                    break;
-                                }
-                                let keycode = chunk[0];
-                                let flags = chunk[1];
-                                let is_down = flags & 0x80 != 0;
-                                let delay_ms = flags & 0x7F;
-                                macro_slot.events.push(MacroEvent {
-                                    keycode,
-                                    is_down,
-                                    delay_ms,
-                                });
-                                if is_down && keycode < 0xE0 {
-                                    let name = key_name(keycode);
-                                    if name.len() == 1 {
-                                        text.push_str(name);
-                                    } else if name == "Space" {
-                                        text.push(' ');
-                                    } else if name == "Enter" {
-                                        text.push('↵');
-                                    }
-                                }
-                            }
-                            macro_slot.text_preview = if text.is_empty() {
-                                format!("{} events", macro_slot.events.len())
-                            } else {
-                                text.chars().take(20).collect()
-                            };
-                        }
-                        macros.push(macro_slot);
-                    } else {
-                        macros.push(MacroSlot::default());
+                match keyboard.get_all_triggers() {
+                    Ok(triggers) => {
+                        // Convert to TUI's TriggerSettings format
+                        let tui_triggers = TriggerSettings {
+                            press_travel: triggers.press_travel,
+                            lift_travel: triggers.lift_travel,
+                            rt_press: triggers.rt_press,
+                            rt_lift: triggers.rt_lift,
+                            key_modes: triggers.key_modes,
+                            bottom_deadzone: triggers.bottom_deadzone,
+                            top_deadzone: triggers.top_deadzone,
+                        };
+                        let _ = result_tx.send(HidResult::Triggers(Some(tui_triggers)));
+                    }
+                    Err(_) => {
+                        let _ = result_tx.send(HidResult::Triggers(None));
                     }
                 }
-                let _ = result_tx.send(HidResult::Macros(macros));
             }
-            HidCommand::QueryBattery => {
-                // Battery is queried via separate dongle interface, not the main device
-                let _ = result_tx.send(HidResult::Battery(None));
+            HidCommand::QueryOptions => match keyboard.get_kb_options() {
+                Ok(opts) => {
+                    let _ = result_tx.send(HidResult::Options {
+                        os_mode: opts.os_mode,
+                        fn_layer: opts.fn_layer,
+                        anti_mistouch: opts.anti_mistouch,
+                        rt_stability: opts.rt_stability,
+                        wasd_swap: opts.wasd_swap,
+                    });
+                }
+                Err(_) => {
+                    let _ = result_tx.send(HidResult::QueryError { field: "options" });
+                }
+            },
+            HidCommand::QueryMacros => {
+                // Macros not yet implemented in keyboard interface
+                let _ = result_tx.send(HidResult::Macros(vec![MacroSlot::default(); 8]));
             }
+            HidCommand::QueryBattery => match keyboard.get_battery() {
+                Ok(bat) => {
+                    let _ = result_tx.send(HidResult::Battery(Some(BatteryInfo {
+                        level: bat.level,
+                        online: bat.online,
+                        charging: bat.charging,
+                    })));
+                }
+                Err(_) => {
+                    let _ = result_tx.send(HidResult::Battery(None));
+                }
+            },
             HidCommand::SetProfile(profile) => {
-                let ok = device.set_profile(profile);
+                let ok = keyboard.set_profile(profile).is_ok();
                 let _ = result_tx.send(HidResult::ProfileSet(ok));
             }
-            HidCommand::SetDebounce(debounce) => {
-                let ok = device.set_debounce(debounce);
+            HidCommand::SetDebounce(ms) => {
+                let ok = keyboard.set_debounce(ms).is_ok();
                 let _ = result_tx.send(HidResult::DebounceSet(ok));
             }
-            HidCommand::SetPollingRate(rate) => {
-                let ok = device.set_polling_rate(rate);
+            HidCommand::SetPollingRate(hz) => {
+                let ok = PollingRate::from_hz(hz)
+                    .map(|r| keyboard.set_polling_rate(r).is_ok())
+                    .unwrap_or(false);
                 let _ = result_tx.send(HidResult::PollingRateSet(ok));
             }
             HidCommand::SetLedParams {
@@ -1687,7 +1701,14 @@ fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: S
                 g,
                 b,
             } => {
-                let ok = device.set_led(mode, brightness, speed, r, g, b, dazzle);
+                let params = LedParams {
+                    mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
+                    brightness,
+                    speed,
+                    color: RgbColor::new(r, g, b),
+                    direction: if dazzle { 1 } else { 0 },
+                };
+                let ok = keyboard.set_led_params(&params).is_ok();
                 let _ = result_tx.send(HidResult::LedParamsSet(ok));
             }
             HidCommand::SetSideLedParams {
@@ -1699,84 +1720,93 @@ fn hid_worker(device: MonsGeekDevice, cmd_rx: Receiver<HidCommand>, result_tx: S
                 g,
                 b,
             } => {
-                let ok = device.set_side_led(mode, brightness, speed, r, g, b, dazzle);
+                let params = LedParams {
+                    mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
+                    brightness,
+                    speed,
+                    color: RgbColor::new(r, g, b),
+                    direction: if dazzle { 1 } else { 0 },
+                };
+                let ok = keyboard.set_side_led_params(&params).is_ok();
                 let _ = result_tx.send(HidResult::SideLedParamsSet(ok));
             }
             HidCommand::SetTrigger {
-                key_idx: _,
-                act: _,
-                deact: _,
-                mode: _,
+                key_idx,
+                act,
+                deact,
+                mode,
             } => {
-                // Per-key trigger setting requires magnetism commands - not implemented yet
-                let _ = result_tx.send(HidResult::TriggerSet(false));
+                let settings = monsgeek_keyboard::KeyTriggerSettings {
+                    key_index: key_idx,
+                    actuation: act,
+                    deactuation: deact,
+                    mode: monsgeek_keyboard::KeyMode::from_u8(mode),
+                };
+                let ok = keyboard.set_key_trigger(&settings).is_ok();
+                let _ = result_tx.send(HidResult::TriggerSet(ok));
             }
-            HidCommand::SetTextMacro {
-                slot,
-                text,
-                delay_ms,
-                repeat,
-            } => {
-                let ok = device.set_text_macro(slot, &text, delay_ms, repeat);
-                let _ = result_tx.send(HidResult::MacroSet(ok));
+            HidCommand::SetTextMacro { .. } => {
+                // Macros not yet implemented
+                let _ = result_tx.send(HidResult::MacroSet(false));
             }
-            HidCommand::ClearMacro(slot) => {
-                let ok = device.set_macro(slot, &[], 1);
-                let _ = result_tx.send(HidResult::MacroCleared(ok));
+            HidCommand::ClearMacro(_) => {
+                let _ = result_tx.send(HidResult::MacroCleared(false));
             }
-            HidCommand::SetAllKeyModes { modes } => {
-                let ok = device.set_key_modes(&modes);
-                let _ = result_tx.send(HidResult::AllKeyModesSet(ok));
+            HidCommand::SetAllKeyModes { .. } => {
+                // Bulk key mode setting not yet implemented
+                let _ = result_tx.send(HidResult::AllKeyModesSet(false));
             }
             HidCommand::SetSingleKeyMode { key_index, mode } => {
-                // For single key mode, we need to get current modes, modify, and send
-                // This is a simplified version - ideally we'd track modes in the worker
-                let ok = if let Some(triggers) = device.get_all_triggers() {
-                    let mut modes = triggers.key_modes;
-                    if key_index < modes.len() {
-                        modes[key_index] = mode;
-                        device.set_key_modes(&modes)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                // Single key mode not yet implemented
                 let _ = result_tx.send(HidResult::SingleKeyModeSet {
-                    ok,
+                    ok: false,
                     key_index,
                     mode,
                 });
             }
             HidCommand::SetAllKeysColor { r, g, b } => {
-                let ok = device.set_all_keys_color(r, g, b);
+                let ok = keyboard
+                    .set_all_keys_color(RgbColor::new(r, g, b), 0)
+                    .is_ok();
                 let _ = result_tx.send(HidResult::AllKeysColorSet(ok));
             }
             HidCommand::SetMagnetismReport(enable) => {
-                device.set_magnetism_report(enable);
-                let _ = result_tx.send(HidResult::MagnetismReportSet(true));
+                let ok = if enable {
+                    keyboard.start_magnetism_report().is_ok()
+                } else {
+                    keyboard.stop_magnetism_report().is_ok()
+                };
+                let _ = result_tx.send(HidResult::MagnetismReportSet(ok));
             }
             HidCommand::SetKbOptions {
-                os_mode: _,
+                os_mode,
                 fn_layer,
                 anti_mistouch,
                 rt_stability,
                 wasd_swap,
             } => {
-                let ok = device.set_options(fn_layer, anti_mistouch, rt_stability, wasd_swap);
+                let opts = KbOptions {
+                    os_mode,
+                    fn_layer,
+                    anti_mistouch,
+                    rt_stability,
+                    wasd_swap,
+                };
+                let ok = keyboard.set_kb_options(&opts).is_ok();
                 let _ = result_tx.send(HidResult::KbOptionsSet(ok));
             }
             HidCommand::SetSleepTime(seconds) => {
-                let ok = device.set_sleep(seconds, seconds);
+                let ok = keyboard.set_sleep_time(seconds).is_ok();
                 let _ = result_tx.send(HidResult::SleepTimeSet(ok));
             }
             HidCommand::Shutdown => {
+                let _ = keyboard.close();
                 break;
             }
         }
 
-        // Add delay between commands for wireless dongle to prevent response desync
-        if device.is_wireless() {
+        // Delay between commands for wireless
+        if is_wireless {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
@@ -2363,11 +2393,9 @@ pub fn run() -> io::Result<()> {
         }
     }
 
-    // Cleanup
+    // Cleanup - stop magnetism reporting via worker
     if app.depth_monitoring {
-        if let Some(ref device) = app.device {
-            device.set_magnetism_report(false);
-        }
+        app.send_command(HidCommand::SetMagnetismReport(false));
     }
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
@@ -2731,7 +2759,7 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
             Span::raw("Precision:      "),
             value_span(
                 loading.feature_list,
-                MonsGeekDevice::precision_str(info.precision).to_string(),
+                precision_str(info.precision).to_string(),
                 Color::Green,
             ),
         ]),
@@ -3088,6 +3116,33 @@ fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(help, inner[2]);
 }
 
+/// Get precision string from feature list precision value
+fn precision_str(precision: u8) -> &'static str {
+    match precision {
+        2 => "0.005mm",
+        1 => "0.01mm",
+        _ => "0.1mm",
+    }
+}
+
+/// Open the INPUT interface for depth reports
+fn open_input_interface(vid: u16, pid: u16) -> Result<hidapi::HidDevice, String> {
+    let hidapi = hidapi::HidApi::new().map_err(|e| format!("HID init failed: {e}"))?;
+
+    for dev_info in hidapi.device_list() {
+        if dev_info.vendor_id() == vid
+            && dev_info.product_id() == pid
+            && dev_info.usage_page() == hal::USAGE_PAGE
+            && dev_info.usage() == hal::USAGE_INPUT
+        {
+            return dev_info
+                .open_device(&hidapi)
+                .map_err(|e| format!("Failed to open input interface: {e}"));
+        }
+    }
+    Err(format!("Input interface for {vid:04x}:{pid:04x} not found"))
+}
+
 /// Get key label for display - use device profile matrix key names
 fn get_key_label(index: usize) -> String {
     use crate::profile::builtin::M1V5HeProfile;
@@ -3100,18 +3155,19 @@ fn get_key_label(index: usize) -> String {
 }
 
 fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
-    // Find max depth for normalization (minimum 0.1mm to avoid division by zero)
-    let max_depth = app.key_depths.iter().cloned().fold(0.1_f32, f32::max);
+    // Use max observed depth for consistent scaling (minimum 0.1mm)
+    let max_depth = app.max_observed_depth.max(0.1);
 
     // Show all keys with non-zero depth as a single row of bars
+    // Use raw depth values (scaled to u64 for display) - BarChart handles scaling via .max()
     let mut bar_data: Vec<(String, u64)> = Vec::new();
 
     for (i, &depth) in app.key_depths.iter().enumerate() {
         if depth > 0.01 || app.active_keys.contains(&i) {
-            // Normalize to 100 based on max depth
-            let depth_pct = ((depth / max_depth) * 100.0).min(100.0) as u64;
+            // Convert mm to 0.01mm units for integer display
+            let depth_raw = (depth * 100.0) as u64;
             let label = get_key_label(i);
-            bar_data.push((label, depth_pct));
+            bar_data.push((label, depth_raw));
         }
     }
 
@@ -3137,12 +3193,16 @@ fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
     // Convert to references for BarChart
     let bar_refs: Vec<(&str, u64)> = bar_data.iter().map(|(s, v)| (s.as_str(), *v)).collect();
 
+    // Max in same units as data (0.01mm)
+    let max_raw = (max_depth * 100.0) as u64;
+
     let chart = BarChart::default()
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!("Key Depths (max: {max_depth:.2}mm)")),
         )
+        .max(max_raw)
         .bar_width(3)
         .bar_gap(1)
         .bar_style(Style::default().fg(Color::Cyan))
