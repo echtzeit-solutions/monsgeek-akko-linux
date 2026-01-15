@@ -54,11 +54,15 @@ bpf-ebpf:
 
 ## Run tests
 test:
-	cd $(DRIVER_DIR) && $(CARGO) test --workspace
+	cd $(DRIVER_DIR) && $(CARGO) test --workspace --features firmware-api
 
 ## Run clippy lints
 check:
-	cd $(DRIVER_DIR) && $(CARGO) clippy --workspace
+	cd $(DRIVER_DIR) && $(CARGO) clippy --workspace --features firmware-api -- -D warnings
+
+## Check formatting (for CI)
+fmt-check:
+	cd $(DRIVER_DIR) && $(CARGO) fmt --all --check
 
 ## Format code
 fmt:

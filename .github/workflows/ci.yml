@@ -17,9 +17,6 @@ jobs:
   format:
     name: Format Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +26,7 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: make fmt-check
 
   # ============================================
   # Clippy linting for main crate
@@ -38,14 +35,10 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     needs: format
-    defaults:
-      run:
-        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -69,7 +62,7 @@ jobs:
           workspaces: iot_driver_linux
 
       - name: Clippy
-        run: cargo clippy --features firmware-api -- -D warnings
+        run: make check
 
   # ============================================
   # Tests for main crate
@@ -78,14 +71,10 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     needs: format
-    defaults:
-      run:
-        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -107,7 +96,7 @@ jobs:
           workspaces: iot_driver_linux
 
       - name: Run tests
-        run: cargo test --features firmware-api
+        run: make test
 
   # ============================================
   # Build release binary
@@ -116,14 +105,10 @@ jobs:
     name: Build Release
     runs-on: ubuntu-latest
     needs: [clippy, test]
-    defaults:
-      run:
-        working-directory: iot_driver_linux
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -145,7 +130,7 @@ jobs:
           workspaces: iot_driver_linux
 
       - name: Build release
-        run: cargo build --release --features firmware-api
+        run: make driver
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -162,9 +147,6 @@ jobs:
     name: Build akko-ebpf
     runs-on: ubuntu-latest
     needs: format
-    defaults:
-      run:
-        working-directory: akko-hid-bpf/akko-ebpf
     steps:
       - uses: actions/checkout@v4
 
@@ -183,10 +165,10 @@ jobs:
           workspaces: akko-hid-bpf/akko-ebpf
 
       - name: Install bpf-linker
-        working-directory: .
         run: cargo install bpf-linker --locked
 
       - name: Verify aya-ebpf version from Cargo.lock
+        working-directory: akko-hid-bpf/akko-ebpf
         run: |
           echo "=== aya-ebpf version from Cargo.lock ==="
           grep -A1 'name = "aya-ebpf"' Cargo.lock | head -5 || echo "No Cargo.lock yet"
@@ -195,9 +177,10 @@ jobs:
         # Override global RUSTFLAGS to include --btf for BTF generation (required for BPF loading)
         env:
           RUSTFLAGS: "-C debuginfo=2 -C link-arg=--btf"
-        run: cargo +nightly build --release -Z build-std=core --target bpfel-unknown-none
+        run: make bpf-ebpf
 
       - name: Verify eBPF object
+        working-directory: akko-hid-bpf/akko-ebpf
         run: |
           file target/bpfel-unknown-none/release/akko-ebpf
           ls -la target/bpfel-unknown-none/release/
@@ -220,14 +203,10 @@ jobs:
     name: Build akko-loader
     runs-on: ubuntu-latest
     needs: format
-    defaults:
-      run:
-        working-directory: akko-hid-bpf/akko-loader
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y libelf-dev zlib1g-dev
@@ -242,7 +221,7 @@ jobs:
           workspaces: akko-hid-bpf
 
       - name: Build akko-loader
-        run: cargo build --release
+        run: make bpf
 
       - name: Upload akko-loader artifact
         uses: actions/upload-artifact@v4
