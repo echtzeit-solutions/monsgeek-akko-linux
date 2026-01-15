@@ -188,6 +188,24 @@ jobs:
           echo "=== BTF verification ==="
           bpftool btf dump file target/bpfel-unknown-none/release/akko-ebpf | head -20 || echo "WARNING: No BTF in object!"
 
+      - name: Verify BPF programs with kernel verifier
+        working-directory: akko-hid-bpf/akko-ebpf
+        run: |
+          # Try to load struct_ops BPF programs through the kernel verifier
+          # This validates the bytecode without needing actual HID hardware
+          sudo bpftool struct_ops register target/bpfel-unknown-none/release/akko-ebpf || {
+            echo "struct_ops register failed (expected on GH runners without HID-BPF support)"
+            # Fall back to prog load which still runs verification
+            sudo bpftool prog loadall target/bpfel-unknown-none/release/akko-ebpf /sys/fs/bpf/akko-test || {
+              echo "prog loadall also failed - checking if it's a permissions/kernel issue vs code issue"
+              # Show the actual error for debugging
+              sudo dmesg | tail -30 || true
+              exit 1
+            }
+            sudo bpftool prog list | grep akko || true
+            sudo rm -rf /sys/fs/bpf/akko-test || true
+          }
+
       - name: Upload akko-ebpf artifact
         uses: actions/upload-artifact@v4
         with:
