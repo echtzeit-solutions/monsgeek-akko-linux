@@ -2,6 +2,9 @@
 target/
 *.exe
 
+# Local cargo config (dev patches)
+.cargo/
+
 # Node modules
 node_modules/
 
