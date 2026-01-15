@@ -1,0 +1,184 @@
+//! Protocol constants and utilities for MonsGeek/Akko keyboard communication
+
+use crate::types::ChecksumType;
+
+/// HID Protocol Commands (FEA_CMD_*)
+pub mod cmd {
+    // SET commands (0x01 - 0x65)
+    pub const SET_RESET: u8 = 0x01;
+    pub const SET_REPORT: u8 = 0x03;
+    pub const SET_PROFILE: u8 = 0x04;
+    pub const SET_DEBOUNCE: u8 = 0x06;
+    pub const SET_LEDPARAM: u8 = 0x07;
+    pub const SET_SLEDPARAM: u8 = 0x08;
+    pub const SET_KBOPTION: u8 = 0x09;
+    pub const SET_KEYMATRIX: u8 = 0x0A;
+    pub const SET_MACRO: u8 = 0x0B;
+    pub const SET_USERPIC: u8 = 0x0C;
+    pub const SET_AUDIO_VIZ: u8 = 0x0D;
+    pub const SET_SCREEN_COLOR: u8 = 0x0E;
+    pub const SET_USERGIF: u8 = 0x12;
+    pub const SET_FN: u8 = 0x10;
+    pub const SET_SLEEPTIME: u8 = 0x11;
+    pub const SET_MAGNETISM_REPORT: u8 = 0x1B;
+    pub const SET_MAGNETISM_CAL: u8 = 0x1C;
+    pub const SET_MAGNETISM_MAX_CAL: u8 = 0x1E;
+    pub const SET_KEY_MAGNETISM_MODE: u8 = 0x1D;
+    pub const SET_MULTI_MAGNETISM: u8 = 0x65;
+
+    // GET commands (0x80 - 0xE6)
+    pub const GET_REV: u8 = 0x80;
+    pub const GET_REPORT: u8 = 0x83;
+    pub const GET_PROFILE: u8 = 0x84;
+    pub const GET_DEBOUNCE: u8 = 0x86;
+    pub const GET_LEDPARAM: u8 = 0x87;
+    pub const GET_SLEDPARAM: u8 = 0x88;
+    pub const GET_KBOPTION: u8 = 0x89;
+    pub const GET_USERPIC: u8 = 0x8C;
+    pub const GET_KEYMATRIX: u8 = 0x8A;
+    pub const GET_MACRO: u8 = 0x8B;
+    pub const GET_USB_VERSION: u8 = 0x8F;
+    pub const GET_FN: u8 = 0x90;
+    pub const GET_SLEEPTIME: u8 = 0x91;
+    pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
+    pub const GET_MULTI_MAGNETISM: u8 = 0xE5;
+    pub const GET_FEATURE_LIST: u8 = 0xE6;
+
+    // Dongle-specific commands
+    /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
+    pub const BATTERY_REFRESH: u8 = 0xF7;
+    /// Flush/NOP - used to flush dongle response buffer
+    pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
+
+    // Response status
+    pub const STATUS_SUCCESS: u8 = 0xAA;
+}
+
+/// Magnetism (Hall Effect trigger) sub-commands for GET/SET_MULTI_MAGNETISM
+pub mod magnetism {
+    /// Press travel (actuation point)
+    pub const PRESS_TRAVEL: u8 = 0;
+    /// Lift travel (release point)
+    pub const LIFT_TRAVEL: u8 = 1;
+    /// Rapid Trigger press sensitivity
+    pub const RT_PRESS: u8 = 2;
+    /// Rapid Trigger lift sensitivity
+    pub const RT_LIFT: u8 = 3;
+    /// Bottom deadzone
+    pub const BOTTOM_DEADZONE: u8 = 5;
+    /// Top deadzone
+    pub const TOP_DEADZONE: u8 = 6;
+    /// Key mode (Normal, RT, DKS, etc.)
+    pub const KEY_MODE: u8 = 7;
+}
+
+/// HID report sizes
+pub const REPORT_SIZE: usize = 65;
+pub const INPUT_REPORT_SIZE: usize = 64;
+
+/// HID communication timing constants
+pub mod timing {
+    /// Number of retries for query operations
+    pub const QUERY_RETRIES: usize = 5;
+    /// Number of retries for send operations
+    pub const SEND_RETRIES: usize = 3;
+    /// Default delay after HID command (ms) - for wired devices
+    pub const DEFAULT_DELAY_MS: u64 = 100;
+    /// Short delay for fast operations (ms)
+    pub const SHORT_DELAY_MS: u64 = 50;
+    /// Minimum delay for streaming (ms)
+    pub const MIN_DELAY_MS: u64 = 5;
+    /// Delay after sending command to dongle (ms)
+    pub const DONGLE_POST_SEND_DELAY_MS: u64 = 150;
+    /// Delay after dongle flush before reading (ms)
+    pub const DONGLE_POST_FLUSH_DELAY_MS: u64 = 100;
+    /// Delay after starting animation upload (ms)
+    pub const ANIMATION_START_DELAY_MS: u64 = 500;
+}
+
+/// RGB/LED data constants
+pub mod rgb {
+    /// Total RGB data size (126 keys * 3 bytes)
+    pub const TOTAL_RGB_SIZE: usize = 378;
+    /// Number of pages per frame
+    pub const NUM_PAGES: usize = 7;
+    /// RGB data per full page
+    pub const PAGE_SIZE: usize = 56;
+    /// RGB data in last page
+    pub const LAST_PAGE_SIZE: usize = 42;
+    /// LED matrix positions (keys)
+    pub const MATRIX_SIZE: usize = 126;
+    /// Magic value for per-key color commands
+    pub const MAGIC_VALUE: u8 = 255;
+}
+
+/// Device identification constants
+pub mod device {
+    /// MonsGeek/Akko vendor ID
+    pub const VENDOR_ID: u16 = 0x3151;
+
+    /// M1 V5 HE wired keyboard
+    pub const PID_M1_V5_WIRED: u16 = 0x5030;
+    /// M1 V5 HE 2.4GHz wireless dongle
+    pub const PID_M1_V5_DONGLE: u16 = 0x5038;
+
+    /// HID usage page for vendor-defined
+    pub const USAGE_PAGE: u16 = 0xFFFF;
+    /// HID usage for feature interface
+    pub const USAGE_FEATURE: u16 = 0x02;
+    /// HID usage for input interface
+    pub const USAGE_INPUT: u16 = 0x01;
+
+    /// Feature interface number
+    pub const INTERFACE_FEATURE: i32 = 2;
+    /// Input interface number
+    pub const INTERFACE_INPUT: i32 = 1;
+
+    /// Check if a PID indicates a wireless dongle
+    pub fn is_dongle_pid(pid: u16) -> bool {
+        pid == PID_M1_V5_DONGLE
+    }
+}
+
+/// Calculate checksum for HID message
+pub fn calculate_checksum(data: &[u8], checksum_type: ChecksumType) -> u8 {
+    match checksum_type {
+        ChecksumType::Bit7 => {
+            let sum: u32 = data.iter().take(7).map(|&b| b as u32).sum();
+            (255 - (sum & 0xFF)) as u8
+        }
+        ChecksumType::Bit8 => {
+            let sum: u32 = data.iter().take(8).map(|&b| b as u32).sum();
+            (255 - (sum & 0xFF)) as u8
+        }
+        ChecksumType::None => 0,
+    }
+}
+
+/// Apply checksum to message buffer
+pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
+    match checksum_type {
+        ChecksumType::Bit7 => {
+            if data.len() >= 8 {
+                data[7] = calculate_checksum(data, checksum_type);
+            }
+        }
+        ChecksumType::Bit8 => {
+            if data.len() >= 9 {
+                data[8] = calculate_checksum(data, checksum_type);
+            }
+        }
+        ChecksumType::None => {}
+    }
+}
+
+/// Build a command buffer with checksum
+pub fn build_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u8> {
+    let mut buf = vec![0u8; REPORT_SIZE];
+    buf[0] = 0; // Report ID
+    buf[1] = cmd;
+    let len = std::cmp::min(data.len(), REPORT_SIZE - 2);
+    buf[2..2 + len].copy_from_slice(&data[..len]);
+    apply_checksum(&mut buf[1..], checksum_type);
+    buf
+}
