@@ -4255,15 +4255,3 @@ dependencies = [
  "syn",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "aya"
-version = "0.13.2"
-
-[[patch.unused]]
-name = "aya-ebpf"
-version = "0.1.2"
-
-[[patch.unused]]
-name = "aya-obj"
-version = "0.2.2"
