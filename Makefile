@@ -49,8 +49,8 @@ bpf:
 
 ## Build BPF eBPF program (requires nightly toolchain)
 bpf-ebpf:
-	cd $(BPF_DIR)/akko-ebpf && cargo +nightly build --release \
-		-Z build-std=core --target bpfel-unknown-none
+	cd $(BPF_DIR)/akko-ebpf && RUSTFLAGS="-C debuginfo=2 -C link-arg=--btf" \
+		cargo +nightly build --release -Z build-std=core --target bpfel-unknown-none
 
 ## Run tests
 test:

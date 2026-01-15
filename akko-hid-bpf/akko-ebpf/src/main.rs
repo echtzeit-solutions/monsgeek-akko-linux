@@ -131,19 +131,59 @@ static BATTERY_FEATURE_DESC: [u8; 24] = [
 // HID-BPF callbacks (safe code using Aya abstractions)
 // =============================================================================
 
+// -----------------------------------------------------------------------------
+// struct_ops Context Wrapper Pattern
+// -----------------------------------------------------------------------------
+//
+// IMPORTANT: struct_ops callbacks do NOT receive the typed struct pointer
+// directly. Instead, the kernel passes a pointer to an array of u64 values
+// where the actual typed pointer is at index 0.
+//
+// In C, the BPF_PROG macro (from bpf_tracing.h) handles this automatically:
+//
+//   SEC("struct_ops/hid_rdesc_fixup")
+//   int BPF_PROG(my_fixup, struct hid_bpf_ctx *hctx) { ... }
+//
+// The macro expands to receive `unsigned long long *ctx` and extracts
+// the typed pointer via `ctx[0]`.
+//
+// In Rust, we must do this manually:
+//
+//   pub extern "C" fn my_fixup(ctx_wrapper: *mut u64) -> i32 {
+//       let hctx = unsafe { *ctx_wrapper as *mut hid_bpf_ctx };
+//       ...
+//   }
+//
+// This generates the correct bytecode:
+//   r6 = *(u64 *)(r1 + 0x0)    // Load from ctx[0]
+//
+// The verifier then recognizes r6 as `trusted_ptr_hid_bpf_ctx()`, which
+// passes kfunc argument type checks. Without this extraction, the verifier
+// sees the raw wrapper pointer and fails with:
+//   "arg#0 pointer type STRUCT hid_bpf_ctx must point to scalar"
+//
+// Reference: linux/tools/testing/selftests/bpf/progs/ and bpf_tracing.h
+// -----------------------------------------------------------------------------
+
+/// Extract the actual hid_bpf_ctx pointer from struct_ops context wrapper.
+#[inline(always)]
+unsafe fn extract_ctx(ctx_wrapper: *mut u64) -> *mut hid_bpf_ctx {
+    *ctx_wrapper as *mut hid_bpf_ctx
+}
+
 // Device event handler - not used
 #[no_mangle]
 #[link_section = "struct_ops/hid_device_event"]
-pub extern "C" fn akko_on_demand_event(_ctx: *mut hid_bpf_ctx) -> i32 {
+pub extern "C" fn akko_on_demand_event(_ctx: *mut u64) -> i32 {
     0
 }
 
 // Report descriptor fixup - appends battery Feature report
 #[no_mangle]
 #[link_section = "struct_ops/hid_rdesc_fixup"]
-pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_ptr: *mut hid_bpf_ctx) -> i32 {
-    // SAFETY: kernel passes valid context pointer
-    let ctx = unsafe { HidBpfContext::new(ctx_ptr) };
+pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
+    // SAFETY: kernel passes valid context wrapper, extract the actual hid_bpf_ctx pointer
+    let ctx = unsafe { HidBpfContext::new(extract_ctx(ctx_wrapper)) };
 
     let Some(mut data) = ctx.data(0, 128) else {
         return 0;
@@ -185,9 +225,9 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_ptr: *mut hid_bpf_ctx) -> i32 {
 // HW request handler (sleepable) - sends F7 on-demand
 #[no_mangle]
 #[link_section = "struct_ops.s/hid_hw_request"]
-pub extern "C" fn akko_on_demand_hw_request(ctx_ptr: *mut hid_bpf_ctx) -> i32 {
-    // SAFETY: kernel passes valid context pointer
-    let ctx = unsafe { HidBpfContext::new(ctx_ptr) };
+pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
+    // SAFETY: kernel passes valid context wrapper, extract the actual hid_bpf_ctx pointer
+    let ctx = unsafe { HidBpfContext::new(extract_ctx(ctx_wrapper)) };
 
     // Need at least 4 bytes for the request buffer
     if ctx.allocated_size() < 4 {
