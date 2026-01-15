@@ -145,7 +145,8 @@ jobs:
   # ============================================
   akko-ebpf:
     name: Build akko-ebpf
-    runs-on: ubuntu-latest
+    # Use Ubuntu 24.04 for kernel 6.11+ which has HID-BPF support
+    runs-on: ubuntu-24.04
     needs: format
     steps:
       - uses: actions/checkout@v4
