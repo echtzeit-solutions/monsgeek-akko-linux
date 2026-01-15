@@ -189,6 +189,17 @@ jobs:
           echo "=== BTF verification ==="
           bpftool btf dump file target/bpfel-unknown-none/release/akko-ebpf | head -20 || echo "WARNING: No BTF in object!"
 
+      - name: Check kernel HID-BPF support
+        run: |
+          echo "=== Kernel version ==="
+          uname -r
+          echo ""
+          echo "=== HID-BPF kernel config ==="
+          cat /boot/config-$(uname -r) 2>/dev/null | grep -E "CONFIG_HID|CONFIG_BPF" | grep -v "^#" | sort || echo "Config not available"
+          echo ""
+          echo "=== HID-BPF kfuncs in vmlinux BTF ==="
+          bpftool btf dump file /sys/kernel/btf/vmlinux 2>/dev/null | grep -i "hid_bpf" | head -20 || echo "No HID-BPF symbols in vmlinux BTF"
+
       - name: Verify BPF programs with kernel verifier
         working-directory: akko-hid-bpf/akko-ebpf
         run: |
