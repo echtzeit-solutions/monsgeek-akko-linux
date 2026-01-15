@@ -23,8 +23,7 @@ pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
 pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES};
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
 pub use hid::{
-    key_mode, BatteryInfo, ConnectedDeviceInfo, DeviceInfo, MonsGeekDevice, TriggerSettings,
-    VendorEventType,
+    key_mode, BatteryInfo, ConnectedDeviceInfo, DeviceInfo, TriggerSettings, VendorEventType,
 };
 pub use power_supply::{
     BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration,

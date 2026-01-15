@@ -1462,6 +1462,8 @@ dependencies = [
  "http",
  "image",
  "libc",
+ "monsgeek-keyboard",
+ "monsgeek-transport",
  "pipewire",
  "prost",
  "ratatui",
@@ -1799,6 +1801,31 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "monsgeek-keyboard"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "monsgeek-transport",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "monsgeek-transport"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hidapi",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-udev",
+ "tracing",
 ]
 
 [[package]]

@@ -412,7 +412,7 @@ pub mod device_ids {
     pub const M1_V5_HE: u32 = 2949;
 
     /// Get device ID from VID/PID if known (fallback when device query fails)
-    /// Prefer using MonsGeekDevice::get_api_device_id() which queries the device directly
+    /// Prefer querying the device directly via SyncKeyboard::get_device_id()
     pub fn from_vid_pid(vid: u16, pid: u16) -> Option<u32> {
         match (vid, pid) {
             (0x3151, 0x5030) => Some(M1_V5_HE),
