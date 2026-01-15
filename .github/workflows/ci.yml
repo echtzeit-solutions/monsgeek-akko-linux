@@ -213,8 +213,9 @@ jobs:
             # Check if failure is due to missing HID-BPF support (expected on GH runners)
             # vs actual code errors (verifier rejection)
             if echo "$OUTPUT" | grep -q "failed to find BTF for extern"; then
-              echo "::warning::Kernel lacks HID-BPF support - skipping verifier check"
-              echo "This is expected on standard Ubuntu kernels. The BPF will be verified on kernels with HID-BPF."
+              echo "::warning::bpftool cannot resolve Rust kfunc format - skipping verifier check"
+              echo "Rust generates VAR entries in .ksyms instead of FUNC entries that libbpf expects."
+              echo "The BPF loads correctly via aya loader which handles this format."
               exit 0
             elif echo "$OUTPUT" | grep -q "must point to scalar"; then
               echo "::error::BPF verifier rejected program - struct_ops context handling error"
