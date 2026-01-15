@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "monsgeek-transport", "monsgeek-keyboard"]
+exclude = ["akko-ebpf", "bpf/hid_battery_support/akko-loader-rs"]
 
 [package]
 name = "iot_driver"
