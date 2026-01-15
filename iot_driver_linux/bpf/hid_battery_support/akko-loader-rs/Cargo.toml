@@ -26,3 +26,6 @@ aya-obj = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
 [profile.release]
 lto = true
 strip = true
+
+# Prevent auto-discovery as part of parent workspace
+[workspace]

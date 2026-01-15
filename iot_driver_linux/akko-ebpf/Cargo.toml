@@ -21,3 +21,6 @@ lto = true
 [profile.release]
 panic = "abort"
 lto = true
+
+# Prevent auto-discovery as part of parent workspace
+[workspace]
