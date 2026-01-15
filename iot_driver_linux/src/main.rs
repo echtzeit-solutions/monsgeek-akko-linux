@@ -17,6 +17,11 @@ mod grpc;
 use grpc::{dj_dev, DriverGrpcServer, DriverService};
 use iot_driver::hal::device_registry;
 
+// New transport abstraction layer
+use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_transport::protocol::cmd as transport_cmd;
+use monsgeek_transport::{list_devices_sync, ChecksumType, SyncTransport};
+
 /// CLI test function - send a command and print response
 /// Uses retry pattern due to Linux HID feature report buffering
 fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> {
@@ -169,7 +174,8 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 cmd::GET_FEATURE_LIST => {
                     println!("  Features:   {:02x?}", &resp[2..12]);
-                    let precision = iot_driver::hid::MonsGeekDevice::precision_str(resp[3]);
+                    let precision =
+                        monsgeek_keyboard::settings::FirmwareVersion::precision_byte_str(resp[3]);
                     println!("  Precision:  {precision}");
                 }
                 cmd::GET_SLEEPTIME => {
@@ -224,6 +230,132 @@ fn cli_all(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    Ok(())
+}
+
+/// Test the new transport abstraction layer
+fn cli_test_transport() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing new transport abstraction layer");
+    println!("=======================================\n");
+
+    // List devices using new discovery
+    println!("Discovering devices...");
+    let devices = list_devices_sync()?;
+
+    if devices.is_empty() {
+        println!("No devices found!");
+        return Ok(());
+    }
+
+    for (i, dev) in devices.iter().enumerate() {
+        println!(
+            "  [{}] VID={:04X} PID={:04X} type={:?}",
+            i, dev.info.vid, dev.info.pid, dev.info.transport_type
+        );
+        if let Some(name) = &dev.info.product_name {
+            println!("      Name: {name}");
+        }
+    }
+
+    // Open first device
+    println!("\nOpening first device...");
+    let transport = SyncTransport::open_any()?;
+    let info = transport.device_info();
+    println!(
+        "  Opened: VID={:04X} PID={:04X} type={:?}",
+        info.vid, info.pid, info.transport_type
+    );
+
+    // Query device ID
+    println!("\nQuerying device ID (GET_USB_VERSION)...");
+    let resp = transport.query_command(transport_cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
+    let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]);
+    let version = u16::from_le_bytes([resp[7], resp[8]]);
+    println!("  Device ID: {device_id} (0x{device_id:08X})");
+    println!(
+        "  Version:   {} (v{}.{:02})",
+        version,
+        version / 100,
+        version % 100
+    );
+
+    // Query profile
+    println!("\nQuerying profile (GET_PROFILE)...");
+    let resp = transport.query_command(transport_cmd::GET_PROFILE, &[], ChecksumType::Bit7)?;
+    println!("  Profile:   {}", resp[1]);
+
+    // Query LED params
+    println!("\nQuerying LED params (GET_LEDPARAM)...");
+    let resp = transport.query_command(transport_cmd::GET_LEDPARAM, &[], ChecksumType::Bit7)?;
+    let mode = resp[1];
+    let brightness = resp[2];
+    let r = resp[5];
+    let g = resp[6];
+    let b = resp[7];
+    println!("  Mode:       {} ({})", mode, cmd::led_mode_name(mode));
+    println!("  Brightness: {brightness}/4");
+    println!("  Color:      #{r:02X}{g:02X}{b:02X}");
+
+    // Check if connected
+    println!(
+        "\nConnection status: {}",
+        if transport.is_connected() {
+            "connected"
+        } else {
+            "disconnected"
+        }
+    );
+
+    // Test keyboard interface (includes trigger settings)
+    println!("\n--- Testing Keyboard Interface ---");
+    match SyncKeyboard::open_any() {
+        Ok(keyboard) => {
+            println!(
+                "  Opened keyboard: {} keys, magnetism={}",
+                keyboard.key_count(),
+                keyboard.has_magnetism()
+            );
+
+            // Test trigger settings
+            println!("\nQuerying trigger settings...");
+            match keyboard.get_all_triggers() {
+                Ok(triggers) => {
+                    println!("  Got {} key modes", triggers.key_modes.len());
+                    println!(
+                        "  Got {} bytes of press_travel",
+                        triggers.press_travel.len()
+                    );
+
+                    // Show first few bytes of each array
+                    println!(
+                        "\n  First 10 key_modes:  {:?}",
+                        &triggers.key_modes[..10.min(triggers.key_modes.len())]
+                    );
+                    println!(
+                        "  First 10 press_travel: {:?}",
+                        &triggers.press_travel[..10.min(triggers.press_travel.len())]
+                    );
+
+                    // Decode first key's 16-bit travel
+                    if triggers.press_travel.len() >= 2 {
+                        let first_travel = u16::from_le_bytes([
+                            triggers.press_travel[0],
+                            triggers.press_travel[1],
+                        ]);
+                        println!(
+                            "  First key travel (u16): {} ({:.2}mm at 0.01mm precision)",
+                            first_travel,
+                            first_travel as f32 / 100.0
+                        );
+                    }
+                }
+                Err(e) => println!("  Error: {e}"),
+            }
+        }
+        Err(e) => println!("  Error opening keyboard: {e}"),
+    }
+
+    println!("\nTransport layer test PASSED!");
     Ok(())
 }
 
@@ -502,21 +634,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hidapi = HidApi::new()?;
             cli_test(&hidapi, cmd::GET_DEBOUNCE)?;
         }
-        Some(Commands::Rate) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if let Some(hz) = device.get_polling_rate() {
-                    println!(
-                        "Polling rate: {} ({})",
-                        hz,
-                        protocol::polling_rate::name(hz)
-                    );
-                } else {
-                    eprintln!("Failed to get polling rate");
+        Some(Commands::Rate) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => match keyboard.get_polling_rate() {
+                Ok(rate) => {
+                    let hz = rate as u16;
+                    println!("Polling rate: {hz} ({})", protocol::polling_rate::name(hz));
                 }
-            } else {
-                eprintln!("No device found");
-            }
-        }
+                Err(e) => eprintln!("Failed to get polling rate: {e}"),
+            },
+            Err(e) => eprintln!("No device found: {e}"),
+        },
         Some(Commands::Options) => {
             let hidapi = HidApi::new()?;
             cli_test(&hidapi, cmd::GET_KBOPTION)?;
@@ -544,42 +671,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // === Set Commands ===
-        Some(Commands::SetProfile { profile }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if device.set_profile(profile) {
-                    println!("Profile set to {profile}");
-                } else {
-                    eprintln!("Failed to set profile");
-                }
-            } else {
-                eprintln!("No device found");
-            }
-        }
-        Some(Commands::SetDebounce { ms }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if device.set_debounce(ms) {
-                    println!("Debounce set to {ms} ms");
-                } else {
-                    eprintln!("Failed to set debounce");
-                }
-            } else {
-                eprintln!("No device found");
-            }
-        }
+        Some(Commands::SetProfile { profile }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => match keyboard.set_profile(profile) {
+                Ok(_) => println!("Profile set to {profile}"),
+                Err(e) => eprintln!("Failed to set profile: {e}"),
+            },
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetDebounce { ms }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => match keyboard.set_debounce(ms) {
+                Ok(_) => println!("Debounce set to {ms} ms"),
+                Err(e) => eprintln!("Failed to set debounce: {e}"),
+            },
+            Err(e) => eprintln!("No device found: {e}"),
+        },
         Some(Commands::SetRate { rate }) => {
+            use monsgeek_keyboard::PollingRate;
             if let Some(hz) = protocol::polling_rate::parse(&rate) {
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.set_polling_rate(hz) {
-                        println!(
-                            "Polling rate set to {} ({})",
-                            hz,
-                            protocol::polling_rate::name(hz)
-                        );
-                    } else {
-                        eprintln!("Failed to set polling rate");
+                if let Some(rate_enum) = PollingRate::from_hz(hz) {
+                    match SyncKeyboard::open_any() {
+                        Ok(keyboard) => match keyboard.set_polling_rate(rate_enum) {
+                            Ok(_) => println!(
+                                "Polling rate set to {hz} ({})",
+                                protocol::polling_rate::name(hz)
+                            ),
+                            Err(e) => eprintln!("Failed to set polling rate: {e}"),
+                        },
+                        Err(e) => eprintln!("No device found: {e}"),
                     }
                 } else {
-                    eprintln!("No device found");
+                    eprintln!("Invalid polling rate '{hz}'. Valid rates: 125, 250, 500, 1000, 2000, 4000, 8000");
                 }
             } else {
                 eprintln!("Invalid polling rate '{rate}'. Valid rates: 125, 250, 500, 1000, 2000, 4000, 8000");
@@ -596,40 +717,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mode_num = cmd::LedMode::parse(&mode)
                 .map(|m| m.as_u8())
                 .unwrap_or_else(|| mode.parse().unwrap_or(1));
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if device.set_led(mode_num, brightness, speed, r, g, b, false) {
-                    println!(
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    match keyboard.set_led(mode_num, brightness, speed, r, g, b, false) {
+                        Ok(_) => println!(
                         "LED set: mode={} ({}) brightness={} speed={} color=#{:02X}{:02X}{:02X}",
-                        mode_num,
-                        cmd::led_mode_name(mode_num),
-                        brightness,
-                        speed,
-                        r,
-                        g,
-                        b
-                    );
-                } else {
-                    eprintln!("Failed to set LED");
+                        mode_num, cmd::led_mode_name(mode_num), brightness, speed, r, g, b
+                    ),
+                        Err(e) => eprintln!("Failed to set LED: {e}"),
+                    }
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
-        Some(Commands::SetSleep { seconds }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if device.set_sleep(seconds, seconds) {
-                    println!(
-                        "Sleep timeout set to {} seconds ({} min)",
-                        seconds,
-                        seconds / 60
-                    );
-                } else {
-                    eprintln!("Failed to set sleep timeout");
-                }
-            } else {
-                eprintln!("No device found");
-            }
-        }
+        Some(Commands::SetSleep { seconds }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => match keyboard.set_sleep_time(seconds) {
+                Ok(_) => println!(
+                    "Sleep timeout set to {} seconds ({} min)",
+                    seconds,
+                    seconds / 60
+                ),
+                Err(e) => eprintln!("Failed to set sleep timeout: {e}"),
+            },
+            Err(e) => eprintln!("No device found: {e}"),
+        },
         Some(Commands::Reset) => {
             print!("This will factory reset the keyboard. Are you sure? (y/N) ");
             use std::io::{self, Write};
@@ -637,379 +748,370 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut input = String::new();
             io::stdin().read_line(&mut input).unwrap();
             if input.trim().to_lowercase() == "y" {
-                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                    if device.reset() {
-                        println!("Keyboard reset to factory defaults");
-                    } else {
-                        eprintln!("Failed to reset keyboard");
-                    }
-                } else {
-                    eprintln!("No device found");
+                match SyncKeyboard::open_any() {
+                    Ok(keyboard) => match keyboard.reset() {
+                        Ok(_) => println!("Keyboard reset to factory defaults"),
+                        Err(e) => eprintln!("Failed to reset keyboard: {e}"),
+                    },
+                    Err(e) => eprintln!("No device found: {e}"),
                 }
             } else {
                 println!("Reset cancelled");
             }
         }
-        Some(Commands::Calibrate) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+        Some(Commands::Calibrate) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
                 println!("Starting calibration...");
                 println!("Step 1: Calibrating minimum (released) position...");
                 println!("        Keep all keys released!");
-                device.calibrate_min(true);
+                let _ = keyboard.calibrate_min(true);
                 std::thread::sleep(std::time::Duration::from_secs(2));
-                device.calibrate_min(false);
+                let _ = keyboard.calibrate_min(false);
                 println!("        Done.");
                 println!();
                 println!("Step 2: Calibrating maximum (pressed) position...");
                 println!("        Press and hold ALL keys firmly for 3 seconds!");
-                device.calibrate_max(true);
+                let _ = keyboard.calibrate_max(true);
                 std::thread::sleep(std::time::Duration::from_secs(3));
-                device.calibrate_max(false);
+                let _ = keyboard.calibrate_max(false);
                 println!("        Done.");
                 println!();
                 println!("Calibration complete!");
-            } else {
-                eprintln!("No device found");
             }
-        }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
 
         // === Trigger Commands ===
-        Some(Commands::Triggers) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                let info = device.read_info();
-                let factor =
-                    iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+        Some(Commands::Triggers) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let version = keyboard.get_version().unwrap_or_default();
+                let factor = version.precision_factor() as f32;
                 println!(
-                    "Trigger Settings (firmware v{}, precision: {})",
-                    info.version,
-                    iot_driver::hid::MonsGeekDevice::precision_str_from_version(info.version)
+                    "Trigger Settings (firmware {}, precision: {})",
+                    version.format(),
+                    version.precision_str()
                 );
                 println!();
 
-                if let Some(triggers) = device.get_all_triggers() {
-                    let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-                        if idx * 2 + 1 < data.len() {
-                            u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+                match keyboard.get_all_triggers() {
+                    Ok(triggers) => {
+                        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+                            if idx * 2 + 1 < data.len() {
+                                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+                            } else {
+                                0
+                            }
+                        };
+
+                        let first_press = decode_u16(&triggers.press_travel, 0);
+                        let first_lift = decode_u16(&triggers.lift_travel, 0);
+                        let first_rt_press = decode_u16(&triggers.rt_press, 0);
+                        let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
+                        let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
+
+                        let num_keys = triggers
+                            .key_modes
+                            .len()
+                            .min(triggers.press_travel.len() / 2);
+
+                        println!("First key settings (as sample):");
+                        println!(
+                            "  Actuation:     {:.1}mm (raw: {})",
+                            first_press as f32 / factor,
+                            first_press
+                        );
+                        println!(
+                            "  Release:       {:.1}mm (raw: {})",
+                            first_lift as f32 / factor,
+                            first_lift
+                        );
+                        println!(
+                            "  RT Press:      {:.2}mm (raw: {})",
+                            first_rt_press as f32 / factor,
+                            first_rt_press
+                        );
+                        println!(
+                            "  RT Release:    {:.2}mm (raw: {})",
+                            first_rt_lift as f32 / factor,
+                            first_rt_lift
+                        );
+                        println!(
+                            "  Mode:          {} ({})",
+                            first_mode,
+                            protocol::magnetism::mode_name(first_mode)
+                        );
+                        println!();
+
+                        let all_same_press = (0..num_keys)
+                            .all(|i| decode_u16(&triggers.press_travel, i) == first_press);
+                        let all_same_mode = triggers
+                            .key_modes
+                            .iter()
+                            .take(num_keys)
+                            .all(|&v| v == first_mode);
+
+                        if all_same_press && all_same_mode {
+                            println!("All {num_keys} keys have identical settings");
                         } else {
-                            0
-                        }
-                    };
-
-                    let first_press = decode_u16(&triggers.press_travel, 0);
-                    let first_lift = decode_u16(&triggers.lift_travel, 0);
-                    let first_rt_press = decode_u16(&triggers.rt_press, 0);
-                    let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
-                    let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
-
-                    let num_keys = triggers
-                        .key_modes
-                        .len()
-                        .min(triggers.press_travel.len() / 2);
-
-                    println!("First key settings (as sample):");
-                    println!(
-                        "  Actuation:     {:.1}mm (raw: {})",
-                        first_press as f32 / factor,
-                        first_press
-                    );
-                    println!(
-                        "  Release:       {:.1}mm (raw: {})",
-                        first_lift as f32 / factor,
-                        first_lift
-                    );
-                    println!(
-                        "  RT Press:      {:.2}mm (raw: {})",
-                        first_rt_press as f32 / factor,
-                        first_rt_press
-                    );
-                    println!(
-                        "  RT Release:    {:.2}mm (raw: {})",
-                        first_rt_lift as f32 / factor,
-                        first_rt_lift
-                    );
-                    println!(
-                        "  Mode:          {} ({})",
-                        first_mode,
-                        protocol::magnetism::mode_name(first_mode)
-                    );
-                    println!();
-
-                    let all_same_press =
-                        (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
-                    let all_same_mode = triggers
-                        .key_modes
-                        .iter()
-                        .take(num_keys)
-                        .all(|&v| v == first_mode);
-
-                    if all_same_press && all_same_mode {
-                        println!("All {num_keys} keys have identical settings");
-                    } else {
-                        println!("Keys have varying settings ({num_keys} keys total)");
-                        println!("\nFirst 10 key values:");
-                        for i in 0..10.min(num_keys) {
-                            let press = decode_u16(&triggers.press_travel, i);
-                            let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
-                            println!(
-                                "  Key {:2}: {:.1}mm mode={}",
-                                i,
-                                press as f32 / factor,
-                                mode
-                            );
+                            println!("Keys have varying settings ({num_keys} keys total)");
+                            println!("\nFirst 10 key values:");
+                            for i in 0..10.min(num_keys) {
+                                let press = decode_u16(&triggers.press_travel, i);
+                                let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
+                                println!(
+                                    "  Key {:2}: {:.1}mm mode={}",
+                                    i,
+                                    press as f32 / factor,
+                                    mode
+                                );
+                            }
                         }
                     }
-                } else {
-                    eprintln!("Failed to read trigger settings");
+                    Err(e) => eprintln!("Failed to read trigger settings: {e}"),
                 }
-            } else {
-                eprintln!("No device found");
             }
-        }
-        Some(Commands::SetActuation { mm }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                let info = device.read_info();
-                let factor =
-                    iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetActuation { mm }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let version = keyboard.get_version().unwrap_or_default();
+                let factor = version.precision_factor() as f32;
                 let raw = (mm * factor) as u16;
-                if device.set_actuation_all_u16(raw) {
-                    println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys");
-                } else {
-                    eprintln!("Failed to set actuation point");
+                match keyboard.set_actuation_all_u16(raw) {
+                    Ok(_) => println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys"),
+                    Err(e) => eprintln!("Failed to set actuation point: {e}"),
                 }
-            } else {
-                eprintln!("No device found");
             }
-        }
-        Some(Commands::SetRt { value }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                let info = device.read_info();
-                let factor =
-                    iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetRt { value }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let version = keyboard.get_version().unwrap_or_default();
+                let factor = version.precision_factor() as f32;
 
                 match value.to_lowercase().as_str() {
-                    "off" | "0" | "disable" => {
-                        if device.set_rapid_trigger_all(false) {
-                            println!("Rapid Trigger disabled for all keys");
-                        } else {
-                            eprintln!("Failed to disable Rapid Trigger");
-                        }
-                    }
+                    "off" | "0" | "disable" => match keyboard.set_rapid_trigger_all(false) {
+                        Ok(_) => println!("Rapid Trigger disabled for all keys"),
+                        Err(e) => eprintln!("Failed to disable Rapid Trigger: {e}"),
+                    },
                     "on" | "enable" => {
                         let sensitivity = (0.3 * factor) as u16;
-                        device.set_rapid_trigger_all(true);
-                        device.set_rt_press_all_u16(sensitivity);
-                        device.set_rt_lift_all_u16(sensitivity);
+                        let _ = keyboard.set_rapid_trigger_all(true);
+                        let _ = keyboard.set_rt_press_all_u16(sensitivity);
+                        let _ = keyboard.set_rt_lift_all_u16(sensitivity);
                         println!("Rapid Trigger enabled with 0.3mm sensitivity for all keys");
                     }
                     _ => {
                         let mm: f32 = value.parse().unwrap_or(0.3);
                         let sensitivity = (mm * factor) as u16;
-                        device.set_rapid_trigger_all(true);
-                        device.set_rt_press_all_u16(sensitivity);
-                        device.set_rt_lift_all_u16(sensitivity);
+                        let _ = keyboard.set_rapid_trigger_all(true);
+                        let _ = keyboard.set_rt_press_all_u16(sensitivity);
+                        let _ = keyboard.set_rt_lift_all_u16(sensitivity);
                         println!("Rapid Trigger enabled with {mm:.2}mm sensitivity for all keys");
                     }
                 }
-            } else {
-                eprintln!("No device found");
             }
-        }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
 
         // === Per-key Color Commands ===
-        Some(Commands::SetColorAll { r, g, b, layer: _ }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+        Some(Commands::SetColorAll { r, g, b, layer }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
                 println!("Setting all keys to color #{r:02X}{g:02X}{b:02X}...");
-                if device.set_all_keys_color(r, g, b) {
-                    println!("All keys set to #{r:02X}{g:02X}{b:02X}");
-                } else {
-                    eprintln!("Failed to set per-key colors");
+                let color = monsgeek_keyboard::led::RgbColor { r, g, b };
+                match keyboard.set_all_keys_color(color, layer) {
+                    Ok(()) => println!("All keys set to #{r:02X}{g:02X}{b:02X}"),
+                    Err(e) => eprintln!("Failed to set per-key colors: {e}"),
                 }
-            } else {
-                eprintln!("No device found");
             }
-        }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
 
         // === Key Remapping ===
         Some(Commands::Remap { from, to, layer }) => {
             let key_index: u8 = from.parse().unwrap_or(0);
             let hid_code = u8::from_str_radix(&to, 16).unwrap_or(0);
 
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                let key_name = iot_driver::protocol::hid::key_name(hid_code);
-                println!("Remapping key {key_index} to {key_name} (0x{hid_code:02x}) on layer {layer}...");
-                if device.set_keymatrix(layer, key_index, hid_code, true, 0) {
-                    println!("Key {key_index} remapped to {key_name}");
-                } else {
-                    eprintln!("Failed to remap key");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                    println!("Remapping key {key_index} to {key_name} (0x{hid_code:02x}) on layer {layer}...");
+                    match keyboard.set_keymatrix(layer, key_index, hid_code, true, 0) {
+                        Ok(()) => println!("Key {key_index} remapped to {key_name}"),
+                        Err(e) => eprintln!("Failed to remap key: {e}"),
+                    }
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
         Some(Commands::ResetKey { key, layer }) => {
             let key_index: u8 = key.parse().unwrap_or(0);
 
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                println!("Resetting key {key_index} on layer {layer}...");
-                if device.reset_key(layer, key_index) {
-                    println!("Key {key_index} reset to default");
-                } else {
-                    eprintln!("Failed to reset key");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    println!("Resetting key {key_index} on layer {layer}...");
+                    match keyboard.reset_key(layer, key_index) {
+                        Ok(()) => println!("Key {key_index} reset to default"),
+                        Err(e) => eprintln!("Failed to reset key: {e}"),
+                    }
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
         Some(Commands::Swap { key1, key2, layer }) => {
             let key_a: u8 = key1.parse().unwrap_or(0);
             let key_b: u8 = key2.parse().unwrap_or(0);
 
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                if let Some(data) = device.get_keymatrix(layer, 2) {
-                    let code_a = if (key_a as usize) * 4 + 2 < data.len() {
-                        data[(key_a as usize) * 4 + 2]
-                    } else {
-                        0
-                    };
-                    let code_b = if (key_b as usize) * 4 + 2 < data.len() {
-                        data[(key_b as usize) * 4 + 2]
-                    } else {
-                        0
-                    };
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => match keyboard.get_keymatrix(layer, 2) {
+                    Ok(data) => {
+                        let code_a = if (key_a as usize) * 4 + 2 < data.len() {
+                            data[(key_a as usize) * 4 + 2]
+                        } else {
+                            0
+                        };
+                        let code_b = if (key_b as usize) * 4 + 2 < data.len() {
+                            data[(key_b as usize) * 4 + 2]
+                        } else {
+                            0
+                        };
 
-                    let name_a = iot_driver::protocol::hid::key_name(code_a);
-                    let name_b = iot_driver::protocol::hid::key_name(code_b);
-                    println!("Swapping key {key_a} ({name_a}) <-> key {key_b} ({name_b})...");
+                        let name_a = iot_driver::protocol::hid::key_name(code_a);
+                        let name_b = iot_driver::protocol::hid::key_name(code_b);
+                        println!("Swapping key {key_a} ({name_a}) <-> key {key_b} ({name_b})...");
 
-                    if device.swap_keys(layer, key_a, code_a, key_b, code_b) {
-                        println!("Keys swapped successfully");
-                    } else {
-                        eprintln!("Failed to swap keys");
+                        match keyboard.swap_keys(layer, key_a, code_a, key_b, code_b) {
+                            Ok(()) => println!("Keys swapped successfully"),
+                            Err(e) => eprintln!("Failed to swap keys: {e}"),
+                        }
                     }
-                } else {
-                    eprintln!("Failed to read current key mappings");
-                }
-            } else {
-                eprintln!("No device found");
+                    Err(e) => eprintln!("Failed to read current key mappings: {e}"),
+                },
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
-        Some(Commands::Keymatrix { layer }) => {
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
+        Some(Commands::Keymatrix { layer }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
                 println!("Reading key matrix for layer {layer}...");
 
-                if let Some(data) = device.get_keymatrix(layer, 3) {
-                    println!("\nKey matrix data ({} bytes):", data.len());
-                    for (i, chunk) in data.chunks(16).enumerate() {
-                        print!("{:04x}: ", i * 16);
-                        for b in chunk {
-                            print!("{b:02x} ");
+                match keyboard.get_keymatrix(layer, 3) {
+                    Ok(data) => {
+                        println!("\nKey matrix data ({} bytes):", data.len());
+                        for (i, chunk) in data.chunks(16).enumerate() {
+                            print!("{:04x}: ", i * 16);
+                            for b in chunk {
+                                print!("{b:02x} ");
+                            }
+                            print!("  |");
+                            for b in chunk {
+                                if *b >= 0x20 && *b < 0x7f {
+                                    print!("{}", *b as char);
+                                } else {
+                                    print!(".");
+                                }
+                            }
+                            println!("|");
                         }
-                        print!("  |");
-                        for b in chunk {
-                            if *b >= 0x20 && *b < 0x7f {
-                                print!("{}", *b as char);
-                            } else {
-                                print!(".");
+
+                        println!("\nKey mappings (format: [type, flags, code, layer]):");
+                        let key_count = keyboard.key_count() as usize;
+                        for i in 0..key_count.min(20) {
+                            if i * 4 + 3 < data.len() {
+                                let k = &data[i * 4..(i + 1) * 4];
+                                let hid_code = k[2];
+                                let key_name = iot_driver::protocol::hid::key_name(hid_code);
+                                println!(
+                                    "  Key {:2}: {:02x} {:02x} {:02x} {:02x}  -> {} (0x{:02x})",
+                                    i, k[0], k[1], k[2], k[3], key_name, hid_code
+                                );
                             }
                         }
-                        println!("|");
                     }
-
-                    println!("\nKey mappings (format: [type, flags, code, layer]):");
-                    let key_count = device.key_count() as usize;
-                    for i in 0..key_count.min(20) {
-                        if i * 4 + 3 < data.len() {
-                            let k = &data[i * 4..(i + 1) * 4];
-                            let hid_code = k[2];
-                            let key_name = iot_driver::protocol::hid::key_name(hid_code);
-                            println!(
-                                "  Key {:2}: {:02x} {:02x} {:02x} {:02x}  -> {} (0x{:02x})",
-                                i, k[0], k[1], k[2], k[3], key_name, hid_code
-                            );
-                        }
-                    }
-                } else {
-                    eprintln!("Failed to read key matrix");
+                    Err(e) => eprintln!("Failed to read key matrix: {e}"),
                 }
-            } else {
-                eprintln!("No device found");
             }
-        }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
 
         // === Macro Commands ===
         Some(Commands::Macro { key }) => {
             let macro_index: u8 = key.parse().unwrap_or(0);
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                println!("Reading macro {macro_index}...");
-                if let Some(data) = device.get_macro(macro_index) {
-                    if data.len() >= 2 {
-                        let length = u16::from_le_bytes([data[0], data[1]]) as usize;
-                        println!("Macro length: {length} bytes");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    println!("Reading macro {macro_index}...");
+                    match keyboard.get_macro(macro_index) {
+                        Ok(data) => {
+                            if data.len() >= 2 {
+                                let length = u16::from_le_bytes([data[0], data[1]]) as usize;
+                                println!("Macro length: {length} bytes");
 
-                        if length > 0 && data.len() > 2 {
-                            println!("\nMacro events (2 bytes each: [keycode, flags]):");
-                            let events = &data[2..];
-                            for (i, chunk) in events.chunks(2).enumerate() {
-                                if chunk.len() < 2 || chunk.iter().all(|&b| b == 0) {
-                                    break;
+                                if length > 0 && data.len() > 2 {
+                                    println!("\nMacro events (2 bytes each: [keycode, flags]):");
+                                    let events = &data[2..];
+                                    for (i, chunk) in events.chunks(2).enumerate() {
+                                        if chunk.len() < 2 || chunk.iter().all(|&b| b == 0) {
+                                            break;
+                                        }
+                                        let keycode = chunk[0];
+                                        let flags = chunk[1];
+
+                                        let event_type =
+                                            if flags & 0x80 != 0 { "Down" } else { "Up" };
+                                        let key_name = iot_driver::protocol::hid::key_name(keycode);
+                                        println!("  Event {i:2}: {event_type} {key_name} (0x{keycode:02x}, flags={flags:02x})");
+                                    }
+                                } else {
+                                    println!("Macro is empty");
                                 }
-                                let keycode = chunk[0];
-                                let flags = chunk[1];
-
-                                let event_type = if flags & 0x80 != 0 { "Down" } else { "Up" };
-                                let key_name = iot_driver::protocol::hid::key_name(keycode);
-                                println!("  Event {i:2}: {event_type} {key_name} (0x{keycode:02x}, flags={flags:02x})");
+                            } else {
+                                println!("Invalid macro data");
                             }
-                        } else {
-                            println!("Macro is empty");
-                        }
-                    } else {
-                        println!("Invalid macro data");
-                    }
 
-                    println!("\nRaw data ({} bytes):", data.len().min(64));
-                    for chunk in data.chunks(16).take(4) {
-                        for b in chunk {
-                            print!("{b:02x} ");
+                            println!("\nRaw data ({} bytes):", data.len().min(64));
+                            for chunk in data.chunks(16).take(4) {
+                                for b in chunk {
+                                    print!("{b:02x} ");
+                                }
+                                println!();
+                            }
                         }
-                        println!();
+                        Err(e) => eprintln!("Failed to read macro: {e}"),
                     }
-                } else {
-                    eprintln!("Failed to read macro (may be empty)");
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
         Some(Commands::SetMacro { key, text }) => {
             let macro_index: u8 = key.parse().unwrap_or(0);
 
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                println!("Setting macro {macro_index} to type: \"{text}\"");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    println!("Setting macro {macro_index} to type: \"{text}\"");
 
-                if device.set_text_macro(macro_index, &text, 10, 1) {
-                    println!("Macro {macro_index} set successfully!");
-                    println!("Assign this macro to a key in the Akko driver to test.");
-                } else {
-                    eprintln!("Failed to set macro");
+                    match keyboard.set_text_macro(macro_index, &text, 10, 1) {
+                        Ok(()) => {
+                            println!("Macro {macro_index} set successfully!");
+                            println!("Assign this macro to a key in the Akko driver to test.");
+                        }
+                        Err(e) => eprintln!("Failed to set macro: {e}"),
+                    }
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
         Some(Commands::ClearMacro { key }) => {
             let macro_index: u8 = key.parse().unwrap_or(0);
 
-            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                println!("Clearing macro {macro_index}...");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    println!("Clearing macro {macro_index}...");
 
-                if device.set_macro(macro_index, &[], 1) {
-                    println!("Macro {macro_index} cleared!");
-                } else {
-                    eprintln!("Failed to clear macro");
+                    match keyboard.set_macro(macro_index, &[], 1) {
+                        Ok(()) => println!("Macro {macro_index} cleared!"),
+                        Err(e) => eprintln!("Failed to clear macro: {e}"),
+                    }
                 }
-            } else {
-                eprintln!("No device found");
+                Err(e) => eprintln!("No device found: {e}"),
             }
         }
 
@@ -1023,8 +1125,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             use iot_driver::gif::{generate_test_animation, load_gif, print_animation_info};
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
             let animation = if test {
                 println!("Generating {frames} frame test animation...");
@@ -1059,10 +1161,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 anim_frames.len(),
                 delay_ms
             );
-            if device.upload_animation(&anim_frames, delay_ms) {
-                println!("Animation uploaded! Keyboard will play it autonomously.");
-            } else {
-                eprintln!("Failed to upload animation");
+            match keyboard.upload_animation(&anim_frames, delay_ms) {
+                Ok(()) => println!("Animation uploaded! Keyboard will play it autonomously."),
+                Err(e) => eprintln!("Failed to upload animation: {e}"),
             }
         }
         Some(Commands::GifStream { file, mode, r#loop }) => {
@@ -1076,10 +1177,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             print_animation_info(&animation);
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
-            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
 
             let running = Arc::new(AtomicBool::new(true));
             let r = running.clone();
@@ -1097,7 +1198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
 
-                    device.set_per_key_colors_fast(&frame.colors, 10, 3);
+                    let _ = keyboard.set_per_key_colors_fast(&frame.colors, 10, 3);
                     print!("\rFrame {:3}/{}", idx + 1, animation.frame_count);
                     std::io::Write::flush(&mut std::io::stdout()).ok();
 
@@ -1126,17 +1227,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
-
-            println!(
-                "Setting LED mode to {} ({}) with layer {}...",
-                led_mode.name(),
-                led_mode.as_u8(),
-                layer
-            );
-            device.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer);
-            println!("Done.");
+            match SyncKeyboard::open_any() {
+                Ok(keyboard) => {
+                    println!(
+                        "Setting LED mode to {} ({}) with layer {}...",
+                        led_mode.name(),
+                        led_mode.as_u8(),
+                        layer
+                    );
+                    match keyboard.set_led_with_option(
+                        led_mode.as_u8(),
+                        4,
+                        0,
+                        128,
+                        128,
+                        128,
+                        false,
+                        layer,
+                    ) {
+                        Ok(_) => println!("Done."),
+                        Err(e) => eprintln!("Failed to set LED mode: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("Failed to open device: {e}"),
+            }
         }
         Some(Commands::Modes) => {
             use iot_driver::protocol::cmd::LedMode;
@@ -1151,10 +1265,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use std::sync::atomic::AtomicBool;
             use std::sync::Arc;
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
-            println!("Starting rainbow test on {}...", device.display_name());
+            println!("Starting rainbow test on {}...", keyboard.device_name());
             println!("Press Ctrl+C to stop");
 
             let running = Arc::new(AtomicBool::new(true));
@@ -1165,36 +1279,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .ok();
 
-            if let Err(e) = iot_driver::audio_reactive::run_rainbow_test(&device, running) {
+            if let Err(e) = iot_driver::audio_reactive::run_rainbow_test(&keyboard, running) {
                 eprintln!("Rainbow test error: {e}");
             }
         }
         Some(Commands::Checkerboard) => {
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
             println!("=== Per-Key Color Test ===\n");
 
             println!("1. Current LED settings:");
-            if let Some(resp) = device.query(0x87) {
-                println!(
-                    "   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
-                    resp[2], resp[3], resp[4], resp[5], resp[6], resp[7], resp[8]
-                );
+            if let Ok(resp) = keyboard.query_raw_cmd(0x87) {
+                if resp.len() >= 9 {
+                    println!(
+                        "   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
+                        resp[1], resp[2], resp[3], resp[4], resp[5], resp[6], resp[7]
+                    );
+                }
             }
 
             println!("\n2. Setting LED mode to 13 (LightUserPicture)...");
-            if !device.set_led(13, 4, 0, 0, 0, 0, false) {
+            if keyboard.set_led(13, 4, 0, 0, 0, 0, false).is_err() {
                 println!("   ERROR: Failed to set LED mode!");
                 return Ok(());
             }
             std::thread::sleep(std::time::Duration::from_millis(300));
 
-            if let Some(resp) = device.query(0x87) {
-                println!(
-                    "   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
-                    resp[2], resp[3], resp[4], resp[5], resp[6], resp[7], resp[8]
-                );
+            if let Ok(resp) = keyboard.query_raw_cmd(0x87) {
+                if resp.len() >= 9 {
+                    println!(
+                        "   Mode: {}, Speed: {}, Brightness: {}, Option: {}, RGB: ({},{},{})",
+                        resp[1], resp[2], resp[3], resp[4], resp[5], resp[6], resp[7]
+                    );
+                }
             }
 
             const MATRIX_SIZE: usize = 126;
@@ -1203,18 +1321,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for layer in 0..4 {
                 println!("   Writing to layer {layer}...");
-                device.set_per_key_colors_to_layer(&red_colors, layer);
+                let _ = keyboard.set_per_key_colors_to_layer(&red_colors, layer);
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
-
-            if let Some(colors) = device.get_per_key_colors_debug() {
-                print!("   Stored colors (first 10): ");
-                for (r, g, b) in colors.iter().take(10) {
-                    print!("({r},{g},{b}) ");
-                }
-                println!();
-            }
 
             for layer in 0..4 {
                 println!(
@@ -1222,7 +1332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     layer,
                     layer << 4
                 );
-                device.set_led_with_option(13, 4, 0, 0, 0, 0, false, layer);
+                let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, layer);
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
 
@@ -1232,14 +1342,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("\n4. Setting ALL keys to BLUE...");
             let blue_colors: Vec<(u8, u8, u8)> = vec![(0, 0, 255); MATRIX_SIZE];
-            device.set_per_key_colors_fast(&blue_colors, 100, 20);
+            let _ = keyboard.set_per_key_colors_fast(&blue_colors, 100, 20);
             std::thread::sleep(std::time::Duration::from_millis(300));
             println!("   Did the keyboard turn BLUE? [Enter to continue]");
             std::io::stdin().read_line(&mut input).ok();
 
             println!("\n5. Setting ALL keys to GREEN...");
             let green_colors: Vec<(u8, u8, u8)> = vec![(0, 255, 0); MATRIX_SIZE];
-            device.set_per_key_colors_fast(&green_colors, 100, 20);
+            let _ = keyboard.set_per_key_colors_fast(&green_colors, 100, 20);
             std::thread::sleep(std::time::Duration::from_millis(300));
             println!("   Did the keyboard turn GREEN? [Enter to continue]");
             std::io::stdin().read_line(&mut input).ok();
@@ -1253,7 +1363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     checker_colors.push((0, 0, 255));
                 }
             }
-            device.set_per_key_colors_fast(&checker_colors, 100, 20);
+            let _ = keyboard.set_per_key_colors_fast(&checker_colors, 100, 20);
             println!("   Did the keyboard show alternating RED/BLUE? [Enter to finish]");
             std::io::stdin().read_line(&mut input).ok();
 
@@ -1263,13 +1373,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use std::sync::atomic::AtomicBool;
             use std::sync::Arc;
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
-            println!("Starting sweep animation on {}...", device.display_name());
+            println!("Starting sweep animation on {}...", keyboard.device_name());
             println!("Press Ctrl+C to stop");
 
-            device.set_led(25, 4, 0, 0, 0, 0, false);
+            let _ = keyboard.set_led(25, 4, 0, 0, 0, 0, false);
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             let running = Arc::new(AtomicBool::new(true));
@@ -1280,7 +1390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .ok();
 
-            let key_count = device.key_count() as usize;
+            let key_count = keyboard.key_count() as usize;
             let mut position = 0usize;
 
             while running.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1295,7 +1405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                device.set_per_key_colors_fast(&colors, 10, 2);
+                let _ = keyboard.set_per_key_colors_fast(&colors, 10, 2);
                 position = (position + 1) % key_count;
 
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1304,21 +1414,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Sweep animation stopped");
         }
         Some(Commands::Red) => {
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
             println!("Simple RED test:");
             println!("1. Setting mode 13 (LightUserPicture) with layer 0...");
-            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             println!("2. Writing RED to layer 0 (126 keys)...");
             let red: Vec<(u8, u8, u8)> = vec![(255, 0, 0); 126];
-            device.set_per_key_colors_to_layer(&red, 0);
+            let _ = keyboard.set_per_key_colors_to_layer(&red, 0);
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             println!("3. Re-setting mode 13 with layer 0 to refresh...");
-            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
             std::thread::sleep(std::time::Duration::from_millis(300));
 
             println!("\nDid the keyboard turn RED?");
@@ -1329,13 +1439,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use std::sync::atomic::AtomicBool;
             use std::sync::Arc;
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
             println!("Starting column-based wave animation...");
             println!("Press Ctrl+C to stop");
 
-            device.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
+            let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
             std::thread::sleep(std::time::Duration::from_millis(200));
 
             let running = Arc::new(AtomicBool::new(true));
@@ -1375,7 +1485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                device.set_per_key_colors_fast(colors.as_ref(), 10, 3);
+                let _ = keyboard.set_per_key_colors_fast(colors.as_ref(), 10, 3);
                 wave_pos = (wave_pos + 0.3) % (NUM_COLS as f32);
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
@@ -1392,12 +1502,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use std::sync::atomic::AtomicBool;
             use std::sync::Arc;
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
             println!(
                 "Starting audio reactive mode on {}...",
-                device.display_name()
+                keyboard.device_name()
             );
             println!("Press Ctrl+C to stop");
 
@@ -1416,7 +1526,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 smoothing: 0.3,
             };
 
-            if let Err(e) = iot_driver::audio_reactive::run_audio_reactive(&device, config, running)
+            if let Err(e) =
+                iot_driver::audio_reactive::run_audio_reactive(&keyboard, config, running)
             {
                 eprintln!("Audio reactive error: {e}");
             }
@@ -1448,10 +1559,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let fps = fps.clamp(1, 60);
 
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
-            println!("Starting screen color mode on {}...", device.display_name());
+            println!(
+                "Starting screen color mode on {}...",
+                keyboard.device_name()
+            );
             println!("Press Ctrl+C to stop");
 
             let running = Arc::new(AtomicBool::new(true));
@@ -1464,7 +1578,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Use await since main is already async
             if let Err(e) =
-                iot_driver::screen_capture::run_screen_color_mode(&device, running, fps).await
+                iot_driver::screen_capture::run_screen_color_mode(&keyboard, running, fps).await
             {
                 eprintln!("Screen color mode error: {e}");
             }
@@ -1479,116 +1593,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use std::sync::atomic::{AtomicBool, Ordering};
             use std::sync::Arc;
 
-            fn print_depth_report(
-                buf: &[u8],
-                precision: f32,
-                show_raw: bool,
-                show_zero: bool,
-            ) -> bool {
-                use iot_driver::protocol::depth_report;
+            // Open device via transport abstraction (works with wired, dongle, BT, WebRTC)
+            let keyboard =
+                SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
 
-                if let Some(report) = depth_report::parse(buf) {
-                    // Skip zero-depth reports unless show_zero is set
-                    if report.depth_raw == 0 && !show_zero {
-                        return false;
-                    }
+            println!("Device: {}", keyboard.device_name());
 
-                    let depth_mm = report.depth_mm(precision);
-
-                    // Create visual bar (max ~4mm travel = 40 chars at 10 chars/mm)
-                    let bar_len = ((depth_mm * 10.0).min(50.0)) as usize;
-                    let bar: String = "█".repeat(bar_len);
-                    let empty: String = "░".repeat(50 - bar_len);
-
-                    if show_raw {
-                        println!(
-                            "  Key {:3} [{bar}{empty}] {:.2}mm (raw={:5})",
-                            report.key_index, depth_mm, report.depth_raw
-                        );
-                    } else {
-                        println!(
-                            "  Key {:3} [{bar}{empty}] {:.2}mm",
-                            report.key_index, depth_mm
-                        );
-                    }
-                    return true;
-                }
-                false
-            }
-
-            // Open main device for commands
-            let device = iot_driver::hid::MonsGeekDevice::open()
-                .map_err(|e| format!("Failed to open device: {e}"))?;
-
-            println!("Device: {}", device.display_name());
-            println!("Feature path: {}", device.path);
-
-            // Read device info to get precision factor
-            let info = device.read_info();
-            // Use version-based precision (more accurate than legacy precision byte)
-            let precision =
-                iot_driver::hid::MonsGeekDevice::precision_factor_from_version(info.version);
+            // Get precision factor from firmware version
+            let version = keyboard.get_version().unwrap_or_default();
+            let precision = version.precision_factor();
             println!(
                 "Firmware version: {} (precision factor: {})",
-                info.version, precision
+                version.format_dotted(),
+                precision
             );
 
-            // Enable magnetism reporting (via feature interface)
+            // Enable magnetism reporting via transport
             println!("\nEnabling magnetism reporting...");
-            let success = device.set_magnetism_report(true);
-            println!("set_magnetism_report(true) returned: {success}");
-
-            if !success {
-                eprintln!("Failed to enable magnetism reporting");
-                return Ok(());
+            match keyboard.start_magnetism_report() {
+                Ok(()) => println!("Magnetism reporting enabled"),
+                Err(e) => {
+                    eprintln!("Failed to enable magnetism reporting: {e}");
+                    return Ok(());
+                }
             }
 
-            // Also try opening the separate INPUT interface for comparison
-            let input_device =
-                iot_driver::hid::MonsGeekDevice::open_input_interface(device.vid, device.pid).ok();
-            if input_device.is_some() {
-                println!("Also opened vendor INPUT interface for comparison");
-            }
-
-            // Try an immediate read right after enabling to catch the confirmation event
-            println!("\nWaiting for magnetism start confirmation...");
+            // Wait for start confirmation
+            println!("Waiting for magnetism start confirmation...");
             std::thread::sleep(std::time::Duration::from_millis(200));
 
-            // Check if confirmation came on feature interface
-            if let Some(buf) = device.read_input(500) {
-                print!("Confirmation from FEATURE: ");
-                for b in &buf {
-                    print!("{b:02x} ");
+            // Try to read confirmation event
+            match keyboard.read_key_depth(500, precision) {
+                Ok(Some(event)) => {
+                    println!(
+                        "Confirmation: Key {} depth={:.2}mm",
+                        event.key_index, event.depth_mm
+                    );
                 }
-                println!();
-                print_depth_report(&buf, precision, show_raw, show_zero);
-            } else {
-                println!("No confirmation on FEATURE interface");
-            }
-
-            // Check INPUT interface too
-            if let Some(ref input_dev) = input_device {
-                let mut buf = [0u8; 64];
-                match input_dev.read_timeout(&mut buf, 500) {
-                    Ok(len) if len > 0 => {
-                        print!("Confirmation from INPUT ({len} bytes): ");
-                        for b in &buf[..len] {
-                            print!("{b:02x} ");
-                        }
-                        println!();
-                    }
-                    Ok(_) => println!("No confirmation on INPUT interface (timeout)"),
-                    Err(e) => println!("INPUT interface read error: {e}"),
-                }
+                Ok(None) => println!("No confirmation event (timeout)"),
+                Err(e) => println!("Read error: {e}"),
             }
 
             println!("\nMonitoring key depth (Ctrl+C to stop)...");
-            println!("Press keys to see depth data.");
-            if input_device.is_some() {
-                println!("Reading from INPUT interface (high-speed batch mode)...\n");
-            } else {
-                println!("Reading from FEATURE interface...\n");
-            }
+            println!("Press keys to see depth data.\n");
 
             let running = Arc::new(AtomicBool::new(true));
             let running_clone = Arc::clone(&running);
@@ -1606,50 +1653,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut key_depths: std::collections::HashMap<u8, (u16, f32)> =
                 std::collections::HashMap::new();
 
-            // Read buffer for INPUT interface
-            let mut input_buf = [0u8; 64];
-
             while running.load(Ordering::SeqCst) {
                 let mut batch_count = 0u32;
 
-                // Batch read all queued reports from INPUT interface (preferred, faster)
-                if let Some(ref input_dev) = input_device {
-                    // Read with short timeout first, then drain with non-blocking
-                    loop {
-                        let timeout = if batch_count == 0 { 10 } else { 0 }; // 10ms initial, then non-blocking
-                        match input_dev.read_timeout(&mut input_buf, timeout) {
-                            Ok(len) if len > 0 => {
-                                if let Some(report) =
-                                    iot_driver::protocol::depth_report::parse(&input_buf[..len])
-                                {
-                                    report_count += 1;
-                                    batch_count += 1;
-                                    let depth_mm = report.depth_mm(precision);
-                                    key_depths
-                                        .insert(report.key_index, (report.depth_raw, depth_mm));
-                                }
-                            }
-                            _ => break, // No more data or error
+                // Batch read via transport abstraction
+                // Works with any transport: HID wired, dongle, Bluetooth, WebRTC
+                loop {
+                    let timeout = if batch_count == 0 { 10 } else { 0 }; // 10ms initial, then non-blocking
+                    match keyboard.read_key_depth(timeout, precision) {
+                        Ok(Some(event)) => {
+                            report_count += 1;
+                            batch_count += 1;
+                            key_depths.insert(event.key_index, (event.depth_raw, event.depth_mm));
                         }
-                    }
-                } else {
-                    // Fallback to FEATURE interface
-                    loop {
-                        let timeout = if batch_count == 0 { 10 } else { 0 };
-                        match device.read_input(timeout) {
-                            Some(buf) => {
-                                if let Some(report) =
-                                    iot_driver::protocol::depth_report::parse(&buf)
-                                {
-                                    report_count += 1;
-                                    batch_count += 1;
-                                    let depth_mm = report.depth_mm(precision);
-                                    key_depths
-                                        .insert(report.key_index, (report.depth_raw, depth_mm));
-                                }
-                            }
-                            None => break,
-                        }
+                        _ => break, // No more data, timeout, or error
                     }
                 }
 
@@ -1674,8 +1691,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let bar: String = "█".repeat(bar_len);
                         let empty: String = "░".repeat(20 - bar_len);
 
-                        // Get key name from device profile matrix mapping
-                        let key_name = device.matrix_key_name(**key_idx);
+                        // Simple key index display (could add profile-based names later)
+                        let key_name = format!("K{key_idx:02}");
 
                         if show_raw {
                             print!("{key_name}[{bar}{empty}]{depth_mm:.1}({raw:4}) ");
@@ -1701,7 +1718,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             println!("\n\nStopping...");
-            device.set_magnetism_report(false);
+            let _ = keyboard.stop_magnetism_report();
             let elapsed = start.elapsed().as_secs_f32();
             println!(
                 "Received {report_count} reports in {:.1}s ({:.0} reports/sec)",
@@ -1714,26 +1731,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Firmware(fw_cmd)) => {
             match fw_cmd {
                 FirmwareCommands::Info => {
-                    if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                        let info = device.read_info();
-                        let version_str =
-                            iot_driver::hid::MonsGeekDevice::format_version(info.version);
+                    match SyncKeyboard::open_any() {
+                        Ok(keyboard) => {
+                            let device_id = keyboard.get_device_id().unwrap_or(0);
+                            let version = keyboard.get_version().unwrap_or_default();
+                            let version_str = version.format_dotted();
 
-                        println!("Firmware Information");
-                        println!("====================");
-                        println!("Device:     {}", device.display_name());
-                        println!("Device ID:  {} (0x{:08X})", info.device_id, info.device_id);
-                        println!("Version:    {} (raw: 0x{:04X})", version_str, info.version);
-                        println!(
-                            "Boot Mode:  {}",
-                            if device.is_boot_mode() { "Yes" } else { "No" }
-                        );
+                            println!("Firmware Information");
+                            println!("====================");
+                            println!("Device:     {}", keyboard.device_name());
+                            println!("Device ID:  {device_id} (0x{device_id:08X})");
+                            println!("Version:    {} (raw: 0x{:04X})", version_str, version.raw);
 
-                        if let Some(api_id) = device.get_api_device_id() {
-                            println!("API ID:     {api_id}");
+                            // Check boot mode via firmware_update module
+                            let is_boot = iot_driver::protocol::firmware_update::is_boot_mode(
+                                keyboard.vid(),
+                                keyboard.pid(),
+                            );
+                            println!("Boot Mode:  {}", if is_boot { "Yes" } else { "No" });
+
+                            // API ID is same as device ID, with VID/PID fallback
+                            let api_id = if device_id != 0 {
+                                Some(device_id)
+                            } else {
+                                iot_driver::firmware_api::device_ids::from_vid_pid(
+                                    keyboard.vid(),
+                                    keyboard.pid(),
+                                )
+                            };
+                            if let Some(id) = api_id {
+                                println!("API ID:     {id}");
+                            }
                         }
-                    } else {
-                        eprintln!("No device found");
+                        Err(e) => eprintln!("No device found: {e}"),
                     }
                 }
                 FirmwareCommands::Validate { file } => {
@@ -1777,15 +1807,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("=== DRY RUN - NO CHANGES WILL BE MADE ===\n");
 
                     // Try to get current device info
-                    let (current_version, device_id) = if let Ok(device) =
-                        iot_driver::hid::MonsGeekDevice::open()
-                    {
-                        let info = device.read_info();
-                        let ver_str = iot_driver::hid::MonsGeekDevice::format_version(info.version);
-                        (Some(ver_str), Some(info.device_id))
-                    } else {
-                        println!("Note: No device connected, simulating without device info\n");
-                        (None, None)
+                    let (current_version, device_id) = match SyncKeyboard::open_any() {
+                        Ok(keyboard) => {
+                            let version = keyboard.get_version().unwrap_or_default();
+                            let device_id = keyboard.get_device_id().unwrap_or(0);
+                            (Some(version.format_dotted()), Some(device_id))
+                        }
+                        Err(_) => {
+                            println!("Note: No device connected, simulating without device info\n");
+                            (None, None)
+                        }
                     };
 
                     match FirmwareFile::load(&file) {
@@ -1808,13 +1839,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         use iot_driver::firmware_api::{check_firmware, device_ids, ApiError};
 
                         // Try to get device ID from connected device or argument
-                        let api_device_id = device_id.or_else(|| {
-                            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                                device.get_api_device_id()
-                            } else {
-                                None
+                        let (api_device_id, keyboard) = if let Some(id) = device_id {
+                            (Some(id), None)
+                        } else {
+                            match SyncKeyboard::open_any() {
+                                Ok(kb) => {
+                                    let id = kb.get_device_id().ok().filter(|&id| id != 0);
+                                    let id =
+                                        id.or_else(|| device_ids::from_vid_pid(kb.vid(), kb.pid()));
+                                    (id, Some(kb))
+                                }
+                                Err(_) => (None, None),
                             }
-                        });
+                        };
 
                         let api_device_id = match api_device_id {
                             Some(id) => id,
@@ -1845,16 +1882,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Compare with current device if connected
-                                if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                                    let info = device.read_info();
-                                    let current_usb = info.version;
-                                    println!("\nCurrent device USB version: 0x{current_usb:04X}");
+                                if let Some(kb) = keyboard.as_ref() {
+                                    if let Ok(version) = kb.get_version() {
+                                        let current_usb = version.raw;
+                                        println!(
+                                            "\nCurrent device USB version: 0x{current_usb:04X}"
+                                        );
 
-                                    if let Some(server_usb) = response.versions.usb {
-                                        if server_usb > current_usb {
-                                            println!("UPDATE AVAILABLE: 0x{current_usb:04X} -> 0x{server_usb:04X}");
-                                        } else {
-                                            println!("Firmware is up to date.");
+                                        if let Some(server_usb) = response.versions.usb {
+                                            if server_usb > current_usb {
+                                                println!("UPDATE AVAILABLE: 0x{current_usb:04X} -> 0x{server_usb:04X}");
+                                            } else {
+                                                println!("Firmware is up to date.");
+                                            }
+                                        }
+                                    }
+                                } else if let Ok(kb) = SyncKeyboard::open_any() {
+                                    if let Ok(version) = kb.get_version() {
+                                        let current_usb = version.raw;
+                                        println!(
+                                            "\nCurrent device USB version: 0x{current_usb:04X}"
+                                        );
+
+                                        if let Some(server_usb) = response.versions.usb {
+                                            if server_usb > current_usb {
+                                                println!("UPDATE AVAILABLE: 0x{current_usb:04X} -> 0x{server_usb:04X}");
+                                            } else {
+                                                println!("Firmware is up to date.");
+                                            }
                                         }
                                     }
                                 }
@@ -1889,8 +1944,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Try to get device ID from connected device or argument
                         let api_device_id = device_id.or_else(|| {
-                            if let Ok(device) = iot_driver::hid::MonsGeekDevice::open() {
-                                device.get_api_device_id()
+                            if let Ok(kb) = SyncKeyboard::open_any() {
+                                kb.get_device_id()
+                                    .ok()
+                                    .filter(|&id| id != 0)
+                                    .or_else(|| device_ids::from_vid_pid(kb.vid(), kb.pid()))
                             } else {
                                 None
                             }
@@ -1943,6 +2001,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        }
+
+        // === Debug Commands ===
+        Some(Commands::TestTransport) => {
+            cli_test_transport()?;
         }
 
         // === Utility Commands ===

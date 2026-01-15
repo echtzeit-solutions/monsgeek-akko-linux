@@ -314,6 +314,10 @@ pub enum Commands {
     },
 
     // === Debug Commands ===
+    /// Test new transport abstraction layer
+    #[command(visible_alias = "tt")]
+    TestTransport,
+
     /// Monitor real-time key depth (magnetism) from keyboard
     #[command(visible_alias = "keydepth")]
     Depth {
