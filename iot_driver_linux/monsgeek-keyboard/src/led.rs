@@ -6,11 +6,11 @@ pub const BRIGHTNESS_MAX: u8 = 4;
 /// Maximum speed value (5 levels: 0-4)
 pub const SPEED_MAX: u8 = 4;
 
-/// Option flag for dazzle (rainbow) mode off
-pub const DAZZLE_OFF: u8 = 0x00;
+/// Option flag for dazzle (rainbow) mode off - unicolor (value 8 in protocol)
+pub const DAZZLE_OFF: u8 = 8;
 
-/// Option flag for dazzle (rainbow) mode on
-pub const DAZZLE_ON: u8 = 0x04;
+/// Option flag for dazzle (rainbow) mode on - rainbow cycling (value 7 in protocol)
+pub const DAZZLE_ON: u8 = 7;
 
 /// RGB color value
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

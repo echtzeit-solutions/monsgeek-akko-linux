@@ -150,18 +150,20 @@ impl KeyboardInterface {
             .query_command(cmd::GET_LEDPARAM, &[], ChecksumType::Bit7)
             .await?;
 
-        if resp.len() < 6 || resp[0] != cmd::GET_LEDPARAM {
+        if resp.len() < 8 || resp[0] != cmd::GET_LEDPARAM {
             return Err(KeyboardError::UnexpectedResponse(
                 "Invalid LED params response".into(),
             ));
         }
 
+        // Protocol format: [cmd, mode, speed, brightness, option, r, g, b]
+        // Speed is inverted in protocol (0 = fast, 4 = slow)
         Ok(LedParams {
             mode: LedMode::from_u8(resp[1]).unwrap_or(LedMode::Off),
-            brightness: resp[2],
-            speed: resp[3],
-            color: RgbColor::new(resp[4], resp[5], resp[6]),
-            direction: resp.get(7).copied().unwrap_or(0),
+            speed: led::SPEED_MAX - resp[2].min(led::SPEED_MAX), // Invert speed
+            brightness: resp[3],
+            color: RgbColor::new(resp[5], resp[6], resp[7]),
+            direction: resp.get(4).copied().unwrap_or(0), // Option byte (dazzle info)
         })
     }
 
@@ -174,18 +176,20 @@ impl KeyboardInterface {
 
     /// Set LED parameters
     pub async fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
+        // Protocol format: [mode, speed, brightness, option, r, g, b]
+        // Speed is inverted in protocol (0 = fast, 4 = slow)
         let data = [
             params.mode as u8,
-            params.brightness,
-            params.speed,
+            led::SPEED_MAX - params.speed.min(led::SPEED_MAX), // Invert speed
+            params.brightness.min(led::BRIGHTNESS_MAX),
+            params.direction, // Option byte (dazzle info)
             params.color.r,
             params.color.g,
             params.color.b,
-            params.direction,
         ];
 
         self.transport
-            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit7)
+            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)
             .await?;
 
         Ok(())
@@ -369,35 +373,39 @@ impl KeyboardInterface {
             .query_command(cmd::GET_SLEDPARAM, &[], ChecksumType::Bit7)
             .await?;
 
-        if resp.len() < 6 || resp[0] != cmd::GET_SLEDPARAM {
+        if resp.len() < 8 || resp[0] != cmd::GET_SLEDPARAM {
             return Err(KeyboardError::UnexpectedResponse(
                 "Invalid side LED params response".into(),
             ));
         }
 
+        // Protocol format: [cmd, mode, speed, brightness, option, r, g, b]
+        // Note: Side LED speed is NOT inverted (unlike main LED)
         Ok(LedParams {
             mode: LedMode::from_u8(resp[1]).unwrap_or(LedMode::Off),
-            brightness: resp[2],
-            speed: resp[3],
-            color: RgbColor::new(resp[4], resp[5], resp[6]),
-            direction: resp.get(7).copied().unwrap_or(0),
+            speed: resp[2],
+            brightness: resp[3],
+            color: RgbColor::new(resp[5], resp[6], resp[7]),
+            direction: resp.get(4).copied().unwrap_or(0), // Option byte (dazzle info)
         })
     }
 
     /// Set side LED parameters
     pub async fn set_side_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
+        // Protocol format: [mode, speed, brightness, option, r, g, b]
+        // Note: Side LED speed is NOT inverted (unlike main LED)
         let data = [
             params.mode as u8,
-            params.brightness,
-            params.speed,
+            params.speed.min(led::SPEED_MAX),
+            params.brightness.min(led::BRIGHTNESS_MAX),
+            params.direction, // Option byte (dazzle info)
             params.color.r,
             params.color.g,
             params.color.b,
-            params.direction,
         ];
 
         self.transport
-            .send_command(cmd::SET_SLEDPARAM, &data, ChecksumType::Bit7)
+            .send_command(cmd::SET_SLEDPARAM, &data, ChecksumType::Bit8)
             .await?;
 
         Ok(())
