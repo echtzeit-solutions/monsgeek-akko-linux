@@ -98,3 +98,9 @@ path = "src/main.rs"
 # [[bin]]
 # name = "monsgeek-tui"
 # path = "src/tui.rs"
+
+[[example]]
+name = "dongle_throughput_test"
+
+[[example]]
+name = "read_dongle"
