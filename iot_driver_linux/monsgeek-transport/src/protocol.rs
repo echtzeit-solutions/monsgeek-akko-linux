@@ -88,12 +88,43 @@ pub mod timing {
     pub const SHORT_DELAY_MS: u64 = 50;
     /// Minimum delay for streaming (ms)
     pub const MIN_DELAY_MS: u64 = 5;
-    /// Delay after sending command to dongle (ms)
+    /// Delay after sending command to dongle (ms) - legacy, use dongle_timing for new code
     pub const DONGLE_POST_SEND_DELAY_MS: u64 = 150;
-    /// Delay after dongle flush before reading (ms)
+    /// Delay after dongle flush before reading (ms) - legacy, use dongle_timing for new code
     pub const DONGLE_POST_FLUSH_DELAY_MS: u64 = 100;
     /// Delay after starting animation upload (ms)
     pub const ANIMATION_START_DELAY_MS: u64 = 500;
+}
+
+/// Dongle-specific timing for polling-based flow control
+///
+/// Based on throughput testing:
+/// - Minimum observed latency: ~8-10ms (awake keyboard)
+/// - Response requires flush command to push into buffer
+/// - Concurrent commands not supported by hardware
+pub mod dongle_timing {
+    /// Initial wait before first poll attempt (ms)
+    /// Adaptive baseline - actual wait is computed from moving average
+    pub const INITIAL_WAIT_MS: u64 = 5;
+
+    /// Default timeout for query operations (ms)
+    pub const QUERY_TIMEOUT_MS: u64 = 500;
+
+    /// Extended timeout when keyboard may be waking from sleep (ms)
+    pub const WAKE_TIMEOUT_MS: u64 = 2000;
+
+    /// Minimum time per poll cycle - flush + read (ms)
+    /// Observed ~1.1ms in testing, but allow brief yield
+    pub const POLL_CYCLE_MS: u64 = 1;
+
+    /// Moving average window size for latency tracking
+    pub const LATENCY_WINDOW_SIZE: usize = 8;
+
+    /// Maximum consecutive timeouts before marking device offline
+    pub const MAX_CONSECUTIVE_TIMEOUTS: usize = 3;
+
+    /// Queue capacity for pending command requests
+    pub const REQUEST_QUEUE_SIZE: usize = 16;
 }
 
 /// RGB/LED data constants

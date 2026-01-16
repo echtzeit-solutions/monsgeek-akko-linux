@@ -1822,6 +1822,7 @@ dependencies = [
  "async-trait",
  "futures",
  "hidapi",
+ "parking_lot 0.12.5",
  "thiserror 2.0.17",
  "tokio",
  "tokio-udev",
