@@ -225,7 +225,10 @@ fn execute_send_only(
 
     // Build and send the command
     let buf = HidDongleTransport::build_command(cmd_byte, data, checksum);
-    debug!("Dongle sending SET command 0x{:02X} (fire-and-forget)", cmd_byte);
+    debug!(
+        "Dongle sending SET command 0x{:02X} (fire-and-forget)",
+        cmd_byte
+    );
     device.send_feature_report(&buf)?;
 
     // Send a flush to ensure command is processed
@@ -290,9 +293,15 @@ fn execute_query(
 
             if raw_mode {
                 // Raw mode: accept any non-zero, non-flush response
-                if resp_cmd != 0 && resp_cmd != cmd::DONGLE_FLUSH_NOP && resp.iter().skip(1).any(|&b| b != 0) {
+                if resp_cmd != 0
+                    && resp_cmd != cmd::DONGLE_FLUSH_NOP
+                    && resp.iter().skip(1).any(|&b| b != 0)
+                {
                     let latency = start.elapsed();
-                    state.latency_tracker.lock().record(latency.as_micros() as u64);
+                    state
+                        .latency_tracker
+                        .lock()
+                        .record(latency.as_micros() as u64);
                     state.consecutive_timeouts.store(0, Ordering::Relaxed);
                     state.wake_mode.store(false, Ordering::Relaxed);
                     debug!(
@@ -306,7 +315,10 @@ fn execute_query(
             } else if resp_cmd == cmd_byte {
                 // Got our expected response
                 let latency = start.elapsed();
-                state.latency_tracker.lock().record(latency.as_micros() as u64);
+                state
+                    .latency_tracker
+                    .lock()
+                    .record(latency.as_micros() as u64);
                 state.consecutive_timeouts.store(0, Ordering::Relaxed);
                 state.wake_mode.store(false, Ordering::Relaxed);
                 debug!(
