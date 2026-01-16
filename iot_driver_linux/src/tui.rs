@@ -1559,11 +1559,12 @@ fn hid_worker_keyboard(
             },
             HidCommand::QueryLedParams => match keyboard.get_led_params() {
                 Ok(params) => {
+                    // Option byte: DAZZLE=8, NORMAL=7
                     let _ = result_tx.send(HidResult::LedParams {
                         mode: params.mode as u8,
                         brightness: params.brightness,
                         speed: params.speed,
-                        dazzle: params.direction != 0,
+                        dazzle: params.direction == 7, // DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
                         r: params.color.r,
                         g: params.color.g,
                         b: params.color.b,
@@ -1577,11 +1578,12 @@ fn hid_worker_keyboard(
             },
             HidCommand::QuerySideLedParams => match keyboard.get_side_led_params() {
                 Ok(params) => {
+                    // Option byte: DAZZLE=8, NORMAL=7
                     let _ = result_tx.send(HidResult::SideLedParams {
                         mode: params.mode as u8,
                         brightness: params.brightness,
                         speed: params.speed,
-                        dazzle: params.direction != 0,
+                        dazzle: params.direction == 7, // DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
                         r: params.color.r,
                         g: params.color.g,
                         b: params.color.b,
@@ -1701,14 +1703,11 @@ fn hid_worker_keyboard(
                 g,
                 b,
             } => {
-                let params = LedParams {
-                    mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
-                    brightness,
-                    speed,
-                    color: RgbColor::new(r, g, b),
-                    direction: if dazzle { 1 } else { 0 },
-                };
-                let ok = keyboard.set_led_params(&params).is_ok();
+                // Use set_led() which has correct byte order: [mode, speed, brightness, option, r, g, b]
+                // set_led_params() had wrong order: [mode, brightness, speed, ...] causing controls to be swapped
+                let ok = keyboard
+                    .set_led(mode, brightness, speed, r, g, b, dazzle)
+                    .is_ok();
                 let _ = result_tx.send(HidResult::LedParamsSet(ok));
             }
             HidCommand::SetSideLedParams {
@@ -1720,12 +1719,13 @@ fn hid_worker_keyboard(
                 g,
                 b,
             } => {
+                // Option byte: DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
                 let params = LedParams {
                     mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
                     brightness,
                     speed,
                     color: RgbColor::new(r, g, b),
-                    direction: if dazzle { 1 } else { 0 },
+                    direction: if dazzle { 7 } else { 8 }, // DAZZLE_ON=7, DAZZLE_OFF=8
                 };
                 let ok = keyboard.set_side_led_params(&params).is_ok();
                 let _ = result_tx.send(HidResult::SideLedParamsSet(ok));
