@@ -9,18 +9,19 @@ license = "GPL-2.0-only"
 [workspace]
 
 [dependencies]
-# Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/struct_ops)
-aya-ebpf = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
+# Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/hid-bpf)
+aya-ebpf = { git = "https://github.com/heeen/aya.git", branch = "hid-bpf" }
 
 [build-dependencies]
 which = "7"
 
 [profile.dev]
 opt-level = 3
-debug = false
+debug = 2
 panic = "abort"
 lto = true
 
 [profile.release]
+debug = 2
 panic = "abort"
 lto = true

@@ -19,6 +19,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ctrlc = "3.4"
 libc = "0.2"
 
-# Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/struct_ops)
-aya = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
-aya-obj = { git = "https://github.com/heeen/aya.git", branch = "struct_ops" }
+# Aya fork with HID-BPF struct_ops support (https://github.com/heeen/aya/tree/hid-bpf)
+aya = { git = "https://github.com/heeen/aya.git", branch = "hid-bpf" }
+aya-obj = { git = "https://github.com/heeen/aya.git", branch = "hid-bpf" }
