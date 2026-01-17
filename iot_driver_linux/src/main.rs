@@ -2023,7 +2023,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_server().await?;
         }
         Some(Commands::Tui) => {
-            iot_driver::tui::run()?;
+            iot_driver::tui::run().await?;
         }
     }
 

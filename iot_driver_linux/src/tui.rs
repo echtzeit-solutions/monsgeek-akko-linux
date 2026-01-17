@@ -2,16 +2,18 @@
 // Real-time monitoring and settings configuration
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{Event, EventStream, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use futures::StreamExt;
 use ratatui::{prelude::*, widgets::*};
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, stdout};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
+use tokio::sync::mpsc;
 
 use std::path::PathBuf;
 
@@ -20,10 +22,11 @@ use crate::hid::BatteryInfo;
 use crate::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
 use crate::{cmd, devices, hal, key_mode, magnetism, DeviceInfo, TriggerSettings};
 
-// New keyboard abstraction layer
+// Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    KeyboardOptions as KbOptions, LedMode, LedParams, PollingRate, RgbColor, SyncKeyboard,
+    KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, RgbColor,
 };
+use monsgeek_transport::{DeviceDiscovery, HidDiscovery};
 
 /// Battery data source
 #[derive(Debug, Clone)]
@@ -67,6 +70,7 @@ struct App {
     depth_cursor: usize,               // Cursor for key selection
     depth_sample_idx: usize,           // Global sample counter for time axis
     max_observed_depth: f32,           // Max depth observed during session (for bar scaling)
+    depth_last_update: Vec<Instant>,   // Last update time per key (for stale detection)
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
     battery_source: Option<BatterySource>,
@@ -74,11 +78,12 @@ struct App {
     is_wireless: bool,
     // Help popup
     show_help: bool,
-    // Worker thread communication
+    // Keyboard interface (async, wrapped in Arc for spawning tasks)
+    keyboard: Option<Arc<KeyboardInterface>>,
     loading: LoadingStates,
     throbber_state: ThrobberState,
-    cmd_tx: Option<Sender<HidCommand>>,
-    result_rx: Option<Receiver<HidResult>>,
+    // Async result channel (sender for spawned tasks)
+    result_tx: mpsc::UnboundedSender<AsyncResult>,
     // Hex color input
     hex_editing: bool,
     hex_input: String,
@@ -165,152 +170,26 @@ struct LoadingStates {
     macros: LoadState,   // tab 5
 }
 
-/// Commands sent to the HID worker thread
-#[derive(Debug)]
-#[allow(dead_code)] // Setter variants prepared for future async command processing
-enum HidCommand {
-    // Queries
-    QueryUsbVersion,
-    QueryProfile,
-    QueryDebounce,
-    QueryPollingRate,
-    QueryLedParams,
-    QuerySideLedParams,
-    QueryKbOptions,
-    QueryFeatureList,
-    QuerySleepTime,
-    QueryTriggers,
-    QueryOptions,
-    QueryMacros,
-    QueryBattery,
-    // Setters (we can add these later)
-    SetProfile(u8),
-    SetDebounce(u8),
-    SetPollingRate(u16),
-    SetLedParams {
-        mode: u8,
-        brightness: u8,
-        speed: u8,
-        dazzle: bool,
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    SetSideLedParams {
-        mode: u8,
-        brightness: u8,
-        speed: u8,
-        dazzle: bool,
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    SetTrigger {
-        key_idx: u8,
-        act: u8,
-        deact: u8,
-        mode: u8,
-    },
-    SetTextMacro {
-        slot: u8,
-        text: String,
-        delay_ms: u8,
-        repeat: u16,
-    },
-    ClearMacro(u8),
-    SetAllKeyModes {
-        modes: Vec<u8>,
-    },
-    SetSingleKeyMode {
-        key_index: usize,
-        mode: u8,
-    },
-    SetAllKeysColor {
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    SetMagnetismReport(bool),
-    SetKbOptions {
-        os_mode: u8,
-        fn_layer: u8,
-        anti_mistouch: bool,
-        rt_stability: u8,
-        wasd_swap: bool,
-    },
-    SetSleepTime(u16),
-    Shutdown,
-}
-
-/// Results from the HID worker thread
-#[derive(Debug)]
-enum HidResult {
-    UsbVersion {
-        device_id: u32,
-        version: u16,
-    },
-    Profile(u8),
-    Debounce(u8),
-    PollingRate(u16),
-    LedParams {
-        mode: u8,
-        brightness: u8,
-        speed: u8,
-        dazzle: bool,
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    SideLedParams {
-        mode: u8,
-        brightness: u8,
-        speed: u8,
-        dazzle: bool,
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    KbOptions {
-        fn_layer: u8,
-        wasd_swap: bool,
-    },
-    FeatureList {
-        precision: u8,
-    },
-    SleepTime(u16),
-    Triggers(Option<TriggerSettings>),
-    Options {
-        os_mode: u8,
-        fn_layer: u8,
-        anti_mistouch: bool,
-        rt_stability: u8,
-        wasd_swap: bool,
-    },
-    Macros(Vec<MacroSlot>),
-    Battery(Option<BatteryInfo>),
-    // Setter confirmations
-    ProfileSet(bool),
-    DebounceSet(bool),
-    PollingRateSet(bool),
-    LedParamsSet(bool),
-    SideLedParamsSet(bool),
-    TriggerSet(bool),
-    MacroSet(bool),
-    MacroCleared(bool),
-    MagnetismReportSet(bool),
-    KbOptionsSet(bool),
-    AllKeyModesSet(bool),
-    SingleKeyModeSet {
-        ok: bool,
-        key_index: usize,
-        mode: u8,
-    },
-    AllKeysColorSet(bool),
-    SleepTimeSet(bool),
-    // Errors
-    QueryError {
-        field: &'static str,
-    },
+/// Async result from background keyboard operations
+/// These are sent from spawned tasks to the main event loop
+#[allow(dead_code)] // Macros and SetComplete reserved for future use
+enum AsyncResult {
+    // Device info results
+    DeviceIdAndVersion(Result<(u32, monsgeek_keyboard::FirmwareVersion), String>),
+    Profile(Result<u8, String>),
+    Debounce(Result<u8, String>),
+    PollingRate(Result<u16, String>),
+    LedParams(Result<LedParams, String>),
+    SideLedParams(Result<LedParams, String>),
+    KbOptions(Result<KbOptions, String>),
+    FeatureList(Result<monsgeek_keyboard::FeatureList, String>),
+    SleepTime(Result<u16, String>),
+    // Other tab results
+    Triggers(Result<TriggerSettings, String>),
+    Options(Result<KbOptions, String>),
+    Macros(Result<Vec<MacroSlot>, String>),
+    // Operation completion (for set operations)
+    SetComplete(String, Result<(), String>), // (field_name, result)
 }
 
 /// History length for time series (samples)
@@ -514,8 +393,9 @@ const KEYBOARD_SHORTCUTS: &[(&str, &str)] = &[
 ];
 
 impl App {
-    fn new() -> Self {
-        Self {
+    fn new() -> (Self, mpsc::UnboundedReceiver<AsyncResult>) {
+        let (result_tx, result_rx) = mpsc::unbounded_channel();
+        let app = Self {
             input_device: None,
             info: DeviceInfo::default(),
             tab: 0,
@@ -544,6 +424,7 @@ impl App {
             depth_cursor: 0,
             depth_sample_idx: 0,
             max_observed_depth: 0.1, // Will grow as keys are pressed
+            depth_last_update: Vec::new(),
             // Battery status
             battery: None,
             battery_source: None,
@@ -551,53 +432,74 @@ impl App {
             is_wireless: false,
             // Help popup
             show_help: false,
-            // Worker thread communication
+            // Keyboard interface (wrapped in Arc for spawning tasks)
+            keyboard: None,
             loading: LoadingStates::default(),
             throbber_state: ThrobberState::default(),
-            cmd_tx: None,
-            result_rx: None,
+            result_tx,
             // Hex color input
             hex_editing: false,
             hex_input: String::new(),
             hex_target: HexColorTarget::default(),
-        }
+        };
+        (app, result_rx)
     }
 
-    fn connect(&mut self) -> Result<(), String> {
-        // Use new unified keyboard abstraction
-        let keyboard =
-            SyncKeyboard::open_any().map_err(|e| format!("Failed to open keyboard: {e}"))?;
+    async fn connect(&mut self) -> Result<(), String> {
+        // Use async device discovery
+        let discovery = HidDiscovery::new();
+        let devices = discovery
+            .list_devices()
+            .await
+            .map_err(|e| format!("Failed to list devices: {e}"))?;
 
-        let key_count = keyboard.key_count();
-        let is_wireless = keyboard.is_wireless();
+        if devices.is_empty() {
+            return Err("No supported device found".to_string());
+        }
 
-        // Get device name from definitions based on transport info
-        let transport_info = keyboard.inner().transport().device_info();
+        let transport = discovery
+            .open_device(&devices[0])
+            .await
+            .map_err(|e| format!("Failed to open device: {e}"))?;
+
+        let transport_info = transport.device_info().clone();
         let vid = transport_info.vid;
         let pid = transport_info.pid;
+
+        // Look up device info - default to 98 keys with magnetism for M1 V5 HE
+        let (key_count, has_magnetism) = match (vid, pid) {
+            (0x3151, 0x5030) => (98, true), // M1 V5 HE wired
+            (0x3151, 0x5038) => (98, true), // M1 V5 HE dongle
+            _ => (98, true),                // Default
+        };
+
+        let keyboard = Arc::new(KeyboardInterface::new(transport, key_count, has_magnetism));
+        let is_wireless = keyboard.is_wireless();
 
         let device_name = if let Some(def) = devices::find_device(vid, pid) {
             def.display_name.to_string()
         } else {
             transport_info
                 .product_name
-                .clone()
                 .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"))
         };
 
         self.device_name = device_name;
         self.key_count = key_count;
         self.is_wireless = is_wireless;
+        self.keyboard = Some(keyboard);
 
         // Initialize key depths array based on actual key count
         self.key_depths = vec![0.0; self.key_count as usize];
         // Initialize depth history for time series
         self.depth_history =
             vec![VecDeque::with_capacity(DEPTH_HISTORY_LEN); self.key_count as usize];
+        // Initialize last update times (set to past so they don't show as active)
+        self.depth_last_update = vec![Instant::now(); self.key_count as usize];
         self.active_keys.clear();
         self.selected_keys.clear();
 
-        // Also open the INPUT interface for depth reports (separate from worker)
+        // Also open the INPUT interface for depth reports
         self.input_device = open_input_interface(vid, pid).ok();
 
         // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
@@ -609,21 +511,10 @@ impl App {
             };
         }
 
-        // Create channels for worker communication
-        let (cmd_tx, cmd_rx) = mpsc::channel::<HidCommand>();
-        let (result_tx, result_rx) = mpsc::channel::<HidResult>();
-
-        // Spawn worker thread using the unified keyboard interface
-        std::thread::spawn(move || {
-            hid_worker_keyboard(keyboard, cmd_rx, result_tx);
-        });
-
-        self.cmd_tx = Some(cmd_tx);
-        self.result_rx = Some(result_rx);
         self.connected = true;
         self.status_msg = format!("Connected to {}", self.device_name);
 
-        // Request battery status immediately for wireless devices
+        // Load battery status immediately for wireless devices
         if self.is_wireless {
             self.refresh_battery();
         }
@@ -631,16 +522,14 @@ impl App {
         Ok(())
     }
 
-    /// Send a command to the HID worker
-    fn send_command(&self, cmd: HidCommand) {
-        if let Some(ref tx) = self.cmd_tx {
-            let _ = tx.send(cmd);
-        }
-    }
+    /// Load all device info (all queries for tabs 0/1)
+    /// Spawns background tasks to avoid blocking the UI
+    fn load_device_info(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
 
-    /// Start async loading of device info (all queries for tabs 0/1)
-    fn start_loading_info(&mut self) {
-        // Mark all info fields as Loading
+        // Mark all as loading
         self.loading.usb_version = LoadState::Loading;
         self.loading.profile = LoadState::Loading;
         self.loading.debounce = LoadState::Loading;
@@ -651,22 +540,132 @@ impl App {
         self.loading.feature_list = LoadState::Loading;
         self.loading.sleep_time = LoadState::Loading;
 
-        // Send all query commands to worker
-        self.send_command(HidCommand::QueryUsbVersion);
-        self.send_command(HidCommand::QueryProfile);
-        self.send_command(HidCommand::QueryDebounce);
-        self.send_command(HidCommand::QueryPollingRate);
-        self.send_command(HidCommand::QueryLedParams);
-        self.send_command(HidCommand::QuerySideLedParams);
-        self.send_command(HidCommand::QueryKbOptions);
-        self.send_command(HidCommand::QueryFeatureList);
-        self.send_command(HidCommand::QuerySleepTime);
+        // Spawn background tasks for each query
+        let tx = self.result_tx.clone();
+
+        // Device ID + Version (combined query)
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = match (kb.get_device_id().await, kb.get_version().await) {
+                    (Ok(id), Ok(ver)) => Ok((id, ver)),
+                    (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
+                };
+                let _ = tx.send(AsyncResult::DeviceIdAndVersion(result));
+            });
+        }
+
+        // Profile
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_profile().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::Profile(result));
+            });
+        }
+
+        // Debounce
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_debounce().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::Debounce(result));
+            });
+        }
+
+        // Polling rate
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb
+                    .get_polling_rate()
+                    .await
+                    .map(|r| r as u16)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::PollingRate(result));
+            });
+        }
+
+        // LED params
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_led_params().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::LedParams(result));
+            });
+        }
+
+        // Side LED params
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_side_led_params().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::SideLedParams(result));
+            });
+        }
+
+        // KB options
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_kb_options().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::KbOptions(result));
+            });
+        }
+
+        // Feature list
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_feature_list().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::FeatureList(result));
+            });
+        }
+
+        // Sleep time
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = kb.get_sleep_time().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::SleepTime(result));
+            });
+        }
     }
 
-    /// Start async loading of trigger settings (tab 3)
-    fn start_loading_triggers(&mut self) {
+    /// Load trigger settings (tab 3)
+    /// Spawns a background task to avoid blocking the UI
+    fn load_triggers(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
+
         self.loading.triggers = LoadState::Loading;
-        self.send_command(HidCommand::QueryTriggers);
+        let tx = self.result_tx.clone();
+        tokio::spawn(async move {
+            let result = keyboard
+                .get_all_triggers()
+                .await
+                .map(|triggers| TriggerSettings {
+                    press_travel: triggers.press_travel,
+                    lift_travel: triggers.lift_travel,
+                    rt_press: triggers.rt_press,
+                    rt_lift: triggers.rt_lift,
+                    key_modes: triggers.key_modes,
+                    bottom_deadzone: triggers.bottom_deadzone,
+                    top_deadzone: triggers.top_deadzone,
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::Triggers(result));
+        });
     }
 
     fn refresh_battery(&mut self) {
@@ -715,9 +714,15 @@ impl App {
         self.last_battery_check = Instant::now();
     }
 
-    fn toggle_depth_monitoring(&mut self) {
+    async fn toggle_depth_monitoring(&mut self) {
         self.depth_monitoring = !self.depth_monitoring;
-        self.send_command(HidCommand::SetMagnetismReport(self.depth_monitoring));
+        if let Some(ref keyboard) = self.keyboard {
+            if self.depth_monitoring {
+                let _ = keyboard.start_magnetism_report().await;
+            } else {
+                let _ = keyboard.stop_magnetism_report().await;
+            }
+        }
         self.status_msg = if self.depth_monitoring {
             "Key depth monitoring ENABLED".to_string()
         } else {
@@ -725,83 +730,110 @@ impl App {
         };
     }
 
-    fn set_led_mode(&mut self, mode: u8) {
-        self.send_command(HidCommand::SetLedParams {
-            mode,
-            brightness: self.info.led_brightness,
-            speed: 4 - self.info.led_speed.min(4),
-            dazzle: self.info.led_dazzle,
-            r: self.info.led_r,
-            g: self.info.led_g,
-            b: self.info.led_b,
-        });
+    async fn set_led_mode(&mut self, mode: u8) {
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_led(
+                    mode,
+                    self.info.led_brightness,
+                    4 - self.info.led_speed.min(4),
+                    self.info.led_r,
+                    self.info.led_g,
+                    self.info.led_b,
+                    self.info.led_dazzle,
+                )
+                .await;
+        }
         self.info.led_mode = mode;
         self.status_msg = format!("LED mode: {}", cmd::led_mode_name(mode));
     }
 
-    fn set_brightness(&mut self, brightness: u8) {
+    async fn set_brightness(&mut self, brightness: u8) {
         let brightness = brightness.min(4);
-        self.send_command(HidCommand::SetLedParams {
-            mode: self.info.led_mode,
-            brightness,
-            speed: 4 - self.info.led_speed.min(4),
-            dazzle: self.info.led_dazzle,
-            r: self.info.led_r,
-            g: self.info.led_g,
-            b: self.info.led_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_led(
+                    self.info.led_mode,
+                    brightness,
+                    4 - self.info.led_speed.min(4),
+                    self.info.led_r,
+                    self.info.led_g,
+                    self.info.led_b,
+                    self.info.led_dazzle,
+                )
+                .await;
+        }
         self.info.led_brightness = brightness;
         self.status_msg = format!("Brightness: {brightness}/4");
     }
 
-    fn set_speed(&mut self, speed: u8) {
+    async fn set_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
-        self.send_command(HidCommand::SetLedParams {
-            mode: self.info.led_mode,
-            brightness: self.info.led_brightness,
-            speed,
-            dazzle: self.info.led_dazzle,
-            r: self.info.led_r,
-            g: self.info.led_g,
-            b: self.info.led_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_led(
+                    self.info.led_mode,
+                    self.info.led_brightness,
+                    speed,
+                    self.info.led_r,
+                    self.info.led_g,
+                    self.info.led_b,
+                    self.info.led_dazzle,
+                )
+                .await;
+        }
         self.info.led_speed = 4 - speed;
         self.status_msg = format!("Speed: {speed}/4");
     }
 
-    fn set_profile(&mut self, profile: u8) {
-        self.send_command(HidCommand::SetProfile(profile));
-        self.info.profile = profile;
-        self.status_msg = format!("Switching to profile {}...", profile + 1);
+    async fn set_profile(&mut self, profile: u8) {
+        if let Some(ref keyboard) = self.keyboard {
+            if keyboard.set_profile(profile).await.is_ok() {
+                self.info.profile = profile;
+                self.status_msg = format!("Profile {} active", profile + 1);
+                // Reload device info after profile switch
+                self.load_device_info();
+            } else {
+                self.status_msg = "Failed to set profile".to_string();
+            }
+        }
     }
 
-    fn set_color(&mut self, r: u8, g: u8, b: u8) {
-        self.send_command(HidCommand::SetLedParams {
-            mode: self.info.led_mode,
-            brightness: self.info.led_brightness,
-            speed: 4 - self.info.led_speed.min(4),
-            dazzle: self.info.led_dazzle,
-            r,
-            g,
-            b,
-        });
+    async fn set_color(&mut self, r: u8, g: u8, b: u8) {
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_led(
+                    self.info.led_mode,
+                    self.info.led_brightness,
+                    4 - self.info.led_speed.min(4),
+                    r,
+                    g,
+                    b,
+                    self.info.led_dazzle,
+                )
+                .await;
+        }
         self.info.led_r = r;
         self.info.led_g = g;
         self.info.led_b = b;
         self.status_msg = format!("Color: #{r:02X}{g:02X}{b:02X}");
     }
 
-    fn toggle_dazzle(&mut self) {
+    async fn toggle_dazzle(&mut self) {
         let new_dazzle = !self.info.led_dazzle;
-        self.send_command(HidCommand::SetLedParams {
-            mode: self.info.led_mode,
-            brightness: self.info.led_brightness,
-            speed: 4 - self.info.led_speed.min(4),
-            dazzle: new_dazzle,
-            r: self.info.led_r,
-            g: self.info.led_g,
-            b: self.info.led_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_led(
+                    self.info.led_mode,
+                    self.info.led_brightness,
+                    4 - self.info.led_speed.min(4),
+                    self.info.led_r,
+                    self.info.led_g,
+                    self.info.led_b,
+                    new_dazzle,
+                )
+                .await;
+        }
         self.info.led_dazzle = new_dazzle;
         self.status_msg = format!("Dazzle: {}", if new_dazzle { "ON" } else { "OFF" });
     }
@@ -827,11 +859,11 @@ impl App {
     }
 
     /// Apply hex color input
-    fn apply_hex_input(&mut self) {
+    async fn apply_hex_input(&mut self) {
         if let Some((r, g, b)) = parse_hex_color(&self.hex_input) {
             match self.hex_target {
-                HexColorTarget::MainLed => self.set_color(r, g, b),
-                HexColorTarget::SideLed => self.set_side_color(r, g, b),
+                HexColorTarget::MainLed => self.set_color(r, g, b).await,
+                HexColorTarget::SideLed => self.set_side_color(r, g, b).await,
             }
         } else {
             self.status_msg = format!("Invalid hex color: {}", self.hex_input);
@@ -841,82 +873,87 @@ impl App {
     }
 
     // Side LED methods
-    fn set_side_mode(&mut self, mode: u8) {
-        self.send_command(HidCommand::SetSideLedParams {
-            mode,
-            brightness: self.info.side_brightness,
-            speed: 4 - self.info.side_speed.min(4),
-            dazzle: self.info.side_dazzle,
-            r: self.info.side_r,
-            g: self.info.side_g,
-            b: self.info.side_b,
-        });
+    async fn set_side_mode(&mut self, mode: u8) {
+        if let Some(ref keyboard) = self.keyboard {
+            let params = LedParams {
+                mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
+                brightness: self.info.side_brightness,
+                speed: 4 - self.info.side_speed.min(4),
+                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
+                direction: if self.info.side_dazzle { 7 } else { 8 },
+            };
+            let _ = keyboard.set_side_led_params(&params).await;
+        }
         self.info.side_mode = mode;
         self.status_msg = format!("Side LED mode: {}", cmd::led_mode_name(mode));
     }
 
-    fn set_side_brightness(&mut self, brightness: u8) {
+    async fn set_side_brightness(&mut self, brightness: u8) {
         let brightness = brightness.min(4);
-        self.send_command(HidCommand::SetSideLedParams {
-            mode: self.info.side_mode,
-            brightness,
-            speed: 4 - self.info.side_speed.min(4),
-            dazzle: self.info.side_dazzle,
-            r: self.info.side_r,
-            g: self.info.side_g,
-            b: self.info.side_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let params = LedParams {
+                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
+                brightness,
+                speed: 4 - self.info.side_speed.min(4),
+                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
+                direction: if self.info.side_dazzle { 7 } else { 8 },
+            };
+            let _ = keyboard.set_side_led_params(&params).await;
+        }
         self.info.side_brightness = brightness;
         self.status_msg = format!("Side brightness: {brightness}/4");
     }
 
-    fn set_side_speed(&mut self, speed: u8) {
+    async fn set_side_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
-        self.send_command(HidCommand::SetSideLedParams {
-            mode: self.info.side_mode,
-            brightness: self.info.side_brightness,
-            speed,
-            dazzle: self.info.side_dazzle,
-            r: self.info.side_r,
-            g: self.info.side_g,
-            b: self.info.side_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let params = LedParams {
+                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
+                brightness: self.info.side_brightness,
+                speed,
+                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
+                direction: if self.info.side_dazzle { 7 } else { 8 },
+            };
+            let _ = keyboard.set_side_led_params(&params).await;
+        }
         self.info.side_speed = 4 - speed;
         self.status_msg = format!("Side speed: {speed}/4");
     }
 
-    fn set_side_color(&mut self, r: u8, g: u8, b: u8) {
-        self.send_command(HidCommand::SetSideLedParams {
-            mode: self.info.side_mode,
-            brightness: self.info.side_brightness,
-            speed: 4 - self.info.side_speed.min(4),
-            dazzle: self.info.side_dazzle,
-            r,
-            g,
-            b,
-        });
+    async fn set_side_color(&mut self, r: u8, g: u8, b: u8) {
+        if let Some(ref keyboard) = self.keyboard {
+            let params = LedParams {
+                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
+                brightness: self.info.side_brightness,
+                speed: 4 - self.info.side_speed.min(4),
+                color: RgbColor::new(r, g, b),
+                direction: if self.info.side_dazzle { 7 } else { 8 },
+            };
+            let _ = keyboard.set_side_led_params(&params).await;
+        }
         self.info.side_r = r;
         self.info.side_g = g;
         self.info.side_b = b;
         self.status_msg = format!("Side color: #{r:02X}{g:02X}{b:02X}");
     }
 
-    fn toggle_side_dazzle(&mut self) {
+    async fn toggle_side_dazzle(&mut self) {
         let new_dazzle = !self.info.side_dazzle;
-        self.send_command(HidCommand::SetSideLedParams {
-            mode: self.info.side_mode,
-            brightness: self.info.side_brightness,
-            speed: 4 - self.info.side_speed.min(4),
-            dazzle: new_dazzle,
-            r: self.info.side_r,
-            g: self.info.side_g,
-            b: self.info.side_b,
-        });
+        if let Some(ref keyboard) = self.keyboard {
+            let params = LedParams {
+                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
+                brightness: self.info.side_brightness,
+                speed: 4 - self.info.side_speed.min(4),
+                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
+                direction: if new_dazzle { 7 } else { 8 },
+            };
+            let _ = keyboard.set_side_led_params(&params).await;
+        }
         self.info.side_dazzle = new_dazzle;
         self.status_msg = format!("Side dazzle: {}", if new_dazzle { "ON" } else { "OFF" });
     }
 
-    fn set_all_key_modes(&mut self, mode: u8) {
+    async fn set_all_key_modes(&mut self, mode: u8) {
         let key_count = self
             .triggers
             .as_ref()
@@ -925,18 +962,17 @@ impl App {
         if key_count == 0 {
             return;
         }
+        // TODO: Implement bulk key mode setting in keyboard interface
+        // For now, update locally
         let modes: Vec<u8> = vec![mode; key_count];
-        self.send_command(HidCommand::SetAllKeyModes {
-            modes: modes.clone(),
-        });
         if let Some(ref mut triggers) = self.triggers {
             triggers.key_modes = modes;
         }
-        self.status_msg = format!("Setting all keys to {}...", magnetism::mode_name(mode));
+        self.status_msg = format!("Set all keys to {}", magnetism::mode_name(mode));
     }
 
     /// Set mode for a single key (used in layout view)
-    fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
+    async fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
         let valid = self
             .triggers
             .as_ref()
@@ -946,13 +982,13 @@ impl App {
             self.status_msg = format!("Invalid key index: {key_index}");
             return;
         }
-        self.send_command(HidCommand::SetSingleKeyMode { key_index, mode });
+        // TODO: Implement single key mode setting in keyboard interface
         if let Some(ref mut triggers) = self.triggers {
             triggers.key_modes[key_index] = mode;
         }
         let key_name = get_key_label(key_index);
         self.status_msg = format!(
-            "Setting key {} ({}) to {}...",
+            "Key {} ({}) set to {}",
             key_index,
             key_name,
             magnetism::mode_name(mode)
@@ -960,58 +996,84 @@ impl App {
     }
 
     /// Set key mode - dispatches to single or all based on view mode
-    fn set_key_mode(&mut self, mode: u8) {
+    async fn set_key_mode(&mut self, mode: u8) {
         if self.trigger_view_mode == TriggerViewMode::Layout {
-            self.set_single_key_mode(self.trigger_selected_key, mode);
+            self.set_single_key_mode(self.trigger_selected_key, mode)
+                .await;
         } else {
-            self.set_all_key_modes(mode);
+            self.set_all_key_modes(mode).await;
         }
     }
 
-    fn apply_per_key_color(&mut self) {
+    async fn apply_per_key_color(&mut self) {
         let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
-        self.send_command(HidCommand::SetAllKeysColor { r, g, b });
-        self.status_msg = format!("Applying #{r:02X}{g:02X}{b:02X} to all keys...");
-    }
-
-    /// Start async loading of keyboard options (tab 4)
-    fn start_loading_options(&mut self) {
-        self.loading.options = LoadState::Loading;
-        self.send_command(HidCommand::QueryOptions);
-    }
-
-    fn save_options(&mut self) {
-        if let Some(ref opts) = self.options {
-            self.send_command(HidCommand::SetKbOptions {
-                os_mode: opts.os_mode,
-                fn_layer: opts.fn_layer,
-                anti_mistouch: opts.anti_mistouch,
-                rt_stability: opts.rt_stability,
-                wasd_swap: opts.wasd_swap,
-            });
-            self.status_msg = "Saving options...".to_string();
+        if let Some(ref keyboard) = self.keyboard {
+            if keyboard
+                .set_all_keys_color(RgbColor::new(r, g, b), 0)
+                .await
+                .is_ok()
+            {
+                self.info.led_mode = 25; // Per-Key Color mode
+                self.status_msg = format!("Per-key color set: #{r:02X}{g:02X}{b:02X}");
+            } else {
+                self.status_msg = "Failed to set per-key colors".to_string();
+            }
         }
     }
 
-    fn set_fn_layer(&mut self, layer: u8) {
+    /// Load keyboard options (tab 4)
+    /// Spawns a background task to avoid blocking the UI
+    fn load_options(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
+
+        self.loading.options = LoadState::Loading;
+        let tx = self.result_tx.clone();
+        tokio::spawn(async move {
+            let result = keyboard.get_kb_options().await.map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::Options(result));
+        });
+    }
+
+    async fn save_options(&mut self) {
+        if let Some(ref opts) = self.options {
+            if let Some(ref keyboard) = self.keyboard {
+                let kb_opts = KbOptions {
+                    os_mode: opts.os_mode,
+                    fn_layer: opts.fn_layer,
+                    anti_mistouch: opts.anti_mistouch,
+                    rt_stability: opts.rt_stability,
+                    wasd_swap: opts.wasd_swap,
+                };
+                if keyboard.set_kb_options(&kb_opts).await.is_ok() {
+                    self.status_msg = "Options saved".to_string();
+                } else {
+                    self.status_msg = "Failed to save options".to_string();
+                }
+            }
+        }
+    }
+
+    async fn set_fn_layer(&mut self, layer: u8) {
         let layer = layer.min(3);
         if let Some(ref mut opts) = self.options {
             opts.fn_layer = layer;
         }
-        self.save_options();
+        self.save_options().await;
         self.status_msg = format!("Fn layer: {layer}");
     }
 
-    fn toggle_wasd_swap(&mut self) {
+    async fn toggle_wasd_swap(&mut self) {
         let new_val = self.options.as_ref().map(|o| !o.wasd_swap).unwrap_or(false);
         if let Some(ref mut opts) = self.options {
             opts.wasd_swap = new_val;
         }
-        self.save_options();
+        self.save_options().await;
         self.status_msg = format!("WASD swap: {}", if new_val { "ON" } else { "OFF" });
     }
 
-    fn toggle_anti_mistouch(&mut self) {
+    async fn toggle_anti_mistouch(&mut self) {
         let new_val = self
             .options
             .as_ref()
@@ -1020,276 +1082,166 @@ impl App {
         if let Some(ref mut opts) = self.options {
             opts.anti_mistouch = new_val;
         }
-        self.save_options();
+        self.save_options().await;
         self.status_msg = format!("Anti-mistouch: {}", if new_val { "ON" } else { "OFF" });
     }
 
-    fn set_rt_stability(&mut self, value: u8) {
+    async fn set_rt_stability(&mut self, value: u8) {
         let value = value.min(125);
         if let Some(ref mut opts) = self.options {
             opts.rt_stability = value;
         }
-        self.save_options();
+        self.save_options().await;
         self.status_msg = format!("RT stability: {value}ms");
     }
 
-    fn set_sleep_time(&mut self, seconds: u16) {
+    async fn set_sleep_time(&mut self, seconds: u16) {
         if let Some(ref mut opts) = self.options {
             opts.sleep_time = seconds;
         }
         self.info.sleep_seconds = seconds;
-        self.send_command(HidCommand::SetSleepTime(seconds));
-        if seconds == 0 {
-            self.status_msg = "Sleep: Never".to_string();
-        } else {
-            self.status_msg = format!("Sleep: {seconds}s");
+        if let Some(ref keyboard) = self.keyboard {
+            if keyboard.set_sleep_time(seconds).await.is_ok() {
+                if seconds == 0 {
+                    self.status_msg = "Sleep: Never".to_string();
+                } else {
+                    self.status_msg = format!("Sleep: {seconds}s");
+                }
+            } else {
+                self.status_msg = "Failed to set sleep time".to_string();
+            }
         }
     }
 
-    /// Start async loading of macros (tab 5)
-    fn start_loading_macros(&mut self) {
+    /// Load macros (tab 5) - placeholder, macros not yet implemented
+    fn load_macros(&mut self) {
         self.loading.macros = LoadState::Loading;
-        self.send_command(HidCommand::QueryMacros);
+        // Macros not yet implemented in keyboard interface
+        self.macros = vec![MacroSlot::default(); 8];
+        self.loading.macros = LoadState::Loaded;
+        self.status_msg = format!("Loaded {} macro slots", self.macros.len());
     }
 
-    /// Process results from HID worker thread
-    fn process_load_results(&mut self) {
-        // Collect all pending results first to avoid borrow conflicts
-        let results: Vec<HidResult> = if let Some(ref rx) = self.result_rx {
-            let mut v = Vec::new();
-            while let Ok(result) = rx.try_recv() {
-                v.push(result);
+    /// Process async result from background tasks
+    fn process_async_result(&mut self, result: AsyncResult) {
+        match result {
+            AsyncResult::DeviceIdAndVersion(Ok((device_id, ver))) => {
+                self.info.device_id = device_id;
+                self.info.version = ver.raw;
+                self.precision_factor = ver.precision_factor() as f32;
+                self.loading.usb_version = LoadState::Loaded;
             }
-            v
-        } else {
-            return;
-        };
-
-        for result in results {
-            match result {
-                HidResult::UsbVersion { device_id, version } => {
-                    self.info.device_id = device_id;
-                    self.info.version = version;
-                    self.precision_factor =
-                        monsgeek_keyboard::FirmwareVersion::new(version).precision_factor() as f32;
-                    self.loading.usb_version = LoadState::Loaded;
-                }
-                HidResult::Profile(profile) => {
-                    self.info.profile = profile;
-                    self.loading.profile = LoadState::Loaded;
-                }
-                HidResult::Debounce(debounce) => {
-                    self.info.debounce = debounce;
-                    self.loading.debounce = LoadState::Loaded;
-                }
-                HidResult::PollingRate(rate) => {
-                    self.info.polling_rate = rate;
-                    self.loading.polling_rate = LoadState::Loaded;
-                }
-                HidResult::LedParams {
-                    mode,
-                    brightness,
-                    speed,
-                    dazzle,
-                    r,
-                    g,
-                    b,
-                } => {
-                    self.info.led_mode = mode;
-                    self.info.led_brightness = brightness;
-                    self.info.led_speed = speed;
-                    self.info.led_dazzle = dazzle;
-                    self.info.led_r = r;
-                    self.info.led_g = g;
-                    self.info.led_b = b;
-                    self.loading.led_params = LoadState::Loaded;
-                }
-                HidResult::SideLedParams {
-                    mode,
-                    brightness,
-                    speed,
-                    dazzle,
-                    r,
-                    g,
-                    b,
-                } => {
-                    self.info.side_mode = mode;
-                    self.info.side_brightness = brightness;
-                    self.info.side_speed = speed;
-                    self.info.side_dazzle = dazzle;
-                    self.info.side_r = r;
-                    self.info.side_g = g;
-                    self.info.side_b = b;
-                    self.loading.side_led_params = LoadState::Loaded;
-                }
-                HidResult::KbOptions {
-                    fn_layer,
-                    wasd_swap,
-                } => {
-                    self.info.fn_layer = fn_layer;
-                    self.info.wasd_swap = wasd_swap;
-                    self.loading.kb_options_info = LoadState::Loaded;
-                }
-                HidResult::FeatureList { precision } => {
-                    self.info.precision = precision;
-                    self.loading.feature_list = LoadState::Loaded;
-                }
-                HidResult::SleepTime(seconds) => {
-                    self.info.sleep_seconds = seconds;
-                    self.loading.sleep_time = LoadState::Loaded;
-                }
-                HidResult::Triggers(triggers) => {
-                    if triggers.is_some() {
-                        self.triggers = triggers;
-                        self.loading.triggers = LoadState::Loaded;
-                        self.status_msg = "Trigger settings loaded".to_string();
-                    } else {
-                        self.loading.triggers = LoadState::Error;
-                        self.status_msg = "Failed to load trigger settings".to_string();
-                    }
-                }
-                HidResult::Options {
-                    os_mode,
-                    fn_layer,
-                    anti_mistouch,
-                    rt_stability,
-                    wasd_swap,
-                } => {
-                    self.options = Some(KeyboardOptions {
-                        os_mode,
-                        fn_layer,
-                        anti_mistouch,
-                        rt_stability,
-                        wasd_swap,
-                        sleep_time: self.info.sleep_seconds,
-                    });
-                    self.loading.options = LoadState::Loaded;
-                    self.status_msg = "Keyboard options loaded".to_string();
-                }
-                HidResult::Macros(macros) => {
-                    self.macros = macros;
-                    self.loading.macros = LoadState::Loaded;
-                    self.status_msg = format!("Loaded {} macro slots", self.macros.len());
-                }
-                HidResult::Battery(battery) => {
-                    self.battery = battery;
-                    self.last_battery_check = Instant::now();
-                }
-                HidResult::ProfileSet(ok) => {
-                    if ok {
-                        self.start_loading_info();
-                    } else {
-                        self.status_msg = "Failed to set profile".to_string();
-                    }
-                }
-                HidResult::DebounceSet(ok) => {
-                    if !ok {
-                        self.status_msg = "Failed to set debounce".to_string();
-                    }
-                }
-                HidResult::PollingRateSet(ok) => {
-                    if !ok {
-                        self.status_msg = "Failed to set polling rate".to_string();
-                    }
-                }
-                HidResult::LedParamsSet(ok) => {
-                    if !ok {
-                        self.status_msg = "Failed to set LED parameters".to_string();
-                    }
-                }
-                HidResult::SideLedParamsSet(ok) => {
-                    if !ok {
-                        self.status_msg = "Failed to set side LED parameters".to_string();
-                    }
-                }
-                HidResult::TriggerSet(ok) => {
-                    if !ok {
-                        self.status_msg = "Failed to set trigger".to_string();
-                    }
-                }
-                HidResult::MacroSet(ok) => {
-                    if ok {
-                        self.start_loading_macros();
-                    } else {
-                        self.status_msg = "Failed to set macro".to_string();
-                    }
-                }
-                HidResult::MacroCleared(ok) => {
-                    if ok {
-                        self.start_loading_macros();
-                    } else {
-                        self.status_msg = "Failed to clear macro".to_string();
-                    }
-                }
-                HidResult::MagnetismReportSet(_ok) => {
-                    // Magnetism report toggle already handled optimistically
-                }
-                HidResult::KbOptionsSet(ok) => {
-                    if ok {
-                        self.status_msg = "Options saved".to_string();
-                    } else {
-                        self.status_msg = "Failed to save options".to_string();
-                    }
-                }
-                HidResult::AllKeyModesSet(ok) => {
-                    if ok {
-                        self.status_msg = "All key modes set".to_string();
-                    } else {
-                        self.status_msg = "Failed to set key modes".to_string();
-                    }
-                }
-                HidResult::SingleKeyModeSet {
-                    ok,
-                    key_index,
-                    mode,
-                } => {
-                    if ok {
-                        let key_name = get_key_label(key_index);
-                        self.status_msg = format!(
-                            "Key {} ({}) set to {}",
-                            key_index,
-                            key_name,
-                            magnetism::mode_name(mode)
-                        );
-                    } else {
-                        self.status_msg = format!("Failed to set key {key_index} mode");
-                    }
-                }
-                HidResult::AllKeysColorSet(ok) => {
-                    if ok {
-                        self.info.led_mode = 25; // Per-Key Color mode
-                        let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
-                        self.status_msg = format!("Per-key color set: #{r:02X}{g:02X}{b:02X}");
-                    } else {
-                        self.status_msg = "Failed to set per-key colors".to_string();
-                    }
-                }
-                HidResult::SleepTimeSet(ok) => {
-                    if ok {
-                        self.status_msg = "Sleep time saved".to_string();
-                    } else {
-                        self.status_msg = "Failed to set sleep time".to_string();
-                    }
-                }
-                HidResult::QueryError { field } => {
-                    // Set error state for the corresponding field
-                    match field {
-                        "usb_version" => self.loading.usb_version = LoadState::Error,
-                        "profile" => self.loading.profile = LoadState::Error,
-                        "debounce" => self.loading.debounce = LoadState::Error,
-                        "polling_rate" => self.loading.polling_rate = LoadState::Error,
-                        "led_params" => self.loading.led_params = LoadState::Error,
-                        "side_led_params" => self.loading.side_led_params = LoadState::Error,
-                        "kb_options" => self.loading.kb_options_info = LoadState::Error,
-                        "feature_list" => self.loading.feature_list = LoadState::Error,
-                        "sleep_time" => self.loading.sleep_time = LoadState::Error,
-                        "triggers" => self.loading.triggers = LoadState::Error,
-                        "options" => self.loading.options = LoadState::Error,
-                        "macros" => self.loading.macros = LoadState::Error,
-                        _ => {}
-                    }
-                    self.status_msg = format!("Failed to load {field}");
-                }
+            AsyncResult::DeviceIdAndVersion(Err(_)) => {
+                self.loading.usb_version = LoadState::Error;
+            }
+            AsyncResult::Profile(Ok(p)) => {
+                self.info.profile = p;
+                self.loading.profile = LoadState::Loaded;
+            }
+            AsyncResult::Profile(Err(_)) => {
+                self.loading.profile = LoadState::Error;
+            }
+            AsyncResult::Debounce(Ok(d)) => {
+                self.info.debounce = d;
+                self.loading.debounce = LoadState::Loaded;
+            }
+            AsyncResult::Debounce(Err(_)) => {
+                self.loading.debounce = LoadState::Error;
+            }
+            AsyncResult::PollingRate(Ok(rate)) => {
+                self.info.polling_rate = rate;
+                self.loading.polling_rate = LoadState::Loaded;
+            }
+            AsyncResult::PollingRate(Err(_)) => {
+                self.loading.polling_rate = LoadState::Error;
+            }
+            AsyncResult::LedParams(Ok(params)) => {
+                self.info.led_mode = params.mode as u8;
+                self.info.led_brightness = params.brightness;
+                self.info.led_speed = params.speed;
+                self.info.led_dazzle = params.direction == 7; // DAZZLE_ON=7
+                self.info.led_r = params.color.r;
+                self.info.led_g = params.color.g;
+                self.info.led_b = params.color.b;
+                self.loading.led_params = LoadState::Loaded;
+            }
+            AsyncResult::LedParams(Err(_)) => {
+                self.loading.led_params = LoadState::Error;
+            }
+            AsyncResult::SideLedParams(Ok(params)) => {
+                self.info.side_mode = params.mode as u8;
+                self.info.side_brightness = params.brightness;
+                self.info.side_speed = params.speed;
+                self.info.side_dazzle = params.direction == 7;
+                self.info.side_r = params.color.r;
+                self.info.side_g = params.color.g;
+                self.info.side_b = params.color.b;
+                self.loading.side_led_params = LoadState::Loaded;
+            }
+            AsyncResult::SideLedParams(Err(_)) => {
+                self.loading.side_led_params = LoadState::Error;
+            }
+            AsyncResult::KbOptions(Ok(opts)) => {
+                self.info.fn_layer = opts.fn_layer;
+                self.info.wasd_swap = opts.wasd_swap;
+                self.loading.kb_options_info = LoadState::Loaded;
+            }
+            AsyncResult::KbOptions(Err(_)) => {
+                self.loading.kb_options_info = LoadState::Error;
+            }
+            AsyncResult::FeatureList(Ok(features)) => {
+                self.info.precision = features.precision;
+                self.loading.feature_list = LoadState::Loaded;
+            }
+            AsyncResult::FeatureList(Err(_)) => {
+                self.loading.feature_list = LoadState::Error;
+            }
+            AsyncResult::SleepTime(Ok(s)) => {
+                self.info.sleep_seconds = s;
+                self.loading.sleep_time = LoadState::Loaded;
+            }
+            AsyncResult::SleepTime(Err(_)) => {
+                self.loading.sleep_time = LoadState::Error;
+            }
+            AsyncResult::Triggers(Ok(triggers)) => {
+                self.triggers = Some(triggers);
+                self.loading.triggers = LoadState::Loaded;
+                self.status_msg = "Trigger settings loaded".to_string();
+            }
+            AsyncResult::Triggers(Err(_)) => {
+                self.loading.triggers = LoadState::Error;
+                self.status_msg = "Failed to load trigger settings".to_string();
+            }
+            AsyncResult::Options(Ok(opts)) => {
+                self.options = Some(KeyboardOptions {
+                    os_mode: opts.os_mode,
+                    fn_layer: opts.fn_layer,
+                    anti_mistouch: opts.anti_mistouch,
+                    rt_stability: opts.rt_stability,
+                    wasd_swap: opts.wasd_swap,
+                    sleep_time: self.info.sleep_seconds,
+                });
+                self.loading.options = LoadState::Loaded;
+                self.status_msg = "Keyboard options loaded".to_string();
+            }
+            AsyncResult::Options(Err(_)) => {
+                self.loading.options = LoadState::Error;
+                self.status_msg = "Failed to load options".to_string();
+            }
+            AsyncResult::Macros(Ok(macros)) => {
+                self.macros = macros;
+                self.loading.macros = LoadState::Loaded;
+                self.status_msg = format!("Loaded {} macro slots", self.macros.len());
+            }
+            AsyncResult::Macros(Err(_)) => {
+                self.loading.macros = LoadState::Error;
+                self.status_msg = "Failed to load macros".to_string();
+            }
+            AsyncResult::SetComplete(field, Ok(())) => {
+                self.status_msg = format!("{field} updated");
+            }
+            AsyncResult::SetComplete(field, Err(e)) => {
+                self.status_msg = format!("Failed to set {field}: {e}");
             }
         }
     }
@@ -1300,19 +1252,14 @@ impl App {
         BRAILLE_SIX.symbols[idx]
     }
 
-    fn set_macro_text(&mut self, index: usize, text: &str, delay_ms: u8, repeat: u16) {
-        self.send_command(HidCommand::SetTextMacro {
-            slot: index as u8,
-            text: text.to_string(),
-            delay_ms,
-            repeat,
-        });
-        self.status_msg = format!("Setting macro {index}...");
+    fn set_macro_text(&mut self, _index: usize, _text: &str, _delay_ms: u8, _repeat: u16) {
+        // Macros not yet implemented in keyboard interface
+        self.status_msg = "Macro setting not yet implemented".to_string();
     }
 
-    fn clear_macro(&mut self, index: usize) {
-        self.send_command(HidCommand::ClearMacro(index as u8));
-        self.status_msg = format!("Clearing macro {index}...");
+    fn clear_macro(&mut self, _index: usize) {
+        // Macros not yet implemented in keyboard interface
+        self.status_msg = "Macro clearing not yet implemented".to_string();
     }
 
     fn read_input_reports(&mut self) {
@@ -1322,6 +1269,10 @@ impl App {
 
         let precision =
             monsgeek_keyboard::FirmwareVersion::new(self.info.version).precision_factor() as f32;
+        let now = Instant::now();
+        // Long timeout as fallback - primary release detection is via depth < 0.05 threshold
+        // This only catches truly stale keys (e.g., missed release reports)
+        let stale_timeout = Duration::from_secs(2);
 
         // Read from INPUT interface (where depth reports come from)
         if let Some(ref input_dev) = self.input_device {
@@ -1335,22 +1286,68 @@ impl App {
                     let key_index = report.key_index as usize;
                     if key_index < self.key_depths.len() {
                         self.key_depths[key_index] = depth_mm;
+                        // Update timestamp for this key
+                        if key_index < self.depth_last_update.len() {
+                            self.depth_last_update[key_index] = now;
+                        }
                         // Track max observed depth for bar chart scaling
                         if depth_mm > self.max_observed_depth {
                             self.max_observed_depth = depth_mm;
                         }
+                        // Mark key as active when pressed, remove when fully released
                         if depth_mm > 0.1 {
                             self.active_keys.insert(key_index);
+                        } else if depth_mm < 0.05 {
+                            // Only remove when depth is very close to rest position
+                            // This handles the "key released" report from keyboard
+                            self.active_keys.remove(&key_index);
+                            // Clear time series history for this key
+                            if key_index < self.depth_history.len() {
+                                self.depth_history[key_index].clear();
+                            }
                         }
+                        // Note: depths between 0.05-0.1 keep current state (hysteresis)
                     }
                 }
             }
         }
 
-        // Push current depths to history for all active keys (time-based sampling)
-        self.depth_sample_idx += 1;
-        for &key_idx in &self.active_keys.clone() {
+        // Reset keys that haven't been updated recently (considered released)
+        let stale_keys: Vec<usize> = self
+            .active_keys
+            .iter()
+            .filter(|&&k| {
+                k < self.depth_last_update.len()
+                    && now.duration_since(self.depth_last_update[k]) > stale_timeout
+            })
+            .copied()
+            .collect();
+        for key_idx in stale_keys {
+            if key_idx < self.key_depths.len() {
+                self.key_depths[key_idx] = 0.0;
+            }
             if key_idx < self.depth_history.len() {
+                self.depth_history[key_idx].clear();
+            }
+            self.active_keys.remove(&key_idx);
+        }
+
+        // Push current depths to history for all selected keys (time-series lockstep)
+        // All selected keys advance together so X-axis (time) is consistent
+        self.depth_sample_idx += 1;
+        for &key_idx in &self.selected_keys.clone() {
+            if key_idx < self.depth_history.len() {
+                let history = &mut self.depth_history[key_idx];
+                if history.len() >= DEPTH_HISTORY_LEN {
+                    history.pop_front();
+                }
+                // Push current depth (0.0 if not active)
+                history.push_back(self.key_depths[key_idx]);
+            }
+        }
+        // Also update history for active but not selected keys (for when they get selected)
+        for &key_idx in &self.active_keys.clone() {
+            if !self.selected_keys.contains(&key_idx) && key_idx < self.depth_history.len() {
                 let history = &mut self.depth_history[key_idx];
                 if history.len() >= DEPTH_HISTORY_LEN {
                     history.pop_front();
@@ -1505,340 +1502,44 @@ fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// HID worker thread using unified keyboard interface
-fn hid_worker_keyboard(
-    keyboard: SyncKeyboard,
-    cmd_rx: Receiver<HidCommand>,
-    result_tx: Sender<HidResult>,
-) {
-    let is_wireless = keyboard.is_wireless();
-
-    while let Ok(cmd) = cmd_rx.recv() {
-        match cmd {
-            HidCommand::QueryUsbVersion => {
-                match (keyboard.get_device_id(), keyboard.get_version()) {
-                    (Ok(device_id), Ok(ver)) => {
-                        let _ = result_tx.send(HidResult::UsbVersion {
-                            device_id,
-                            version: ver.raw,
-                        });
-                    }
-                    _ => {
-                        let _ = result_tx.send(HidResult::QueryError {
-                            field: "usb_version",
-                        });
-                    }
-                }
-            }
-            HidCommand::QueryProfile => match keyboard.get_profile() {
-                Ok(p) => {
-                    let _ = result_tx.send(HidResult::Profile(p));
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError { field: "profile" });
-                }
-            },
-            HidCommand::QueryDebounce => match keyboard.get_debounce() {
-                Ok(d) => {
-                    let _ = result_tx.send(HidResult::Debounce(d));
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError { field: "debounce" });
-                }
-            },
-            HidCommand::QueryPollingRate => match keyboard.get_polling_rate() {
-                Ok(rate) => {
-                    let hz = rate as u16;
-                    let _ = result_tx.send(HidResult::PollingRate(hz));
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "polling_rate",
-                    });
-                }
-            },
-            HidCommand::QueryLedParams => match keyboard.get_led_params() {
-                Ok(params) => {
-                    // Option byte: DAZZLE=8, NORMAL=7
-                    let _ = result_tx.send(HidResult::LedParams {
-                        mode: params.mode as u8,
-                        brightness: params.brightness,
-                        speed: params.speed,
-                        dazzle: params.direction == 7, // DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
-                        r: params.color.r,
-                        g: params.color.g,
-                        b: params.color.b,
-                    });
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "led_params",
-                    });
-                }
-            },
-            HidCommand::QuerySideLedParams => match keyboard.get_side_led_params() {
-                Ok(params) => {
-                    // Option byte: DAZZLE=8, NORMAL=7
-                    let _ = result_tx.send(HidResult::SideLedParams {
-                        mode: params.mode as u8,
-                        brightness: params.brightness,
-                        speed: params.speed,
-                        dazzle: params.direction == 7, // DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
-                        r: params.color.r,
-                        g: params.color.g,
-                        b: params.color.b,
-                    });
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "side_led_params",
-                    });
-                }
-            },
-            HidCommand::QueryKbOptions => match keyboard.get_kb_options() {
-                Ok(opts) => {
-                    let _ = result_tx.send(HidResult::KbOptions {
-                        fn_layer: opts.fn_layer,
-                        wasd_swap: opts.wasd_swap,
-                    });
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "kb_options",
-                    });
-                }
-            },
-            HidCommand::QueryFeatureList => match keyboard.get_feature_list() {
-                Ok(features) => {
-                    let _ = result_tx.send(HidResult::FeatureList {
-                        precision: features.precision,
-                    });
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "feature_list",
-                    });
-                }
-            },
-            HidCommand::QuerySleepTime => match keyboard.get_sleep_time() {
-                Ok(s) => {
-                    let _ = result_tx.send(HidResult::SleepTime(s));
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError {
-                        field: "sleep_time",
-                    });
-                }
-            },
-            HidCommand::QueryTriggers => {
-                match keyboard.get_all_triggers() {
-                    Ok(triggers) => {
-                        // Convert to TUI's TriggerSettings format
-                        let tui_triggers = TriggerSettings {
-                            press_travel: triggers.press_travel,
-                            lift_travel: triggers.lift_travel,
-                            rt_press: triggers.rt_press,
-                            rt_lift: triggers.rt_lift,
-                            key_modes: triggers.key_modes,
-                            bottom_deadzone: triggers.bottom_deadzone,
-                            top_deadzone: triggers.top_deadzone,
-                        };
-                        let _ = result_tx.send(HidResult::Triggers(Some(tui_triggers)));
-                    }
-                    Err(_) => {
-                        let _ = result_tx.send(HidResult::Triggers(None));
-                    }
-                }
-            }
-            HidCommand::QueryOptions => match keyboard.get_kb_options() {
-                Ok(opts) => {
-                    let _ = result_tx.send(HidResult::Options {
-                        os_mode: opts.os_mode,
-                        fn_layer: opts.fn_layer,
-                        anti_mistouch: opts.anti_mistouch,
-                        rt_stability: opts.rt_stability,
-                        wasd_swap: opts.wasd_swap,
-                    });
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::QueryError { field: "options" });
-                }
-            },
-            HidCommand::QueryMacros => {
-                // Macros not yet implemented in keyboard interface
-                let _ = result_tx.send(HidResult::Macros(vec![MacroSlot::default(); 8]));
-            }
-            HidCommand::QueryBattery => match keyboard.get_battery() {
-                Ok(bat) => {
-                    let _ = result_tx.send(HidResult::Battery(Some(BatteryInfo {
-                        level: bat.level,
-                        online: bat.online,
-                        charging: bat.charging,
-                    })));
-                }
-                Err(_) => {
-                    let _ = result_tx.send(HidResult::Battery(None));
-                }
-            },
-            HidCommand::SetProfile(profile) => {
-                let ok = keyboard.set_profile(profile).is_ok();
-                let _ = result_tx.send(HidResult::ProfileSet(ok));
-            }
-            HidCommand::SetDebounce(ms) => {
-                let ok = keyboard.set_debounce(ms).is_ok();
-                let _ = result_tx.send(HidResult::DebounceSet(ok));
-            }
-            HidCommand::SetPollingRate(hz) => {
-                let ok = PollingRate::from_hz(hz)
-                    .map(|r| keyboard.set_polling_rate(r).is_ok())
-                    .unwrap_or(false);
-                let _ = result_tx.send(HidResult::PollingRateSet(ok));
-            }
-            HidCommand::SetLedParams {
-                mode,
-                brightness,
-                speed,
-                dazzle,
-                r,
-                g,
-                b,
-            } => {
-                // Use set_led() which has correct byte order: [mode, speed, brightness, option, r, g, b]
-                // set_led_params() had wrong order: [mode, brightness, speed, ...] causing controls to be swapped
-                let ok = keyboard
-                    .set_led(mode, brightness, speed, r, g, b, dazzle)
-                    .is_ok();
-                let _ = result_tx.send(HidResult::LedParamsSet(ok));
-            }
-            HidCommand::SetSideLedParams {
-                mode,
-                brightness,
-                speed,
-                dazzle,
-                r,
-                g,
-                b,
-            } => {
-                // Option byte: DAZZLE_ON=7 (rainbow), DAZZLE_OFF=8 (unicolor)
-                let params = LedParams {
-                    mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
-                    brightness,
-                    speed,
-                    color: RgbColor::new(r, g, b),
-                    direction: if dazzle { 7 } else { 8 }, // DAZZLE_ON=7, DAZZLE_OFF=8
-                };
-                let ok = keyboard.set_side_led_params(&params).is_ok();
-                let _ = result_tx.send(HidResult::SideLedParamsSet(ok));
-            }
-            HidCommand::SetTrigger {
-                key_idx,
-                act,
-                deact,
-                mode,
-            } => {
-                let settings = monsgeek_keyboard::KeyTriggerSettings {
-                    key_index: key_idx,
-                    actuation: act,
-                    deactuation: deact,
-                    mode: monsgeek_keyboard::KeyMode::from_u8(mode),
-                };
-                let ok = keyboard.set_key_trigger(&settings).is_ok();
-                let _ = result_tx.send(HidResult::TriggerSet(ok));
-            }
-            HidCommand::SetTextMacro { .. } => {
-                // Macros not yet implemented
-                let _ = result_tx.send(HidResult::MacroSet(false));
-            }
-            HidCommand::ClearMacro(_) => {
-                let _ = result_tx.send(HidResult::MacroCleared(false));
-            }
-            HidCommand::SetAllKeyModes { .. } => {
-                // Bulk key mode setting not yet implemented
-                let _ = result_tx.send(HidResult::AllKeyModesSet(false));
-            }
-            HidCommand::SetSingleKeyMode { key_index, mode } => {
-                // Single key mode not yet implemented
-                let _ = result_tx.send(HidResult::SingleKeyModeSet {
-                    ok: false,
-                    key_index,
-                    mode,
-                });
-            }
-            HidCommand::SetAllKeysColor { r, g, b } => {
-                let ok = keyboard
-                    .set_all_keys_color(RgbColor::new(r, g, b), 0)
-                    .is_ok();
-                let _ = result_tx.send(HidResult::AllKeysColorSet(ok));
-            }
-            HidCommand::SetMagnetismReport(enable) => {
-                let ok = if enable {
-                    keyboard.start_magnetism_report().is_ok()
-                } else {
-                    keyboard.stop_magnetism_report().is_ok()
-                };
-                let _ = result_tx.send(HidResult::MagnetismReportSet(ok));
-            }
-            HidCommand::SetKbOptions {
-                os_mode,
-                fn_layer,
-                anti_mistouch,
-                rt_stability,
-                wasd_swap,
-            } => {
-                let opts = KbOptions {
-                    os_mode,
-                    fn_layer,
-                    anti_mistouch,
-                    rt_stability,
-                    wasd_swap,
-                };
-                let ok = keyboard.set_kb_options(&opts).is_ok();
-                let _ = result_tx.send(HidResult::KbOptionsSet(ok));
-            }
-            HidCommand::SetSleepTime(seconds) => {
-                let ok = keyboard.set_sleep_time(seconds).is_ok();
-                let _ = result_tx.send(HidResult::SleepTimeSet(ok));
-            }
-            HidCommand::Shutdown => {
-                let _ = keyboard.close();
-                break;
-            }
-        }
-
-        // Delay between commands for wireless
-        if is_wireless {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-}
-
 /// Run the TUI - called via 'iot_driver tui' command
-pub fn run() -> io::Result<()> {
+pub async fn run() -> io::Result<()> {
+    use crossterm::event::KeyModifiers;
+
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    let mut app = App::new();
+    let (mut app, mut result_rx) = App::new();
 
     // Try to connect
-    if let Err(e) = app.connect() {
+    if let Err(e) = app.connect().await {
         app.status_msg = e;
     } else {
-        // Start async loading of device info (TUI starts on tab 0)
-        app.start_loading_info();
+        // Load device info (TUI starts on tab 0) - spawns background tasks
+        app.load_device_info();
     }
 
-    let tick_rate = Duration::from_millis(100);
-    let mut last_tick = Instant::now();
+    // Set up async event stream
+    let mut event_stream = EventStream::new();
+    let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
 
     loop {
         terminal.draw(|f| ui(f, &app))?;
 
-        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+        tokio::select! {
+            // Handle async results from background tasks
+            Some(result) = result_rx.recv() => {
+                app.process_async_result(result);
+            }
+            // Handle terminal events
+            maybe_event = event_stream.next() => {
+                if let Some(Ok(Event::Key(key))) = maybe_event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
                     // Handle macro editing mode first
                     if app.macro_editing {
                         match key.code {
@@ -1883,7 +1584,7 @@ pub fn run() -> io::Result<()> {
                     if app.hex_editing {
                         match key.code {
                             KeyCode::Esc => app.cancel_hex_input(),
-                            KeyCode::Enter => app.apply_hex_input(),
+                            KeyCode::Enter => app.apply_hex_input().await,
                             KeyCode::Backspace => {
                                 app.hex_input.pop();
                             }
@@ -1909,11 +1610,11 @@ pub fn run() -> io::Result<()> {
                             app.trigger_scroll = 0;
                             // Auto-load when entering tabs
                             if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
-                                app.start_loading_triggers();
+                                app.load_triggers();
                             } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
-                                app.start_loading_options();
+                                app.load_options();
                             } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
-                                app.start_loading_macros();
+                                app.load_macros();
                             }
                         }
                         KeyCode::BackTab => {
@@ -1922,38 +1623,31 @@ pub fn run() -> io::Result<()> {
                             app.trigger_scroll = 0;
                             // Auto-load when entering tabs
                             if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
-                                app.start_loading_triggers();
+                                app.load_triggers();
                             } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
-                                app.start_loading_options();
+                                app.load_options();
                             } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
-                                app.start_loading_macros();
+                                app.load_macros();
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
-                                // Move cursor up one row in depth bar chart
-                                // Row sizes: 15, 15, 13, 13, 10
                                 let row_starts = [0, 15, 30, 43, 56];
-                                if let Some(row) =
-                                    row_starts.iter().rposition(|&s| s <= app.depth_cursor)
-                                {
+                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
                                     if row > 0 {
                                         let col = app.depth_cursor - row_starts[row];
                                         let prev_row_start = row_starts[row - 1];
                                         let prev_row_size = row_starts[row] - prev_row_start;
-                                        app.depth_cursor =
-                                            prev_row_start + col.min(prev_row_size - 1);
+                                        app.depth_cursor = prev_row_start + col.min(prev_row_size - 1);
                                     }
                                 }
                             } else if app.tab == 3 {
-                                // Triggers tab navigation
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_up();
                                 } else if app.trigger_scroll > 0 {
                                     app.trigger_scroll -= 1;
                                 }
                             } else if app.tab == 5 {
-                                // Select macro
                                 if app.macro_selected > 0 {
                                     app.macro_selected -= 1;
                                 }
@@ -1963,29 +1657,20 @@ pub fn run() -> io::Result<()> {
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
-                                // Move cursor down one row in depth bar chart
-                                let row_starts = [0, 15, 30, 43, 56, 66]; // last is end sentinel
-                                if let Some(row) =
-                                    row_starts.iter().rposition(|&s| s <= app.depth_cursor)
-                                {
+                                let row_starts = [0, 15, 30, 43, 56, 66];
+                                if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
                                     if row < 4 {
-                                        // 5 rows total
                                         let col = app.depth_cursor - row_starts[row];
                                         let next_row_start = row_starts[row + 1];
                                         let next_row_size = row_starts[row + 2] - next_row_start;
-                                        app.depth_cursor =
-                                            next_row_start + col.min(next_row_size - 1);
+                                        app.depth_cursor = next_row_start + col.min(next_row_size - 1);
                                     }
                                 }
                             } else if app.tab == 3 {
-                                // Triggers tab navigation
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_down();
                                 } else {
-                                    // Scroll trigger list
-                                    let max_scroll = app
-                                        .triggers
-                                        .as_ref()
+                                    let max_scroll = app.triggers.as_ref()
                                         .map(|t| t.key_modes.len().saturating_sub(15))
                                         .unwrap_or(0);
                                     if app.trigger_scroll < max_scroll {
@@ -1993,7 +1678,6 @@ pub fn run() -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 5 {
-                                // Select macro
                                 if app.macro_selected < app.macros.len().saturating_sub(1) {
                                     app.macro_selected += 1;
                                 }
@@ -2003,100 +1687,45 @@ pub fn run() -> io::Result<()> {
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
                             if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
-                                // Move cursor left in depth bar chart
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
-                            } else if app.tab == 3
-                                && app.trigger_view_mode == TriggerViewMode::Layout
-                            {
+                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_left();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT)
-                                {
-                                    10
-                                } else {
-                                    1
-                                };
+                                let step: u8 = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
-                                    // Main LED
-                                    0 if app.info.led_mode > 0 => {
-                                        app.set_led_mode(app.info.led_mode - 1)
-                                    }
-                                    1 if app.info.led_brightness > 0 => {
-                                        app.set_brightness(app.info.led_brightness - 1)
-                                    }
+                                    0 if app.info.led_mode > 0 => app.set_led_mode(app.info.led_mode - 1).await,
+                                    1 if app.info.led_brightness > 0 => app.set_brightness(app.info.led_brightness - 1).await,
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
-                                        if current > 0 {
-                                            app.set_speed(current - 1);
-                                        }
+                                        if current > 0 { app.set_speed(current - 1).await; }
                                     }
-                                    3 => {
-                                        // Red
-                                        let r = app.info.led_r.saturating_sub(step);
-                                        app.set_color(r, app.info.led_g, app.info.led_b);
-                                    }
-                                    4 => {
-                                        // Green
-                                        let g = app.info.led_g.saturating_sub(step);
-                                        app.set_color(app.info.led_r, g, app.info.led_b);
-                                    }
-                                    5 => {
-                                        // Blue
-                                        let b = app.info.led_b.saturating_sub(step);
-                                        app.set_color(app.info.led_r, app.info.led_g, b);
-                                    }
-                                    7 => app.toggle_dazzle(), // Dazzle
-                                    // Side LED (8 is separator)
-                                    9 if app.info.side_mode > 0 => {
-                                        app.set_side_mode(app.info.side_mode - 1)
-                                    }
-                                    10 if app.info.side_brightness > 0 => {
-                                        app.set_side_brightness(app.info.side_brightness - 1)
-                                    }
+                                    3 => { let r = app.info.led_r.saturating_sub(step); app.set_color(r, app.info.led_g, app.info.led_b).await; }
+                                    4 => { let g = app.info.led_g.saturating_sub(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
+                                    5 => { let b = app.info.led_b.saturating_sub(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
+                                    7 => app.toggle_dazzle().await,
+                                    9 if app.info.side_mode > 0 => app.set_side_mode(app.info.side_mode - 1).await,
+                                    10 if app.info.side_brightness > 0 => app.set_side_brightness(app.info.side_brightness - 1).await,
                                     11 => {
                                         let current = 4 - app.info.side_speed.min(4);
-                                        if current > 0 {
-                                            app.set_side_speed(current - 1);
-                                        }
+                                        if current > 0 { app.set_side_speed(current - 1).await; }
                                     }
-                                    12 => {
-                                        // Side Red
-                                        let r = app.info.side_r.saturating_sub(step);
-                                        app.set_side_color(r, app.info.side_g, app.info.side_b);
-                                    }
-                                    13 => {
-                                        // Side Green
-                                        let g = app.info.side_g.saturating_sub(step);
-                                        app.set_side_color(app.info.side_r, g, app.info.side_b);
-                                    }
-                                    14 => {
-                                        // Side Blue
-                                        let b = app.info.side_b.saturating_sub(step);
-                                        app.set_side_color(app.info.side_r, app.info.side_g, b);
-                                    }
-                                    16 => app.toggle_side_dazzle(), // Side Dazzle
+                                    12 => { let r = app.info.side_r.saturating_sub(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 => { let g = app.info.side_g.saturating_sub(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 => { let b = app.info.side_b.saturating_sub(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    16 => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
-                                // Options tab
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer > 0 => {
-                                            app.set_fn_layer(opts.fn_layer - 1)
-                                        }
-                                        1 => app.toggle_wasd_swap(),
-                                        2 => app.toggle_anti_mistouch(),
-                                        3 if opts.rt_stability >= 25 => {
-                                            app.set_rt_stability(opts.rt_stability - 25)
-                                        }
-                                        4 if opts.sleep_time >= 60 => {
-                                            app.set_sleep_time(opts.sleep_time - 60)
-                                        }
-                                        4 if opts.sleep_time > 0 && opts.sleep_time < 60 => {
-                                            app.set_sleep_time(0)
-                                        }
+                                        0 if opts.fn_layer > 0 => app.set_fn_layer(opts.fn_layer - 1).await,
+                                        1 => app.toggle_wasd_swap().await,
+                                        2 => app.toggle_anti_mistouch().await,
+                                        3 if opts.rt_stability >= 25 => app.set_rt_stability(opts.rt_stability - 25).await,
+                                        4 if opts.sleep_time >= 60 => app.set_sleep_time(opts.sleep_time - 60).await,
+                                        4 if opts.sleep_time > 0 && opts.sleep_time < 60 => app.set_sleep_time(0).await,
                                         _ => {}
                                     }
                                 }
@@ -2104,117 +1733,58 @@ pub fn run() -> io::Result<()> {
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
                             if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
-                                // Move cursor right in depth bar chart
                                 let max_key = app.key_depths.len().min(66).saturating_sub(1);
                                 if app.depth_cursor < max_key {
                                     app.depth_cursor += 1;
                                 }
-                            } else if app.tab == 3
-                                && app.trigger_view_mode == TriggerViewMode::Layout
-                            {
+                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_right();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(event::KeyModifiers::SHIFT)
-                                {
-                                    10
-                                } else {
-                                    1
-                                };
+                                let step: u8 = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
                                 match app.selected {
-                                    // Main LED
-                                    0 if app.info.led_mode < cmd::LED_MODE_MAX => {
-                                        app.set_led_mode(app.info.led_mode + 1)
-                                    }
-                                    1 if app.info.led_brightness < 4 => {
-                                        app.set_brightness(app.info.led_brightness + 1)
-                                    }
+                                    0 if app.info.led_mode < cmd::LED_MODE_MAX => app.set_led_mode(app.info.led_mode + 1).await,
+                                    1 if app.info.led_brightness < 4 => app.set_brightness(app.info.led_brightness + 1).await,
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
-                                        if current < 4 {
-                                            app.set_speed(current + 1);
-                                        }
+                                        if current < 4 { app.set_speed(current + 1).await; }
                                     }
-                                    3 => {
-                                        // Red
-                                        let r = app.info.led_r.saturating_add(step);
-                                        app.set_color(r, app.info.led_g, app.info.led_b);
-                                    }
-                                    4 => {
-                                        // Green
-                                        let g = app.info.led_g.saturating_add(step);
-                                        app.set_color(app.info.led_r, g, app.info.led_b);
-                                    }
-                                    5 => {
-                                        // Blue
-                                        let b = app.info.led_b.saturating_add(step);
-                                        app.set_color(app.info.led_r, app.info.led_g, b);
-                                    }
-                                    7 => app.toggle_dazzle(), // Dazzle
-                                    // Side LED (8 is separator)
-                                    9 if app.info.side_mode < cmd::LED_MODE_MAX => {
-                                        app.set_side_mode(app.info.side_mode + 1)
-                                    }
-                                    10 if app.info.side_brightness < 4 => {
-                                        app.set_side_brightness(app.info.side_brightness + 1)
-                                    }
+                                    3 => { let r = app.info.led_r.saturating_add(step); app.set_color(r, app.info.led_g, app.info.led_b).await; }
+                                    4 => { let g = app.info.led_g.saturating_add(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
+                                    5 => { let b = app.info.led_b.saturating_add(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
+                                    7 => app.toggle_dazzle().await,
+                                    9 if app.info.side_mode < cmd::LED_MODE_MAX => app.set_side_mode(app.info.side_mode + 1).await,
+                                    10 if app.info.side_brightness < 4 => app.set_side_brightness(app.info.side_brightness + 1).await,
                                     11 => {
                                         let current = 4 - app.info.side_speed.min(4);
-                                        if current < 4 {
-                                            app.set_side_speed(current + 1);
-                                        }
+                                        if current < 4 { app.set_side_speed(current + 1).await; }
                                     }
-                                    12 => {
-                                        // Side Red
-                                        let r = app.info.side_r.saturating_add(step);
-                                        app.set_side_color(r, app.info.side_g, app.info.side_b);
-                                    }
-                                    13 => {
-                                        // Side Green
-                                        let g = app.info.side_g.saturating_add(step);
-                                        app.set_side_color(app.info.side_r, g, app.info.side_b);
-                                    }
-                                    14 => {
-                                        // Side Blue
-                                        let b = app.info.side_b.saturating_add(step);
-                                        app.set_side_color(app.info.side_r, app.info.side_g, b);
-                                    }
-                                    16 => app.toggle_side_dazzle(), // Side Dazzle
+                                    12 => { let r = app.info.side_r.saturating_add(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 => { let g = app.info.side_g.saturating_add(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 => { let b = app.info.side_b.saturating_add(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    16 => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
-                                // Options tab
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer < 3 => {
-                                            app.set_fn_layer(opts.fn_layer + 1)
-                                        }
-                                        1 => app.toggle_wasd_swap(),
-                                        2 => app.toggle_anti_mistouch(),
-                                        3 if opts.rt_stability < 125 => {
-                                            app.set_rt_stability(opts.rt_stability + 25)
-                                        }
-                                        4 if opts.sleep_time < 3600 => {
-                                            app.set_sleep_time(opts.sleep_time + 60)
-                                        }
+                                        0 if opts.fn_layer < 3 => app.set_fn_layer(opts.fn_layer + 1).await,
+                                        1 => app.toggle_wasd_swap().await,
+                                        2 => app.toggle_anti_mistouch().await,
+                                        3 if opts.rt_stability < 125 => app.set_rt_stability(opts.rt_stability + 25).await,
+                                        4 if opts.sleep_time < 3600 => app.set_sleep_time(opts.sleep_time + 60).await,
                                         _ => {}
                                     }
                                 }
                             }
                         }
                         KeyCode::Char('r') => {
-                            // Refresh current tab data
-                            app.start_loading_info();
-                            if app.tab == 3 {
-                                app.start_loading_triggers();
-                            } else if app.tab == 4 {
-                                app.start_loading_options();
-                            } else if app.tab == 5 {
-                                app.start_loading_macros();
-                            }
                             app.status_msg = "Refreshing...".to_string();
+                            app.load_device_info();
+                            if app.tab == 3 { app.load_triggers(); }
+                            else if app.tab == 4 { app.load_options(); }
+                            else if app.tab == 5 { app.load_macros(); }
                         }
                         KeyCode::Enter if app.tab == 1 => {
-                            // Enter starts hex editing on Color rows
                             if app.selected == 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
                             } else if app.selected == 15 {
@@ -2222,83 +1792,48 @@ pub fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('#') if app.tab == 1 => {
-                            // Hex color input for LED tab - on RGB or Color rows
                             if app.selected >= 3 && app.selected <= 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
                             } else if app.selected >= 12 && app.selected <= 15 {
                                 app.start_hex_input(HexColorTarget::SideLed);
                             }
                         }
-                        KeyCode::Char(c)
-                            if app.tab == 1
-                                && (app.selected == 6 || app.selected == 15)
-                                && c.is_ascii_hexdigit() =>
-                        {
-                            // Typing hex digit on Color row starts editing
-                            let target = if app.selected == 6 {
-                                HexColorTarget::MainLed
-                            } else {
-                                HexColorTarget::SideLed
-                            };
+                        KeyCode::Char(c) if app.tab == 1 && (app.selected == 6 || app.selected == 15) && c.is_ascii_hexdigit() => {
+                            let target = if app.selected == 6 { HexColorTarget::MainLed } else { HexColorTarget::SideLed };
                             app.start_hex_input(target);
-                            app.hex_input.clear(); // Clear prefilled value
+                            app.hex_input.clear();
                             app.hex_input.push(c.to_ascii_uppercase());
                         }
                         KeyCode::Char('e') if app.tab == 5 => {
-                            // Edit selected macro
                             if !app.macros.is_empty() {
                                 app.macro_editing = true;
                                 app.macro_edit_text.clear();
-                                // Pre-fill with existing text preview if available
                                 let m = &app.macros[app.macro_selected];
-                                if !m.text_preview.is_empty() && !m.text_preview.contains("events")
-                                {
+                                if !m.text_preview.is_empty() && !m.text_preview.contains("events") {
                                     app.macro_edit_text = m.text_preview.clone();
                                 }
-                                app.status_msg = format!(
-                                    "Editing macro {} - type text and press Enter",
-                                    app.macro_selected
-                                );
+                                app.status_msg = format!("Editing macro {} - type text and press Enter", app.macro_selected);
                             }
                         }
                         KeyCode::Char('c') if app.tab == 5 => {
-                            // Clear selected macro
                             if !app.macros.is_empty() {
                                 app.clear_macro(app.macro_selected);
                             }
                         }
                         KeyCode::Char('m') => {
-                            app.toggle_depth_monitoring();
+                            app.toggle_depth_monitoring().await;
                         }
                         KeyCode::Char('c') => {
-                            if let Err(e) = app.connect() {
+                            if let Err(e) = app.connect().await {
                                 app.status_msg = e;
                             } else {
-                                app.start_loading_info();
+                                app.load_device_info();
                             }
                         }
-                        // Profile switching with Ctrl+1-4
-                        KeyCode::Char('1')
-                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                        {
-                            app.set_profile(0)
-                        }
-                        KeyCode::Char('2')
-                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                        {
-                            app.set_profile(1)
-                        }
-                        KeyCode::Char('3')
-                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                        {
-                            app.set_profile(2)
-                        }
-                        KeyCode::Char('4')
-                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                        {
-                            app.set_profile(3)
-                        }
-                        // Page up/down for fast trigger scrolling
+                        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(0).await,
+                        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(1).await,
+                        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(2).await,
+                        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(3).await,
                         KeyCode::PageUp => {
                             if app.tab == 3 {
                                 app.trigger_scroll = app.trigger_scroll.saturating_sub(15);
@@ -2306,65 +1841,30 @@ pub fn run() -> io::Result<()> {
                         }
                         KeyCode::PageDown => {
                             if app.tab == 3 {
-                                let max_scroll = app
-                                    .triggers
-                                    .as_ref()
+                                let max_scroll = app.triggers.as_ref()
                                     .map(|t| t.key_modes.len().saturating_sub(15))
                                     .unwrap_or(0);
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
                             }
                         }
-                        // Key mode switching on Triggers tab
-                        // In Layout view: sets selected key only
-                        // In List view: sets all keys
-                        // Shift+key always sets all keys
-                        KeyCode::Char('n') if app.tab == 3 => {
-                            app.set_key_mode(magnetism::MODE_NORMAL);
-                        }
-                        KeyCode::Char('N') if app.tab == 3 => {
-                            app.set_all_key_modes(magnetism::MODE_NORMAL);
-                        }
-                        KeyCode::Char('t') if app.tab == 3 => {
-                            app.set_key_mode(magnetism::MODE_RAPID_TRIGGER);
-                        }
-                        KeyCode::Char('T') if app.tab == 3 => {
-                            app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER);
-                        }
-                        KeyCode::Char('d') if app.tab == 3 => {
-                            app.set_key_mode(magnetism::MODE_DKS);
-                        }
-                        KeyCode::Char('D') if app.tab == 3 => {
-                            app.set_all_key_modes(magnetism::MODE_DKS);
-                        }
-                        KeyCode::Char('s') if app.tab == 3 => {
-                            app.set_key_mode(magnetism::MODE_SNAPTAP);
-                        }
-                        KeyCode::Char('S') if app.tab == 3 => {
-                            app.set_all_key_modes(magnetism::MODE_SNAPTAP);
-                        }
-                        // Per-key color mode in LED Settings tab
-                        KeyCode::Char('p') if app.tab == 1 => {
-                            app.apply_per_key_color();
-                        }
-                        // Depth tab controls
-                        KeyCode::Char('v') if app.tab == 2 => {
-                            app.toggle_depth_view();
-                        }
-                        // Triggers tab view toggle
-                        KeyCode::Char('v') if app.tab == 3 => {
-                            app.toggle_trigger_view();
-                        }
-                        KeyCode::Char('x') if app.tab == 2 => {
-                            app.clear_depth_data();
-                        }
+                        KeyCode::Char('n') if app.tab == 3 => app.set_key_mode(magnetism::MODE_NORMAL).await,
+                        KeyCode::Char('N') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_NORMAL).await,
+                        KeyCode::Char('t') if app.tab == 3 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER).await,
+                        KeyCode::Char('T') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER).await,
+                        KeyCode::Char('d') if app.tab == 3 => app.set_key_mode(magnetism::MODE_DKS).await,
+                        KeyCode::Char('D') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_DKS).await,
+                        KeyCode::Char('s') if app.tab == 3 => app.set_key_mode(magnetism::MODE_SNAPTAP).await,
+                        KeyCode::Char('S') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_SNAPTAP).await,
+                        KeyCode::Char('p') if app.tab == 1 => app.apply_per_key_color().await,
+                        KeyCode::Char('v') if app.tab == 2 => app.toggle_depth_view(),
+                        KeyCode::Char('v') if app.tab == 3 => app.toggle_trigger_view(),
+                        KeyCode::Char('x') if app.tab == 2 => app.clear_depth_data(),
                         KeyCode::Char(' ') if app.tab == 2 => {
-                            // Select/deselect key at cursor in bar chart mode
                             if app.depth_view_mode == DepthViewMode::BarChart {
                                 app.toggle_key_selection(app.depth_cursor);
                                 let label = get_key_label(app.depth_cursor);
                                 if app.selected_keys.contains(&app.depth_cursor) {
-                                    app.status_msg =
-                                        format!("Selected Key {label} for time series");
+                                    app.status_msg = format!("Selected Key {label} for time series");
                                 } else {
                                     app.status_msg = format!("Deselected Key {label}");
                                 }
@@ -2374,28 +1874,28 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
-        }
 
-        if last_tick.elapsed() >= tick_rate {
-            // Process async loading results
-            app.process_load_results();
+            // Handle tick updates
+            _ = tick_interval.tick() => {
+                // Advance spinner animation
+                app.throbber_state.calc_next();
 
-            // Advance spinner animation
-            app.throbber_state.calc_next();
+                // Read depth reports (handles stale key cleanup internally)
+                app.read_input_reports();
 
-            app.read_input_reports();
-            last_tick = Instant::now();
-
-            // Refresh battery every 30 seconds for wireless devices
-            if app.is_wireless && app.last_battery_check.elapsed() >= Duration::from_secs(30) {
-                app.refresh_battery();
+                // Refresh battery every 30 seconds for wireless devices
+                if app.is_wireless && app.last_battery_check.elapsed() >= Duration::from_secs(30) {
+                    app.refresh_battery();
+                }
             }
         }
     }
 
-    // Cleanup - stop magnetism reporting via worker
+    // Cleanup - stop magnetism reporting
     if app.depth_monitoring {
-        app.send_command(HidCommand::SetMagnetismReport(false));
+        if let Some(ref keyboard) = app.keyboard {
+            let _ = keyboard.stop_magnetism_report().await;
+        }
     }
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
