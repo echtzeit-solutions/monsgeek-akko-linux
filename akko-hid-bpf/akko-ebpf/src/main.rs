@@ -29,6 +29,14 @@ use aya_ebpf::programs::hid_bpf::{
 };
 
 // =============================================================================
+// GPL License - Required for BPF programs using GPL-only kernel helpers/kfuncs
+// =============================================================================
+
+#[link_section = "license"]
+#[used]
+static LICENSE: [u8; 4] = *b"GPL\0";
+
+// =============================================================================
 // Safe wrappers for BPF helpers
 // =============================================================================
 
@@ -81,16 +89,33 @@ static VENDOR_HID_MAP: Array<u32, 1> = Array::new();
 // struct_ops definitions
 // =============================================================================
 
+/// Kernel's list_head struct for linked lists.
+/// Must have exact name for BTF matching.
+#[repr(C)]
+struct list_head {
+    next: *mut list_head,
+    prev: *mut list_head,
+}
+
+/// Opaque hid_device pointer type for BTF matching.
+#[repr(C)]
+struct hid_device {
+    _opaque: u8,
+}
+
+/// Matches kernel's struct hid_bpf_ops layout.
+/// Field names and types MUST match exactly for BTF struct_ops matching.
+/// Function pointers use raw *const () to generate PTR BTF entries.
 #[repr(C)]
 struct hid_bpf_ops {
     hid_id: i32,
     flags: u32,
-    _list: [usize; 2],
-    hid_device_event: usize,
-    hid_rdesc_fixup: usize,
-    hid_hw_request: usize,
-    hid_hw_output_report: usize,
-    hdev: usize,
+    list: list_head,
+    hid_device_event: *const (),
+    hid_rdesc_fixup: *const (),
+    hid_hw_request: *const (),
+    hid_hw_output_report: *const (),
+    hdev: *mut hid_device,
 }
 
 unsafe impl Sync for hid_bpf_ops {}
@@ -100,12 +125,16 @@ unsafe impl Sync for hid_bpf_ops {}
 static akko_on_demand: hid_bpf_ops = hid_bpf_ops {
     hid_id: 0,
     flags: 0,
-    _list: [0; 2],
-    hid_device_event: 0,
-    hid_rdesc_fixup: 0,
-    hid_hw_request: 0,
-    hid_hw_output_report: 0,
-    hdev: 0,
+    list: list_head {
+        next: core::ptr::null_mut(),
+        prev: core::ptr::null_mut(),
+    },
+    // Reference actual functions to create relocations for loader to find
+    hid_device_event: akko_on_demand_event as *const (),
+    hid_rdesc_fixup: akko_on_demand_rdesc_fixup as *const (),
+    hid_hw_request: akko_on_demand_hw_request as *const (),
+    hid_hw_output_report: core::ptr::null(), // Not implemented
+    hdev: core::ptr::null_mut(),
 };
 
 // =============================================================================
