@@ -567,6 +567,7 @@ fn run_input_notify_test(duration_secs: u64, interval_ms: u64) -> anyhow::Result
 
 /// Result of a polling query
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PollResult {
     success: bool,
     latency_us: u64,
