@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
 use tokio::sync::mpsc;
+use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use std::path::PathBuf;
 
@@ -98,6 +99,8 @@ struct App {
     // Mouse hit areas (updated during render via interior mutability)
     tab_bar_area: StdCell<Rect>,
     content_area: StdCell<Rect>,
+    // Scroll view state for content area
+    scroll_state: ScrollViewState,
 }
 
 /// Which color is being edited with hex input
@@ -465,6 +468,8 @@ impl App {
             // Mouse hit areas (updated during render)
             tab_bar_area: StdCell::new(Rect::default()),
             content_area: StdCell::new(Rect::default()),
+            // Scroll view state
+            scroll_state: ScrollViewState::new(),
         };
         (app, result_rx)
     }
@@ -1591,7 +1596,7 @@ pub async fn run() -> io::Result<()> {
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
 
     loop {
-        terminal.draw(|f| ui(f, &app))?;
+        terminal.draw(|f| ui(f, &mut app))?;
 
         tokio::select! {
             // Handle async results from background tasks
@@ -1673,6 +1678,7 @@ pub async fn run() -> io::Result<()> {
                             app.tab = (app.tab + 1) % 6;
                             app.selected = 0;
                             app.trigger_scroll = 0;
+                            app.scroll_state = ScrollViewState::new();
                             // Auto-load when entering tabs
                             if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
                                 app.load_triggers();
@@ -1686,6 +1692,7 @@ pub async fn run() -> io::Result<()> {
                             app.tab = if app.tab == 0 { 5 } else { app.tab - 1 };
                             app.selected = 0;
                             app.trigger_scroll = 0;
+                            app.scroll_state = ScrollViewState::new();
                             // Auto-load when entering tabs
                             if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
                                 app.load_triggers();
@@ -1962,6 +1969,7 @@ pub async fn run() -> io::Result<()> {
                                     app.tab = i;
                                     app.selected = 0;
                                     app.trigger_scroll = 0;
+                                    app.scroll_state = ScrollViewState::new();
                                     // Auto-load when entering tabs
                                     if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
                                         app.load_triggers();
@@ -2007,59 +2015,10 @@ pub async fn run() -> io::Result<()> {
                         }
                     }
                     MouseEventKind::ScrollUp if content.contains(pos) => {
-                        // Scroll up navigates up in lists
-                        match app.tab {
-                            1 => {
-                                if app.selected > 0 {
-                                    app.selected -= 1;
-                                }
-                            }
-                            3 => {
-                                if app.trigger_scroll > 0 {
-                                    app.trigger_scroll -= 1;
-                                }
-                            }
-                            4 => {
-                                if app.selected > 0 {
-                                    app.selected -= 1;
-                                }
-                            }
-                            5 => {
-                                if app.macro_selected > 0 {
-                                    app.macro_selected -= 1;
-                                }
-                            }
-                            _ => {}
-                        }
+                        app.scroll_state.scroll_up();
                     }
                     MouseEventKind::ScrollDown if content.contains(pos) => {
-                        // Scroll down navigates down in lists
-                        match app.tab {
-                            1 => {
-                                if app.selected < 16 {
-                                    app.selected += 1;
-                                }
-                            }
-                            3 => {
-                                if let Some(ref triggers) = app.triggers {
-                                    let max_scroll = triggers.press_travel.len().saturating_sub(15);
-                                    if app.trigger_scroll < max_scroll {
-                                        app.trigger_scroll += 1;
-                                    }
-                                }
-                            }
-                            4 => {
-                                if app.selected < 4 {
-                                    app.selected += 1;
-                                }
-                            }
-                            5 => {
-                                if app.macro_selected + 1 < app.macros.len() {
-                                    app.macro_selected += 1;
-                                }
-                            }
-                            _ => {}
-                        }
+                        app.scroll_state.scroll_down();
                     }
                     _ => {}
                     }
@@ -2097,7 +2056,7 @@ pub async fn run() -> io::Result<()> {
     Ok(())
 }
 
-fn ui(f: &mut Frame, app: &App) {
+fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -2352,7 +2311,7 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(kb_help, columns[1]);
 }
 
-fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
+fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
     let info = &app.info;
     let loading = &app.loading;
     let spinner = app.spinner_char();
@@ -2544,15 +2503,26 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
         ]),
     ];
 
-    let para = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Device Information [r to refresh]"),
-    );
-    f.render_widget(para, area);
+    // Render the block border first
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Device Information [r to refresh]");
+    let inner_area = block.inner(area);
+    f.render_widget(block, area);
+
+    // Create paragraph without block (rendered separately)
+    let content_height = text.len() as u16;
+    let para = Paragraph::new(text);
+
+    // Use ScrollView for narrow terminals
+    let content_size = Size::new(inner_area.width, content_height);
+    let mut scroll_view =
+        ScrollView::new(content_size).horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+    scroll_view.render_widget(para, Rect::new(0, 0, inner_area.width, content_height));
+    f.render_stateful_widget(scroll_view, inner_area, &mut app.scroll_state);
 }
 
-fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
+fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
     let info = &app.info;
     let speed = 4 - info.led_speed.min(4);
 
@@ -2766,7 +2736,7 @@ fn render_led_settings(f: &mut Frame, app: &App, area: Rect) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn render_depth_monitor(f: &mut Frame, app: &App, area: Rect) {
+fn render_depth_monitor(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -2880,7 +2850,7 @@ fn get_key_label(index: usize) -> String {
     profile.matrix_key_name(index as u8).to_string()
 }
 
-fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
+fn render_depth_bar_chart(f: &mut Frame, app: &mut App, area: Rect) {
     // Use max observed depth for consistent scaling (minimum 0.1mm)
     let max_depth = app.max_observed_depth.max(0.1);
 
@@ -2942,7 +2912,7 @@ fn render_depth_bar_chart(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(chart, area);
 }
 
-fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
+fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
     // Find all keys with history data (any non-empty history)
     let mut active_keys: Vec<usize> = app
         .depth_history
@@ -3081,7 +3051,7 @@ fn render_depth_time_series(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(chart, area);
 }
 
-fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
+fn render_trigger_settings(f: &mut Frame, app: &mut App, area: Rect) {
     // Check loading state first
     if app.loading.triggers == LoadState::Loading {
         let block = Block::default()
@@ -3125,7 +3095,7 @@ fn render_trigger_settings(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render trigger settings as a list view
-fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
+fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
     // Split into summary and detail areas
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -3230,7 +3200,7 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(summary_block, chunks[0]);
 
-    // Key list section
+    // Key list section with ScrollView
     if let Some(ref triggers) = app.triggers {
         let decode_u16 = |data: &[u8], idx: usize| -> u16 {
             if idx * 2 + 1 < data.len() {
@@ -3245,10 +3215,8 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
             .len()
             .min(triggers.press_travel.len() / 2);
 
-        // Build rows for table
+        // Build ALL rows for table (ScrollView handles viewport)
         let rows: Vec<Row> = (0..num_keys)
-            .skip(app.trigger_scroll)
-            .take(15) // Show 15 keys at a time
             .map(|i| {
                 let press = decode_u16(&triggers.press_travel, i);
                 let lift = decode_u16(&triggers.lift_travel, i);
@@ -3279,6 +3247,14 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::Cyan),
         );
 
+        // Render the block border first
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Per-Key [{num_keys} keys] n/t/d/s:SetAll v:Layout"));
+        let inner_area = block.inner(chunks[1]);
+        f.render_widget(block, chunks[1]);
+
+        // Create table without block (rendered separately)
         let table = Table::new(
             rows,
             [
@@ -3291,14 +3267,17 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
                 Constraint::Length(14),
             ],
         )
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            "Per-Key [{}-{}] n/t/d/s:SetAll v:Layout",
-            app.trigger_scroll,
-            (app.trigger_scroll + 15).min(num_keys)
-        )));
+        .header(header);
 
-        f.render_widget(table, chunks[1]);
+        // Use ScrollView for smooth scrolling - content height = rows + 1 for header
+        let content_height = (num_keys + 1) as u16;
+        let content_width = inner_area.width;
+        let content_size = Size::new(content_width, content_height);
+
+        let mut scroll_view = ScrollView::new(content_size)
+            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+        scroll_view.render_widget(table, Rect::new(0, 0, content_width, content_height));
+        f.render_stateful_widget(scroll_view, inner_area, &mut app.scroll_state);
     } else {
         let help = Paragraph::new(vec![
             Line::from(""),
@@ -3329,7 +3308,7 @@ fn render_trigger_list(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render trigger settings as a keyboard layout view
-fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
+fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
     // Split into layout area and detail area
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -3523,7 +3502,7 @@ fn render_trigger_layout(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_options(f: &mut Frame, app: &App, area: Rect) {
+fn render_options(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(ref opts) = app.options {
         let os_mode_str = match opts.os_mode {
             0 => "Windows",
@@ -3661,7 +3640,7 @@ fn render_options(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_macros(f: &mut Frame, app: &App, area: Rect) {
+fn render_macros(f: &mut Frame, app: &mut App, area: Rect) {
     use crate::protocol::hid::key_name;
 
     // Check loading state first
