@@ -53,7 +53,20 @@ pub enum Commands {
 
     /// Get battery status (for 2.4GHz wireless dongles)
     #[command(visible_aliases = ["bat", "b"])]
-    Battery,
+    Battery {
+        /// Print only battery percentage (for scripts)
+        #[arg(short, long)]
+        quiet: bool,
+        /// Show full vendor response in hex
+        #[arg(long)]
+        hex: bool,
+        /// Continuously monitor (interval in seconds, default: 1)
+        #[arg(short, long)]
+        watch: Option<Option<u64>>,
+        /// Use vendor HID interface directly (skip kernel power_supply)
+        #[arg(long)]
+        vendor: bool,
+    },
 
     /// Monitor battery continuously and export to /run/akko-keyboard
     #[command(visible_aliases = ["batmon", "monitor"])]

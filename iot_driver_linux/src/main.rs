@@ -362,121 +362,202 @@ fn cli_test_transport() -> Result<(), Box<dyn std::error::Error>> {
 /// Get battery status from 2.4GHz dongle
 ///
 /// Checks kernel power_supply first (when eBPF filter loaded), falls back to vendor protocol.
-fn cli_battery(hidapi: &HidApi) -> Result<(), Box<dyn std::error::Error>> {
+fn cli_battery(
+    hidapi: &HidApi,
+    quiet: bool,
+    show_hex: bool,
+    watch: Option<Option<u64>>,
+    force_vendor: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     use iot_driver::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
+    use std::time::Duration;
 
-    // Check for kernel power_supply (eBPF filter loaded)
-    if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
-        println!("Battery Status (kernel)");
-        println!("-----------------------");
-        println!("  Source: {}", path.display());
-        if let Some(info) = read_kernel_battery(&path) {
-            println!("  Level:     {}%", info.level);
-            println!("  Connected: {}", if info.online { "Yes" } else { "No" });
-            println!("  Charging:  {}", if info.charging { "Yes" } else { "No" });
-        } else {
-            println!("  Failed to read battery status");
+    // Determine watch interval (None = no watch, Some(None) = default 1s, Some(Some(n)) = n seconds)
+    let watch_interval = watch.map(|opt| opt.unwrap_or(1));
+
+    loop {
+        // Check for kernel power_supply (eBPF filter loaded) unless --vendor flag
+        if !force_vendor {
+            if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+                if quiet {
+                    if let Some(info) = read_kernel_battery(&path) {
+                        println!("{}", info.level);
+                    } else {
+                        eprintln!("Failed to read battery");
+                        std::process::exit(1);
+                    }
+                } else {
+                    println!("Battery Status (kernel)");
+                    println!("-----------------------");
+                    println!("  Source: {}", path.display());
+                    if let Some(info) = read_kernel_battery(&path) {
+                        println!("  Level:     {}%", info.level);
+                        println!("  Connected: {}", if info.online { "Yes" } else { "No" });
+                        println!("  Charging:  {}", if info.charging { "Yes" } else { "No" });
+                    } else {
+                        println!("  Failed to read battery status");
+                    }
+                }
+                if watch_interval.is_none() {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_secs(watch_interval.unwrap()));
+                continue;
+            }
         }
-        return Ok(());
+
+        // Use vendor protocol (direct HID)
+        let result = read_vendor_battery(hidapi, show_hex);
+
+        match result {
+            Some((battery, online, raw_bytes)) => {
+                if quiet {
+                    println!("{battery}");
+                } else if show_hex {
+                    // Print full hex dump for analysis
+                    print_hex_dump(&raw_bytes);
+                } else {
+                    println!("Battery Status (vendor)");
+                    println!("-----------------------");
+                    println!("  Level:     {battery}%");
+                    println!("  Connected: {}", if online { "Yes" } else { "No" });
+                    let hex: Vec<String> =
+                        raw_bytes[1..8].iter().map(|b| format!("{b:02x}")).collect();
+                    println!("  Raw[1..8]: {}", hex.join(" "));
+                }
+            }
+            None => {
+                if quiet {
+                    eprintln!("No battery data");
+                    std::process::exit(1);
+                } else {
+                    println!("No 2.4GHz dongle found or battery data unavailable");
+                }
+            }
+        }
+
+        if let Some(interval) = watch_interval {
+            std::thread::sleep(Duration::from_secs(interval));
+        } else {
+            break;
+        }
     }
 
-    // Fall back to vendor protocol
-    println!("Battery Status (vendor)");
-    println!("-----------------------");
+    Ok(())
+}
 
-    let mut found_any = false;
-    let mut best_battery: Option<(u8, bool, [u8; 7])> = None;
-
+/// Read battery from vendor protocol, returns (battery%, online, full_response)
+fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, [u8; 65])> {
     for device_info in hidapi.device_list() {
-        // Only match dongle devices (PID 0x5038)
         let vid = device_info.vendor_id();
         let pid = device_info.product_id();
 
+        // Only match dongle devices (PID 0x5038)
         if vid != 0x3151 || pid != 0x5038 {
             continue;
         }
 
-        // Match vendor interfaces (both Usage 0x01 and 0x02 for testing)
-        if device_info.usage_page() != 0xFFFF {
+        // Match vendor interface (Usage 0x02 on page 0xFFFF)
+        if device_info.usage_page() != 0xFFFF || device_info.usage() != 0x02 {
             continue;
         }
-
-        // Only test vendor interfaces
-        let usage = device_info.usage();
-        if usage != 0x01 && usage != 0x02 {
-            continue;
-        }
-
-        found_any = true;
-        let path = device_info.path().to_string_lossy();
-        println!("Testing interface: VID={vid:04x} PID={pid:04x} Usage=0x{usage:02x}");
-        println!("  Path: {path}");
 
         let device = match device_info.open_device(hidapi) {
             Ok(d) => d,
             Err(e) => {
-                println!("  Failed to open: {e:?}");
+                if show_debug {
+                    eprintln!("Failed to open vendor interface: {e:?}");
+                }
                 continue;
             }
         };
 
-        // Try Feature report with Report ID 5
+        // Send F7 command to trigger battery refresh
+        // Format: [Report_ID=0, Command=0xF7, ...]
+        let mut f7_cmd = [0u8; 65];
+        f7_cmd[0] = 0x00; // Report ID 0
+        f7_cmd[1] = 0xF7; // F7 command
+        if let Err(e) = device.send_feature_report(&f7_cmd) {
+            if show_debug {
+                eprintln!("F7 send failed: {e:?}");
+            }
+        } else if show_debug {
+            eprintln!("F7 sent OK");
+        }
+
+        // Small delay for dongle to query keyboard
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Get Feature report with Report ID 5
         let mut buf = [0u8; 65];
-        buf[0] = 0x05; // Report ID
+        buf[0] = 0x05;
 
-        println!("  get_feature_report(5)...");
         match device.get_feature_report(&mut buf) {
-            Ok(l) => {
-                let is_zero = buf[1..8].iter().all(|&b| b == 0);
-                let hex: Vec<String> = buf[0..8].iter().map(|b| format!("{b:02x}")).collect();
-                println!("    len={}, data=[{}]", l, hex.join(" "));
-                if !is_zero && buf[1] > 0 && buf[1] <= 100 {
-                    let mut raw = [0u8; 7];
-                    raw.copy_from_slice(&buf[1..8]);
-                    // byte[1] = battery, byte[4] = is_online (confirmed)
-                    best_battery = Some((buf[1], buf[4] != 0, raw));
+            Ok(_len) => {
+                let battery = buf[1];
+                let online = buf[4] != 0;
+
+                // Return data even if battery is 0 (for debugging)
+                // Caller can decide if 0 is valid
+                return Some((battery, online, buf));
+            }
+            Err(e) => {
+                if show_debug {
+                    eprintln!("get_feature_report failed: {e:?}");
                 }
             }
-            Err(e) => println!("    failed: {e:?}"),
-        };
+        }
+    }
+    None
+}
 
-        // Try Feature with Report ID 0
-        buf = [0u8; 65];
-        buf[0] = 0x00;
-        println!("  get_feature_report(0)...");
-        match device.get_feature_report(&mut buf) {
-            Ok(l) => {
-                let is_zero = buf[1..8].iter().all(|&b| b == 0);
-                let hex: Vec<String> = buf[0..8].iter().map(|b| format!("{b:02x}")).collect();
-                println!("    len={}, data=[{}]", l, hex.join(" "));
-                if !is_zero && best_battery.is_none() && buf[1] > 0 && buf[1] <= 100 {
-                    let mut raw = [0u8; 7];
-                    raw.copy_from_slice(&buf[1..8]);
-                    // byte[1] = battery, byte[4] = is_online (confirmed)
-                    best_battery = Some((buf[1], buf[4] != 0, raw));
+/// Print hex dump of full response for protocol analysis
+fn print_hex_dump(data: &[u8; 65]) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs() % 86400; // Seconds since midnight (rough)
+    let hours = (secs / 3600) % 24;
+    let mins = (secs % 3600) / 60;
+    let sec = secs % 60;
+    let millis = now.subsec_millis();
+    println!(
+        "[{hours:02}:{mins:02}:{sec:02}.{millis:03}] Full vendor response ({} bytes):",
+        data.len()
+    );
+
+    // Print in 16-byte rows with offset
+    for (i, chunk) in data.chunks(16).enumerate() {
+        let offset = i * 16;
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
+        let ascii: String = chunk
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '.'
                 }
-            }
-            Err(e) => println!("    failed: {e:?}"),
-        };
-
-        println!();
+            })
+            .collect();
+        println!("  {offset:04x}: {:<48} |{ascii}|", hex.join(" "));
     }
 
-    if let Some((battery, online, raw)) = best_battery {
-        println!("Battery Status");
-        println!("--------------");
-        println!("  Level:     {battery}%");
-        println!("  Connected: {}", if online { "Yes" } else { "No" });
-        let hex: Vec<String> = raw.iter().map(|b| format!("{b:02x}")).collect();
-        println!("  Raw:       {}", hex.join(" "));
-        println!();
-        println!("Note: Charging status not available via dongle protocol");
-    } else if found_any {
-        println!("Dongle found but battery data not available (all zeros)");
-    } else {
-        println!("No 2.4GHz dongle found (PID 5038)");
-    }
-    Ok(())
+    // Highlight known fields
+    println!("  ---");
+    println!("  byte[0] = 0x{:02x} (Report ID)", data[0]);
+    println!("  byte[1] = {} (Battery %)", data[1]);
+    println!("  byte[2] = 0x{:02x}", data[2]);
+    println!("  byte[3] = 0x{:02x}", data[3]);
+    println!(
+        "  byte[4] = {} (Online: {})",
+        data[4],
+        if data[4] != 0 { "Yes" } else { "No" }
+    );
+    println!("  byte[5] = 0x{:02x}", data[5]);
+    println!("  byte[6] = 0x{:02x}", data[6]);
+    println!("  byte[7] = 0x{:02x}", data[7]);
 }
 
 /// Continuously monitor battery status and export to /run/akko-keyboard
@@ -661,9 +742,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli_all(&hidapi)?;
         }
 
-        Some(Commands::Battery) => {
+        Some(Commands::Battery {
+            quiet,
+            hex,
+            watch,
+            vendor,
+        }) => {
             let hidapi = HidApi::new()?;
-            cli_battery(&hidapi)?;
+            cli_battery(&hidapi, quiet, hex, watch, vendor)?;
         }
 
         Some(Commands::BatteryMonitor { interval }) => {
