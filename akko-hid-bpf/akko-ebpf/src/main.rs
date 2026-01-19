@@ -251,19 +251,19 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
     new_size as i32
 }
 
-// HW request handler (sleepable) - sends F7 on-demand
+// HW request handler (sleepable) - sends F7 on-demand and returns battery value
 #[no_mangle]
 #[link_section = "struct_ops.s/hid_hw_request"]
 pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
     // SAFETY: kernel passes valid context wrapper, extract the actual hid_bpf_ctx pointer
     let ctx = unsafe { HidBpfContext::new(extract_ctx(ctx_wrapper)) };
 
-    // Need at least 4 bytes for the request buffer
-    if ctx.allocated_size() < 4 {
+    // Need at least 2 bytes for the battery response [report_id, battery]
+    if ctx.allocated_size() < 2 {
         return 0;
     }
 
-    let Some(data) = ctx.data(0, 4) else {
+    let Some(mut data) = ctx.data(0, 2) else {
         return 0;
     };
 
@@ -279,23 +279,6 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
 
     trace!(b"akko_ondemand: battery request, report_id=%d", report_id as u32);
 
-    // Check throttle
-    let Some(&last_f7) = STATE_MAP.get(0) else {
-        return 0;
-    };
-    let Some(&throttle) = CONFIG_MAP.get(0) else {
-        return 0;
-    };
-
-    let now = ktime_get_ns();
-    let elapsed = now - last_f7;
-
-    if elapsed <= throttle {
-        trace!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
-        return 0;
-    }
-
-    // Throttle expired - send F7 to vendor interface
     // Vendor hid_id is set by loader in VENDOR_HID_MAP
     let Some(&vendor_hid_id) = VENDOR_HID_MAP.get(0) else {
         trace!(b"akko_ondemand: vendor_hid_id not set in map");
@@ -307,28 +290,65 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
+    // Check throttle - only send F7 if enough time has passed
+    let Some(&last_f7) = STATE_MAP.get(0) else {
+        return 0;
+    };
+    let Some(&throttle) = CONFIG_MAP.get(0) else {
+        return 0;
+    };
+
+    let now = ktime_get_ns();
+    let elapsed = now - last_f7;
 
     // RAII guard - context automatically released on drop (even on early return)
     let Some(vendor) = AllocatedContext::new(vendor_hid_id) else {
         trace!(b"akko_ondemand: failed to allocate vendor context");
-        let _ = STATE_MAP.set(0, now, 0);
         return 0;
     };
 
-    // Send F7 command (64-byte buffer, F7 at byte 0)
-    let mut f7_buf: [u8; 64] = [0; 64];
-    f7_buf[0] = 0xF7;
+    // Send F7 command if throttle expired (triggers dongle to query keyboard battery)
+    if elapsed > throttle {
+        trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
 
-    let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
+        // F7 command format: [Report_ID=0, Command=0xF7, ...]
+        let mut f7_buf: [u8; 65] = [0; 65];
+        f7_buf[0] = 0x00; // Report ID
+        f7_buf[1] = 0xF7; // F7 command
 
-    trace!(b"akko_ondemand: F7 ret=%d", ret);
+        let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
+        trace!(b"akko_ondemand: F7 SET ret=%d", ret);
 
-    // Update timestamp
-    let _ = STATE_MAP.set(0, now, 0);
+        // Update timestamp
+        let _ = STATE_MAP.set(0, now, 0);
+    } else {
+        trace!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
+    }
 
-    // vendor automatically released here via Drop
-    0
+    // Read battery response via GET_FEATURE Report 5
+    // Request: [Report_ID=5, ...] - Response: [Report_ID (0 or 5), battery_level, ...]
+    let mut response: [u8; 65] = [0; 65];
+    response[0] = 0x05; // Request Report ID 5
+    let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+
+    if ret < 2 {
+        trace!(b"akko_ondemand: GET failed ret=%d", ret);
+        return 0;
+    }
+
+    // Extract battery value - byte[1] is battery level (0-100)
+    // Clamp to 100 to avoid reporting invalid percentages
+    let battery = if response[1] > 100 { 100 } else { response[1] };
+
+    trace!(b"akko_ondemand: battery=%d (raw=%d)", battery as u32, response[1] as u32);
+
+    // Write battery response to kernel's buffer
+    // Format: [report_id, battery_level]
+    data.set(0, BATTERY_REPORT_ID);
+    data.set(1, battery);
+
+    // Return 2 = we handled the request and wrote 2 bytes
+    2
 }
 
 #[panic_handler]
