@@ -33,7 +33,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ### Host Dependencies
 
-#### Debian/Ubuntu
+<details>
+<summary><b>Debian/Ubuntu</b></summary>
 
 ```bash
 # Core dependencies (required)
@@ -48,8 +49,10 @@ sudo apt install libjack-jackd2-dev
 # Optional: Screen capture/sync (PipeWire)
 sudo apt install libpipewire-0.3-dev libclang-dev
 ```
+</details>
 
-#### Arch Linux
+<details>
+<summary><b>Arch Linux</b></summary>
 
 ```bash
 # Core dependencies (required)
@@ -64,8 +67,10 @@ sudo pacman -S jack2
 # Optional: Screen capture/sync (PipeWire)
 sudo pacman -S pipewire clang
 ```
+</details>
 
-#### Fedora / RHEL / CentOS
+<details>
+<summary><b>Fedora / RHEL / CentOS</b></summary>
 
 ```bash
 # Core dependencies (required)
@@ -80,8 +85,10 @@ sudo dnf install jack-audio-connection-kit-devel
 # Optional: Screen capture/sync (PipeWire)
 sudo dnf install pipewire-devel clang-devel
 ```
+</details>
 
-#### openSUSE
+<details>
+<summary><b>openSUSE</b></summary>
 
 ```bash
 # Core dependencies (required)
@@ -96,6 +103,7 @@ sudo zypper install libjack-devel
 # Optional: Screen capture/sync (PipeWire)
 sudo zypper install pipewire-devel clang-devel
 ```
+</details>
 
 ### Build and Install
 
