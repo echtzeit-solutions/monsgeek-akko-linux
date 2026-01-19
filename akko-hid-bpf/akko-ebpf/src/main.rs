@@ -307,48 +307,61 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     };
 
-    // Send F7 command if throttle expired (triggers dongle to query keyboard battery)
-    if elapsed > throttle {
-        trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
-
+    // Helper to send F7 command
+    let send_f7 = |vendor: &AllocatedContext| {
         // F7 command format: [Report_ID=0, Command=0xF7, ...]
         let mut f7_buf: [u8; 65] = [0; 65];
         f7_buf[0] = 0x00; // Report ID
         f7_buf[1] = 0xF7; // F7 command
+        vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport)
+    };
 
-        let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
+    // Helper to read battery
+    let read_battery = |vendor: &AllocatedContext| -> Option<u8> {
+        let mut response: [u8; 65] = [0; 65];
+        response[0] = 0x05; // Request Report ID 5
+        let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+        if ret >= 2 {
+            Some(response[1])
+        } else {
+            None
+        }
+    };
+
+    // Send F7 command if throttle expired (triggers dongle to query keyboard battery)
+    let mut sent_f7 = false;
+    if elapsed > throttle {
+        trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
+        let ret = send_f7(&vendor);
         trace!(b"akko_ondemand: F7 SET ret=%d", ret);
-
-        // Update timestamp
+        sent_f7 = true;
         let _ = STATE_MAP.set(0, now, 0);
     } else {
         trace!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
     }
 
     // Read battery response via GET_FEATURE Report 5
-    // Request: [Report_ID=5, ...] - Response: [Report_ID (0 or 5), battery_level, ...]
-    let mut response: [u8; 65] = [0; 65];
-    response[0] = 0x05; // Request Report ID 5
-    let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
-
-    if ret < 2 {
-        trace!(b"akko_ondemand: GET failed ret=%d", ret);
+    let Some(raw_battery) = read_battery(&vendor) else {
+        trace!(b"akko_ondemand: GET failed");
         return 0;
-    }
+    };
 
-    // Extract battery value - byte[1] is battery level (0-100)
-    let raw_battery = response[1];
+    // If battery is 0 and we didn't just send F7, the data is likely stale - refresh
+    let raw_battery = if raw_battery == 0 && !sent_f7 {
+        trace!(b"akko_ondemand: battery=0, forcing F7 refresh");
+        let ret = send_f7(&vendor);
+        trace!(b"akko_ondemand: F7 SET ret=%d", ret);
+        let _ = STATE_MAP.set(0, now, 0);
+
+        // Read again after F7
+        read_battery(&vendor).unwrap_or(0)
+    } else {
+        raw_battery
+    };
 
     // Log abnormal values for debugging
     if raw_battery > 100 {
-        trace!(
-            b"akko_ondemand: WARN abnormal battery=%d, resp[0-3]=%02x %02x %02x %02x",
-            raw_battery as u32,
-            response[0] as u32,
-            response[1] as u32,
-            response[2] as u32,
-            response[3] as u32
-        );
+        trace!(b"akko_ondemand: WARN abnormal battery=%d", raw_battery as u32);
     }
 
     // Clamp to 100 to avoid reporting invalid percentages
