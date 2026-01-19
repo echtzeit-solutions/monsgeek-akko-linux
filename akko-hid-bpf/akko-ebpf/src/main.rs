@@ -337,10 +337,24 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
     }
 
     // Extract battery value - byte[1] is battery level (0-100)
-    // Clamp to 100 to avoid reporting invalid percentages
-    let battery = if response[1] > 100 { 100 } else { response[1] };
+    let raw_battery = response[1];
 
-    trace!(b"akko_ondemand: battery=%d (raw=%d)", battery as u32, response[1] as u32);
+    // Log abnormal values for debugging
+    if raw_battery > 100 {
+        trace!(
+            b"akko_ondemand: WARN abnormal battery=%d, resp[0-3]=%02x %02x %02x %02x",
+            raw_battery as u32,
+            response[0] as u32,
+            response[1] as u32,
+            response[2] as u32,
+            response[3] as u32
+        );
+    }
+
+    // Clamp to 100 to avoid reporting invalid percentages
+    let battery = if raw_battery > 100 { 100 } else { raw_battery };
+
+    trace!(b"akko_ondemand: battery=%d (raw=%d)", battery as u32, raw_battery as u32);
 
     // Write battery response to kernel's buffer
     // Format: [report_id, battery_level]

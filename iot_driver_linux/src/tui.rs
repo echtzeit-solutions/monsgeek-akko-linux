@@ -11,6 +11,7 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::{prelude::*, widgets::*};
+use std::cell::Cell as StdCell;
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, stdout};
 use std::sync::Arc;
@@ -94,9 +95,9 @@ struct App {
     hex_target: HexColorTarget,
     // Firmware check result
     firmware_check: Option<FirmwareCheckResult>,
-    // Terminal size for mouse calculations
-    terminal_width: u16,
-    terminal_height: u16,
+    // Mouse hit areas (updated during render via interior mutability)
+    tab_bar_area: StdCell<Rect>,
+    content_area: StdCell<Rect>,
 }
 
 /// Which color is being edited with hex input
@@ -461,9 +462,9 @@ impl App {
             hex_target: HexColorTarget::default(),
             // Firmware check
             firmware_check: None,
-            // Terminal size (will be updated on first draw and resize)
-            terminal_width: 80,
-            terminal_height: 24,
+            // Mouse hit areas (updated during render)
+            tab_bar_area: StdCell::new(Rect::default()),
+            content_area: StdCell::new(Rect::default()),
         };
         (app, result_rx)
     }
@@ -1941,19 +1942,22 @@ pub async fn run() -> io::Result<()> {
                     }
                 } else if let Some(Ok(Event::Mouse(mouse))) = maybe_event {
                     // Handle mouse events
+                    let pos = Position::new(mouse.column, mouse.row);
+                    let tab_bar = app.tab_bar_area.get();
+                    let content = app.content_area.get();
+
                     match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let x = mouse.column;
-                        let y = mouse.row;
-
-                        // Tab bar is at y=1 (inside the title block)
-                        // Calculate tab positions dynamically based on tab names
-                        if y == 1 {
+                        // Check if click is in tab bar area
+                        if tab_bar.contains(pos) {
+                            // Calculate which tab was clicked
+                            // Tabs render with border (1 char), then " Tab1 │ Tab2 │ ..."
                             let tab_names = ["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Macros"];
-                            let mut pos = 2u16; // Start after border and initial padding
+                            let inner_x = mouse.column.saturating_sub(tab_bar.x + 1); // Account for border
+                            let mut tab_pos = 1u16; // Initial padding
                             for (i, name) in tab_names.iter().enumerate() {
                                 let tab_width = name.len() as u16;
-                                if x >= pos && x < pos + tab_width {
+                                if inner_x >= tab_pos && inner_x < tab_pos + tab_width {
                                     let old_tab = app.tab;
                                     app.tab = i;
                                     app.selected = 0;
@@ -1971,14 +1975,14 @@ pub async fn run() -> io::Result<()> {
                                     }
                                     break;
                                 }
-                                pos += tab_width + 3; // Tab width + " │ " separator
+                                tab_pos += tab_width + 3; // Tab width + " │ " separator
                             }
                         }
 
-                        // Content area clicks - y >= 4 (after title block 0-2 and tab bar 3)
-                        if y >= 4 {
-                            let content_row = (y - 4) as usize;
-                            // For list-based tabs, clicking selects the item
+                        // Check if click is in content area
+                        if content.contains(pos) {
+                            // Row within content area (accounting for any border)
+                            let content_row = (mouse.row.saturating_sub(content.y + 1)) as usize;
                             match app.tab {
                                 1 => {
                                     // LED Settings - items in the list
@@ -2002,7 +2006,7 @@ pub async fn run() -> io::Result<()> {
                             }
                         }
                     }
-                    MouseEventKind::ScrollUp => {
+                    MouseEventKind::ScrollUp if content.contains(pos) => {
                         // Scroll up navigates up in lists
                         match app.tab {
                             1 => {
@@ -2028,7 +2032,7 @@ pub async fn run() -> io::Result<()> {
                             _ => {}
                         }
                     }
-                    MouseEventKind::ScrollDown => {
+                    MouseEventKind::ScrollDown if content.contains(pos) => {
                         // Scroll down navigates down in lists
                         match app.tab {
                             1 => {
@@ -2059,9 +2063,8 @@ pub async fn run() -> io::Result<()> {
                     }
                     _ => {}
                     }
-                } else if let Some(Ok(Event::Resize(w, h))) = maybe_event {
-                    app.terminal_width = w;
-                    app.terminal_height = h;
+                } else if let Some(Ok(Event::Resize(_, _))) = maybe_event {
+                    // Resize is handled automatically by ratatui on next draw
                 }
             }
 
@@ -2143,6 +2146,10 @@ fn ui(f: &mut Frame, app: &App) {
             .title("Tabs [Tab/Shift+Tab]"),
     );
     f.render_widget(tabs, chunks[1]);
+
+    // Store areas for mouse hit testing (using interior mutability)
+    app.tab_bar_area.set(chunks[1]);
+    app.content_area.set(chunks[2]);
 
     // Content based on tab
     match app.tab {
