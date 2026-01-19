@@ -190,6 +190,63 @@ pub struct FirmwareCheckResponse {
     pub lowest_app_version: Option<String>,
 }
 
+/// Simplified result of firmware version check for UI display
+#[derive(Debug, Clone)]
+pub struct FirmwareCheckResult {
+    /// Server's USB firmware version (if available)
+    pub server_version: Option<u16>,
+    /// Whether an update is available (server version > local version)
+    pub has_update: bool,
+    /// Download path if update available
+    pub download_path: Option<String>,
+    /// Message (e.g., "up to date" or "not in database")
+    pub message: String,
+}
+
+impl FirmwareCheckResult {
+    /// Create result indicating firmware is up to date
+    pub fn up_to_date() -> Self {
+        Self {
+            server_version: None,
+            has_update: false,
+            download_path: None,
+            message: "Up to date".to_string(),
+        }
+    }
+
+    /// Create result indicating device is not in server database (500 error = no update)
+    pub fn not_in_database() -> Self {
+        Self {
+            server_version: None,
+            has_update: false,
+            download_path: None,
+            message: "Not in database (up to date)".to_string(),
+        }
+    }
+
+    /// Create result from server response, comparing against local version
+    pub fn from_response(response: &FirmwareCheckResponse, local_version: u16) -> Self {
+        let server_version = response.versions.usb;
+        let has_update = server_version.map(|sv| sv > local_version).unwrap_or(false);
+
+        let message = if has_update {
+            format!(
+                "Update available: v{:X}",
+                server_version.unwrap_or(local_version)
+            )
+        } else {
+            "Up to date".to_string()
+        };
+
+        Self {
+            server_version,
+            has_update,
+            download_path: response.versions.download_path.clone(),
+            message,
+        }
+    }
+}
+
 /// Check firmware version from API (blocking)
 #[cfg(feature = "firmware-api")]
 pub fn check_firmware_blocking(device_id: u32) -> Result<FirmwareCheckResponse, ApiError> {

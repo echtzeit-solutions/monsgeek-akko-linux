@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use std::path::PathBuf;
 
 // Use shared library
+use crate::firmware_api::FirmwareCheckResult;
 use crate::hid::BatteryInfo;
 use crate::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
 use crate::{cmd, devices, hal, key_mode, magnetism, DeviceInfo, TriggerSettings};
@@ -88,6 +89,8 @@ struct App {
     hex_editing: bool,
     hex_input: String,
     hex_target: HexColorTarget,
+    // Firmware check result
+    firmware_check: Option<FirmwareCheckResult>,
 }
 
 /// Which color is being edited with hex input
@@ -164,6 +167,7 @@ struct LoadingStates {
     kb_options_info: LoadState, // fn_layer + wasd_swap for info display
     feature_list: LoadState,    // precision
     sleep_time: LoadState,
+    firmware_check: LoadState, // server firmware version check
     // Other tabs
     triggers: LoadState, // tab 3
     options: LoadState,  // tab 4
@@ -184,6 +188,7 @@ enum AsyncResult {
     KbOptions(Result<KbOptions, String>),
     FeatureList(Result<monsgeek_keyboard::FeatureList, String>),
     SleepTime(Result<u16, String>),
+    FirmwareCheck(FirmwareCheckResult),
     // Other tab results
     Triggers(Result<TriggerSettings, String>),
     Options(Result<KbOptions, String>),
@@ -203,6 +208,7 @@ const DEPTH_HISTORY_LEN: usize = 100;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum KeyContext {
     Global,   // Available everywhere
+    Info,     // Device Info tab (0)
     Led,      // LED Settings tab (1)
     Depth,    // Key Depth tab (2)
     Triggers, // Trigger Settings tab (3)
@@ -283,6 +289,12 @@ const TUI_KEYBINDS: &[Keybind] = &[
         keys: "PgUp/PgDn",
         description: "Fast scroll (15 items)",
         context: KeyContext::Global,
+    },
+    // Info tab
+    Keybind {
+        keys: "u",
+        description: "Check for firmware updates",
+        context: KeyContext::Info,
     },
     // LED tab
     Keybind {
@@ -441,6 +453,8 @@ impl App {
             hex_editing: false,
             hex_input: String::new(),
             hex_target: HexColorTarget::default(),
+            // Firmware check
+            firmware_check: None,
         };
         (app, result_rx)
     }
@@ -712,6 +726,40 @@ impl App {
             None => {}
         }
         self.last_battery_check = Instant::now();
+    }
+
+    /// Check for firmware updates from server
+    fn check_firmware(&mut self) {
+        if !self.connected || self.loading.firmware_check == LoadState::Loading {
+            return;
+        }
+
+        let device_id = self.info.device_id;
+        let local_version = self.info.version;
+        let tx = self.result_tx.clone();
+
+        self.loading.firmware_check = LoadState::Loading;
+        self.status_msg = "Checking for firmware updates...".to_string();
+
+        tokio::spawn(async move {
+            use crate::firmware_api::{check_firmware, ApiError};
+
+            let result = match check_firmware(device_id).await {
+                Ok(response) => FirmwareCheckResult::from_response(&response, local_version),
+                Err(ApiError::ServerError(500, _)) => {
+                    // 500 error means device not in database = no update available
+                    FirmwareCheckResult::not_in_database()
+                }
+                Err(e) => FirmwareCheckResult {
+                    server_version: None,
+                    has_update: false,
+                    download_path: None,
+                    message: format!("Check failed: {e}"),
+                },
+            };
+
+            let _ = tx.send(AsyncResult::FirmwareCheck(result));
+        });
     }
 
     async fn toggle_depth_monitoring(&mut self) {
@@ -1202,6 +1250,11 @@ impl App {
             }
             AsyncResult::SleepTime(Err(_)) => {
                 self.loading.sleep_time = LoadState::Error;
+            }
+            AsyncResult::FirmwareCheck(result) => {
+                self.firmware_check = Some(result.clone());
+                self.loading.firmware_check = LoadState::Loaded;
+                self.status_msg = result.message;
             }
             AsyncResult::Triggers(Ok(triggers)) => {
                 self.triggers = Some(triggers);
@@ -1784,6 +1837,9 @@ pub async fn run() -> io::Result<()> {
                             else if app.tab == 4 { app.load_options(); }
                             else if app.tab == 5 { app.load_macros(); }
                         }
+                        KeyCode::Char('u') if app.tab == 0 => {
+                            app.check_firmware();
+                        }
                         KeyCode::Enter if app.tab == 1 => {
                             if app.selected == 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
@@ -2068,6 +2124,7 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
             current_context = kb.context;
             let section_name = match current_context {
                 KeyContext::Global => "Global",
+                KeyContext::Info => "Info Tab",
                 KeyContext::Led => "LED Tab",
                 KeyContext::Depth => "Depth Tab",
                 KeyContext::Triggers => "Triggers Tab",
@@ -2205,6 +2262,32 @@ fn render_device_info(f: &mut Frame, app: &App, area: Rect) {
                 format!("v{:X}", info.version),
                 Color::Yellow,
             ),
+        ]),
+        // Firmware update check
+        Line::from(vec![
+            Span::raw("Update:         "),
+            match loading.firmware_check {
+                LoadState::NotLoaded => Span::styled(
+                    "[u] Check".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                LoadState::Loading => {
+                    Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow))
+                }
+                LoadState::Loaded => {
+                    if let Some(ref result) = app.firmware_check {
+                        let color = if result.has_update {
+                            Color::Yellow
+                        } else {
+                            Color::Green
+                        };
+                        Span::styled(result.message.clone(), Style::default().fg(color))
+                    } else {
+                        Span::styled("-".to_string(), Style::default().fg(Color::DarkGray))
+                    }
+                }
+                LoadState::Error => Span::styled("!".to_string(), Style::default().fg(Color::Red)),
+            },
         ]),
         // Profile
         Line::from(vec![
