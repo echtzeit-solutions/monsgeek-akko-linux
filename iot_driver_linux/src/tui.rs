@@ -2,7 +2,10 @@
 // Real-time monitoring and settings configuration
 
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEventKind},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
+        MouseButton, MouseEventKind,
+    },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -91,6 +94,9 @@ struct App {
     hex_target: HexColorTarget,
     // Firmware check result
     firmware_check: Option<FirmwareCheckResult>,
+    // Terminal size for mouse calculations
+    terminal_width: u16,
+    terminal_height: u16,
 }
 
 /// Which color is being edited with hex input
@@ -455,6 +461,9 @@ impl App {
             hex_target: HexColorTarget::default(),
             // Firmware check
             firmware_check: None,
+            // Terminal size (will be updated on first draw and resize)
+            terminal_width: 80,
+            terminal_height: 24,
         };
         (app, result_rx)
     }
@@ -1561,7 +1570,9 @@ pub async fn run() -> io::Result<()> {
 
     // Setup terminal
     enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
+    stdout()
+        .execute(EnterAlternateScreen)?
+        .execute(EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     let (mut app, mut result_rx) = App::new();
@@ -1928,6 +1939,129 @@ pub async fn run() -> io::Result<()> {
                         }
                         _ => {}
                     }
+                } else if let Some(Ok(Event::Mouse(mouse))) = maybe_event {
+                    // Handle mouse events
+                    match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let x = mouse.column;
+                        let y = mouse.row;
+
+                        // Tab bar is at y=1 (inside the title block)
+                        // Calculate tab positions dynamically based on tab names
+                        if y == 1 {
+                            let tab_names = ["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Macros"];
+                            let mut pos = 2u16; // Start after border and initial padding
+                            for (i, name) in tab_names.iter().enumerate() {
+                                let tab_width = name.len() as u16;
+                                if x >= pos && x < pos + tab_width {
+                                    let old_tab = app.tab;
+                                    app.tab = i;
+                                    app.selected = 0;
+                                    app.trigger_scroll = 0;
+                                    // Auto-load when entering tabs
+                                    if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                                        app.load_triggers();
+                                    } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
+                                        app.load_options();
+                                    } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
+                                        app.load_macros();
+                                    }
+                                    if old_tab != app.tab {
+                                        app.status_msg = format!("Switched to tab {}", i);
+                                    }
+                                    break;
+                                }
+                                pos += tab_width + 3; // Tab width + " │ " separator
+                            }
+                        }
+
+                        // Content area clicks - y >= 4 (after title block 0-2 and tab bar 3)
+                        if y >= 4 {
+                            let content_row = (y - 4) as usize;
+                            // For list-based tabs, clicking selects the item
+                            match app.tab {
+                                1 => {
+                                    // LED Settings - items in the list
+                                    if content_row < 17 {
+                                        app.selected = content_row;
+                                    }
+                                }
+                                4 => {
+                                    // Options tab - 5 items (0-4)
+                                    if content_row < 5 {
+                                        app.selected = content_row;
+                                    }
+                                }
+                                5 => {
+                                    // Macros tab - select macro slot
+                                    if content_row < app.macros.len() {
+                                        app.macro_selected = content_row;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        // Scroll up navigates up in lists
+                        match app.tab {
+                            1 => {
+                                if app.selected > 0 {
+                                    app.selected -= 1;
+                                }
+                            }
+                            3 => {
+                                if app.trigger_scroll > 0 {
+                                    app.trigger_scroll -= 1;
+                                }
+                            }
+                            4 => {
+                                if app.selected > 0 {
+                                    app.selected -= 1;
+                                }
+                            }
+                            5 => {
+                                if app.macro_selected > 0 {
+                                    app.macro_selected -= 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    MouseEventKind::ScrollDown => {
+                        // Scroll down navigates down in lists
+                        match app.tab {
+                            1 => {
+                                if app.selected < 16 {
+                                    app.selected += 1;
+                                }
+                            }
+                            3 => {
+                                if let Some(ref triggers) = app.triggers {
+                                    let max_scroll = triggers.press_travel.len().saturating_sub(15);
+                                    if app.trigger_scroll < max_scroll {
+                                        app.trigger_scroll += 1;
+                                    }
+                                }
+                            }
+                            4 => {
+                                if app.selected < 4 {
+                                    app.selected += 1;
+                                }
+                            }
+                            5 => {
+                                if app.macro_selected + 1 < app.macros.len() {
+                                    app.macro_selected += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                    }
+                } else if let Some(Ok(Event::Resize(w, h))) = maybe_event {
+                    app.terminal_width = w;
+                    app.terminal_height = h;
                 }
             }
 
@@ -1954,7 +2088,9 @@ pub async fn run() -> io::Result<()> {
         }
     }
     disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
+    stdout()
+        .execute(DisableMouseCapture)?
+        .execute(LeaveAlternateScreen)?;
     Ok(())
 }
 
