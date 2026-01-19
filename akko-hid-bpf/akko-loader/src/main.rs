@@ -13,6 +13,8 @@ mod control;
 mod hid;
 mod loader;
 
+use std::path::PathBuf;
+
 use anyhow::{bail, Result};
 use chrono::Local;
 use clap::{Parser, Subcommand};
@@ -47,7 +49,12 @@ enum Commands {
     /// Unload BPF programs
     Unload,
     /// Verify BPF programs through kernel verifier (CI mode, no hardware required)
-    Verify,
+    Verify {
+        /// Path to BPF object file to verify.
+        /// If not provided, uses default location /usr/local/lib/akko/akko-ebpf.bpf.o
+        #[arg(long)]
+        bpf_path: Option<PathBuf>,
+    },
 }
 
 fn setup_logging(verbose: bool) {
@@ -102,9 +109,9 @@ fn main() -> Result<()> {
             setup_logging(cli.verbose);
             return loader::unload();
         }
-        Some(Commands::Verify) => {
+        Some(Commands::Verify { bpf_path }) => {
             setup_logging(cli.verbose);
-            return loader::verify();
+            return loader::verify(bpf_path.as_deref());
         }
         Some(Commands::Load) => {
             // Fall through to load logic below

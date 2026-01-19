@@ -113,8 +113,14 @@ fn get_bpf_path() -> Result<PathBuf> {
 ///
 /// This loads and verifies all BPF programs without registering them.
 /// Used in CI to catch verifier errors without requiring actual hardware.
-pub fn verify() -> Result<()> {
-    let bpf_path = get_bpf_path()?;
+///
+/// # Arguments
+/// * `bpf_path` - Optional path to BPF object file. If None, uses default search paths.
+pub fn verify(bpf_path: Option<&Path>) -> Result<()> {
+    let bpf_path = match bpf_path {
+        Some(p) => p.to_path_buf(),
+        None => get_bpf_path()?,
+    };
     info!("Verifying BPF from {:?}", bpf_path);
 
     let mut bpf = Ebpf::load_file(&bpf_path)
