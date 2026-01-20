@@ -228,7 +228,7 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko_ondemand: appending battery, orig=%d", orig_size as u32);
+    trace!(b"akko: RDESC appending battery, orig=%d", orig_size as u32);
 
     // Append battery descriptor using safe copy
     if !data.copy_from_slice(orig_size, &BATTERY_FEATURE_DESC) {
@@ -246,7 +246,7 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
     }
 
     let new_size = orig_size + BATTERY_FEATURE_DESC.len();
-    trace!(b"akko_ondemand: new size = %d bytes", new_size as u32);
+    trace!(b"akko: RDESC new size=%d bytes", new_size as u32);
 
     new_size as i32
 }
@@ -277,16 +277,16 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko_ondemand: battery request, report_id=%d", report_id as u32);
+    trace!(b"akko: REQUEST report_id=%d", report_id as u32);
 
     // Vendor hid_id is set by loader in VENDOR_HID_MAP
     let Some(&vendor_hid_id) = VENDOR_HID_MAP.get(0) else {
-        trace!(b"akko_ondemand: vendor_hid_id not set in map");
+        trace!(b"akko: ERROR vendor_hid_id not set");
         return 0;
     };
 
     if vendor_hid_id == 0 {
-        trace!(b"akko_ondemand: vendor_hid_id is 0, not configured");
+        trace!(b"akko: ERROR vendor_hid_id=0");
         return 0;
     }
 
@@ -303,11 +303,11 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
 
     // RAII guard - context automatically released on drop (even on early return)
     let Some(vendor) = AllocatedContext::new(vendor_hid_id) else {
-        trace!(b"akko_ondemand: failed to allocate vendor context");
+        trace!(b"akko: ERROR failed to alloc vendor ctx");
         return 0;
     };
 
-    // Helper to send F7 command
+    // Helper to send F7 command - tells dongle to query keyboard battery
     let send_f7 = |vendor: &AllocatedContext| {
         // F7 command format: [Report_ID=0, Command=0xF7, ...]
         let mut f7_buf: [u8; 65] = [0; 65];
@@ -316,11 +316,12 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport)
     };
 
-    // Helper to read battery
+    // Helper to read battery from vendor interface (GET_REPORT on Report ID 5)
     let read_battery = |vendor: &AllocatedContext| -> Option<u8> {
         let mut response: [u8; 65] = [0; 65];
         response[0] = 0x05; // Request Report ID 5
         let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+        trace!(b"akko: VENDOR_GET ret=%d raw=%d", ret, response[1] as u32);
         if ret >= 2 {
             Some(response[1])
         } else {
@@ -331,29 +332,30 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
     // Send F7 command if throttle expired (triggers dongle to query keyboard battery)
     let mut sent_f7 = false;
     if elapsed > throttle {
-        trace!(b"akko_ondemand: sending F7 to vendor=%d", vendor_hid_id);
+        trace!(b"akko: REFRESH sending F7 (throttle expired)");
         let ret = send_f7(&vendor);
-        trace!(b"akko_ondemand: F7 SET ret=%d", ret);
+        trace!(b"akko: F7_SEND ret=%d", ret);
         sent_f7 = true;
         let _ = STATE_MAP.set(0, now, 0);
     } else {
-        trace!(b"akko_ondemand: throttle active (%d sec ago)", (elapsed / 1_000_000_000) as u32);
+        trace!(b"akko: CACHED using dongle cache (%d sec old)", (elapsed / 1_000_000_000) as u32);
     }
 
     // Read battery response via GET_FEATURE Report 5
     let Some(raw_battery) = read_battery(&vendor) else {
-        trace!(b"akko_ondemand: GET failed");
+        trace!(b"akko: ERROR VENDOR_GET failed");
         return 0;
     };
 
     // If battery is 0 and we didn't just send F7, the data is likely stale - refresh
     let raw_battery = if raw_battery == 0 && !sent_f7 {
-        trace!(b"akko_ondemand: battery=0, forcing F7 refresh");
+        trace!(b"akko: STALE got 0%%, forcing F7 refresh");
         let ret = send_f7(&vendor);
-        trace!(b"akko_ondemand: F7 SET ret=%d", ret);
+        trace!(b"akko: F7_SEND ret=%d", ret);
         let _ = STATE_MAP.set(0, now, 0);
 
         // Read again after F7
+        trace!(b"akko: re-reading after F7...");
         read_battery(&vendor).unwrap_or(0)
     } else {
         raw_battery
@@ -361,13 +363,13 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
 
     // Log abnormal values for debugging
     if raw_battery > 100 {
-        trace!(b"akko_ondemand: WARN abnormal battery=%d", raw_battery as u32);
+        trace!(b"akko: WARN abnormal value=%d", raw_battery as u32);
     }
 
     // Clamp to 100 to avoid reporting invalid percentages
     let battery = if raw_battery > 100 { 100 } else { raw_battery };
 
-    trace!(b"akko_ondemand: battery=%d (raw=%d)", battery as u32, raw_battery as u32);
+    trace!(b"akko: RESULT battery=%d%%", battery as u32);
 
     // Write battery response to kernel's buffer
     // Format: [report_id, battery_level]
