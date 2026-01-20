@@ -21,7 +21,15 @@ pub use sync::{list_keyboards, SyncKeyboard};
 use std::sync::Arc;
 
 use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
-use monsgeek_transport::{ChecksumType, Transport, TransportType, VendorEvent};
+use monsgeek_transport::{ChecksumType, Transport, TransportExt, TransportType, VendorEvent};
+// Typed commands
+use monsgeek_transport::command::{
+    BatteryRefresh, BatteryResponse, DebounceResponse,
+    LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
+    PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
+    QueryProfile, QuerySleepTime, SetDebounce, SetMagnetismReport, SetPollingRate, SetProfile,
+    SetSleepTime, SleepTimeResponse,
+};
 
 /// High-level keyboard interface using any transport
 ///
@@ -122,49 +130,22 @@ impl KeyboardInterface {
             });
         }
 
-        // For dongles, send battery refresh command
-        let resp = self
-            .transport
-            .query_command(cmd::BATTERY_REFRESH, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() >= 5 {
-            Ok(BatteryInfo {
-                level: resp[1],
-                online: resp[4] != 0,
-                charging: false, // Not available via protocol
-            })
-        } else {
-            Err(KeyboardError::UnexpectedResponse(
-                "Invalid battery response".into(),
-            ))
-        }
+        // Battery response doesn't echo command, use query_no_echo
+        let resp: BatteryResponse = self.transport.query_no_echo(&BatteryRefresh).await?;
+        Ok(BatteryInfo {
+            level: resp.level,
+            online: resp.online,
+            charging: false, // Not available via protocol
+        })
     }
 
     // === LED Control ===
 
     /// Get current LED parameters
     pub async fn get_led_params(&self) -> Result<LedParams, KeyboardError> {
-        let resp = self
-            .transport
-            .query_command(cmd::GET_LEDPARAM, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() < 8 || resp[0] != cmd::GET_LEDPARAM {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid LED params response".into(),
-            ));
-        }
-
-        // Protocol format: [cmd, mode, speed, brightness, option, r, g, b]
-        // Speed is inverted in protocol (0 = fast, 4 = slow)
-        Ok(LedParams {
-            mode: LedMode::from_u8(resp[1]).unwrap_or(LedMode::Off),
-            speed: led::SPEED_MAX - resp[2].min(led::SPEED_MAX), // Invert speed
-            brightness: resp[3],
-            color: RgbColor::new(resp[5], resp[6], resp[7]),
-            direction: resp.get(4).copied().unwrap_or(0), // Option byte (dazzle info)
-        })
+        let resp: TransportLedParamsResponse =
+            self.transport.query(&QueryLedParams::default()).await?;
+        Ok(LedParams::from_transport_response(&resp))
     }
 
     /// Set LED mode
@@ -176,22 +157,7 @@ impl KeyboardInterface {
 
     /// Set LED parameters
     pub async fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
-        // Protocol format: [mode, speed, brightness, option, r, g, b]
-        // Speed is inverted in protocol (0 = fast, 4 = slow)
-        let data = [
-            params.mode as u8,
-            led::SPEED_MAX - params.speed.min(led::SPEED_MAX), // Invert speed
-            params.brightness.min(led::BRIGHTNESS_MAX),
-            params.direction, // Option byte (dazzle info)
-            params.color.r,
-            params.color.g,
-            params.color.b,
-        ];
-
-        self.transport
-            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)
-            .await?;
-
+        self.transport.send(&params.to_transport_cmd()).await?;
         Ok(())
     }
 
@@ -199,18 +165,8 @@ impl KeyboardInterface {
 
     /// Get current profile (0-3)
     pub async fn get_profile(&self) -> Result<u8, KeyboardError> {
-        let resp = self
-            .transport
-            .query_command(cmd::GET_PROFILE, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() < 2 || resp[0] != cmd::GET_PROFILE {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid profile response".into(),
-            ));
-        }
-
-        Ok(resp[1])
+        let resp: ProfileResponse = self.transport.query(&QueryProfile::default()).await?;
+        Ok(resp.profile)
     }
 
     /// Set current profile (0-3)
@@ -220,41 +176,26 @@ impl KeyboardInterface {
                 "Profile must be 0-3".into(),
             ));
         }
-
-        self.transport
-            .send_command(cmd::SET_PROFILE, &[profile], ChecksumType::Bit7)
-            .await?;
-
+        self.transport.send(&SetProfile::new(profile)).await?;
         Ok(())
     }
 
     /// Get polling rate
     pub async fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
-        let resp = self
-            .transport
-            .query_command(cmd::GET_REPORT, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() < 2 || resp[0] != cmd::GET_REPORT {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid polling rate response".into(),
-            ));
-        }
-
-        PollingRate::from_protocol_value(resp[1])
+        let resp: PollingRateResponse = self.transport.query(&QueryPollingRate::default()).await?;
+        // Convert transport PollingRate to keyboard PollingRate
+        PollingRate::from_hz(resp.rate.to_hz())
             .ok_or_else(|| KeyboardError::UnexpectedResponse("Unknown polling rate".into()))
     }
 
     /// Set polling rate
     pub async fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
+        // Convert keyboard PollingRate to transport PollingRate
+        let transport_rate = TransportPollingRate::from_hz(rate as u16)
+            .ok_or_else(|| KeyboardError::InvalidParameter("Invalid polling rate".into()))?;
         self.transport
-            .send_command(
-                cmd::SET_REPORT,
-                &[rate.to_protocol_value()],
-                ChecksumType::Bit7,
-            )
+            .send(&SetPollingRate::new(transport_rate))
             .await?;
-
         Ok(())
     }
 
@@ -262,18 +203,8 @@ impl KeyboardInterface {
 
     /// Get debounce time in milliseconds
     pub async fn get_debounce(&self) -> Result<u8, KeyboardError> {
-        let resp = self
-            .transport
-            .query_command(cmd::GET_DEBOUNCE, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() < 2 || resp[0] != cmd::GET_DEBOUNCE {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid debounce response".into(),
-            ));
-        }
-
-        Ok(resp[1])
+        let resp: DebounceResponse = self.transport.query(&QueryDebounce::default()).await?;
+        Ok(resp.ms)
     }
 
     /// Set debounce time in milliseconds (0-50)
@@ -283,11 +214,7 @@ impl KeyboardInterface {
                 "Debounce must be 0-50ms".into(),
             ));
         }
-
-        self.transport
-            .send_command(cmd::SET_DEBOUNCE, &[ms], ChecksumType::Bit7)
-            .await?;
-
+        self.transport.send(&SetDebounce::new(ms)).await?;
         Ok(())
     }
 
@@ -295,27 +222,13 @@ impl KeyboardInterface {
 
     /// Get sleep timeout in seconds
     pub async fn get_sleep_time(&self) -> Result<u16, KeyboardError> {
-        let resp = self
-            .transport
-            .query_command(cmd::GET_SLEEPTIME, &[], ChecksumType::Bit7)
-            .await?;
-
-        if resp.len() < 3 || resp[0] != cmd::GET_SLEEPTIME {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid sleep time response".into(),
-            ));
-        }
-
-        Ok(u16::from_le_bytes([resp[1], resp[2]]))
+        let resp: SleepTimeResponse = self.transport.query(&QuerySleepTime::default()).await?;
+        Ok(resp.seconds)
     }
 
     /// Set sleep timeout in seconds
     pub async fn set_sleep_time(&self, seconds: u16) -> Result<(), KeyboardError> {
-        let bytes = seconds.to_le_bytes();
-        self.transport
-            .send_command(cmd::SET_SLEEPTIME, &bytes, ChecksumType::Bit7)
-            .await?;
-
+        self.transport.send(&SetSleepTime::new(seconds)).await?;
         Ok(())
     }
 
@@ -464,11 +377,7 @@ impl KeyboardInterface {
                 "Device does not have Hall Effect switches".into(),
             ));
         }
-
-        self.transport
-            .send_command(cmd::SET_MAGNETISM_REPORT, &[1], ChecksumType::Bit7)
-            .await?;
-
+        self.transport.send(&SetMagnetismReport::enable()).await?;
         Ok(())
     }
 
@@ -477,11 +386,7 @@ impl KeyboardInterface {
         if !self.has_magnetism {
             return Ok(());
         }
-
-        self.transport
-            .send_command(cmd::SET_MAGNETISM_REPORT, &[0], ChecksumType::Bit7)
-            .await?;
-
+        self.transport.send(&SetMagnetismReport::disable()).await?;
         Ok(())
     }
 
@@ -602,22 +507,26 @@ impl KeyboardInterface {
             ));
         }
 
-        // Key modes use 1 byte per key, need 2 pages for up to ~120 keys
-        let modes = self.get_magnetism(mag_cmd::KEY_MODE, 2).await?;
+        // Calculate pages needed based on key count (64 bytes per page)
+        let pages_u8 = (self.key_count as usize).div_ceil(64); // 1 byte per key
+        let pages_u16 = (self.key_count as usize * 2).div_ceil(64); // 2 bytes per key
+
+        // Key modes use 1 byte per key
+        let modes = self.get_magnetism(mag_cmd::KEY_MODE, pages_u8).await?;
 
         // Travel values use 2 bytes per key (16-bit little-endian)
-        let press = self.get_magnetism(mag_cmd::PRESS_TRAVEL, 2).await?;
-        let lift = self.get_magnetism(mag_cmd::LIFT_TRAVEL, 2).await?;
-        let rt_press = self.get_magnetism(mag_cmd::RT_PRESS, 2).await?;
-        let rt_lift = self.get_magnetism(mag_cmd::RT_LIFT, 2).await?;
+        let press = self.get_magnetism(mag_cmd::PRESS_TRAVEL, pages_u16).await?;
+        let lift = self.get_magnetism(mag_cmd::LIFT_TRAVEL, pages_u16).await?;
+        let rt_press = self.get_magnetism(mag_cmd::RT_PRESS, pages_u16).await?;
+        let rt_lift = self.get_magnetism(mag_cmd::RT_LIFT, pages_u16).await?;
 
         // Deadzones - may fail on older firmware
         let bottom_dz = self
-            .get_magnetism(mag_cmd::BOTTOM_DEADZONE, 2)
+            .get_magnetism(mag_cmd::BOTTOM_DEADZONE, pages_u16)
             .await
             .unwrap_or_default();
         let top_dz = self
-            .get_magnetism(mag_cmd::TOP_DEADZONE, 2)
+            .get_magnetism(mag_cmd::TOP_DEADZONE, pages_u16)
             .await
             .unwrap_or_default();
 

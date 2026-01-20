@@ -184,3 +184,65 @@ impl Default for LedParams {
         }
     }
 }
+
+// =============================================================================
+// Conversions to/from transport types
+// =============================================================================
+
+use monsgeek_transport::command::{
+    LedMode as TransportLedMode, LedParamsResponse as TransportLedParamsResponse,
+    Rgb as TransportRgb, SetLedParams as TransportSetLedParams,
+};
+
+impl From<LedMode> for TransportLedMode {
+    fn from(mode: LedMode) -> Self {
+        // Both enums use same numeric values for common modes
+        TransportLedMode::from_u8(mode as u8).unwrap_or(TransportLedMode::Off)
+    }
+}
+
+impl From<TransportLedMode> for LedMode {
+    fn from(mode: TransportLedMode) -> Self {
+        LedMode::from_u8(mode as u8).unwrap_or(LedMode::Off)
+    }
+}
+
+impl From<RgbColor> for TransportRgb {
+    fn from(c: RgbColor) -> Self {
+        TransportRgb::new(c.r, c.g, c.b)
+    }
+}
+
+impl From<TransportRgb> for RgbColor {
+    fn from(c: TransportRgb) -> Self {
+        RgbColor::new(c.r, c.g, c.b)
+    }
+}
+
+impl LedParams {
+    /// Convert to transport SetLedParams command
+    pub fn to_transport_cmd(&self) -> TransportSetLedParams {
+        let dazzle = (self.direction & 0x0F) == DAZZLE_ON;
+        let layer = self.direction >> 4;
+
+        TransportSetLedParams {
+            mode: self.mode.into(),
+            speed: self.speed,
+            brightness: self.brightness,
+            color: self.color.into(),
+            dazzle,
+            layer,
+        }
+    }
+
+    /// Create from transport LedParamsResponse
+    pub fn from_transport_response(resp: &TransportLedParamsResponse) -> Self {
+        Self {
+            mode: resp.mode.into(),
+            speed: resp.speed,
+            brightness: resp.brightness,
+            color: resp.color.into(),
+            direction: resp.option_raw,
+        }
+    }
+}
