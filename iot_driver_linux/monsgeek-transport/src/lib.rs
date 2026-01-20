@@ -8,6 +8,7 @@
 //! - Bluetooth GATT (future)
 //! - WebRTC (future, for remote access)
 
+pub mod command;
 pub mod error;
 pub mod protocol;
 pub mod types;
@@ -23,6 +24,39 @@ pub mod bluetooth;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
 
+pub use command::{
+    // Battery
+    BatteryRefresh,
+    BatteryResponse,
+    DebounceResponse,
+    HidCommand,
+    HidResponse,
+    LedMode,
+    LedParamsResponse,
+    ParseError,
+    PollingRate,
+    PollingRateResponse,
+    ProfileResponse,
+    QueryDebounce,
+    // Queries
+    QueryLedParams,
+    QueryPollingRate,
+    QueryProfile,
+    QuerySleepTime,
+    QueryVersion,
+    Rgb,
+    SetDebounce,
+    // LED
+    SetLedParams,
+    // Magnetism
+    SetMagnetismReport,
+    SetPollingRate,
+    // Settings
+    SetProfile,
+    SetSleepTime,
+    SleepTimeResponse,
+    TransportExt,
+};
 pub use error::TransportError;
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType, VendorEvent,
