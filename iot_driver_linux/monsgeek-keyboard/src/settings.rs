@@ -91,6 +91,8 @@ pub struct BatteryInfo {
     pub online: bool,
     /// Device is charging (may not be available)
     pub charging: bool,
+    /// Device is idle (no recent key activity)
+    pub idle: bool,
 }
 
 /// Polling rate options

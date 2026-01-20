@@ -410,7 +410,7 @@ fn cli_battery(
         let result = read_vendor_battery(hidapi, show_hex);
 
         match result {
-            Some((battery, online, raw_bytes)) => {
+            Some((battery, online, idle, raw_bytes)) => {
                 if quiet {
                     println!("{battery}");
                 } else if show_hex {
@@ -421,6 +421,14 @@ fn cli_battery(
                     println!("-----------------------");
                     println!("  Level:     {battery}%");
                     println!("  Connected: {}", if online { "Yes" } else { "No" });
+                    println!(
+                        "  Idle:      {}",
+                        if idle {
+                            "Yes (sleeping)"
+                        } else {
+                            "No (active)"
+                        }
+                    );
                     let hex: Vec<String> =
                         raw_bytes[1..8].iter().map(|b| format!("{b:02x}")).collect();
                     println!("  Raw[1..8]: {}", hex.join(" "));
@@ -446,8 +454,8 @@ fn cli_battery(
     Ok(())
 }
 
-/// Read battery from vendor protocol, returns (battery%, online, full_response)
-fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, [u8; 65])> {
+/// Read battery from vendor protocol, returns (battery%, online, idle, full_response)
+fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, bool, [u8; 65])> {
     for device_info in hidapi.device_list() {
         let vid = device_info.vendor_id();
         let pid = device_info.product_id();
@@ -495,11 +503,12 @@ fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, [
         match device.get_feature_report(&mut buf) {
             Ok(_len) => {
                 let battery = buf[1];
+                let idle = buf[3] != 0;
                 let online = buf[4] != 0;
 
                 // Return data even if battery is 0 (for debugging)
                 // Caller can decide if 0 is valid
-                return Some((battery, online, buf));
+                return Some((battery, online, idle, buf));
             }
             Err(e) => {
                 if show_debug {
@@ -549,7 +558,11 @@ fn print_hex_dump(data: &[u8; 65]) {
     println!("  byte[0] = 0x{:02x} (Report ID)", data[0]);
     println!("  byte[1] = {} (Battery %)", data[1]);
     println!("  byte[2] = 0x{:02x}", data[2]);
-    println!("  byte[3] = 0x{:02x}", data[3]);
+    println!(
+        "  byte[3] = 0x{:02x} (Idle: {})",
+        data[3],
+        if data[3] != 0 { "Yes" } else { "No" }
+    );
     println!(
         "  byte[4] = {} (Online: {})",
         data[4],
@@ -635,12 +648,13 @@ fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> 
                 if let Ok(len) = device.get_feature_report(&mut buf) {
                     if len >= 5 {
                         // Byte offsets confirmed via Windows driver decompilation:
-                        // byte[1] = battery, byte[4] = is_online
+                        // byte[1] = battery, byte[3] = idle flag, byte[4] = is_online
                         // Charging not available via dongle protocol
                         let info = BatteryInfo {
                             level: buf[1],
                             charging: false, // Not available via dongle protocol
                             online: buf[4] != 0,
+                            idle: buf[3] != 0, // 1 = idle, 0 = active
                         };
 
                         // Update /run/akko-keyboard files

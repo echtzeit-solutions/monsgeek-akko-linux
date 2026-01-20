@@ -582,6 +582,7 @@ impl HidCommand for BatteryRefresh {
 pub struct BatteryResponse {
     pub level: u8,    // 0-100%
     pub online: bool, // Keyboard connected to dongle
+    pub idle: bool,   // Keyboard is idle (no recent activity)
 }
 
 impl HidResponse for BatteryResponse {
@@ -589,8 +590,14 @@ impl HidResponse for BatteryResponse {
     const MIN_LEN: usize = 5;
 
     fn from_data(data: &[u8]) -> Result<Self, ParseError> {
-        // Battery response format (from dongle):
-        // [0] = 0x01 (status), [1] = level, [4] = online flag
+        // Battery response format (65 bytes including Report ID):
+        // [0] = Report ID (0x00)
+        // [1] = battery level (0-100%)
+        // [2] = unknown (always 0x00)
+        // [3] = idle flag (1 = idle/sleeping, 0 = active/recently pressed)
+        // [4] = online flag (1 = connected)
+        // [5-6] = unknown (both 0x01)
+        // [7+] = padding (0x00)
         let level = data[1];
         if level > 100 {
             return Err(ParseError::InvalidValue {
@@ -601,6 +608,7 @@ impl HidResponse for BatteryResponse {
         Ok(Self {
             level,
             online: data[4] != 0,
+            idle: data.len() > 3 && data[3] != 0,
         })
     }
 }

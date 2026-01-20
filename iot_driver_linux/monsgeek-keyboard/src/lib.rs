@@ -127,6 +127,7 @@ impl KeyboardInterface {
                 level: 100,
                 online: true,
                 charging: false,
+                idle: false,
             });
         }
 
@@ -136,6 +137,7 @@ impl KeyboardInterface {
             level: resp.level,
             online: resp.online,
             charging: false, // Not available via protocol
+            idle: resp.idle,
         })
     }
 

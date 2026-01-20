@@ -541,11 +541,19 @@ impl App {
         }
 
         self.connected = true;
-        self.status_msg = format!("Connected to {}", self.device_name);
 
         // Load battery status immediately for wireless devices
         if self.is_wireless {
             self.refresh_battery();
+            // Show warning if keyboard is idle/sleeping
+            if self.battery.as_ref().map(|b| b.idle).unwrap_or(false) {
+                self.status_msg =
+                    "Keyboard sleeping - press a key to wake before querying".to_string();
+            } else {
+                self.status_msg = format!("Connected to {}", self.device_name);
+            }
+        } else {
+            self.status_msg = format!("Connected to {}", self.device_name);
         }
 
         Ok(())
@@ -1587,8 +1595,12 @@ pub async fn run() -> io::Result<()> {
     if let Err(e) = app.connect().await {
         app.status_msg = e;
     } else {
-        // Load device info (TUI starts on tab 0) - spawns background tasks
-        app.load_device_info();
+        // Skip loading if keyboard is sleeping (queries will fail/timeout)
+        let is_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
+        if !is_idle {
+            // Load device info (TUI starts on tab 0) - spawns background tasks
+            app.load_device_info();
+        }
     }
 
     // Set up async event stream
@@ -1850,11 +1862,20 @@ pub async fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('r') => {
-                            app.status_msg = "Refreshing...".to_string();
-                            app.load_device_info();
-                            if app.tab == 3 { app.load_triggers(); }
-                            else if app.tab == 4 { app.load_options(); }
-                            else if app.tab == 5 { app.load_macros(); }
+                            // Re-check battery/idle state before refresh
+                            if app.is_wireless {
+                                app.refresh_battery();
+                            }
+                            let is_idle = app.is_wireless && app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
+                            if is_idle {
+                                app.status_msg = "Keyboard sleeping - press a key to wake before querying".to_string();
+                            } else {
+                                app.status_msg = "Refreshing...".to_string();
+                                app.load_device_info();
+                                if app.tab == 3 { app.load_triggers(); }
+                                else if app.tab == 4 { app.load_options(); }
+                                else if app.tab == 5 { app.load_macros(); }
+                            }
                         }
                         KeyCode::Char('u') if app.tab == 0 => {
                             app.check_firmware();
@@ -1902,7 +1923,11 @@ pub async fn run() -> io::Result<()> {
                             if let Err(e) = app.connect().await {
                                 app.status_msg = e;
                             } else {
-                                app.load_device_info();
+                                // Skip loading if keyboard is sleeping
+                                let is_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
+                                if !is_idle {
+                                    app.load_device_info();
+                                }
                             }
                         }
                         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(0).await,
@@ -2037,7 +2062,17 @@ pub async fn run() -> io::Result<()> {
 
                 // Refresh battery every 30 seconds for wireless devices
                 if app.is_wireless && app.last_battery_check.elapsed() >= Duration::from_secs(30) {
+                    let was_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
                     app.refresh_battery();
+                    let is_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
+
+                    if is_idle {
+                        app.status_msg = "Keyboard sleeping - press a key to wake before querying".to_string();
+                    } else if was_idle {
+                        // Keyboard just woke up - load device info now
+                        app.status_msg = "Keyboard awake - loading settings...".to_string();
+                        app.load_device_info();
+                    }
                 }
             }
         }
@@ -2158,7 +2193,9 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Some(BatterySource::Vendor) => "v",
                 None => "?",
             };
-            format!(" {}{}%({src})", icon, batt.level)
+            // Show idle indicator when keyboard is sleeping
+            let idle_str = if batt.idle { " zzz" } else { "" };
+            format!(" {}{}%({src}){idle_str}", icon, batt.level)
         } else {
             " ?%".to_string()
         }

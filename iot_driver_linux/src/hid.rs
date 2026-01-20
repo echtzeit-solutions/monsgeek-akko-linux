@@ -42,6 +42,8 @@ pub struct BatteryInfo {
     pub online: bool,
     /// Device is charging
     pub charging: bool,
+    /// Device is idle (no recent key activity)
+    pub idle: bool,
 }
 
 impl BatteryInfo {
@@ -51,11 +53,11 @@ impl BatteryInfo {
     /// The driver uses protobuf Status24 { battery: u32, is_online: bool }
     ///
     /// HID response format from 2.4GHz dongle (VID:3151 PID:5038):
-    /// - byte[0] = 0x01 (status byte, always 0x01)
+    /// - byte[0] = 0x00 (Report ID)
     /// - byte[1] = battery level (0-100) - CONFIRMED via USB capture
     /// - byte[2] = 0x00 (unknown)
-    /// - byte[3] = 0x00 (unknown)
-    /// - byte[4] = 0x01 (unknown flag, always 0x01 in captures)
+    /// - byte[3] = idle flag (1 = idle/sleeping, 0 = active/recently pressed)
+    /// - byte[4] = online flag (1 = connected)
     /// - byte[5] = 0x01 (unknown flag, always 0x01 in captures)
     /// - byte[6] = 0x01 (unknown flag, always 0x01 in captures)
     /// - byte[7] = 0x00 (unknown)
@@ -73,6 +75,8 @@ impl BatteryInfo {
         // Byte offsets confirmed via Windows driver decompilation
         let level = data[1];
         let online = data[4] != 0;
+        // byte[3] = idle flag (1 = idle, 0 = active)
+        let idle = data.len() > 3 && data[3] != 0;
         // Note: byte[5] is NOT charging status (user confirmed KB wasn't charging when byte[5]=1)
         // Charging status is not available from dongle protocol
         let charging = false;
@@ -86,6 +90,7 @@ impl BatteryInfo {
             level,
             online,
             charging,
+            idle,
         })
     }
 
@@ -110,6 +115,7 @@ impl BatteryInfo {
             level: cmd_data[3],
             online: cmd_data[4] & 0x01 != 0,
             charging: cmd_data[4] & 0x02 != 0,
+            idle: false, // Not available in vendor event format
         })
     }
 

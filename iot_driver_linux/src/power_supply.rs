@@ -72,6 +72,7 @@ pub fn read_kernel_battery(path: &Path) -> Option<BatteryInfo> {
         level: capacity,
         online: present,
         charging: status == "Charging",
+        idle: false, // Not available from kernel interface
     })
 }
 
@@ -188,6 +189,7 @@ pub struct BatteryState {
     pub level: AtomicU8,
     pub online: AtomicBool,
     pub charging: AtomicBool,
+    pub idle: AtomicBool,
 }
 
 impl Default for BatteryState {
@@ -196,6 +198,7 @@ impl Default for BatteryState {
             level: AtomicU8::new(255), // Unknown
             online: AtomicBool::new(false),
             charging: AtomicBool::new(false),
+            idle: AtomicBool::new(false),
         }
     }
 }
@@ -205,6 +208,7 @@ impl BatteryState {
         self.level.store(info.level, Ordering::Relaxed);
         self.online.store(info.online, Ordering::Relaxed);
         self.charging.store(info.charging, Ordering::Relaxed);
+        self.idle.store(info.idle, Ordering::Relaxed);
     }
 
     pub fn get_info(&self) -> BatteryInfo {
@@ -212,6 +216,7 @@ impl BatteryState {
             level: self.level.load(Ordering::Relaxed),
             online: self.online.load(Ordering::Relaxed),
             charging: self.charging.load(Ordering::Relaxed),
+            idle: self.idle.load(Ordering::Relaxed),
         }
     }
 
@@ -376,12 +381,14 @@ mod tests {
             level: 75,
             online: true,
             charging: false,
+            idle: true,
         };
         state.update(&info);
 
         assert_eq!(state.level.load(Ordering::Relaxed), 75);
         assert!(state.online.load(Ordering::Relaxed));
         assert!(!state.charging.load(Ordering::Relaxed));
+        assert!(state.idle.load(Ordering::Relaxed));
         assert_eq!(state.status(), PowerSupplyStatus::Discharging);
     }
 
