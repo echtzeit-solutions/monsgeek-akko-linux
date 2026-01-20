@@ -33,10 +33,6 @@ struct Cli {
     #[arg(short = 'i', long, global = true)]
     hid_id: Option<u32>,
 
-    /// F7 refresh throttle interval in seconds (default: 10 minutes)
-    #[arg(short, long, default_value = "600", global = true)]
-    throttle: u32,
-
     /// Verbose output
     #[arg(short, long, global = true)]
     verbose: bool,
@@ -45,7 +41,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Load BPF programs
-    Load,
+    Load {
+        /// Path to BPF object file to load.
+        /// If not provided, uses default location /usr/local/lib/akko/akko-ebpf.bpf.o
+        #[arg(long)]
+        bpf_path: Option<PathBuf>,
+    },
     /// Unload BPF programs
     Unload,
     /// Verify BPF programs through kernel verifier (CI mode, no hardware required)
@@ -104,7 +105,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Handle subcommands - status is default when no subcommand given
-    match &cli.command {
+    let bpf_path = match &cli.command {
         Some(Commands::Unload) => {
             setup_logging(cli.verbose);
             return loader::unload();
@@ -113,14 +114,15 @@ fn main() -> Result<()> {
             setup_logging(cli.verbose);
             return loader::verify(bpf_path.as_deref());
         }
-        Some(Commands::Load) => {
+        Some(Commands::Load { bpf_path }) => {
             // Fall through to load logic below
+            bpf_path.clone()
         }
         None => {
             // Default: show status
             return do_status();
         }
-    }
+    };
 
     setup_logging(cli.verbose);
 
@@ -186,7 +188,7 @@ fn main() -> Result<()> {
     };
 
     // Load BPF program (link will be pinned)
-    loader::load(hid_info.hid_id, cli.throttle)?;
+    loader::load(hid_info.hid_id, bpf_path.as_deref())?;
 
     // Rebind device to activate BPF
     if !hid_info.device_name.is_empty() {

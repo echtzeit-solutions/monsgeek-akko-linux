@@ -150,8 +150,15 @@ pub fn verify(bpf_path: Option<&Path>) -> Result<()> {
 ///
 /// The BPF link is pinned to the filesystem so it persists after the loader exits.
 /// Use `unload()` to remove the pinned link.
-pub fn load(hid_id: u32, throttle_secs: u32) -> Result<()> {
-    let bpf_path = get_bpf_path()?;
+///
+/// # Arguments
+/// * `hid_id` - HID device ID for the keyboard interface
+/// * `bpf_path` - Optional path to BPF object file. If None, uses default search paths.
+pub fn load(hid_id: u32, bpf_path: Option<&Path>) -> Result<()> {
+    let bpf_path = match bpf_path {
+        Some(p) => p.to_path_buf(),
+        None => get_bpf_path()?,
+    };
     info!("Loading BPF from {:?}", bpf_path);
 
     let mut bpf = Ebpf::load_file(&bpf_path)
@@ -172,23 +179,6 @@ pub fn load(hid_id: u32, throttle_secs: u32) -> Result<()> {
     debug!("Calling load_struct_ops...");
     bpf.load_struct_ops(&btf)
         .context("Failed to load struct_ops programs")?;
-
-    // Configure throttle interval
-    let throttle_ns: u64 = u64::from(throttle_secs) * 1_000_000_000;
-    info!(
-        "Configuring throttle interval: {}s ({}ns)",
-        throttle_secs, throttle_ns
-    );
-
-    let mut config_map: Array<_, u64> = bpf
-        .map_mut("CONFIG_MAP")
-        .context("CONFIG_MAP not found in BPF")?
-        .try_into()
-        .context("Failed to convert CONFIG_MAP")?;
-
-    config_map
-        .set(0, throttle_ns, 0)
-        .context("Failed to set throttle in CONFIG_MAP")?;
 
     // Set the vendor hid_id (vendor interface is keyboard + 2)
     let vendor_hid_id = hid_id + 2;
