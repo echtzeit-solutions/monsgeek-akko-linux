@@ -1,13 +1,13 @@
 //! HID-BPF driver for Akko/MonsGeek 2.4GHz dongle battery integration
-//! Option C: On-demand F7 refresh triggered by UPower/userspace reads
+//! On-demand F7 refresh triggered by UPower/userspace reads
 //!
-//! This version sends F7 refresh commands when the battery is queried,
-//! with a configurable throttle interval. Key insights:
+//! This version sends F7 refresh commands when the battery is queried.
+//! Key insights:
 //!
 //! 1. The hw_request hook fires when kernel reads battery Feature report
 //! 2. F7 must go to the VENDOR interface (hid_id + 2), not keyboard interface
 //! 3. We allocate a fresh context to avoid nested call protection
-//! 4. Throttle prevents excessive F7 commands
+//! 4. F7 queries do NOT wake the keyboard (idle flag stays set)
 //!
 //! Dongle: VID 0x3151 / PID 0x5038
 //!
@@ -40,13 +40,6 @@ static LICENSE: [u8; 4] = *b"GPL\0";
 // Safe wrappers for BPF helpers
 // =============================================================================
 
-/// Get current kernel time in nanoseconds (safe wrapper).
-#[inline(always)]
-fn ktime_get_ns() -> u64 {
-    // SAFETY: bpf_ktime_get_ns is always safe to call, returns monotonic time
-    unsafe { aya_ebpf::helpers::bpf_ktime_get_ns() }
-}
-
 /// Safe wrapper for bpf_printk that hides the unsafe.
 macro_rules! trace {
     ($($arg:tt)*) => {
@@ -59,11 +52,11 @@ macro_rules! trace {
 // Constants
 // =============================================================================
 
+/// BPF revision number - INCREMENT THIS when making changes to help identify loaded version
+const REVISION: u32 = 2;
+
 /// Battery Feature Report ID
 const BATTERY_REPORT_ID: u8 = 0x05;
-
-/// Default throttle: 10 minutes in nanoseconds
-const DEFAULT_THROTTLE_NS: u64 = 600 * 1_000_000_000;
 
 /// Keyboard HID descriptor signature: Usage Page (Generic Desktop), Usage (Keyboard)
 const KEYBOARD_SIGNATURE: [u8; 4] = [0x05, 0x01, 0x09, 0x06];
@@ -71,14 +64,6 @@ const KEYBOARD_SIGNATURE: [u8; 4] = [0x05, 0x01, 0x09, 0x06];
 // =============================================================================
 // BPF Maps
 // =============================================================================
-
-/// Configuration map - holds throttle interval in nanoseconds
-#[btf_map]
-static CONFIG_MAP: Array<u64, 1> = Array::new();
-
-/// State map - holds last F7 timestamp in nanoseconds
-#[btf_map]
-static STATE_MAP: Array<u64, 1> = Array::new();
 
 /// Vendor HID ID map - set by loader, holds the vendor interface hid_id
 /// This avoids having to read hid_device.id from kernel struct (complex offset)
@@ -228,25 +213,15 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko: RDESC appending battery, orig=%d", orig_size as u32);
+    trace!(b"akko_rev%d: RDESC appending battery, orig=%d", REVISION, orig_size as u32);
 
     // Append battery descriptor using safe copy
     if !data.copy_from_slice(orig_size, &BATTERY_FEATURE_DESC) {
         return 0;
     }
 
-    // Initialize state map
-    let _ = STATE_MAP.set(0, 0u64, 0);
-
-    // Initialize config with default throttle if not set
-    if let Some(&throttle) = CONFIG_MAP.get(0) {
-        if throttle == 0 {
-            let _ = CONFIG_MAP.set(0, DEFAULT_THROTTLE_NS, 0);
-        }
-    }
-
     let new_size = orig_size + BATTERY_FEATURE_DESC.len();
-    trace!(b"akko: RDESC new size=%d bytes", new_size as u32);
+    trace!(b"akko_rev%d: RDESC new size=%d bytes", REVISION, new_size as u32);
 
     new_size as i32
 }
@@ -277,99 +252,60 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko: REQUEST report_id=%d", report_id as u32);
+    trace!(b"akko_rev%d: REQUEST report_id=%d", REVISION, report_id as u32);
 
     // Vendor hid_id is set by loader in VENDOR_HID_MAP
     let Some(&vendor_hid_id) = VENDOR_HID_MAP.get(0) else {
-        trace!(b"akko: ERROR vendor_hid_id not set");
+        trace!(b"akko_rev%d: ERROR vendor_hid_id not set", REVISION);
         return 0;
     };
 
     if vendor_hid_id == 0 {
-        trace!(b"akko: ERROR vendor_hid_id=0");
+        trace!(b"akko_rev%d: ERROR vendor_hid_id=0", REVISION);
         return 0;
     }
-
-    // Check throttle - only send F7 if enough time has passed
-    let Some(&last_f7) = STATE_MAP.get(0) else {
-        return 0;
-    };
-    let Some(&throttle) = CONFIG_MAP.get(0) else {
-        return 0;
-    };
-
-    let now = ktime_get_ns();
-    let elapsed = now - last_f7;
 
     // RAII guard - context automatically released on drop (even on early return)
     let Some(vendor) = AllocatedContext::new(vendor_hid_id) else {
-        trace!(b"akko: ERROR failed to alloc vendor ctx");
+        trace!(b"akko_rev%d: ERROR failed to alloc vendor ctx", REVISION);
         return 0;
     };
 
-    // Helper to send F7 command - tells dongle to query keyboard battery
-    let send_f7 = |vendor: &AllocatedContext| {
-        // F7 command format: [Report_ID=0, Command=0xF7, ...]
-        let mut f7_buf: [u8; 65] = [0; 65];
-        f7_buf[0] = 0x00; // Report ID
-        f7_buf[1] = 0xF7; // F7 command
-        vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport)
-    };
-
-    // Helper to read battery from vendor interface (GET_REPORT on Report ID 5)
-    let read_battery = |vendor: &AllocatedContext| -> Option<u8> {
-        let mut response: [u8; 65] = [0; 65];
-        response[0] = 0x05; // Request Report ID 5
-        let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
-        trace!(b"akko: VENDOR_GET ret=%d raw=%d", ret, response[1] as u32);
-        if ret >= 2 {
-            Some(response[1])
-        } else {
-            None
-        }
-    };
-
-    // Send F7 command if throttle expired (triggers dongle to query keyboard battery)
-    let mut sent_f7 = false;
-    if elapsed > throttle {
-        trace!(b"akko: REFRESH sending F7 (throttle expired)");
-        let ret = send_f7(&vendor);
-        trace!(b"akko: F7_SEND ret=%d", ret);
-        sent_f7 = true;
-        let _ = STATE_MAP.set(0, now, 0);
-    } else {
-        trace!(b"akko: CACHED using dongle cache (%d sec old)", (elapsed / 1_000_000_000) as u32);
-    }
+    // Send F7 command to tell dongle to query keyboard battery
+    // F7 queries do NOT wake the keyboard (verified via idle flag)
+    let mut f7_buf: [u8; 65] = [0; 65];
+    f7_buf[0] = 0x00; // Report ID
+    f7_buf[1] = 0xF7; // F7 command
+    let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
+    trace!(b"akko_rev%d: F7_SEND %db", REVISION, ret);
 
     // Read battery response via GET_FEATURE Report 5
-    let Some(raw_battery) = read_battery(&vendor) else {
-        trace!(b"akko: ERROR VENDOR_GET failed");
+    let mut response: [u8; 65] = [0; 65];
+    response[0] = 0x05; // Request Report ID 5
+    let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+    trace!(b"akko_rev%d: VENDOR_GET %db [%02x %02x %02x %02x]", REVISION, ret,
+        response[0] as u32, response[1] as u32, response[2] as u32, response[3] as u32);
+    trace!(b"akko_rev%d: VENDOR_GET [%02x %02x %02x %02x]", REVISION,
+        response[4] as u32, response[5] as u32, response[6] as u32, response[7] as u32);
+
+    if ret < 2 {
+        trace!(b"akko_rev%d: ERROR VENDOR_GET failed", REVISION);
         return 0;
-    };
+    }
 
-    // If battery is 0 and we didn't just send F7, the data is likely stale - refresh
-    let raw_battery = if raw_battery == 0 && !sent_f7 {
-        trace!(b"akko: STALE got 0%%, forcing F7 refresh");
-        let ret = send_f7(&vendor);
-        trace!(b"akko: F7_SEND ret=%d", ret);
-        let _ = STATE_MAP.set(0, now, 0);
-
-        // Read again after F7
-        trace!(b"akko: re-reading after F7...");
-        read_battery(&vendor).unwrap_or(0)
-    } else {
-        raw_battery
-    };
+    let raw_battery = response[1];
+    let idle = response[3];
+    let online = response[4];
 
     // Log abnormal values for debugging
     if raw_battery > 100 {
-        trace!(b"akko: WARN abnormal value=%d", raw_battery as u32);
+        trace!(b"akko_rev%d: WARN abnormal value=%d", REVISION, raw_battery as u32);
     }
 
     // Clamp to 100 to avoid reporting invalid percentages
     let battery = if raw_battery > 100 { 100 } else { raw_battery };
 
-    trace!(b"akko: RESULT battery=%d%%", battery as u32);
+    trace!(b"akko_rev%d: RESULT bat=%d%% idle=%d online=%d", REVISION, battery as u32, idle as u32, online as u32);
 
     // Write battery response to kernel's buffer
     // Format: [report_id, battery_level]
