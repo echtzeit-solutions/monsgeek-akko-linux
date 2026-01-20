@@ -727,6 +727,7 @@ impl<T: Transport + ?Sized> TransportExt for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::REPORT_SIZE;
 
     #[test]
     fn test_set_led_params_builder() {
