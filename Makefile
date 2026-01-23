@@ -8,6 +8,7 @@ UDEV_RULES_DIR ?= /etc/udev/rules.d
 SYSTEMD_DIR ?= /etc/systemd/system
 BIN_DIR ?= $(PREFIX)/bin
 LIB_DIR ?= $(PREFIX)/lib/akko
+DATA_DIR ?= $(PREFIX)/share/akko
 
 # Project directories
 DRIVER_DIR := iot_driver_linux
@@ -21,7 +22,9 @@ LOADER_BIN := akko-loader
         install install-driver install-udev install-bpf install-systemd install-all \
         uninstall uninstall-driver uninstall-bpf \
         test check fmt help \
-        install-tray uninstall-tray run-tray
+        install-tray uninstall-tray run-tray \
+        install-dev-sudoers uninstall-dev-sudoers \
+        update-device-db update-device-db-full install-data uninstall-data
 
 # Tray app directory
 TRAY_DIR := plasma-tray
@@ -155,6 +158,31 @@ uninstall: uninstall-driver uninstall-bpf
 	@echo "All components uninstalled."
 
 # ============================================================================
+# Development Targets
+# ============================================================================
+
+# Paths for dev sudoers (must be absolute)
+DEV_WRAPPER := $(CURDIR)/scripts/bpf-dev-wrapper.sh
+SUDOERS_FILE := /etc/sudoers.d/akko-bpf-dev
+
+## Install sudoers rule for passwordless BPF dev operations (requires sudo)
+## This allows the pre-push hook to verify BPF without password prompts
+install-dev-sudoers:
+	@echo "Installing development sudoers rule..."
+	@echo "# Allow passwordless BPF operations for development" > /tmp/akko-bpf-dev
+	@echo "# Installed by: make install-dev-sudoers" >> /tmp/akko-bpf-dev
+	@echo "$(USER) ALL=(ALL) NOPASSWD: $(DEV_WRAPPER)" >> /tmp/akko-bpf-dev
+	$(INSTALL) -m 440 /tmp/akko-bpf-dev $(SUDOERS_FILE)
+	@rm /tmp/akko-bpf-dev
+	@echo "Sudoers rule installed at $(SUDOERS_FILE)"
+	@echo "You can now run: sudo $(DEV_WRAPPER) verify|load|unload"
+
+## Remove development sudoers rule
+uninstall-dev-sudoers:
+	rm -f $(SUDOERS_FILE)
+	@echo "Development sudoers rule removed."
+
+# ============================================================================
 # Tray App Targets (KDE Plasma system tray)
 # ============================================================================
 
@@ -178,6 +206,43 @@ uninstall-tray:
 	rm -rf $(TRAY_INSTALL_DIR)
 	rm -f $(AUTOSTART_DIR)/akko-tray.desktop
 	@echo "Tray app uninstalled."
+
+# ============================================================================
+# Device Database Targets
+# ============================================================================
+
+## Update device database from app.monsgeek.com
+update-device-db:
+	@echo "Updating device database from webapp..."
+	./scripts/update-device-db.sh
+
+## Update device database including Electron driver (slower)
+update-device-db-full:
+	@echo "Updating device database (webapp + electron)..."
+	./scripts/update-device-db.sh --electron
+
+## Install device data files (requires sudo)
+install-data:
+	@test -f data/devices.json || \
+		{ echo "Error: Device data not found. Run 'make update-device-db' first."; exit 1; }
+	@echo "Installing device data..."
+	$(INSTALL) -d $(DATA_DIR)
+	$(INSTALL) -m 644 data/devices.json $(DATA_DIR)/devices.json
+	@if [ -f data/key_layouts.json ]; then \
+		$(INSTALL) -m 644 data/key_layouts.json $(DATA_DIR)/key_layouts.json; \
+	fi
+	@if [ -f data/key_codes.json ]; then \
+		$(INSTALL) -m 644 data/key_codes.json $(DATA_DIR)/key_codes.json; \
+	fi
+	@echo "Device data installed to $(DATA_DIR)"
+
+## Uninstall device data files
+uninstall-data:
+	rm -f $(DATA_DIR)/devices.json
+	rm -f $(DATA_DIR)/key_layouts.json
+	rm -f $(DATA_DIR)/key_codes.json
+	-rmdir $(DATA_DIR) 2>/dev/null || true
+	@echo "Device data uninstalled."
 
 # ============================================================================
 # Help
@@ -213,7 +278,18 @@ help:
 	@echo "  install-tray   Install tray app + autostart"
 	@echo "  uninstall-tray Remove tray app"
 	@echo ""
+	@echo "Development targets:"
+	@echo "  install-dev-sudoers   Allow passwordless BPF verify/load (for pre-push hook)"
+	@echo "  uninstall-dev-sudoers Remove dev sudoers rule"
+	@echo ""
+	@echo "Device database targets:"
+	@echo "  update-device-db      Fetch and extract device data from webapp"
+	@echo "  update-device-db-full Also include Electron driver (slower)"
+	@echo "  install-data          Install device data to $(DATA_DIR)"
+	@echo "  uninstall-data        Remove installed device data"
+	@echo ""
 	@echo "Variables:"
 	@echo "  PREFIX=$(PREFIX)"
 	@echo "  BIN_DIR=$(BIN_DIR)"
+	@echo "  DATA_DIR=$(DATA_DIR)"
 	@echo "  UDEV_RULES_DIR=$(UDEV_RULES_DIR)"
