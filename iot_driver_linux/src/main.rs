@@ -15,10 +15,10 @@ use cli::{Cli, Commands, FirmwareCommands};
 // gRPC server module
 mod grpc;
 use grpc::{dj_dev, DriverGrpcServer, DriverService};
-use iot_driver::hal::device_registry;
+use iot_driver::hal::{self, device_registry};
 
 // New transport abstraction layer
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::{SleepTimeSettings, SyncKeyboard};
 use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{list_devices_sync, ChecksumType, SyncTransport};
 
@@ -47,20 +47,19 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
             let device = device_info.open_device(hidapi)?;
 
             // Prepare command with checksum (Bit7 mode)
-            let mut buf = vec![0u8; 65];
-            buf[0] = 0; // Report ID
-            buf[1] = cmd; // Command byte
-                          // Checksum at byte 7 of payload (buf[8])
-            let sum: u32 = buf[1..8].iter().map(|&b| b as u32).sum();
-            buf[8] = (255 - (sum & 0xFF)) as u8;
+            let buf = protocol::build_command(cmd, &[], protocol::ChecksumType::Bit7);
 
-            println!("Sending command 0x{:02x} ({})...", cmd, cmd::name(cmd));
+            println!(
+                "no wait Sending command 0x{:02x} ({})...",
+                cmd,
+                cmd::name(cmd)
+            );
             println!("  TX: {:02x?}", &buf[1..12]);
 
-            // 2.4GHz dongle (PID 0x5038) has a delayed response buffer:
+            // 2.4GHz dongle has a delayed response buffer:
             // GET_FEATURE returns the PREVIOUS response, not the current one.
             // We need to send a "flush" command (0xFC) to push the actual response out.
-            let is_dongle = pid == 0x5038;
+            let is_dongle = hal::is_dongle_pid(pid);
             let mut resp = vec![0u8; 65];
             let mut success = false;
 
@@ -70,14 +69,14 @@ fn cli_test(hidapi: &HidApi, cmd: u8) -> Result<(), Box<dyn std::error::Error>> 
                 std::thread::sleep(std::time::Duration::from_millis(150));
 
                 // Send DONGLE_FLUSH_NOP to push out the response
-                let mut fc_buf = vec![0u8; 65];
-                fc_buf[0] = 0; // Report ID
-                fc_buf[1] = cmd::DONGLE_FLUSH_NOP;
-                let sum: u32 = fc_buf[1..8].iter().map(|&b| b as u32).sum();
-                fc_buf[8] = (255 - (sum & 0xFF)) as u8;
+                let fc_buf = protocol::build_command(
+                    cmd::DONGLE_FLUSH_NOP,
+                    &[],
+                    protocol::ChecksumType::Bit7,
+                );
 
                 device.send_feature_report(&fc_buf)?;
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                //std::thread::sleep(std::time::Duration::from_millis(100));
 
                 // Read response - should be the response to our original command
                 resp[0] = 0;
@@ -369,7 +368,7 @@ fn cli_battery(
     watch: Option<Option<u64>>,
     force_vendor: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use iot_driver::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
+    use iot_driver::power_supply::{find_dongle_battery_power_supply, read_kernel_battery};
     use std::time::Duration;
 
     // Determine watch interval (None = no watch, Some(None) = default 1s, Some(Some(n)) = n seconds)
@@ -378,7 +377,7 @@ fn cli_battery(
     loop {
         // Check for kernel power_supply (eBPF filter loaded) unless --vendor flag
         if !force_vendor {
-            if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+            if let Some(path) = find_dongle_battery_power_supply() {
                 if quiet {
                     if let Some(info) = read_kernel_battery(&path) {
                         println!("{}", info.level);
@@ -460,8 +459,8 @@ fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, b
         let vid = device_info.vendor_id();
         let pid = device_info.product_id();
 
-        // Only match dongle devices (PID 0x5038)
-        if vid != 0x3151 || pid != 0x5038 {
+        // Only match dongle devices
+        if vid != hal::VENDOR_ID || !hal::is_dongle_pid(pid) {
             continue;
         }
 
@@ -481,20 +480,18 @@ fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, b
         };
 
         // Send F7 command to trigger battery refresh
-        // Format: [Report_ID=0, Command=0xF7, ...]
-        let mut f7_cmd = [0u8; 65];
-        f7_cmd[0] = 0x00; // Report ID 0
-        f7_cmd[1] = 0xF7; // F7 command
+        let f7_cmd =
+            protocol::build_command(cmd::BATTERY_REFRESH, &[], protocol::ChecksumType::Bit7);
         if let Err(e) = device.send_feature_report(&f7_cmd) {
             if show_debug {
                 eprintln!("F7 send failed: {e:?}");
             }
         } else if show_debug {
-            eprintln!("F7 sent OK");
+            eprintln!("F7 sent OK, not waiting");
         }
 
         // Small delay for dongle to query keyboard
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        //        std::thread::sleep(std::time::Duration::from_millis(0));
 
         // Get Feature report with Report ID 5
         let mut buf = [0u8; 65];
@@ -578,12 +575,12 @@ fn print_hex_dump(data: &[u8; 65]) {
 fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> {
     use iot_driver::hid::BatteryInfo;
     use iot_driver::power_supply::{
-        find_hid_battery_power_supply, read_kernel_battery, PowerSupply, TestPowerIntegration,
+        find_dongle_battery_power_supply, read_kernel_battery, PowerSupply, TestPowerIntegration,
     };
     use std::time::{Duration, Instant};
 
     // Check for kernel power_supply (eBPF filter loaded)
-    if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+    if let Some(path) = find_dongle_battery_power_supply() {
         println!("Kernel power_supply detected at: {}", path.display());
         println!("Battery is already available via kernel - no monitoring needed.");
         println!("UPower and other tools can read directly from:");
@@ -633,7 +630,7 @@ fn cli_battery_monitor(interval: u64) -> Result<(), Box<dyn std::error::Error>> 
             let vid = device_info.vendor_id();
             let pid = device_info.product_id();
 
-            if vid != 0x3151 || pid != 0x5038 {
+            if vid != hal::VENDOR_ID || !hal::is_dongle_pid(pid) {
                 continue;
             }
 
@@ -747,10 +744,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hidapi = HidApi::new()?;
             cli_test(&hidapi, cmd::GET_FEATURE_LIST)?;
         }
-        Some(Commands::Sleep) => {
-            let hidapi = HidApi::new()?;
-            cli_test(&hidapi, cmd::GET_SLEEPTIME)?;
-        }
+        Some(Commands::Sleep) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => match keyboard.get_sleep_time() {
+                Ok(settings) => {
+                    println!("Sleep Time Settings:");
+                    println!("  Bluetooth:");
+                    println!(
+                        "    Idle:       {} ({})",
+                        settings.idle_bt,
+                        SleepTimeSettings::format_duration(settings.idle_bt)
+                    );
+                    println!(
+                        "    Deep Sleep: {} ({})",
+                        settings.deep_bt,
+                        SleepTimeSettings::format_duration(settings.deep_bt)
+                    );
+                    println!("  2.4GHz:");
+                    println!(
+                        "    Idle:       {} ({})",
+                        settings.idle_24g,
+                        SleepTimeSettings::format_duration(settings.idle_24g)
+                    );
+                    println!(
+                        "    Deep Sleep: {} ({})",
+                        settings.deep_24g,
+                        SleepTimeSettings::format_duration(settings.deep_24g)
+                    );
+                }
+                Err(e) => eprintln!("Failed to get sleep settings: {e}"),
+            },
+            Err(e) => eprintln!("No device found: {e}"),
+        },
         Some(Commands::All) => {
             let hidapi = HidApi::new()?;
             cli_all(&hidapi)?;
@@ -830,15 +854,163 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => eprintln!("No device found: {e}"),
             }
         }
-        Some(Commands::SetSleep { seconds }) => match SyncKeyboard::open_any() {
-            Ok(keyboard) => match keyboard.set_sleep_time(seconds) {
-                Ok(_) => println!(
-                    "Sleep timeout set to {} seconds ({} min)",
-                    seconds,
-                    seconds / 60
-                ),
-                Err(e) => eprintln!("Failed to set sleep timeout: {e}"),
-            },
+        Some(Commands::SetSleep {
+            idle,
+            deep,
+            idle_bt,
+            idle_24g,
+            deep_bt,
+            deep_24g,
+            uniform,
+        }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                // Get current settings first
+                let current = match keyboard.get_sleep_time() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to read current settings: {e}");
+                        return Ok(());
+                    }
+                };
+
+                // Parse duration helper
+                let parse_time = |s: &str| -> Result<u16, String> {
+                    SleepTimeSettings::parse_duration(s)
+                        .ok_or_else(|| format!("Invalid duration: {s}"))
+                };
+
+                let mut settings = current;
+
+                // Handle --uniform first (idle,deep format)
+                if let Some(ref u) = uniform {
+                    let parts: Vec<&str> = u.split(',').collect();
+                    if parts.len() != 2 {
+                        eprintln!("--uniform requires format: idle,deep (e.g., '2m,28m')");
+                        return Ok(());
+                    }
+                    let idle_val = match parse_time(parts[0]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    };
+                    let deep_val = match parse_time(parts[1]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    };
+                    settings = SleepTimeSettings::uniform(idle_val, deep_val);
+                }
+
+                // Handle --idle (affects both BT and 2.4GHz)
+                if let Some(ref i) = idle {
+                    match parse_time(i) {
+                        Ok(v) => {
+                            settings.idle_bt = v;
+                            settings.idle_24g = v;
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Handle --deep (affects both BT and 2.4GHz)
+                if let Some(ref d) = deep {
+                    match parse_time(d) {
+                        Ok(v) => {
+                            settings.deep_bt = v;
+                            settings.deep_24g = v;
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Handle individual overrides
+                if let Some(ref v) = idle_bt {
+                    match parse_time(v) {
+                        Ok(val) => settings.idle_bt = val,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+                if let Some(ref v) = idle_24g {
+                    match parse_time(v) {
+                        Ok(val) => settings.idle_24g = val,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+                if let Some(ref v) = deep_bt {
+                    match parse_time(v) {
+                        Ok(val) => settings.deep_bt = val,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+                if let Some(ref v) = deep_24g {
+                    match parse_time(v) {
+                        Ok(val) => settings.deep_24g = val,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Check if any changes were made
+                if settings == current
+                    && idle.is_none()
+                    && deep.is_none()
+                    && uniform.is_none()
+                    && idle_bt.is_none()
+                    && idle_24g.is_none()
+                    && deep_bt.is_none()
+                    && deep_24g.is_none()
+                {
+                    eprintln!("No sleep time options specified. Use --help for usage.");
+                    return Ok(());
+                }
+
+                // Apply settings
+                match keyboard.set_sleep_time(&settings) {
+                    Ok(_) => {
+                        println!("Sleep time settings updated:");
+                        println!("  Bluetooth:");
+                        println!(
+                            "    Idle:       {}",
+                            SleepTimeSettings::format_duration(settings.idle_bt)
+                        );
+                        println!(
+                            "    Deep Sleep: {}",
+                            SleepTimeSettings::format_duration(settings.deep_bt)
+                        );
+                        println!("  2.4GHz:");
+                        println!(
+                            "    Idle:       {}",
+                            SleepTimeSettings::format_duration(settings.idle_24g)
+                        );
+                        println!(
+                            "    Deep Sleep: {}",
+                            SleepTimeSettings::format_duration(settings.deep_24g)
+                        );
+                    }
+                    Err(e) => eprintln!("Failed to set sleep settings: {e}"),
+                }
+            }
             Err(e) => eprintln!("No device found: {e}"),
         },
         Some(Commands::Reset) => {
@@ -885,11 +1057,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Triggers) => match SyncKeyboard::open_any() {
             Ok(keyboard) => {
                 let version = keyboard.get_version().unwrap_or_default();
-                let factor = version.precision_factor() as f32;
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
                 println!(
                     "Trigger Settings (firmware {}, precision: {})",
                     version.format(),
-                    version.precision_str()
+                    precision.as_str()
                 );
                 println!();
 
@@ -974,8 +1147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Some(Commands::SetActuation { mm }) => match SyncKeyboard::open_any() {
             Ok(keyboard) => {
-                let version = keyboard.get_version().unwrap_or_default();
-                let factor = version.precision_factor() as f32;
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
                 let raw = (mm * factor) as u16;
                 match keyboard.set_actuation_all_u16(raw) {
                     Ok(_) => println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys"),
@@ -986,8 +1159,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Some(Commands::SetRt { value }) => match SyncKeyboard::open_any() {
             Ok(keyboard) => {
-                let version = keyboard.get_version().unwrap_or_default();
-                let factor = version.precision_factor() as f32;
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
 
                 match value.to_lowercase().as_str() {
                     "off" | "0" | "disable" => match keyboard.set_rapid_trigger_all(false) {
@@ -1699,13 +1872,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Device: {}", keyboard.device_name());
 
-            // Get precision factor from firmware version
+            // Get precision from device
             let version = keyboard.get_version().unwrap_or_default();
-            let precision = version.precision_factor();
+            let precision = keyboard.get_precision().unwrap_or_default();
             println!(
-                "Firmware version: {} (precision factor: {})",
+                "Firmware version: {} (precision: {})",
                 version.format_dotted(),
-                precision
+                precision.as_str()
             );
 
             // Enable magnetism reporting via transport
@@ -1723,7 +1896,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::thread::sleep(std::time::Duration::from_millis(200));
 
             // Try to read confirmation event
-            match keyboard.read_key_depth(500, precision) {
+            match keyboard.read_key_depth(500, precision.factor()) {
                 Ok(Some(event)) => {
                     println!(
                         "Confirmation: Key {} depth={:.2}mm",
@@ -1760,7 +1933,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Works with any transport: HID wired, dongle, Bluetooth, WebRTC
                 loop {
                     let timeout = if batch_count == 0 { 10 } else { 0 }; // 10ms initial, then non-blocking
-                    match keyboard.read_key_depth(timeout, precision) {
+                    match keyboard.read_key_depth(timeout, precision.factor()) {
                         Ok(Some(event)) => {
                             report_count += 1;
                             batch_count += 1;
@@ -2124,6 +2297,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Tui) => {
             iot_driver::tui::run().await?;
+        }
+        Some(Commands::Joystick { config, headless }) => {
+            // Launch the joystick mapper
+            // We can either spawn it as a subprocess or call into the library directly
+            // For now, spawn the separate binary
+            let mut cmd = std::process::Command::new("monsgeek-joystick");
+            if let Some(config_path) = config {
+                cmd.arg("--config").arg(config_path);
+            }
+            if headless {
+                cmd.arg("--headless");
+            }
+            let status = cmd.status();
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(s) => {
+                    eprintln!("Joystick mapper exited with status: {}", s);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!(
+                        "monsgeek-joystick binary not found. Run: cargo build -p monsgeek-joystick"
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Failed to run joystick mapper: {}", e);
+                }
+            }
         }
     }
 

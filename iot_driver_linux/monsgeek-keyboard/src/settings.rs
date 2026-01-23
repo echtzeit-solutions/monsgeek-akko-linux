@@ -1,5 +1,79 @@
 //! Keyboard settings types
 
+/// Precision level for trigger/travel settings
+///
+/// Determines the resolution of travel distance measurements.
+/// Higher precision allows finer control over actuation points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Precision {
+    /// 0.1mm resolution (legacy/low precision)
+    #[default]
+    Coarse,
+    /// 0.01mm resolution (standard precision)
+    Medium,
+    /// 0.005mm resolution (high precision)
+    Fine,
+}
+
+impl Precision {
+    /// Create from feature list precision byte
+    ///
+    /// The feature list response uses: 0 = 0.1mm, 1 = 0.05mm, 2 = 0.01mm
+    /// Note: 0.05mm maps to Medium since we don't have a separate variant
+    pub fn from_feature_byte(byte: u8) -> Self {
+        match byte {
+            2 => Self::Fine,   // 0.005mm - highest precision
+            1 => Self::Medium, // 0.01mm (0.05mm in feature list)
+            _ => Self::Coarse, // 0.1mm - default/legacy
+        }
+    }
+
+    /// Create from firmware version
+    ///
+    /// Older firmware doesn't support feature list, so precision is
+    /// inferred from version number thresholds.
+    pub fn from_firmware_version(version: u16) -> Self {
+        if version >= 1280 {
+            Self::Fine // 0.005mm
+        } else if version >= 768 {
+            Self::Medium // 0.01mm
+        } else {
+            Self::Coarse // 0.1mm
+        }
+    }
+
+    /// Get the precision factor (multiplier for raw values)
+    ///
+    /// Raw travel values are multiplied by 1/factor to get mm.
+    /// E.g., raw value 100 with factor 100 = 1.0mm
+    pub fn factor(&self) -> f64 {
+        match self {
+            Self::Fine => 200.0,   // 0.005mm steps
+            Self::Medium => 100.0, // 0.01mm steps
+            Self::Coarse => 10.0,  // 0.1mm steps
+        }
+    }
+
+    /// Get precision as display string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fine => "0.005mm",
+            Self::Medium => "0.01mm",
+            Self::Coarse => "0.1mm",
+        }
+    }
+
+    /// Convert raw travel value to millimeters
+    pub fn raw_to_mm(&self, raw: u16) -> f64 {
+        raw as f64 / self.factor()
+    }
+
+    /// Convert millimeters to raw travel value
+    pub fn mm_to_raw(&self, mm: f64) -> u16 {
+        (mm * self.factor()).round() as u16
+    }
+}
+
 /// Firmware version information
 #[derive(Debug, Clone, Default)]
 pub struct FirmwareVersion {
@@ -23,27 +97,20 @@ impl FirmwareVersion {
         Self { raw }
     }
 
+    /// Get precision level based on firmware version
+    pub fn precision(&self) -> Precision {
+        Precision::from_firmware_version(self.raw)
+    }
+
     /// Get precision factor based on firmware version
     /// Newer firmware has higher precision for travel settings
     pub fn precision_factor(&self) -> f64 {
-        if self.raw >= 1280 {
-            200.0 // 0.005mm precision
-        } else if self.raw >= 768 {
-            100.0 // 0.01mm precision
-        } else {
-            10.0 // 0.1mm precision
-        }
+        self.precision().factor()
     }
 
     /// Get precision string (e.g., "0.01mm")
     pub fn precision_str(&self) -> &'static str {
-        if self.raw >= 1280 {
-            "0.005mm"
-        } else if self.raw >= 768 {
-            "0.01mm"
-        } else {
-            "0.1mm"
-        }
+        self.precision().as_str()
     }
 
     /// Format as human-readable string (e.g., "v10.29" for raw=1029)
@@ -196,6 +263,129 @@ impl KeyboardOptions {
     }
 }
 
+/// Sleep time settings for wireless modes
+///
+/// Controls idle and deep sleep timeouts for Bluetooth and 2.4GHz connections.
+/// Times are in seconds. Set to 0 to disable that particular timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SleepTimeSettings {
+    /// Bluetooth idle timeout (seconds) - keyboard enters light sleep
+    pub idle_bt: u16,
+    /// 2.4GHz idle timeout (seconds) - keyboard enters light sleep
+    pub idle_24g: u16,
+    /// Bluetooth deep sleep timeout (seconds) - keyboard powers down further
+    pub deep_bt: u16,
+    /// 2.4GHz deep sleep timeout (seconds) - keyboard powers down further
+    pub deep_24g: u16,
+}
+
+impl Default for SleepTimeSettings {
+    fn default() -> Self {
+        Self {
+            idle_bt: 120,   // 2 minutes
+            idle_24g: 120,  // 2 minutes
+            deep_bt: 1680,  // 28 minutes
+            deep_24g: 1680, // 28 minutes
+        }
+    }
+}
+
+impl SleepTimeSettings {
+    /// Create new sleep time settings
+    pub fn new(idle_bt: u16, idle_24g: u16, deep_bt: u16, deep_24g: u16) -> Self {
+        Self {
+            idle_bt,
+            idle_24g,
+            deep_bt,
+            deep_24g,
+        }
+    }
+
+    /// Create with same idle and deep timeout for both wireless modes
+    pub fn uniform(idle_seconds: u16, deep_seconds: u16) -> Self {
+        Self {
+            idle_bt: idle_seconds,
+            idle_24g: idle_seconds,
+            deep_bt: deep_seconds,
+            deep_24g: deep_seconds,
+        }
+    }
+
+    /// Format idle timeout as human-readable duration
+    pub fn format_idle(&self, is_bt: bool) -> String {
+        let secs = if is_bt { self.idle_bt } else { self.idle_24g };
+        Self::format_duration(secs)
+    }
+
+    /// Format deep sleep timeout as human-readable duration
+    pub fn format_deep(&self, is_bt: bool) -> String {
+        let secs = if is_bt { self.deep_bt } else { self.deep_24g };
+        Self::format_duration(secs)
+    }
+
+    /// Format seconds as human-readable duration string
+    pub fn format_duration(secs: u16) -> String {
+        if secs == 0 {
+            "disabled".to_string()
+        } else if secs < 60 {
+            format!("{}s", secs)
+        } else if secs < 3600 {
+            let mins = secs / 60;
+            let rem = secs % 60;
+            if rem == 0 {
+                format!("{}m", mins)
+            } else {
+                format!("{}m {}s", mins, rem)
+            }
+        } else {
+            let hours = secs / 3600;
+            let mins = (secs % 3600) / 60;
+            if mins == 0 {
+                format!("{}h", hours)
+            } else {
+                format!("{}h {}m", hours, mins)
+            }
+        }
+    }
+
+    /// Parse duration string (e.g., "2m", "30s", "1h 30m") to seconds
+    pub fn parse_duration(s: &str) -> Option<u16> {
+        let s = s.trim().to_lowercase();
+
+        // Handle "disabled" or "off"
+        if s == "disabled" || s == "off" || s == "0" {
+            return Some(0);
+        }
+
+        let mut total_secs: u32 = 0;
+        let mut current_num = String::new();
+
+        for c in s.chars() {
+            if c.is_ascii_digit() {
+                current_num.push(c);
+            } else if !current_num.is_empty() {
+                let num: u32 = current_num.parse().ok()?;
+                current_num.clear();
+                match c {
+                    'h' => total_secs += num * 3600,
+                    'm' => total_secs += num * 60,
+                    's' => total_secs += num,
+                    _ => return None,
+                }
+            }
+        }
+
+        // If there's a trailing number with no unit, treat as seconds
+        if !current_num.is_empty() {
+            let num: u32 = current_num.parse().ok()?;
+            total_secs += num;
+        }
+
+        // Clamp to u16 max
+        Some(total_secs.min(u16::MAX as u32) as u16)
+    }
+}
+
 /// Device feature list
 #[derive(Debug, Clone, Default)]
 pub struct FeatureList {
@@ -206,20 +396,43 @@ pub struct FeatureList {
 }
 
 impl FeatureList {
-    /// Parse from GET_FEATURE_LIST response bytes
+    /// Parse from GET_FEATURE_LIST response bytes (after echo byte stripped)
+    /// Response format: [0xAA validity marker, precision_enum, ...]
+    /// If validity marker is not 0xAA, the response is invalid and precision defaults to 0xFF (unknown)
     pub fn from_bytes(bytes: &[u8]) -> Self {
+        // Check validity marker (first byte should be 0xAA)
+        let valid = bytes.first().copied() == Some(0xAA);
         Self {
-            precision: bytes.first().copied().unwrap_or(0),
+            // Byte 0 = 0xAA validity marker, Byte 1 = precision enum
+            // Use 0xFF to indicate unknown/invalid response
+            precision: if valid {
+                bytes.get(1).copied().unwrap_or(0xFF)
+            } else {
+                0xFF // Invalid response - will trigger fallback to firmware version
+            },
             raw_features: bytes.to_vec(),
+        }
+    }
+
+    /// Check if the feature list response was valid
+    pub fn is_valid(&self) -> bool {
+        self.precision != 0xFF
+    }
+
+    /// Get precision level from feature list
+    ///
+    /// Returns None if the feature list response was invalid (command not supported).
+    /// Caller should fall back to firmware version in that case.
+    pub fn precision(&self) -> Option<Precision> {
+        if self.is_valid() {
+            Some(Precision::from_feature_byte(self.precision))
+        } else {
+            None
         }
     }
 
     /// Get the precision factor (10, 100, or 200)
     pub fn precision_factor(&self) -> f64 {
-        match self.precision {
-            2 => 200.0, // 0.005mm
-            1 => 100.0, // 0.01mm
-            _ => 10.0,  // 0.1mm
-        }
+        self.precision().map(|p| p.factor()).unwrap_or(10.0) // Default to coarse if invalid
     }
 }

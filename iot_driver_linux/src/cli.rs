@@ -43,7 +43,7 @@ pub enum Commands {
     #[command(visible_aliases = ["feat", "f"])]
     Features,
 
-    /// Get sleep timeout
+    /// Get sleep time settings (idle + deep sleep for BT and 2.4GHz)
     #[command(visible_alias = "s")]
     Sleep,
 
@@ -122,11 +122,40 @@ pub enum Commands {
         b: u8,
     },
 
-    /// Set sleep timeout
+    /// Set sleep time settings
+    ///
+    /// Sets idle and deep sleep timeouts for Bluetooth and 2.4GHz modes.
+    /// Values can be specified as seconds (120), minutes (2m), or hours (1h).
+    /// Use "0" or "off" to disable a timeout.
     #[command(visible_alias = "ss")]
     SetSleep {
-        /// Sleep timeout in seconds
-        seconds: u16,
+        /// Idle timeout for both BT and 2.4GHz (e.g., "2m", "120", "off")
+        #[arg(long)]
+        idle: Option<String>,
+
+        /// Deep sleep timeout for both BT and 2.4GHz (e.g., "28m", "1680", "off")
+        #[arg(long)]
+        deep: Option<String>,
+
+        /// Bluetooth idle timeout (overrides --idle for BT)
+        #[arg(long)]
+        idle_bt: Option<String>,
+
+        /// 2.4GHz idle timeout (overrides --idle for 2.4GHz)
+        #[arg(long)]
+        idle_24g: Option<String>,
+
+        /// Bluetooth deep sleep timeout (overrides --deep for BT)
+        #[arg(long)]
+        deep_bt: Option<String>,
+
+        /// 2.4GHz deep sleep timeout (overrides --deep for 2.4GHz)
+        #[arg(long)]
+        deep_24g: Option<String>,
+
+        /// Set all timeouts uniformly: idle,deep (e.g., "2m,28m")
+        #[arg(short, long)]
+        uniform: Option<String>,
     },
 
     /// Factory reset keyboard
@@ -368,6 +397,17 @@ pub enum Commands {
 
     /// Run interactive terminal UI
     Tui,
+
+    /// Run joystick mapper (maps magnetic keys to virtual joystick axes)
+    #[command(visible_alias = "joy")]
+    Joystick {
+        /// Config file path (default: ~/.config/monsgeek/joystick.toml)
+        #[arg(short, long)]
+        config: Option<std::path::PathBuf>,
+        /// Run without TUI (headless mode)
+        #[arg(long)]
+        headless: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]

@@ -463,25 +463,55 @@ impl HidResponse for PollingRateResponse {
 // =============================================================================
 
 /// SET_SLEEPTIME command (0x11)
+///
+/// Sets all 4 sleep time values:
+/// - idle_bt: Bluetooth idle timeout (light sleep)
+/// - idle_24g: 2.4GHz idle timeout (light sleep)
+/// - deep_bt: Bluetooth deep sleep timeout
+/// - deep_24g: 2.4GHz deep sleep timeout
+///
+/// All values are in seconds. Set to 0 to disable.
 #[derive(Debug, Clone)]
 pub struct SetSleepTime {
-    pub seconds: u16,
+    /// Bluetooth idle timeout in seconds
+    pub idle_bt: u16,
+    /// 2.4GHz idle timeout in seconds
+    pub idle_24g: u16,
+    /// Bluetooth deep sleep timeout in seconds
+    pub deep_bt: u16,
+    /// 2.4GHz deep sleep timeout in seconds
+    pub deep_24g: u16,
 }
 
 impl SetSleepTime {
-    pub fn new(seconds: u16) -> Self {
-        Self { seconds }
-    }
-
-    pub fn from_minutes(minutes: u16) -> Self {
+    /// Create with all 4 sleep time values
+    pub fn new(idle_bt: u16, idle_24g: u16, deep_bt: u16, deep_24g: u16) -> Self {
         Self {
-            seconds: minutes * 60,
+            idle_bt,
+            idle_24g,
+            deep_bt,
+            deep_24g,
         }
     }
 
-    /// Disable sleep (set to 0)
+    /// Create with uniform idle and deep timeouts for both wireless modes
+    pub fn uniform(idle_seconds: u16, deep_seconds: u16) -> Self {
+        Self {
+            idle_bt: idle_seconds,
+            idle_24g: idle_seconds,
+            deep_bt: deep_seconds,
+            deep_24g: deep_seconds,
+        }
+    }
+
+    /// Create from minutes (convenience method)
+    pub fn from_minutes(idle_mins: u16, deep_mins: u16) -> Self {
+        Self::uniform(idle_mins * 60, deep_mins * 60)
+    }
+
+    /// Disable all sleep timeouts
     pub fn disabled() -> Self {
-        Self { seconds: 0 }
+        Self::uniform(0, 0)
     }
 }
 
@@ -490,33 +520,92 @@ impl HidCommand for SetSleepTime {
     const CHECKSUM: ChecksumType = ChecksumType::Bit7;
 
     fn to_data(&self) -> Vec<u8> {
-        self.seconds.to_le_bytes().to_vec()
+        // Webapp packet layout: command at [0], data at [8..16]
+        // Our to_data() goes to buf[2..], so we need padding to reach buf[9]
+        // buf[9] = to_data()[7], buf[10] = to_data()[8], etc.
+        let mut data = vec![0u8; 15];
+        // idle_bt at bytes 7-8 (becomes packet bytes 9-10, webapp bytes 8-9)
+        data[7..9].copy_from_slice(&self.idle_bt.to_le_bytes());
+        // idle_24g at bytes 9-10
+        data[9..11].copy_from_slice(&self.idle_24g.to_le_bytes());
+        // deep_bt at bytes 11-12
+        data[11..13].copy_from_slice(&self.deep_bt.to_le_bytes());
+        // deep_24g at bytes 13-14
+        data[13..15].copy_from_slice(&self.deep_24g.to_le_bytes());
+        data
     }
 }
 
-/// GET_SLEEPTIME response
+/// GET_SLEEPTIME response (0x91)
+///
+/// Contains all 4 sleep time values in seconds.
 #[derive(Debug, Clone)]
 pub struct SleepTimeResponse {
-    pub seconds: u16,
+    /// Bluetooth idle timeout in seconds
+    pub idle_bt: u16,
+    /// 2.4GHz idle timeout in seconds
+    pub idle_24g: u16,
+    /// Bluetooth deep sleep timeout in seconds
+    pub deep_bt: u16,
+    /// 2.4GHz deep sleep timeout in seconds
+    pub deep_24g: u16,
 }
 
 impl SleepTimeResponse {
-    pub fn minutes(&self) -> u16 {
-        self.seconds / 60
+    /// Get idle timeout in minutes for specified mode
+    pub fn idle_minutes(&self, is_bt: bool) -> u16 {
+        let secs = if is_bt { self.idle_bt } else { self.idle_24g };
+        secs / 60
     }
 
-    pub fn is_disabled(&self) -> bool {
-        self.seconds == 0
+    /// Get deep sleep timeout in minutes for specified mode
+    pub fn deep_minutes(&self, is_bt: bool) -> u16 {
+        let secs = if is_bt { self.deep_bt } else { self.deep_24g };
+        secs / 60
+    }
+
+    /// Check if idle sleep is disabled for specified mode
+    pub fn is_idle_disabled(&self, is_bt: bool) -> bool {
+        if is_bt {
+            self.idle_bt == 0
+        } else {
+            self.idle_24g == 0
+        }
+    }
+
+    /// Check if deep sleep is disabled for specified mode
+    pub fn is_deep_disabled(&self, is_bt: bool) -> bool {
+        if is_bt {
+            self.deep_bt == 0
+        } else {
+            self.deep_24g == 0
+        }
     }
 }
 
 impl HidResponse for SleepTimeResponse {
     const CMD_ECHO: u8 = cmd::GET_SLEEPTIME;
-    const MIN_LEN: usize = 3;
+    const MIN_LEN: usize = 16; // Need bytes 8-15 for all 4 values
 
     fn from_data(data: &[u8]) -> Result<Self, ParseError> {
-        let seconds = u16::from_le_bytes([data[1], data[2]]);
-        Ok(Self { seconds })
+        // Webapp reads from response bytes 8-15
+        // data[0] = command echo, so data[8..16] = sleep time values
+        if data.len() < 16 {
+            return Err(ParseError::TooShort {
+                expected: 16,
+                got: data.len(),
+            });
+        }
+        let idle_bt = u16::from_le_bytes([data[8], data[9]]);
+        let idle_24g = u16::from_le_bytes([data[10], data[11]]);
+        let deep_bt = u16::from_le_bytes([data[12], data[13]]);
+        let deep_24g = u16::from_le_bytes([data[14], data[15]]);
+        Ok(Self {
+            idle_bt,
+            idle_24g,
+            deep_bt,
+            deep_24g,
+        })
     }
 }
 
@@ -789,14 +878,47 @@ mod tests {
 
     #[test]
     fn test_sleep_time() {
-        let cmd = SetSleepTime::from_minutes(10);
+        // Test command with 4 values: idle=120s, deep=1680s for both modes
+        let cmd = SetSleepTime::uniform(120, 1680);
         let data = cmd.to_data();
-        assert_eq!(data, [0x58, 0x02]); // 600 seconds = 0x0258 LE
+        // Data should be 15 bytes with values at indices 7-14
+        assert_eq!(data.len(), 15);
+        // idle_bt at [7..9]: 120 = 0x0078 LE
+        assert_eq!(data[7], 0x78);
+        assert_eq!(data[8], 0x00);
+        // idle_24g at [9..11]: 120 = 0x0078 LE
+        assert_eq!(data[9], 0x78);
+        assert_eq!(data[10], 0x00);
+        // deep_bt at [11..13]: 1680 = 0x0690 LE
+        assert_eq!(data[11], 0x90);
+        assert_eq!(data[12], 0x06);
+        // deep_24g at [13..15]: 1680 = 0x0690 LE
+        assert_eq!(data[13], 0x90);
+        assert_eq!(data[14], 0x06);
 
-        let resp_data = [0x91, 0x58, 0x02];
+        // Test response parsing (16 bytes minimum with values at indices 8-15)
+        let mut resp_data = [0u8; 16];
+        resp_data[0] = 0x91; // command echo
+                             // idle_bt = 120 at [8..10]
+        resp_data[8] = 0x78;
+        resp_data[9] = 0x00;
+        // idle_24g = 120 at [10..12]
+        resp_data[10] = 0x78;
+        resp_data[11] = 0x00;
+        // deep_bt = 1680 at [12..14]
+        resp_data[12] = 0x90;
+        resp_data[13] = 0x06;
+        // deep_24g = 1680 at [14..16]
+        resp_data[14] = 0x90;
+        resp_data[15] = 0x06;
+
         let resp = SleepTimeResponse::parse(&resp_data).unwrap();
-        assert_eq!(resp.seconds, 600);
-        assert_eq!(resp.minutes(), 10);
+        assert_eq!(resp.idle_bt, 120);
+        assert_eq!(resp.idle_24g, 120);
+        assert_eq!(resp.deep_bt, 1680);
+        assert_eq!(resp.deep_24g, 1680);
+        assert_eq!(resp.idle_minutes(true), 2);
+        assert_eq!(resp.deep_minutes(true), 28);
     }
 
     #[test]
