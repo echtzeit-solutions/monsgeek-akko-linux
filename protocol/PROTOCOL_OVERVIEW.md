@@ -6,28 +6,13 @@ This document describes the communication protocol stack for MonsGeek/Akko keybo
 
 ## Protocol Stack
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  MonsGeek/Akko Vendor Protocol (FEA_CMD_*)                  │
-│  - SET_LEDPARAM, GET_BATTERY, SET_KEYMATRIX, etc.           │
-├─────────────────────────────────────────────────────────────┤
-│  HID Reports                                                │
-│  - Feature Reports (bidirectional config, 65 bytes)         │
-│  - Input Reports (keyboard→host events via interrupt)       │
-│  - Output Reports (host→keyboard, e.g. LED indicators)      │
-├─────────────────────────────────────────────────────────────┤
-│  HID Interfaces (from USB descriptor)                       │
-│  - Interface 0: Keyboard (Boot, EP1)                        │
-│  - Interface 1: "Keyboard" (Boot, EP2) - actually vendor!   │
-│  - Interface 2: Vendor (EP3, feature reports)           ←── │
-├─────────────────────────────────────────────────────────────┤
-│  USB Device (VID:PID, multiple interfaces)                  │
-│  - VID 0x3151, PID 0x5038 (2.4GHz dongle)                   │
-│  - VID 0x3151, PID 0x4007 (wired keyboard)                  │
-├─────────────────────────────────────────────────────────────┤
-│  USB (transport)                                            │
-└─────────────────────────────────────────────────────────────┘
-```
+| Layer | Details |
+|-------|---------|
+| **Vendor Protocol** (FEA_CMD_*) | SET_LEDPARAM, GET_BATTERY, SET_KEYMATRIX, etc. |
+| **HID Reports** | Feature Reports (bidirectional config, 65 bytes), Input Reports (keyboard→host events), Output Reports (host→keyboard, e.g. LED indicators) |
+| **HID Interfaces** | Interface 0: Keyboard (Boot, EP1), Interface 1: "Keyboard" (Boot, EP2) - actually vendor!, Interface 2: Vendor (EP3, feature reports) ← |
+| **USB Device** | VID 0x3151, PID 0x5038 (2.4GHz dongle), VID 0x3151, PID 0x4007 (wired keyboard) |
+| **USB** | Transport layer |
 
 ## USB Interfaces and Endpoints
 
@@ -93,26 +78,150 @@ Used for both feature report responses and interrupt notifications:
 
 **Interrupt Notifications (via EP2):**
 
-The notification type byte (byte 1) uses firmware-internal codes:
-```
-05 00 00 ...   Keyboard wake notification (all zeros after report ID)
-05 01 XX       Profile changed (XX = 0-3 for profiles 1-4, via Fn+F9..F12)
-05 03 XX YY    Keyboard function changed (XX=category/state, YY=action)
-               - 05 03 XX 01 = Win key lock (XX: 0=off, 1=on, Fn+Win)
-               - 05 03 XX 03 = WASD/Arrow swap (XX: 0=normal, 8=swapped, Fn+W)
-               - 05 03 XX 08 = Unknown toggle (XX: 0/1, Fn+RAlt)
-               - 05 03 04 09 = Backlight toggled (Fn+L)
-               - 05 03 00 11 = Dial mode toggled (volume ↔ brightness)
-05 04 XX       LED effect mode (XX = effect ID 1-20)
-               - Fn+Home: effects 1-5 (0x01-0x05)
-               - Fn+PgUp: effects 6-10 (0x06-0x0A)
-               - Fn+End: effects 11-15 (0x0B-0x0F)
-               - Fn+PgDn: effects 16-20 (0x10-0x14)
-05 05 XX       LED effect speed (XX = 0-4, Fn+=/Fn+- to adjust)
-               Not emitted in static light mode
-05 06 XX       Keyboard brightness level (XX = 0-4, via dial or Fn+Up/Down)
-05 07 XX       LED color (XX = 0-7: red/green/blue/orange/magenta/yellow/white/rainbow, via Fn+\)
-```
+<table>
+<tr>
+  <th>Byte 0</th>
+  <th>Byte 1</th>
+  <th>Byte 2</th>
+  <th>Byte 3</th>
+  <th>Byte 4</th>
+  <th>Byte 5</th>
+  <th>Name</th>
+  <th>Description</th>
+</tr>
+<tr>
+  <td rowspan="14"><code>0x05</code><br>(Report ID)</td>
+  <td><code>0x00</code></td>
+  <td><code>0x00</code></td>
+  <td><code>0x00</code></td>
+  <td><code>0x00</code></td>
+  <td>-</td>
+  <td>Wake</td>
+  <td>Keyboard wake from sleep (all zeros after report ID)</td>
+</tr>
+<tr>
+  <td><code>0x01</code></td>
+  <td>profile</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>ProfileChange</td>
+  <td>Profile changed via Fn+F9..F12 (profile: 0-3)</td>
+</tr>
+<tr>
+  <td rowspan="5"><code>0x03</code><br>(KB Func)</td>
+  <td>state</td>
+  <td><code>0x01</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>WinLockToggle</td>
+  <td>Win key lock via Fn+Win (state: 0=off, 1=on)</td>
+</tr>
+<tr>
+  <td>state</td>
+  <td><code>0x03</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>WasdSwapToggle</td>
+  <td>WASD/Arrow swap via Fn+W (state: 0=normal, 8=swapped)</td>
+</tr>
+<tr>
+  <td>layer</td>
+  <td><code>0x08</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>FnLayerToggle</td>
+  <td>Fn layer toggle via Fn+Alt (layer: 0=default, 1=alternate)</td>
+</tr>
+<tr>
+  <td><code>0x04</code></td>
+  <td><code>0x09</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>BacklightToggle</td>
+  <td>Backlight toggle via Fn+L</td>
+</tr>
+<tr>
+  <td><code>0x00</code></td>
+  <td><code>0x11</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>DialModeToggle</td>
+  <td>Dial mode toggle (volume ↔ brightness)</td>
+</tr>
+<tr>
+  <td><code>0x04</code></td>
+  <td>effect_id</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>LedEffectMode</td>
+  <td>LED effect mode (1-20) via Fn+Home/PgUp/End/PgDn</td>
+</tr>
+<tr>
+  <td><code>0x05</code></td>
+  <td>speed</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>LedEffectSpeed</td>
+  <td>LED effect speed (0-4) via Fn+←/→</td>
+</tr>
+<tr>
+  <td><code>0x06</code></td>
+  <td>level</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>BrightnessLevel</td>
+  <td>Brightness level (0-4) via Fn+↑/↓ or dial</td>
+</tr>
+<tr>
+  <td><code>0x07</code></td>
+  <td>color</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>LedColor</td>
+  <td>LED color (0-7) via Fn+\</td>
+</tr>
+<tr>
+  <td><code>0x0F</code></td>
+  <td>started</td>
+  <td>-</td>
+  <td>-</td>
+  <td>-</td>
+  <td>SettingsAck</td>
+  <td>Settings ACK (started: 1=begin, 0=complete)</td>
+</tr>
+<tr>
+  <td><code>0x1B</code></td>
+  <td colspan="2">depth (u16 LE)</td>
+  <td>key_idx</td>
+  <td>-</td>
+  <td>KeyDepth</td>
+  <td>Magnetism/key depth report (hall effect sensor)</td>
+</tr>
+<tr>
+  <td><code>0x88</code></td>
+  <td>-</td>
+  <td>-</td>
+  <td>level</td>
+  <td>flags</td>
+  <td>BatteryStatus</td>
+  <td>Battery status from dongle (level 0-100)</td>
+</tr>
+</table>
+
+**Battery flags (byte 4):** bit 0 = online, bit 1 = charging
+
+**LED effect ranges:**
+- Fn+Home: effects 1-5 (0x01-0x05)
+- Fn+PgUp: effects 6-10 (0x06-0x0A)
+- Fn+End: effects 11-15 (0x0B-0x0F)
+- Fn+PgDn: effects 16-20 (0x10-0x14)
+
+**LED colors (0x07 values):** 0=red, 1=green, 2=blue, 3=orange, 4=magenta, 5=yellow, 6=white, 7=rainbow
 
 **Preliminary: LED notification type correlation**
 
@@ -124,6 +233,8 @@ Notification:          0x04  0x05   0x06         0x07
 Field index:            0     1      2            3
 ```
 Formula (unconfirmed): `notification_type = ledparam_field_index + 4`
+
+```
 05 0f 01       Settings saved ACK (keyboard confirmed via RF)
 05 0f 00       Settings saved ACK complete
 ```
@@ -136,14 +247,9 @@ Formula (unconfirmed): `notification_type = ledparam_field_index + 4`
 
 ### Command Format (SET_REPORT, 65 bytes)
 
-```
-┌────────┬────────┬────────┬────────┬────────┬────────┬────────┬──────────┬──────────┐
-│ Byte 0 │ Byte 1 │ Byte 2 │ Byte 3 │ Byte 4 │ Byte 5 │ Byte 6 │ Byte 7   │ Byte 8+  │
-├────────┼────────┼────────┼────────┼────────┼────────┼────────┼──────────┼──────────┤
-│ Report │ CMD    │ Param1 │ Param2 │ Param3 │ Param4 │ Param5 │ Checksum │ Padding  │
-│ ID=0   │        │        │        │        │        │        │ (Bit7)   │          │
-└────────┴────────┴────────┴────────┴────────┴────────┴────────┴──────────┴──────────┘
-```
+| Byte 0 | Byte 1 | Byte 2 | Byte 3 | Byte 4 | Byte 5 | Byte 6 | Byte 7 | Byte 8+ |
+|--------|--------|--------|--------|--------|--------|--------|--------|---------|
+| Report ID=0 | CMD | Param1 | Param2 | Param3 | Param4 | Param5 | Checksum (Bit7) | Padding |
 
 **Checksum (Bit7)**: `255 - (sum of bytes 1-7) & 0xFF`
 
@@ -197,23 +303,15 @@ Write commands receive acknowledgment via EP2 interrupt after RF round-trip.
 
 Response to F7 command (GET_REPORT id=5):
 
-```
-┌────────┬─────────┬────────┬────────┬──────────┬────────┬────────┬─────────┐
-│ Byte 0 │ Byte 1  │ Byte 2 │ Byte 3 │ Byte 4   │ Byte 5 │ Byte 6 │ Byte 7+ │
-├────────┼─────────┼────────┼────────┼──────────┼────────┼────────┼─────────┤
-│ 0x00   │ Battery │ 0x00   │ Idle   │ Online   │ 0x01   │ 0x01   │ 0x00    │
-│        │ (1-100) │        │ (0/1)  │ (0/1)    │        │        │         │
-└────────┴─────────┴────────┴────────┴──────────┴────────┴────────┴─────────┘
-```
-
-| Field | Byte | Values | Description |
-|-------|------|--------|-------------|
-| Report ID | 0 | 0x00 | Always 0x00 in response |
-| Battery | 1 | 1-100 | Battery percentage |
-| Unknown | 2 | 0x00 | Always 0x00 |
-| Idle | 3 | 0/1 | 1 = keyboard idle/sleeping, 0 = active |
-| Online | 4 | 0/1 | 1 = keyboard connected, 0 = disconnected |
-| Marker | 5-6 | 0x01, 0x01 | Validity markers |
+| Byte | Field | Values | Description |
+|------|-------|--------|-------------|
+| 0 | Report ID | `0x00` | Always 0x00 in response |
+| 1 | Battery | 1-100 | Battery percentage |
+| 2 | Unknown | `0x00` | Always 0x00 |
+| 3 | Idle | 0/1 | 1 = keyboard idle/sleeping, 0 = active |
+| 4 | Online | 0/1 | 1 = keyboard connected, 0 = disconnected |
+| 5-6 | Marker | `0x01, 0x01` | Validity markers |
+| 7+ | Padding | `0x00` | Unused |
 
 **Example:**
 ```
@@ -269,6 +367,43 @@ The 0x11 value appears constant; host must track current mode state.
 ```
 When a setting is written (e.g., sleep timeout via 0x11), the keyboard sends this ACK ~220ms later after receiving the command over RF. This confirms the setting was saved to the keyboard, not just received by the dongle.
 
+**Commands that do NOT trigger SettingsAck:**
+- SET_MAGNETISM (0x1B) - monitor mode toggle
+- BATTERY_REFRESH (0xF7) - battery query
+
+## Magnetism Monitoring (Hall Effect)
+
+The keyboard's hall effect switches can report real-time key depth via command 0x1B.
+
+### Enable/Disable Monitoring
+
+| Command | Param1 | Description |
+|---------|--------|-------------|
+| `1b 01 00 00 00 00 00 e3` | 0x01 | Enable key depth monitoring |
+| `1b 00 00 00 00 00 00 e4` | 0x00 | Disable key depth monitoring |
+
+Send command followed by FC flush. No SettingsAck is sent.
+
+### KeyDepth Notifications (0x1B)
+
+When monitoring is enabled, the keyboard streams depth reports via EP2:
+
+| Byte | Field | Description |
+|------|-------|-------------|
+| 0 | Report ID | `0x05` |
+| 1 | Type | `0x1B` |
+| 2-3 | Depth | u16 LE, raw hall effect value |
+| 4 | Key Index | Matrix index of key being pressed |
+
+**Example key press cycle:**
+```
+05 1b 0f 00 29    depth=15,  key=41 (press start)
+05 1b 69 01 29    depth=361, key=41 (bottom out)
+05 1b 00 00 29    depth=0,   key=41 (release)
+```
+
+Reports arrive at ~3-20ms intervals during key movement. Depth values typically range 0-400+ depending on switch travel.
+
 ## FEA_CMD Command Codes
 
 Standard keyboard commands (work on both wired and wireless):
@@ -289,6 +424,7 @@ Standard keyboard commands (work on both wired and wireless):
 | SET_AUDIO | 0x0D | - | - | Audio visualizer data |
 | SET_WINDOS | 0x0E | - | - | Screen color sync |
 | SET_SLEEP | 0x11 | - | - | Sleep timeout (dongle) |
+| SET_MAGNETISM | 0x1B | - | - | Key depth monitor (no ACK) |
 | - | - | GET_BATTERY | 0x83 | Battery (wired only) |
 | - | - | GET_INFOR | 0x8F | Device info/settings |
 | BATTERY_REFRESH | 0xF7 | - | - | Battery query (dongle) |
