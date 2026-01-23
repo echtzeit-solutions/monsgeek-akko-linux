@@ -15,13 +15,16 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use hidapi::HidDevice;
 use parking_lot::Mutex;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::error::TransportError;
 use crate::protocol::{self, cmd, dongle_timing, REPORT_SIZE};
 use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
+
+/// Broadcast channel capacity for vendor events
+const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// Maximum number of cached responses
 const MAX_CACHE_SIZE: usize = 16;
@@ -115,7 +118,6 @@ struct CommandRequest {
 /// Shared state between transport handle and worker
 struct DongleState {
     device: Mutex<HidDevice>,
-    input_device: Option<Mutex<HidDevice>>,
     cache: Mutex<ResponseCache>,
     latency_tracker: Mutex<LatencyTracker>,
     consecutive_timeouts: AtomicUsize,
@@ -136,6 +138,10 @@ pub struct HidDongleTransport {
     request_tx: mpsc::Sender<CommandRequest>,
     /// Flag to track if worker is running
     worker_running: Arc<AtomicBool>,
+    /// Broadcast sender for vendor events (if input device available)
+    event_tx: Option<broadcast::Sender<VendorEvent>>,
+    /// Shutdown flag for event reader thread
+    event_shutdown: Arc<AtomicBool>,
 }
 
 impl HidDongleTransport {
@@ -147,9 +153,9 @@ impl HidDongleTransport {
         input_device: Option<HidDevice>,
         info: TransportDeviceInfo,
     ) -> Self {
+        // Create state (input_device goes to event reader thread, not here)
         let state = Arc::new(DongleState {
             device: Mutex::new(feature_device),
-            input_device: input_device.map(Mutex::new),
             cache: Mutex::new(ResponseCache::new()),
             latency_tracker: Mutex::new(LatencyTracker::new(dongle_timing::LATENCY_WINDOW_SIZE)),
             consecutive_timeouts: AtomicUsize::new(0),
@@ -171,11 +177,32 @@ impl HidDongleTransport {
             })
             .expect("Failed to spawn dongle worker thread");
 
+        // Spawn event reader thread if input device available
+        let event_shutdown = Arc::new(AtomicBool::new(false));
+        let event_tx = if let Some(input) = input_device {
+            let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+            let tx_clone = tx.clone();
+            let shutdown_clone = event_shutdown.clone();
+
+            std::thread::Builder::new()
+                .name("dongle-event-reader".into())
+                .spawn(move || {
+                    dongle_event_reader_loop(input, tx_clone, shutdown_clone);
+                })
+                .expect("Failed to spawn dongle event reader thread");
+
+            Some(tx)
+        } else {
+            None
+        };
+
         Self {
             state,
             info,
             request_tx,
             worker_running,
+            event_tx,
+            event_shutdown,
         }
     }
 
@@ -467,22 +494,30 @@ impl Transport for HidDongleTransport {
     }
 
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        let input = match &self.state.input_device {
-            Some(dev) => dev,
-            None => return Ok(None),
-        };
-
-        let device = input.lock();
-        let mut buf = vec![0u8; 64];
-
-        match device.read_timeout(&mut buf, timeout_ms as i32) {
-            Ok(len) if len > 0 => {
-                debug!("Dongle event ({} bytes): {:02X?}", len, &buf[..len.min(16)]);
-                Ok(Some(parse_dongle_event(&buf[..len])))
+        // If we have an event channel, receive from it with timeout
+        if let Some(ref tx) = self.event_tx {
+            let mut rx = tx.subscribe();
+            let timeout = Duration::from_millis(timeout_ms as u64);
+            match tokio::time::timeout(timeout, rx.recv()).await {
+                Ok(Ok(event)) => Ok(Some(event)),
+                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
+                    debug!("Dongle event receiver lagged by {} events", n);
+                    // Try again immediately after lag
+                    match rx.recv().await {
+                        Ok(event) => Ok(Some(event)),
+                        Err(_) => Ok(None),
+                    }
+                }
+                Ok(Err(broadcast::error::RecvError::Closed)) => Ok(None),
+                Err(_) => Ok(None), // Timeout
             }
-            Ok(_) => Ok(None),
-            Err(e) => Err(TransportError::HidError(e.to_string())),
+        } else {
+            Ok(None)
         }
+    }
+
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<VendorEvent>> {
+        self.event_tx.as_ref().map(|tx| tx.subscribe())
     }
 
     fn device_info(&self) -> &TransportDeviceInfo {
@@ -501,10 +536,42 @@ impl Transport for HidDongleTransport {
         // Dropping the sender will cause the worker to exit
         Ok(())
     }
+
+    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+        let device = self.state.device.lock();
+
+        // Send F7 command to trigger battery refresh
+        let buf = Self::build_command(cmd::BATTERY_REFRESH, &[], ChecksumType::Bit7);
+        device.send_feature_report(&buf)?;
+
+        // Read cached value via feature report 0x05
+        let mut buf = vec![0u8; REPORT_SIZE];
+        buf[0] = 0x05;
+
+        device.get_feature_report(&mut buf)?;
+
+        // Parse battery response:
+        // [1] = level (0-100), [3] = idle flag, [4] = online flag
+        let level = buf[1];
+        let idle = buf.len() > 3 && buf[3] != 0;
+        let online = buf.len() > 4 && buf[4] != 0;
+
+        // Sanity check
+        if level > 100 {
+            return Err(TransportError::Internal(format!(
+                "Invalid battery level: {level}"
+            )));
+        }
+
+        Ok((level, online, idle))
+    }
 }
 
 impl Drop for HidDongleTransport {
     fn drop(&mut self) {
+        // Signal event reader thread to shutdown
+        self.event_shutdown.store(true, Ordering::SeqCst);
+
         // Log final latency stats
         let tracker = self.state.latency_tracker.lock();
         if !tracker.samples.is_empty() {
@@ -513,44 +580,162 @@ impl Drop for HidDongleTransport {
                 tracker.average_ms()
             );
         }
+        debug!("HidDongleTransport dropped, signaling event reader shutdown");
     }
 }
 
-/// Parse vendor event from dongle input report
+/// Dedicated event reader loop for dongle running in its own thread
+///
+/// Reads from the HID input device and broadcasts events to all subscribers.
+/// Wakes immediately when data arrives (hidapi read_timeout behavior).
+/// The 5ms timeout is only for checking the shutdown flag during idle periods.
+fn dongle_event_reader_loop(
+    input_device: HidDevice,
+    tx: broadcast::Sender<VendorEvent>,
+    shutdown: Arc<AtomicBool>,
+) {
+    debug!("Dongle event reader thread started");
+    let mut buf = [0u8; 64];
+
+    while !shutdown.load(Ordering::Relaxed) {
+        // Read with short timeout - wakes immediately on data
+        // Timeout only affects how often we check shutdown flag when idle
+        match input_device.read_timeout(&mut buf, 5) {
+            Ok(len) if len > 0 => {
+                debug!(
+                    "Dongle event reader got {} bytes: {:02X?}",
+                    len,
+                    &buf[..len.min(16)]
+                );
+                let event = parse_dongle_event(&buf[..len]);
+                // Send to all subscribers (ignores if no receivers)
+                let _ = tx.send(event);
+            }
+            Ok(_) => {
+                // Timeout, no data - loop continues to check shutdown
+            }
+            Err(e) => {
+                // Log error but keep trying (device might recover)
+                warn!("Dongle event reader error: {}", e);
+                // Brief sleep to avoid spinning on persistent errors
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+
+    debug!("Dongle event reader thread exiting");
+}
+
+/// Parse keyboard function notification (type 0x03)
+fn parse_kb_func(payload: &[u8]) -> VendorEvent {
+    let category = payload.get(1).copied().unwrap_or(0);
+    let action = payload.get(2).copied().unwrap_or(0);
+
+    match action {
+        0x01 => VendorEvent::WinLockToggle {
+            locked: category != 0,
+        },
+        0x03 => VendorEvent::WasdSwapToggle {
+            swapped: category == 8, // category 8 = swapped, category 0 = normal
+        },
+        0x09 => VendorEvent::BacklightToggle,
+        0x11 => VendorEvent::DialModeToggle,
+        _ => VendorEvent::UnknownKbFunc { category, action },
+    }
+}
+
+/// Parse vendor event from dongle input report (EP2 notifications)
+///
+/// The dongle forwards the same notification format as wired connection.
+/// Report format (Report ID 0x05):
+/// - Byte 0: Notification type
+/// - Byte 1+: Notification data
+///
+/// Notification types:
+/// - 0x00: Wake (all zeros)
+/// - 0x01: Profile changed (data = profile 0-3)
+/// - 0x03: KB function (category, action)
+/// - 0x04: LED effect mode (effect ID 1-20)
+/// - 0x05: LED effect speed (0-4)
+/// - 0x06: Brightness level (0-4)
+/// - 0x07: LED color (0-7)
+/// - 0x0F: Settings ACK (0=done, 1=start)
+/// - 0x1B: Key depth (magnetism report)
+/// - 0x88: Battery status (dongle-specific)
 fn parse_dongle_event(data: &[u8]) -> VendorEvent {
     if data.is_empty() {
         return VendorEvent::Unknown(data.to_vec());
     }
 
-    // Skip report ID if present
-    let cmd_data = if data[0] == 0x05 && data.len() > 1 {
+    // Skip report ID if present (0x05)
+    let payload = if data[0] == 0x05 && data.len() > 1 {
         &data[1..]
     } else {
         data
     };
 
-    if cmd_data.is_empty() {
+    if payload.is_empty() {
         return VendorEvent::Unknown(data.to_vec());
     }
 
-    match cmd_data[0] {
-        0x1B if cmd_data.len() >= 5 => {
-            // Key depth report
-            let depth_raw = u16::from_le_bytes([cmd_data[1], cmd_data[2]]);
-            let key_index = cmd_data[3];
+    let notif_type = payload[0];
+    let value = payload.get(1).copied().unwrap_or(0);
+
+    match notif_type {
+        // Wake notification: type 0x00 with all zeros
+        0x00 if payload.iter().skip(1).all(|&b| b == 0) => VendorEvent::Wake,
+
+        // Profile changed via Fn+F9..F12
+        0x01 => VendorEvent::ProfileChange { profile: value },
+
+        // Keyboard function notification (Win lock, WASD swap, etc.)
+        0x03 => parse_kb_func(payload),
+
+        // LED effect mode changed via Fn+Home/PgUp/End/PgDn
+        0x04 => VendorEvent::LedEffectMode { effect_id: value },
+
+        // LED effect speed changed via Fn+←/→
+        0x05 => VendorEvent::LedEffectSpeed { speed: value },
+
+        // Brightness level changed via Fn+↑/↓
+        0x06 => VendorEvent::BrightnessLevel { level: value },
+
+        // LED color changed via Fn+\
+        0x07 => VendorEvent::LedColor { color: value },
+
+        // Settings ACK (magnetism start/stop shares this type)
+        0x0F => {
+            // Magnetism control uses specific byte patterns
+            if payload.len() >= 3 {
+                if payload[1] == 0x01 && payload[2] == 0x00 {
+                    return VendorEvent::MagnetismStart;
+                } else if payload[1] == 0x00 && payload[2] == 0x00 {
+                    return VendorEvent::MagnetismStop;
+                }
+            }
+            // Generic settings ack
+            VendorEvent::SettingsAck {
+                started: value != 0,
+            }
+        }
+
+        // Key depth report (magnetism)
+        0x1B if payload.len() >= 5 => {
+            let depth_raw = u16::from_le_bytes([payload[1], payload[2]]);
+            let key_index = payload[3];
             VendorEvent::KeyDepth {
                 key_index,
                 depth_raw,
             }
         }
-        0x88 if cmd_data.len() >= 5 => {
-            // Battery status from dongle
-            VendorEvent::BatteryStatus {
-                level: cmd_data[3],
-                charging: cmd_data[4] & 0x02 != 0,
-                online: cmd_data[4] & 0x01 != 0,
-            }
-        }
+
+        // Battery status from dongle (dongle-specific notification)
+        0x88 if payload.len() >= 5 => VendorEvent::BatteryStatus {
+            level: payload[3],
+            charging: payload[4] & 0x02 != 0,
+            online: payload[4] & 0x01 != 0,
+        },
+
         _ => VendorEvent::Unknown(data.to_vec()),
     }
 }

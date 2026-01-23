@@ -17,7 +17,7 @@ use std::io::{self, stdout};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use std::path::PathBuf;
@@ -25,12 +25,15 @@ use std::path::PathBuf;
 // Use shared library
 use crate::firmware_api::FirmwareCheckResult;
 use crate::hid::BatteryInfo;
-use crate::power_supply::{find_hid_battery_power_supply, read_kernel_battery};
+use crate::power_supply::{
+    find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
+};
 use crate::{cmd, devices, hal, key_mode, magnetism, DeviceInfo, TriggerSettings};
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, RgbColor,
+    KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
+    SleepTimeSettings, VendorEvent,
 };
 use monsgeek_transport::{DeviceDiscovery, HidDiscovery};
 
@@ -55,14 +58,18 @@ struct App {
     connected: bool,
     device_name: String,
     key_count: u8,
+    has_sidelight: bool,
+    has_magnetism: bool,
     // Trigger settings
     triggers: Option<TriggerSettings>,
     trigger_scroll: usize,
     trigger_view_mode: TriggerViewMode,
     trigger_selected_key: usize, // Selected key in layout view
-    precision_factor: f32,
+    precision: Precision,
     // Keyboard options
     options: Option<KeyboardOptions>,
+    // Sleep time settings (loaded separately, merged into options)
+    sleep_settings: Option<SleepTimeSettings>,
     // Macro editor state
     macros: Vec<MacroSlot>,
     macro_selected: usize,
@@ -86,6 +93,8 @@ struct App {
     show_help: bool,
     // Keyboard interface (async, wrapped in Arc for spawning tasks)
     keyboard: Option<Arc<KeyboardInterface>>,
+    // Event receiver for low-latency EP2 notifications
+    event_rx: Option<broadcast::Receiver<VendorEvent>>,
     loading: LoadingStates,
     throbber_state: ThrobberState,
     // Async result channel (sender for spawned tasks)
@@ -135,7 +144,20 @@ struct KeyboardOptions {
     anti_mistouch: bool,
     rt_stability: u8,
     wasd_swap: bool,
-    sleep_time: u16, // seconds, 0 = never sleep
+    // Sleep time settings (all in seconds, 0 = disabled)
+    idle_bt: u16,
+    idle_24g: u16,
+    deep_bt: u16,
+    deep_24g: u16,
+}
+
+/// Sleep time field identifier for updates
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SleepField {
+    IdleBt,
+    Idle24g,
+    DeepBt,
+    Deep24g,
 }
 
 /// Key depth visualization mode
@@ -175,7 +197,7 @@ struct LoadingStates {
     led_params: LoadState, // all main LED fields
     side_led_params: LoadState,
     kb_options_info: LoadState, // fn_layer + wasd_swap for info display
-    feature_list: LoadState,    // precision
+    precision: LoadState,
     sleep_time: LoadState,
     firmware_check: LoadState, // server firmware version check
     // Other tabs
@@ -196,13 +218,15 @@ enum AsyncResult {
     LedParams(Result<LedParams, String>),
     SideLedParams(Result<LedParams, String>),
     KbOptions(Result<KbOptions, String>),
-    FeatureList(Result<monsgeek_keyboard::FeatureList, String>),
-    SleepTime(Result<u16, String>),
+    Precision(Result<Precision, String>),
+    SleepTime(Result<SleepTimeSettings, String>),
     FirmwareCheck(FirmwareCheckResult),
     // Other tab results
     Triggers(Result<TriggerSettings, String>),
     Options(Result<KbOptions, String>),
     Macros(Result<Vec<MacroSlot>, String>),
+    // Battery status (from keyboard API)
+    Battery(Result<BatteryInfo, String>),
     // Operation completion (for set operations)
     SetComplete(String, Result<(), String>), // (field_name, result)
 }
@@ -428,12 +452,15 @@ impl App {
             connected: false,
             device_name: String::new(),
             key_count: 0,
+            has_sidelight: false,
+            has_magnetism: false,
             triggers: None,
             trigger_scroll: 0,
             trigger_view_mode: TriggerViewMode::default(),
             trigger_selected_key: 0,
-            precision_factor: 100.0, // Default 0.01mm precision
+            precision: Precision::default(),
             options: None,
+            sleep_settings: None,
             macros: Vec::new(),
             macro_selected: 0,
             macro_editing: false,
@@ -456,6 +483,8 @@ impl App {
             show_help: false,
             // Keyboard interface (wrapped in Arc for spawning tasks)
             keyboard: None,
+            // Event receiver (subscribed on connect)
+            event_rx: None,
             loading: LoadingStates::default(),
             throbber_state: ThrobberState::default(),
             result_tx,
@@ -495,26 +524,38 @@ impl App {
         let vid = transport_info.vid;
         let pid = transport_info.pid;
 
-        // Look up device info - default to 98 keys with magnetism for M1 V5 HE
-        let (key_count, has_magnetism) = match (vid, pid) {
-            (0x3151, 0x5030) => (98, true), // M1 V5 HE wired
-            (0x3151, 0x5038) => (98, true), // M1 V5 HE dongle
-            _ => (98, true),                // Default
-        };
+        // Look up device info from database, falling back to hardcoded or defaults
+        let (key_count, has_magnetism, has_sidelight, device_name) =
+            if let Some(info) = devices::get_device_info(vid, pid) {
+                (
+                    if info.key_count > 0 {
+                        info.key_count
+                    } else {
+                        98
+                    },
+                    info.has_magnetism,
+                    info.has_sidelight,
+                    info.display_name,
+                )
+            } else {
+                // Fallback for unknown devices
+                let name = transport_info
+                    .product_name
+                    .clone()
+                    .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"));
+                (98, true, false, name) // Default: assume 98 keys, magnetism, no sidelight
+            };
 
         let keyboard = Arc::new(KeyboardInterface::new(transport, key_count, has_magnetism));
         let is_wireless = keyboard.is_wireless();
 
-        let device_name = if let Some(def) = devices::find_device(vid, pid) {
-            def.display_name.to_string()
-        } else {
-            transport_info
-                .product_name
-                .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"))
-        };
+        // Subscribe to low-latency event notifications
+        self.event_rx = keyboard.subscribe_events();
 
         self.device_name = device_name;
         self.key_count = key_count;
+        self.has_sidelight = has_sidelight;
+        self.has_magnetism = has_magnetism;
         self.is_wireless = is_wireless;
         self.keyboard = Some(keyboard);
 
@@ -574,7 +615,7 @@ impl App {
         self.loading.led_params = LoadState::Loading;
         self.loading.side_led_params = LoadState::Loading;
         self.loading.kb_options_info = LoadState::Loading;
-        self.loading.feature_list = LoadState::Loading;
+        self.loading.precision = LoadState::Loading;
         self.loading.sleep_time = LoadState::Loading;
 
         // Spawn background tasks for each query
@@ -662,8 +703,8 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_feature_list().await.map_err(|e| e.to_string());
-                let _ = tx.send(AsyncResult::FeatureList(result));
+                let result = kb.get_precision().await.map_err(|e| e.to_string());
+                let _ = tx.send(AsyncResult::Precision(result));
             });
         }
 
@@ -711,7 +752,7 @@ impl App {
         }
 
         // Re-detect battery source (allows hot-switching when eBPF loads/unloads)
-        self.battery_source = if let Some(path) = find_hid_battery_power_supply(0x3151, 0x5038) {
+        self.battery_source = if let Some(path) = find_dongle_battery_power_supply() {
             Some(BatterySource::Kernel(path))
         } else {
             Some(BatterySource::Vendor)
@@ -719,32 +760,28 @@ impl App {
 
         match &self.battery_source {
             Some(BatterySource::Kernel(path)) => {
-                // Read from kernel power_supply sysfs
+                // Read from kernel power_supply sysfs (synchronous, fast)
                 self.battery = read_kernel_battery(path);
             }
             Some(BatterySource::Vendor) => {
-                // Query battery from 2.4GHz dongle vendor interface
-                if let Ok(hidapi) = hidapi::HidApi::new() {
-                    for device_info in hidapi.device_list() {
-                        let vid = device_info.vendor_id();
-                        let pid = device_info.product_id();
-
-                        // Only match dongle (PID 0x5038) vendor interface
-                        if vid != 0x3151 || pid != 0x5038 || device_info.usage_page() != 0xFFFF {
-                            continue;
-                        }
-
-                        if let Ok(device) = device_info.open_device(&hidapi) {
-                            let mut buf = [0u8; 65];
-                            buf[0] = 0x05; // Report ID
-
-                            if let Ok(_len) = device.get_feature_report(&mut buf) {
-                                self.battery = BatteryInfo::from_feature_report(&buf);
-                            }
-                            break;
-                        }
-                    }
-                }
+                // Query battery via keyboard API (async)
+                let Some(keyboard) = self.keyboard.clone() else {
+                    return;
+                };
+                let tx = self.result_tx.clone();
+                tokio::spawn(async move {
+                    let result = keyboard
+                        .get_battery()
+                        .await
+                        .map(|kb_info| BatteryInfo {
+                            level: kb_info.level,
+                            online: kb_info.online,
+                            charging: kb_info.charging,
+                            idle: kb_info.idle,
+                        })
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(AsyncResult::Battery(result));
+                });
             }
             None => {}
         }
@@ -1166,18 +1203,75 @@ impl App {
         self.status_msg = format!("RT stability: {value}ms");
     }
 
-    async fn set_sleep_time(&mut self, seconds: u16) {
-        if let Some(ref mut opts) = self.options {
-            opts.sleep_time = seconds;
-        }
-        self.info.sleep_seconds = seconds;
-        if let Some(ref keyboard) = self.keyboard {
-            if keyboard.set_sleep_time(seconds).await.is_ok() {
-                if seconds == 0 {
-                    self.status_msg = "Sleep: Never".to_string();
-                } else {
-                    self.status_msg = format!("Sleep: {seconds}s");
+    /// Update a single sleep time value with validation (deep >= idle)
+    async fn update_sleep_time(&mut self, field: SleepField, delta: i32) {
+        let Some(ref mut opts) = self.options else {
+            return;
+        };
+
+        // Get current value and compute new value
+        let current = match field {
+            SleepField::IdleBt => opts.idle_bt,
+            SleepField::Idle24g => opts.idle_24g,
+            SleepField::DeepBt => opts.deep_bt,
+            SleepField::Deep24g => opts.deep_24g,
+        };
+
+        // Apply delta with bounds (0 to 3600 seconds = 0 to 1 hour)
+        let new_val = (current as i32 + delta).clamp(0, 3600) as u16;
+
+        // Validate: deep sleep must be >= idle sleep for same mode
+        // When increasing idle, also increase deep if needed
+        // When decreasing deep, also decrease idle if needed
+        match field {
+            SleepField::IdleBt => {
+                opts.idle_bt = new_val;
+                if opts.deep_bt < new_val && new_val > 0 {
+                    opts.deep_bt = new_val;
                 }
+            }
+            SleepField::Idle24g => {
+                opts.idle_24g = new_val;
+                if opts.deep_24g < new_val && new_val > 0 {
+                    opts.deep_24g = new_val;
+                }
+            }
+            SleepField::DeepBt => {
+                // Deep must be >= idle (unless disabled)
+                let min_val = if new_val == 0 { 0 } else { opts.idle_bt };
+                opts.deep_bt = new_val.max(min_val);
+            }
+            SleepField::Deep24g => {
+                let min_val = if new_val == 0 { 0 } else { opts.idle_24g };
+                opts.deep_24g = new_val.max(min_val);
+            }
+        }
+
+        // Update display value
+        self.info.sleep_seconds = opts.idle_bt;
+
+        // Send to keyboard
+        if let Some(ref keyboard) = self.keyboard {
+            let settings =
+                SleepTimeSettings::new(opts.idle_bt, opts.idle_24g, opts.deep_bt, opts.deep_24g);
+            if keyboard.set_sleep_time(&settings).await.is_ok() {
+                let field_name = match field {
+                    SleepField::IdleBt => "BT Idle",
+                    SleepField::Idle24g => "2.4G Idle",
+                    SleepField::DeepBt => "BT Deep",
+                    SleepField::Deep24g => "2.4G Deep",
+                };
+                let value = match field {
+                    SleepField::IdleBt => opts.idle_bt,
+                    SleepField::Idle24g => opts.idle_24g,
+                    SleepField::DeepBt => opts.deep_bt,
+                    SleepField::Deep24g => opts.deep_24g,
+                };
+                self.status_msg = format!(
+                    "{}: {}",
+                    field_name,
+                    SleepTimeSettings::format_duration(value)
+                );
             } else {
                 self.status_msg = "Failed to set sleep time".to_string();
             }
@@ -1199,7 +1293,6 @@ impl App {
             AsyncResult::DeviceIdAndVersion(Ok((device_id, ver))) => {
                 self.info.device_id = device_id;
                 self.info.version = ver.raw;
-                self.precision_factor = ver.precision_factor() as f32;
                 self.loading.usb_version = LoadState::Loaded;
             }
             AsyncResult::DeviceIdAndVersion(Err(_)) => {
@@ -1260,16 +1353,27 @@ impl App {
             AsyncResult::KbOptions(Err(_)) => {
                 self.loading.kb_options_info = LoadState::Error;
             }
-            AsyncResult::FeatureList(Ok(features)) => {
-                self.info.precision = features.precision;
-                self.loading.feature_list = LoadState::Loaded;
+            AsyncResult::Precision(Ok(precision)) => {
+                self.precision = precision;
+                self.loading.precision = LoadState::Loaded;
             }
-            AsyncResult::FeatureList(Err(_)) => {
-                self.loading.feature_list = LoadState::Error;
+            AsyncResult::Precision(Err(_)) => {
+                self.loading.precision = LoadState::Error;
             }
-            AsyncResult::SleepTime(Ok(s)) => {
-                self.info.sleep_seconds = s;
+            AsyncResult::SleepTime(Ok(settings)) => {
+                // Store full sleep time settings
+                self.info.sleep_seconds = settings.idle_bt; // For info display
+                self.sleep_settings = Some(settings);
                 self.loading.sleep_time = LoadState::Loaded;
+                // Update options if already loaded
+                if let Some(ref mut opts) = self.options {
+                    if let Some(ref s) = self.sleep_settings {
+                        opts.idle_bt = s.idle_bt;
+                        opts.idle_24g = s.idle_24g;
+                        opts.deep_bt = s.deep_bt;
+                        opts.deep_24g = s.deep_24g;
+                    }
+                }
             }
             AsyncResult::SleepTime(Err(_)) => {
                 self.loading.sleep_time = LoadState::Error;
@@ -1289,13 +1393,18 @@ impl App {
                 self.status_msg = "Failed to load trigger settings".to_string();
             }
             AsyncResult::Options(Ok(opts)) => {
+                // Get sleep settings if already loaded, otherwise use defaults
+                let sleep = self.sleep_settings.unwrap_or_default();
                 self.options = Some(KeyboardOptions {
                     os_mode: opts.os_mode,
                     fn_layer: opts.fn_layer,
                     anti_mistouch: opts.anti_mistouch,
                     rt_stability: opts.rt_stability,
                     wasd_swap: opts.wasd_swap,
-                    sleep_time: self.info.sleep_seconds,
+                    idle_bt: sleep.idle_bt,
+                    idle_24g: sleep.idle_24g,
+                    deep_bt: sleep.deep_bt,
+                    deep_24g: sleep.deep_24g,
                 });
                 self.loading.options = LoadState::Loaded;
                 self.status_msg = "Keyboard options loaded".to_string();
@@ -1318,6 +1427,13 @@ impl App {
             }
             AsyncResult::SetComplete(field, Err(e)) => {
                 self.status_msg = format!("Failed to set {field}: {e}");
+            }
+            // Battery is read synchronously via feature report, not used currently
+            AsyncResult::Battery(Ok(info)) => {
+                self.battery = Some(info);
+            }
+            AsyncResult::Battery(Err(e)) => {
+                self.status_msg = format!("Battery read failed: {e}");
             }
         }
     }
@@ -1343,8 +1459,7 @@ impl App {
             return;
         }
 
-        let precision =
-            monsgeek_keyboard::FirmwareVersion::new(self.info.version).precision_factor() as f32;
+        let precision = self.precision.factor() as f32;
         let now = Instant::now();
         // Long timeout as fallback - primary release detection is via depth < 0.05 threshold
         // This only catches truly stale keys (e.g., missed release reports)
@@ -1429,6 +1544,105 @@ impl App {
                     history.pop_front();
                 }
                 history.push_back(self.key_depths[key_idx]);
+            }
+        }
+    }
+
+    /// Handle a vendor notification and update app state
+    fn handle_vendor_notification(&mut self, event: VendorEvent) {
+        match event {
+            VendorEvent::Wake => {
+                self.status_msg = "Keyboard wake".to_string();
+            }
+            VendorEvent::ProfileChange { profile } => {
+                self.info.profile = profile;
+                self.status_msg = format!("Profile {} (via Fn key)", profile + 1);
+            }
+            VendorEvent::LedEffectMode { effect_id } => {
+                self.info.led_mode = effect_id;
+                self.status_msg = format!(
+                    "LED mode: {} ({})",
+                    effect_id,
+                    crate::cmd::led_mode_name(effect_id)
+                );
+            }
+            VendorEvent::LedEffectSpeed { speed } => {
+                // Speed is stored inverted (0=fast, 4=slow in protocol)
+                self.info.led_speed = 4 - speed.min(4);
+                self.status_msg = format!("LED speed: {}/4", speed);
+            }
+            VendorEvent::BrightnessLevel { level } => {
+                self.info.led_brightness = level;
+                self.status_msg = format!("Brightness: {}/4", level);
+            }
+            VendorEvent::LedColor { color } => {
+                // Map color index to RGB (7 preset colors + custom)
+                let (r, g, b) = match color {
+                    0 => (255, 0, 0),     // Red
+                    1 => (255, 128, 0),   // Orange
+                    2 => (255, 255, 0),   // Yellow
+                    3 => (0, 255, 0),     // Green
+                    4 => (0, 255, 255),   // Cyan
+                    5 => (0, 0, 255),     // Blue
+                    6 => (128, 0, 255),   // Purple
+                    7 => (255, 255, 255), // White (rainbow/dazzle)
+                    _ => (255, 255, 255), // Default white
+                };
+                self.info.led_r = r;
+                self.info.led_g = g;
+                self.info.led_b = b;
+                // Color index 7 typically means dazzle/rainbow mode
+                self.info.led_dazzle = color == 7;
+                self.status_msg = format!("LED color: #{:02X}{:02X}{:02X}", r, g, b);
+            }
+            VendorEvent::WinLockToggle { locked } => {
+                self.status_msg =
+                    format!("Win key: {}", if locked { "LOCKED" } else { "unlocked" });
+            }
+            VendorEvent::WasdSwapToggle { swapped } => {
+                self.info.wasd_swap = swapped;
+                self.status_msg = format!(
+                    "WASD/Arrows: {}",
+                    if swapped { "SWAPPED" } else { "normal" }
+                );
+            }
+            VendorEvent::BacklightToggle => {
+                self.status_msg = "Backlight toggled".to_string();
+            }
+            VendorEvent::DialModeToggle => {
+                self.status_msg = "Dial mode toggled".to_string();
+            }
+            VendorEvent::SettingsAck { started } => {
+                // Settings ACK is low-level, only show in debug
+                if started {
+                    tracing::debug!("Settings change started");
+                } else {
+                    tracing::debug!("Settings change complete");
+                }
+            }
+            VendorEvent::MagnetismStart | VendorEvent::MagnetismStop => {
+                // Handled separately by depth monitoring
+            }
+            VendorEvent::KeyDepth { .. } => {
+                // Key depth is handled by read_input_reports
+            }
+            VendorEvent::BatteryStatus {
+                level,
+                charging,
+                online,
+            } => {
+                self.battery = Some(crate::hid::BatteryInfo {
+                    level,
+                    charging,
+                    online,
+                    idle: false,
+                });
+            }
+            VendorEvent::UnknownKbFunc { category, action } => {
+                self.status_msg = format!("KB func: cat={} action={}", category, action);
+            }
+            VendorEvent::Unknown(data) => {
+                tracing::debug!("Unknown notification: {:02X?}", data);
             }
         }
     }
@@ -1789,16 +2003,17 @@ pub async fn run() -> io::Result<()> {
                                     4 => { let g = app.info.led_g.saturating_sub(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
                                     5 => { let b = app.info.led_b.saturating_sub(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
                                     7 => app.toggle_dazzle().await,
-                                    9 if app.info.side_mode > 0 => app.set_side_mode(app.info.side_mode - 1).await,
-                                    10 if app.info.side_brightness > 0 => app.set_side_brightness(app.info.side_brightness - 1).await,
-                                    11 => {
+                                    // Side LED controls (only if device has sidelight)
+                                    9 if app.has_sidelight && app.info.side_mode > 0 => app.set_side_mode(app.info.side_mode - 1).await,
+                                    10 if app.has_sidelight && app.info.side_brightness > 0 => app.set_side_brightness(app.info.side_brightness - 1).await,
+                                    11 if app.has_sidelight => {
                                         let current = 4 - app.info.side_speed.min(4);
                                         if current > 0 { app.set_side_speed(current - 1).await; }
                                     }
-                                    12 => { let r = app.info.side_r.saturating_sub(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 => { let g = app.info.side_g.saturating_sub(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 => { let b = app.info.side_b.saturating_sub(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
-                                    16 => app.toggle_side_dazzle().await,
+                                    12 if app.has_sidelight => { let r = app.info.side_r.saturating_sub(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 if app.has_sidelight => { let g = app.info.side_g.saturating_sub(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 if app.has_sidelight => { let b = app.info.side_b.saturating_sub(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    16 if app.has_sidelight => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
@@ -1808,8 +2023,11 @@ pub async fn run() -> io::Result<()> {
                                         1 => app.toggle_wasd_swap().await,
                                         2 => app.toggle_anti_mistouch().await,
                                         3 if opts.rt_stability >= 25 => app.set_rt_stability(opts.rt_stability - 25).await,
-                                        4 if opts.sleep_time >= 60 => app.set_sleep_time(opts.sleep_time - 60).await,
-                                        4 if opts.sleep_time > 0 && opts.sleep_time < 60 => app.set_sleep_time(0).await,
+                                        // Sleep time sliders: -60s per press
+                                        4 => app.update_sleep_time(SleepField::IdleBt, -60).await,
+                                        5 => app.update_sleep_time(SleepField::Idle24g, -60).await,
+                                        6 => app.update_sleep_time(SleepField::DeepBt, -60).await,
+                                        7 => app.update_sleep_time(SleepField::Deep24g, -60).await,
                                         _ => {}
                                     }
                                 }
@@ -1836,16 +2054,17 @@ pub async fn run() -> io::Result<()> {
                                     4 => { let g = app.info.led_g.saturating_add(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
                                     5 => { let b = app.info.led_b.saturating_add(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
                                     7 => app.toggle_dazzle().await,
-                                    9 if app.info.side_mode < cmd::LED_MODE_MAX => app.set_side_mode(app.info.side_mode + 1).await,
-                                    10 if app.info.side_brightness < 4 => app.set_side_brightness(app.info.side_brightness + 1).await,
-                                    11 => {
+                                    // Side LED controls (only if device has sidelight)
+                                    9 if app.has_sidelight && app.info.side_mode < cmd::LED_MODE_MAX => app.set_side_mode(app.info.side_mode + 1).await,
+                                    10 if app.has_sidelight && app.info.side_brightness < 4 => app.set_side_brightness(app.info.side_brightness + 1).await,
+                                    11 if app.has_sidelight => {
                                         let current = 4 - app.info.side_speed.min(4);
                                         if current < 4 { app.set_side_speed(current + 1).await; }
                                     }
-                                    12 => { let r = app.info.side_r.saturating_add(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 => { let g = app.info.side_g.saturating_add(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 => { let b = app.info.side_b.saturating_add(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
-                                    16 => app.toggle_side_dazzle().await,
+                                    12 if app.has_sidelight => { let r = app.info.side_r.saturating_add(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 if app.has_sidelight => { let g = app.info.side_g.saturating_add(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 if app.has_sidelight => { let b = app.info.side_b.saturating_add(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    16 if app.has_sidelight => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
@@ -1855,7 +2074,11 @@ pub async fn run() -> io::Result<()> {
                                         1 => app.toggle_wasd_swap().await,
                                         2 => app.toggle_anti_mistouch().await,
                                         3 if opts.rt_stability < 125 => app.set_rt_stability(opts.rt_stability + 25).await,
-                                        4 if opts.sleep_time < 3600 => app.set_sleep_time(opts.sleep_time + 60).await,
+                                        // Sleep time sliders: +60s per press
+                                        4 => app.update_sleep_time(SleepField::IdleBt, 60).await,
+                                        5 => app.update_sleep_time(SleepField::Idle24g, 60).await,
+                                        6 => app.update_sleep_time(SleepField::DeepBt, 60).await,
+                                        7 => app.update_sleep_time(SleepField::Deep24g, 60).await,
                                         _ => {}
                                     }
                                 }
@@ -1883,18 +2106,18 @@ pub async fn run() -> io::Result<()> {
                         KeyCode::Enter if app.tab == 1 => {
                             if app.selected == 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
-                            } else if app.selected == 15 {
+                            } else if app.selected == 15 && app.has_sidelight {
                                 app.start_hex_input(HexColorTarget::SideLed);
                             }
                         }
                         KeyCode::Char('#') if app.tab == 1 => {
                             if app.selected >= 3 && app.selected <= 6 {
                                 app.start_hex_input(HexColorTarget::MainLed);
-                            } else if app.selected >= 12 && app.selected <= 15 {
+                            } else if app.has_sidelight && app.selected >= 12 && app.selected <= 15 {
                                 app.start_hex_input(HexColorTarget::SideLed);
                             }
                         }
-                        KeyCode::Char(c) if app.tab == 1 && (app.selected == 6 || app.selected == 15) && c.is_ascii_hexdigit() => {
+                        KeyCode::Char(c) if app.tab == 1 && (app.selected == 6 || (app.selected == 15 && app.has_sidelight)) && c.is_ascii_hexdigit() => {
                             let target = if app.selected == 6 { HexColorTarget::MainLed } else { HexColorTarget::SideLed };
                             app.start_hex_input(target);
                             app.hex_input.clear();
@@ -2049,6 +2272,29 @@ pub async fn run() -> io::Result<()> {
                     }
                 } else if let Some(Ok(Event::Resize(_, _))) = maybe_event {
                     // Resize is handled automatically by ratatui on next draw
+                }
+            }
+
+            // Handle keyboard EP2 events - low-latency channel from dedicated reader thread
+            // This wakes immediately when events arrive (not tick-based)
+            result = async {
+                match &mut app.event_rx {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok(event) => {
+                        app.handle_vendor_notification(event);
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("Event receiver lagged by {} events", n);
+                        // Continue - will get next event on next iteration
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Event channel closed");
+                        app.event_rx = None;
+                    }
                 }
             }
 
@@ -2476,12 +2722,12 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                 Color::Cyan,
             ),
         ]),
-        // Feature list (precision)
+        // Precision
         Line::from(vec![
             Span::raw("Precision:      "),
             value_span(
-                loading.feature_list,
-                precision_str(info.precision).to_string(),
+                loading.precision,
+                app.precision.as_str().to_string(),
                 Color::Green,
             ),
         ]),
@@ -2569,7 +2815,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
         format!("{:3} {}", val, "█".repeat(bars))
     };
 
-    let items: Vec<ListItem> = vec![
+    // Build main LED settings items
+    let mut items: Vec<ListItem> = vec![
         ListItem::new(Line::from(vec![
             Span::raw("Mode:       "),
             Span::styled(
@@ -2657,12 +2904,15 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 }),
             ),
         ])),
-        // Side LED section
-        ListItem::new(Line::from(vec![Span::styled(
+    ];
+
+    // Side LED section - only show if device has sidelight
+    if app.has_sidelight {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
             "─── Side LEDs (Side Lights) ───",
             Style::default().fg(Color::DarkGray),
-        )])),
-        ListItem::new(Line::from(vec![
+        )])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Mode:       "),
             Span::styled(
                 format!(
@@ -2672,8 +2922,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Style::default().fg(Color::Cyan),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Brightness: "),
             Span::styled(
                 format!(
@@ -2683,8 +2933,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Style::default().fg(Color::Cyan),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Speed:      "),
             Span::styled(
                 format!(
@@ -2694,29 +2944,29 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Style::default().fg(Color::Cyan),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Red:        "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_r)),
                 Style::default().fg(Color::Red),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Green:      "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_g)),
                 Style::default().fg(Color::Green),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Blue:       "),
             Span::styled(
                 format!("< {} >", rgb_bar(info.side_b)),
                 Style::default().fg(Color::Blue),
             ),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Color:      "),
             if app.hex_editing && app.hex_target == HexColorTarget::SideLed {
                 // Show editable textbox
@@ -2737,8 +2987,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 )
             },
             Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
-        ])),
-        ListItem::new(Line::from(vec![
+        ])));
+        items.push(ListItem::new(Line::from(vec![
             Span::raw("Dazzle:     "),
             Span::styled(
                 if info.side_dazzle {
@@ -2752,8 +3002,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                     Color::Gray
                 }),
             ),
-        ])),
-    ];
+        ])));
+    }
 
     let list = List::new(items)
         .block(
@@ -2847,15 +3097,6 @@ fn render_depth_monitor(f: &mut Frame, app: &mut App, area: Rect) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, inner[2]);
-}
-
-/// Get precision string from feature list precision value
-fn precision_str(precision: u8) -> &'static str {
-    match precision {
-        2 => "0.005mm",
-        1 => "0.01mm",
-        _ => "0.1mm",
-    }
 }
 
 /// Open the INPUT interface for depth reports
@@ -3143,14 +3384,8 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
 
     // Summary section
-    let factor = app.precision_factor;
-    let precision_str = if factor >= 200.0 {
-        "0.005mm"
-    } else if factor >= 100.0 {
-        "0.01mm"
-    } else {
-        "0.1mm"
-    };
+    let factor = app.precision.factor() as f32;
+    let precision_str = app.precision.as_str();
 
     let summary = if let Some(ref triggers) = app.triggers {
         // Decode first key values
@@ -3355,7 +3590,7 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
         ])
         .split(area);
 
-    let factor = app.precision_factor;
+    let factor = app.precision.factor() as f32;
 
     // Render keyboard layout
     let layout_area = chunks[0];
@@ -3602,18 +3837,48 @@ fn render_options(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(Color::DarkGray),
                 ),
             ])),
+            // Sleep time settings (4 sliders)
             ListItem::new(Line::from(vec![
-                Span::raw("Sleep Time:     "),
+                Span::raw("BT Idle:        "),
                 Span::styled(
-                    if opts.sleep_time == 0 {
-                        "< Never >".to_string()
-                    } else {
-                        format!("< {}s >", opts.sleep_time)
-                    },
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_bt)),
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::styled(
-                    "  (0=never, auto-sleep timeout)",
+                    "  (Bluetooth idle timeout)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])),
+            ListItem::new(Line::from(vec![
+                Span::raw("2.4G Idle:      "),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_24g)),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    "  (2.4GHz idle timeout)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])),
+            ListItem::new(Line::from(vec![
+                Span::raw("BT Deep Sleep:  "),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_bt)),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    "  (must be ≥ BT idle)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])),
+            ListItem::new(Line::from(vec![
+                Span::raw("2.4G Deep Sleep:"),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_24g)),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    "  (must be ≥ 2.4G idle)",
                     Style::default().fg(Color::DarkGray),
                 ),
             ])),
@@ -3642,7 +3907,7 @@ fn render_options(f: &mut Frame, app: &mut App, area: Rect) {
             .highlight_symbol("> ");
 
         let mut state = ListState::default();
-        state.select(Some(app.selected.min(4)));
+        state.select(Some(app.selected.min(7))); // 8 items: FN, WASD, AntiMis, RT, 4x sleep
         f.render_stateful_widget(list, area, &mut state);
     } else if app.loading.options == LoadState::Loading {
         // Show loading spinner

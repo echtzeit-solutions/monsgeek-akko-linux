@@ -9,6 +9,7 @@
 //! - WebRTC (future, for remote access)
 
 pub mod command;
+pub mod device_registry;
 pub mod error;
 pub mod protocol;
 pub mod types;
@@ -57,6 +58,7 @@ pub use command::{
     SleepTimeResponse,
     TransportExt,
 };
+pub use device_registry::{is_dongle_pid, DONGLE_PIDS, VENDOR_ID};
 pub use error::TransportError;
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType, VendorEvent,
@@ -69,6 +71,7 @@ pub use sync_adapter::{list_devices_sync, open_device_sync, SyncTransport};
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 /// The core transport trait - all backends implement this
 ///
@@ -158,6 +161,22 @@ pub trait Transport: Send + Sync {
 
     /// Close the transport gracefully
     async fn close(&self) -> Result<(), TransportError>;
+
+    /// Get battery status (dongle-specific: sends F7 refresh, reads report 0x05)
+    ///
+    /// Returns (level, online, idle) tuple.
+    /// For wired connections, returns (100, true, false) as there's no battery.
+    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError>;
+
+    /// Subscribe to vendor events via broadcast channel
+    ///
+    /// Returns a receiver for asynchronous vendor event notifications.
+    /// Events are pushed from a dedicated reader thread with ~5ms latency.
+    /// Returns None if the transport doesn't support event subscriptions
+    /// (e.g., no input endpoint available).
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<VendorEvent>> {
+        None // Default: not supported
+    }
 }
 
 /// Type alias for a boxed transport

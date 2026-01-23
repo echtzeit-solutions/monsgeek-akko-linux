@@ -15,20 +15,25 @@ pub use led::{LedMode, LedParams, RgbColor};
 pub use magnetism::{
     KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, TriggerSettings,
 };
-pub use settings::{BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate};
+pub use settings::{
+    BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
+    SleepTimeSettings,
+};
 pub use sync::{list_keyboards, SyncKeyboard};
+
+// Re-export VendorEvent for use by consumers (TUI notification handling)
+pub use monsgeek_transport::VendorEvent;
 
 use std::sync::Arc;
 
 use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
-use monsgeek_transport::{ChecksumType, Transport, TransportExt, TransportType, VendorEvent};
+use monsgeek_transport::{ChecksumType, Transport, TransportExt};
 // Typed commands
 use monsgeek_transport::command::{
-    BatteryRefresh, BatteryResponse, DebounceResponse,
-    LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
-    PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
-    QueryProfile, QuerySleepTime, SetDebounce, SetMagnetismReport, SetPollingRate, SetProfile,
-    SetSleepTime, SleepTimeResponse,
+    DebounceResponse, LedParamsResponse as TransportLedParamsResponse,
+    PollingRate as TransportPollingRate, PollingRateResponse, ProfileResponse, QueryDebounce,
+    QueryLedParams, QueryPollingRate, QueryProfile, QuerySleepTime, SetDebounce,
+    SetMagnetismReport, SetPollingRate, SetProfile, SetSleepTime, SleepTimeResponse,
 };
 
 /// High-level keyboard interface using any transport
@@ -73,12 +78,12 @@ impl KeyboardInterface {
 
     /// Check if using wireless transport
     pub fn is_wireless(&self) -> bool {
-        self.transport.device_info().transport_type.is_wireless()
+        self.transport.device_info().is_wireless()
     }
 
     /// Check if connected via dongle
     pub fn is_dongle(&self) -> bool {
-        self.transport.device_info().transport_type == TransportType::HidDongle
+        self.transport.device_info().is_dongle()
     }
 
     // === Device Info ===
@@ -121,23 +126,16 @@ impl KeyboardInterface {
     }
 
     /// Get battery info (dongle/wireless only)
+    ///
+    /// For dongle connections, this sends F7 to refresh and reads the cached
+    /// value from feature report 0x05. For wired connections, returns full battery.
     pub async fn get_battery(&self) -> Result<BatteryInfo, KeyboardError> {
-        if !self.is_wireless() {
-            return Ok(BatteryInfo {
-                level: 100,
-                online: true,
-                charging: false,
-                idle: false,
-            });
-        }
-
-        // Battery response doesn't echo command, use query_no_echo
-        let resp: BatteryResponse = self.transport.query_no_echo(&BatteryRefresh).await?;
+        let (level, online, idle) = self.transport.get_battery_status().await?;
         Ok(BatteryInfo {
-            level: resp.level,
-            online: resp.online,
-            charging: false, // Not available via protocol
-            idle: resp.idle,
+            level,
+            online,
+            charging: false, // Not available via dongle protocol
+            idle,
         })
     }
 
@@ -222,15 +220,33 @@ impl KeyboardInterface {
 
     // === Sleep ===
 
-    /// Get sleep timeout in seconds
-    pub async fn get_sleep_time(&self) -> Result<u16, KeyboardError> {
+    /// Get sleep time settings for all wireless modes
+    ///
+    /// Returns idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
+    /// All values are in seconds.
+    pub async fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
         let resp: SleepTimeResponse = self.transport.query(&QuerySleepTime::default()).await?;
-        Ok(resp.seconds)
+        Ok(SleepTimeSettings {
+            idle_bt: resp.idle_bt,
+            idle_24g: resp.idle_24g,
+            deep_bt: resp.deep_bt,
+            deep_24g: resp.deep_24g,
+        })
     }
 
-    /// Set sleep timeout in seconds
-    pub async fn set_sleep_time(&self, seconds: u16) -> Result<(), KeyboardError> {
-        self.transport.send(&SetSleepTime::new(seconds)).await?;
+    /// Set sleep time settings for all wireless modes
+    ///
+    /// Sets idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
+    /// All values are in seconds. Set to 0 to disable a particular timeout.
+    pub async fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
+        self.transport
+            .send(&SetSleepTime::new(
+                settings.idle_bt,
+                settings.idle_24g,
+                settings.deep_bt,
+                settings.deep_24g,
+            ))
+            .await?;
         Ok(())
     }
 
@@ -277,6 +293,27 @@ impl KeyboardInterface {
         }
 
         Ok(FeatureList::from_bytes(&resp[1..]))
+    }
+
+    /// Get precision level for travel/trigger settings
+    ///
+    /// This method tries to get precision from the feature list first.
+    /// If the keyboard doesn't support the feature list command (returns invalid response),
+    /// it falls back to inferring precision from the firmware version.
+    ///
+    /// This is the recommended way to get precision - consumers should use this
+    /// instead of calling get_feature_list() or get_version() directly for precision.
+    pub async fn get_precision(&self) -> Result<settings::Precision, KeyboardError> {
+        // Try feature list first
+        if let Ok(features) = self.get_feature_list().await {
+            if let Some(precision) = features.precision() {
+                return Ok(precision);
+            }
+        }
+
+        // Fall back to firmware version
+        let version = self.get_version().await?;
+        Ok(version.precision())
     }
 
     // === Side LED (Sidelight) ===
@@ -411,6 +448,30 @@ impl KeyboardInterface {
             })),
             _ => Ok(None),
         }
+    }
+
+    /// Poll for vendor notifications (non-blocking with timeout)
+    ///
+    /// Returns any EP2 vendor event from the keyboard, including:
+    /// - Profile changes (Fn+F9..F12)
+    /// - LED settings (brightness, effect, speed, color)
+    /// - Keyboard functions (Win lock, WASD swap)
+    /// - Key depth events (during magnetism monitoring)
+    /// - Settings acknowledgments
+    /// - Wake events
+    ///
+    /// This is useful for real-time TUI updates when the user changes
+    /// settings via the keyboard's Fn key combinations.
+    ///
+    /// Returns None on timeout (no event within timeout_ms)
+    pub async fn poll_notification(
+        &self,
+        timeout_ms: u32,
+    ) -> Result<Option<VendorEvent>, KeyboardError> {
+        self.transport
+            .read_event(timeout_ms)
+            .await
+            .map_err(KeyboardError::Transport)
     }
 
     /// Get trigger settings for a specific key
@@ -1223,5 +1284,16 @@ impl KeyboardInterface {
     pub async fn close(&self) -> Result<(), KeyboardError> {
         self.transport.close().await?;
         Ok(())
+    }
+
+    /// Subscribe to vendor events via broadcast channel
+    ///
+    /// Returns a receiver for asynchronous vendor event notifications.
+    /// Events are pushed from a dedicated reader thread with near-zero latency
+    /// when data arrives.
+    ///
+    /// Returns None if event subscriptions are not supported (no input endpoint).
+    pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<VendorEvent>> {
+        self.transport.subscribe_events()
     }
 }
