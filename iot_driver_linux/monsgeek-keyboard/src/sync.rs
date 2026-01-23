@@ -8,10 +8,15 @@ use std::sync::Arc;
 use crate::error::KeyboardError;
 use crate::led::{LedParams, RgbColor};
 use crate::magnetism::{KeyDepthEvent, KeyTriggerSettings, TriggerSettings};
-use crate::settings::{BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate};
+use crate::settings::{
+    BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
+    SleepTimeSettings,
+};
 use crate::KeyboardInterface;
 
-use monsgeek_transport::{list_devices_sync, open_device_sync, DiscoveredDevice, Transport};
+use monsgeek_transport::{
+    list_devices_sync, open_device_sync, DiscoveredDevice, Transport, VendorEvent,
+};
 
 /// Block on a future using futures crate (works in any context)
 fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -164,14 +169,14 @@ impl SyncKeyboard {
         block_on(self.inner.set_debounce(ms))
     }
 
-    /// Get sleep time
-    pub fn get_sleep_time(&self) -> Result<u16, KeyboardError> {
+    /// Get sleep time settings for all wireless modes
+    pub fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
         block_on(self.inner.get_sleep_time())
     }
 
-    /// Set sleep time
-    pub fn set_sleep_time(&self, seconds: u16) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_sleep_time(seconds))
+    /// Set sleep time settings for all wireless modes
+    pub fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
+        block_on(self.inner.set_sleep_time(settings))
     }
 
     /// Get keyboard options
@@ -187,6 +192,15 @@ impl SyncKeyboard {
     /// Get feature list
     pub fn get_feature_list(&self) -> Result<FeatureList, KeyboardError> {
         block_on(self.inner.get_feature_list())
+    }
+
+    /// Get precision level for travel/trigger settings
+    ///
+    /// This method tries to get precision from the feature list first.
+    /// If the keyboard doesn't support the feature list command,
+    /// it falls back to inferring precision from the firmware version.
+    pub fn get_precision(&self) -> Result<Precision, KeyboardError> {
+        block_on(self.inner.get_precision())
     }
 
     // === Magnetism ===
@@ -208,6 +222,22 @@ impl SyncKeyboard {
         precision_factor: f64,
     ) -> Result<Option<KeyDepthEvent>, KeyboardError> {
         block_on(self.inner.read_key_depth(timeout_ms, precision_factor))
+    }
+
+    /// Poll for vendor notifications (non-blocking with timeout)
+    ///
+    /// Returns any EP2 vendor event from the keyboard, including:
+    /// - Profile changes (Fn+F9..F12)
+    /// - LED settings (brightness, effect, speed, color)
+    /// - Keyboard functions (Win lock, WASD swap)
+    /// - Key depth events (during magnetism monitoring)
+    /// - Settings acknowledgments
+    /// - Wake events
+    ///
+    /// This is useful for real-time TUI updates when the user changes
+    /// settings via the keyboard's Fn key combinations.
+    pub fn poll_notification(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, KeyboardError> {
+        block_on(self.inner.poll_notification(timeout_ms))
     }
 
     /// Get trigger settings for a key

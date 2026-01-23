@@ -4,9 +4,11 @@
 use super::builtin::{M1V5HeProfile, M1V5HeWirelessProfile};
 use super::json::{JsonProfileWrapper, LoadError};
 use super::traits::DeviceProfile;
+use crate::device_loader::{DeviceDatabase, JsonDeviceDefinition};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tracing::debug;
 
 /// Registry for device profiles
 /// Provides lookup by VID/PID or device ID
@@ -16,6 +18,8 @@ pub struct ProfileRegistry {
     by_vid_pid: HashMap<(u16, u16), Vec<Arc<dyn DeviceProfile>>>,
     /// Profiles indexed by ID
     by_id: HashMap<u32, Arc<dyn DeviceProfile>>,
+    /// Device database loaded from JSON for feature lookup
+    device_db: Option<DeviceDatabase>,
 }
 
 impl ProfileRegistry {
@@ -24,6 +28,7 @@ impl ProfileRegistry {
         Self {
             by_vid_pid: HashMap::new(),
             by_id: HashMap::new(),
+            device_db: None,
         }
     }
 
@@ -31,6 +36,7 @@ impl ProfileRegistry {
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
         registry.load_builtins();
+        registry.load_device_database();
         registry
     }
 
@@ -41,6 +47,60 @@ impl ProfileRegistry {
 
         // M1 V5 HE Wireless
         self.register(Arc::new(M1V5HeWirelessProfile::new()));
+    }
+
+    /// Load the device database from default paths
+    pub fn load_device_database(&mut self) {
+        match DeviceDatabase::load_default() {
+            Ok(db) => {
+                self.device_db = Some(db);
+            }
+            Err(e) => {
+                debug!("Device database not loaded: {}", e);
+            }
+        }
+    }
+
+    /// Get device info from the database by VID/PID
+    /// This provides access to device features even for devices without builtin profiles
+    pub fn get_device_info(&self, vid: u16, pid: u16) -> Option<&JsonDeviceDefinition> {
+        self.device_db
+            .as_ref()
+            .and_then(|db| db.find_by_vid_pid(vid, pid).into_iter().next())
+    }
+
+    /// Get device info with company preference
+    pub fn get_device_info_for_company(
+        &self,
+        vid: u16,
+        pid: u16,
+        company: &str,
+    ) -> Option<&JsonDeviceDefinition> {
+        self.device_db
+            .as_ref()
+            .and_then(|db| db.find_by_vid_pid_company(vid, pid, company))
+    }
+
+    /// Check if device has magnetism (Hall effect switches) from database
+    pub fn device_has_magnetism(&self, vid: u16, pid: u16) -> bool {
+        self.get_device_info(vid, pid)
+            .map(|d| d.has_magnetism())
+            .unwrap_or(false)
+    }
+
+    /// Get key count from database
+    pub fn device_key_count(&self, vid: u16, pid: u16) -> Option<u8> {
+        self.get_device_info(vid, pid).and_then(|d| d.key_count)
+    }
+
+    /// Check if device database is loaded
+    pub fn has_device_database(&self) -> bool {
+        self.device_db.is_some()
+    }
+
+    /// Get device database stats
+    pub fn device_database_stats(&self) -> Option<(usize, u32)> {
+        self.device_db.as_ref().map(|db| (db.len(), db.version()))
     }
 
     /// Register a profile in the registry

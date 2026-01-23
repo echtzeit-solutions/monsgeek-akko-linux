@@ -13,7 +13,7 @@ use tokio_udev::{EventType, MonitorBuilder};
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
-use iot_driver::hal::{device_registry, HidInterface};
+use iot_driver::hal::{self, device_registry, HidInterface};
 use iot_driver::protocol::{self, cmd};
 
 #[allow(non_camel_case_types)] // Proto types use camelCase to match original iot_driver.exe
@@ -446,12 +446,8 @@ impl DriverService {
 
     /// Static helper to query device ID
     fn query_device_id_static(device: &HidDevice) -> Option<i32> {
-        let mut cmd_buf = [0u8; 65];
-        cmd_buf[0] = 0;
-        cmd_buf[1] = cmd::GET_USB_VERSION;
-
-        let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
-        cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+        let cmd_buf =
+            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
 
         if device.send_feature_report(&cmd_buf).is_err() {
             return None;
@@ -474,12 +470,8 @@ impl DriverService {
             return self.query_device_id_dongle(device);
         }
 
-        let mut cmd_buf = [0u8; 65];
-        cmd_buf[0] = 0;
-        cmd_buf[1] = cmd::GET_USB_VERSION;
-
-        let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
-        cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+        let cmd_buf =
+            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
 
         for attempt in 0..3 {
             match device.send_feature_report(&cmd_buf) {
@@ -525,12 +517,8 @@ impl DriverService {
     /// Query device ID from 2.4GHz dongle using flush pattern
     /// The dongle has a delayed response buffer - we need to send 0xFC flush to push out responses
     fn query_device_id_dongle(&self, device: &HidDevice) -> Option<i32> {
-        let mut cmd_buf = [0u8; 65];
-        cmd_buf[0] = 0;
-        cmd_buf[1] = cmd::GET_USB_VERSION;
-
-        let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
-        cmd_buf[8] = 255 - (sum & 0xFF) as u8;
+        let cmd_buf =
+            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
 
         // Send the command
         if device.send_feature_report(&cmd_buf).is_err() {
@@ -539,17 +527,15 @@ impl DriverService {
         }
         std::thread::sleep(std::time::Duration::from_millis(150));
 
+        // Build flush command once
+        let flush_buf =
+            protocol::build_command(cmd::DONGLE_FLUSH_NOP, &[], protocol::ChecksumType::Bit7);
+
         // Try to read response with flush/retry pattern
         const MAX_ATTEMPTS: usize = 5;
         for attempt in 0..MAX_ATTEMPTS {
             // Send DONGLE_FLUSH_NOP (0xFC) to push out the response
-            cmd_buf.fill(0);
-            cmd_buf[0] = 0;
-            cmd_buf[1] = cmd::DONGLE_FLUSH_NOP;
-            let sum: u16 = cmd_buf[1..8].iter().map(|&x| x as u16).sum();
-            cmd_buf[8] = 255 - (sum & 0xFF) as u8;
-
-            if device.send_feature_report(&cmd_buf).is_err() {
+            if device.send_feature_report(&flush_buf).is_err() {
                 warn!("Failed to send flush command to dongle");
                 return None;
             }
@@ -625,7 +611,7 @@ impl DriverService {
                 );
 
                 // Check if this is a 2.4GHz dongle
-                let is_dongle = pid == 0x5038;
+                let is_dongle = hal::is_dongle_pid(pid);
 
                 let (device_id, battery, is_online) = match device_info.open_device(&hidapi) {
                     Ok(hid_device) => {
@@ -734,9 +720,8 @@ impl DriverService {
     /// Check if a device path corresponds to a 2.4GHz dongle
     fn is_dongle_path(device_path: &str) -> bool {
         // Path format: "vid-pid-usage_page-usage-interface"
-        // Dongle PID is 0x5038 = 20536
         if let Some((_, pid, _, _, _)) = HidInterface::parse_path_key(device_path) {
-            pid == 0x5038
+            hal::is_dongle_pid(pid)
         } else {
             false
         }
@@ -747,11 +732,8 @@ impl DriverService {
 
     /// Send the DONGLE_FLUSH_NOP command to push buffered response out
     fn send_dongle_flush(device: &HidDevice) -> Result<(), hidapi::HidError> {
-        let mut flush_buf = [0u8; 65];
-        flush_buf[0] = 0;
-        flush_buf[1] = cmd::DONGLE_FLUSH_NOP;
-        let sum: u16 = flush_buf[1..8].iter().map(|&x| x as u16).sum();
-        flush_buf[8] = 255 - (sum & 0xFF) as u8;
+        let flush_buf =
+            protocol::build_command(cmd::DONGLE_FLUSH_NOP, &[], protocol::ChecksumType::Bit7);
         debug!("Sending dongle flush (0xFC)");
         device.send_feature_report(&flush_buf)
     }

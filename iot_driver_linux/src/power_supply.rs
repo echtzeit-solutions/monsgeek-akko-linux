@@ -47,6 +47,19 @@ pub fn find_hid_battery_power_supply(vid: u16, pid: u16) -> Option<PathBuf> {
     None
 }
 
+/// Find the kernel power_supply path for any known dongle.
+///
+/// Searches for any dongle PID in the DONGLE_PIDS list.
+pub fn find_dongle_battery_power_supply() -> Option<PathBuf> {
+    use crate::hal;
+    for &pid in hal::DONGLE_PIDS {
+        if let Some(path) = find_hid_battery_power_supply(hal::VENDOR_ID, pid) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Read battery info from a kernel power_supply sysfs path.
 ///
 /// Reads capacity, status, and present from the standard sysfs interface.

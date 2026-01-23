@@ -77,7 +77,9 @@ pub struct DeviceFeatures {
 /// Fn layer configuration per OS
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FnSysLayer {
+    #[serde(default)]
     pub win: u8,
+    #[serde(default)]
     pub mac: u8,
 }
 

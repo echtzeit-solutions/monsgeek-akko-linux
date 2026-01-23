@@ -11,6 +11,19 @@ pub const PRODUCT_ID_M1_V5_WIRELESS: u16 = 0x5038; // 2.4GHz dongle
 pub const PRODUCT_ID_DONGLE_LEGACY_1: u16 = 0x503A; // possibly other model
 pub const PRODUCT_ID_DONGLE_LEGACY_2: u16 = 0x503D; // possibly other model
 
+/// All known dongle PIDs (2.4GHz wireless receivers)
+pub const DONGLE_PIDS: &[u16] = &[
+    PRODUCT_ID_M1_V5_WIRELESS,  // 0x5038
+    PRODUCT_ID_DONGLE_LEGACY_1, // 0x503A
+    PRODUCT_ID_DONGLE_LEGACY_2, // 0x503D
+];
+
+/// Check if PID represents a 2.4GHz dongle
+#[inline]
+pub fn is_dongle_pid(pid: u16) -> bool {
+    DONGLE_PIDS.contains(&pid)
+}
+
 /// Vendor-specific HID usage page (0xFFFF)
 pub const USAGE_PAGE: u16 = 0xFFFF;
 

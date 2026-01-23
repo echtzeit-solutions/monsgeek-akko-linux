@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "monsgeek-transport", "monsgeek-keyboard"]
+members = [".", "monsgeek-transport", "monsgeek-keyboard", "monsgeek-joystick"]
 
 [package]
 name = "iot_driver"
@@ -76,6 +76,7 @@ image = { version = "0.25", default-features = false, features = ["gif", "png"] 
 # New transport abstraction layer
 monsgeek-transport = { path = "monsgeek-transport" }
 monsgeek-keyboard = { path = "monsgeek-keyboard" }
+monsgeek-joystick = { path = "monsgeek-joystick" }
 
 # Firmware download/update
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }

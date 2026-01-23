@@ -392,6 +392,27 @@ pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
     }
 }
 
+/// Build a complete HID command buffer (65 bytes with report ID)
+///
+/// # Arguments
+/// * `cmd` - Command byte (e.g., `cmd::GET_USB_VERSION`)
+/// * `data` - Additional data bytes after command (can be empty)
+/// * `checksum_type` - Checksum type to apply
+///
+/// # Returns
+/// 65-byte buffer: [report_id=0, cmd, data..., checksum, zeros...]
+pub fn build_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u8> {
+    let mut buf = vec![0u8; REPORT_SIZE];
+    buf[0] = 0; // Report ID
+    buf[1] = cmd;
+    let len = std::cmp::min(data.len(), REPORT_SIZE - 2);
+    if len > 0 {
+        buf[2..2 + len].copy_from_slice(&data[..len]);
+    }
+    apply_checksum(&mut buf[1..], checksum_type);
+    buf
+}
+
 // Device constants (VID, PID, USAGE, etc.) are now in hal::constants
 // Use hal::VENDOR_ID, hal::PRODUCT_ID_*, etc.
 
