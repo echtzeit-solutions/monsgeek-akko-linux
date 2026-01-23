@@ -51,31 +51,82 @@ pub enum ChecksumType {
     None,
 }
 
-/// Vendor events from input reports
-#[derive(Debug, Clone)]
+/// Vendor events from input reports (EP2 notifications)
+#[derive(Debug, Clone, PartialEq)]
 pub enum VendorEvent {
-    /// Key depth/magnetism data
+    /// Key depth/magnetism data (0x1B)
     KeyDepth {
         /// Key matrix index
         key_index: u8,
         /// Raw depth value from hall effect sensor
         depth_raw: u16,
     },
-    /// Magnetism reporting started
+    /// Magnetism reporting started (0x0F with start flag)
     MagnetismStart,
-    /// Magnetism reporting stopped
+    /// Magnetism reporting stopped (0x0F with stop flag)
     MagnetismStop,
-    /// Profile changed
+
+    // === Profile & Settings Notifications ===
+    /// Keyboard wake from sleep (0x00 - all zeros payload)
+    Wake,
+    /// Profile changed via Fn+F9..F12 (0x01)
     ProfileChange {
         /// New profile number (0-3)
         profile: u8,
     },
-    /// LED effect changed
-    LedChange {
-        /// New LED mode
-        mode: u8,
+    /// Settings acknowledgment (0x0F)
+    SettingsAck {
+        /// true = settings change started, false = completed
+        started: bool,
     },
-    /// Battery status update
+
+    // === LED Settings Notifications ===
+    /// LED effect mode changed via Fn+Home/PgUp/End/PgDn (0x04)
+    LedEffectMode {
+        /// Effect ID (1-20)
+        effect_id: u8,
+    },
+    /// LED effect speed changed via Fn+←/→ (0x05)
+    LedEffectSpeed {
+        /// Speed level (0-4)
+        speed: u8,
+    },
+    /// Brightness level changed via Fn+↑/↓ (0x06)
+    BrightnessLevel {
+        /// Brightness level (0-4)
+        level: u8,
+    },
+    /// LED color changed via Fn+\ (0x07)
+    LedColor {
+        /// Color index (0-7)
+        color: u8,
+    },
+
+    // === Keyboard Function Notifications (0x03) ===
+    /// Win lock toggled via Fn+L_Win (action 0x01)
+    WinLockToggle {
+        /// true = locked, false = unlocked
+        locked: bool,
+    },
+    /// WASD/Arrow swap toggled via Fn+W (action 0x03)
+    WasdSwapToggle {
+        /// true = swapped, false = normal
+        swapped: bool,
+    },
+    /// Backlight toggle via Fn+L (action 0x09)
+    BacklightToggle,
+    /// Dial mode toggle via dial button (action 0x11)
+    DialModeToggle,
+    /// Unknown keyboard function notification
+    UnknownKbFunc {
+        /// Category byte
+        category: u8,
+        /// Action byte
+        action: u8,
+    },
+
+    // === Battery & Connection ===
+    /// Battery status update (from dongle, 0x88)
     BatteryStatus {
         /// Battery level 0-100
         level: u8,
@@ -84,8 +135,21 @@ pub enum VendorEvent {
         /// Device is online/connected
         online: bool,
     },
-    /// Unknown event type
+
+    /// Unknown event type (raw bytes for debugging)
     Unknown(Vec<u8>),
+}
+
+impl TransportDeviceInfo {
+    /// Check if connected via 2.4GHz dongle
+    pub fn is_dongle(&self) -> bool {
+        self.transport_type == TransportType::HidDongle
+    }
+
+    /// Check if connected via wireless transport (dongle, Bluetooth, etc.)
+    pub fn is_wireless(&self) -> bool {
+        self.transport_type.is_wireless()
+    }
 }
 
 /// Discovered device that can be opened

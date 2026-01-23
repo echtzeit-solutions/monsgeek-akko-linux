@@ -1,7 +1,9 @@
 // Device Registry for Akko/MonsGeek Keyboards
 // Defines supported devices and their capabilities
+// Also provides integration with the device database for feature lookup
 
 use crate::hal;
+use crate::profile::registry::profile_registry;
 
 /// Device definition with capabilities
 #[derive(Debug, Clone, Copy)]
@@ -81,15 +83,78 @@ pub fn get_pids_for_vid(vid: u16) -> Vec<u16> {
 }
 
 /// Check if device has magnetism (hall effect switches)
+/// First checks hardcoded SUPPORTED_DEVICES, then falls back to device database
 pub fn has_magnetism(vid: u16, pid: u16) -> bool {
-    find_device(vid, pid)
-        .map(|d| d.has_magnetism)
-        .unwrap_or(false)
+    // Check hardcoded definitions first
+    if let Some(dev) = find_device(vid, pid) {
+        return dev.has_magnetism;
+    }
+    // Fall back to device database
+    profile_registry().device_has_magnetism(vid, pid)
 }
 
-/// Get key count for device (0 for dongles)
+/// Get key count for device (0 for dongles/unknown)
+/// First checks hardcoded SUPPORTED_DEVICES, then falls back to device database
 pub fn key_count(vid: u16, pid: u16) -> u8 {
-    find_device(vid, pid).map(|d| d.key_count).unwrap_or(0)
+    // Check hardcoded definitions first
+    if let Some(dev) = find_device(vid, pid) {
+        return dev.key_count;
+    }
+    // Fall back to device database
+    profile_registry().device_key_count(vid, pid).unwrap_or(0)
+}
+
+/// Get device display name
+/// First checks hardcoded SUPPORTED_DEVICES, then falls back to device database
+pub fn get_display_name(vid: u16, pid: u16) -> Option<String> {
+    // Check hardcoded definitions first
+    if let Some(dev) = find_device(vid, pid) {
+        return Some(dev.display_name.to_string());
+    }
+    // Fall back to device database
+    profile_registry()
+        .get_device_info(vid, pid)
+        .map(|d| d.display_name.clone())
+}
+
+/// Get device info from the database (if available)
+pub fn get_device_info(vid: u16, pid: u16) -> Option<DeviceInfo> {
+    // Check hardcoded definitions first
+    if let Some(dev) = find_device(vid, pid) {
+        return Some(DeviceInfo {
+            name: dev.name.to_string(),
+            display_name: dev.display_name.to_string(),
+            company: Some("MonsGeek".to_string()), // Hardcoded devices are MonsGeek
+            key_count: dev.key_count,
+            has_magnetism: dev.has_magnetism,
+            has_sidelight: dev.has_sidelight,
+            layer_count: None,
+        });
+    }
+    // Fall back to device database
+    profile_registry()
+        .get_device_info(vid, pid)
+        .map(|d| DeviceInfo {
+            name: d.name.clone(),
+            display_name: d.display_name.clone(),
+            company: d.company.clone(),
+            key_count: d.key_count.unwrap_or(0),
+            has_magnetism: d.has_magnetism(),
+            has_sidelight: d.has_side_light.unwrap_or(false),
+            layer_count: d.layer,
+        })
+}
+
+/// Device info struct returned by get_device_info
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    pub name: String,
+    pub display_name: String,
+    pub company: Option<String>,
+    pub key_count: u8,
+    pub has_magnetism: bool,
+    pub has_sidelight: bool,
+    pub layer_count: Option<u8>,
 }
 
 // =============================================================================

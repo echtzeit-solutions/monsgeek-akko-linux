@@ -7,6 +7,7 @@ use hidapi::HidApi;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
+use crate::device_registry;
 use crate::error::TransportError;
 use crate::hid_dongle::HidDongleTransport;
 use crate::hid_wired::HidWiredTransport;
@@ -107,7 +108,7 @@ impl DeviceDiscovery for HidDiscovery {
                 continue;
             }
 
-            let is_dongle = device::is_dongle_pid(pid);
+            let is_dongle = device_registry::is_dongle_pid(pid);
             let transport_type = if is_dongle {
                 TransportType::HidDongle
             } else {
