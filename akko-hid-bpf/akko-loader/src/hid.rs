@@ -228,10 +228,36 @@ pub fn send_f7_command(hidraw_path: &str) -> Result<u8> {
 
     let fd = file.as_raw_fd();
 
-    // Send F7 command via SET_FEATURE
+    // Phase 1: Drain any pre-existing stale responses from the dongle buffer.
+    // The dongle can have buffered responses from previous commands (like 0x8F).
+    // We flush+read repeatedly until we stop getting new data.
+    tracing::debug!("Draining stale responses...");
+    for drain_attempt in 0..10 {
+        send_dongle_flush_fd(fd)?;
+        thread::sleep(Duration::from_millis(10));
+        let mut drain_buf = [0u8; 65];
+        drain_buf[0] = 0x05;
+        let ret = unsafe { libc::ioctl(fd, hidiocgfeature(65), drain_buf.as_mut_ptr()) };
+        if ret >= 0 {
+            tracing::debug!(
+                "Drain {}: cmd=0x{:02x} data={:02x} {:02x} {:02x}",
+                drain_attempt,
+                drain_buf[0],
+                drain_buf[1],
+                drain_buf[2],
+                drain_buf[3]
+            );
+        }
+    }
+    thread::sleep(Duration::from_millis(20));
+
+    // Phase 2: Send F7 command via SET_FEATURE
     let mut buf = [0u8; 65];
     buf[0] = 0x00; // Report ID
     buf[1] = 0xF7; // F7 command
+    // Add Bit7 checksum (matches other dongle commands; improves reliability)
+    let sum: u16 = buf[1..8].iter().map(|&x| x as u16).sum();
+    buf[8] = 255 - (sum & 0xFF) as u8;
 
     let ret = unsafe { libc::ioctl(fd, hidiocsfeature(65), buf.as_mut_ptr()) };
     if ret < 0 {
@@ -241,31 +267,120 @@ pub fn send_f7_command(hidraw_path: &str) -> Result<u8> {
         );
     }
 
-    // Wait a bit for the dongle to query the keyboard
-    thread::sleep(Duration::from_millis(100));
+    // Dongle quirk: some replies appear to be queued (eg responses to other
+    // commands like 0x8F). However, battery read sometimes works *without*
+    // flushing first (see iot_driver's vendor battery path). So we:
+    // - try a direct GET_FEATURE first (no flush) after a short delay
+    // - if that doesn't look like battery, fall back to a flush+poll drain loop.
+    //
+    // Battery response signature (observed):
+    // - buf[0] == 0x00 or 0x05 (firmware quirk)
+    // - buf[1] in 1..=100
+    // - buf[2] == 0x00
+    // - buf[5] == 0x01 && buf[6] == 0x01
+    const MAX_ATTEMPTS: usize = 20;
+    let mut last_head = [0u8; 8];
+    let looks_like_battery = |buf: &[u8; 65]| -> Option<u8> {
+        let report_ok = buf[0] == 0x00 || buf[0] == 0x05;
+        let level = buf[1];
+        if report_ok && level > 0 && level <= 100 && buf[2] == 0x00 && buf[5] == 0x01 && buf[6] == 0x01 {
+            Some(level)
+        } else {
+            None
+        }
+    };
 
-    // Read battery via GET_FEATURE Report 5
+    // First attempt: no flush, just a direct GET after allowing time for the dongle to query RF.
+    thread::sleep(Duration::from_millis(80));
     buf.fill(0);
-    buf[0] = 0x05; // Report ID 5
+    buf[0] = 0x05;
+    let ret0 = unsafe { libc::ioctl(fd, hidiocgfeature(65), buf.as_mut_ptr()) };
+    if ret0 >= 0 {
+        last_head.copy_from_slice(&buf[..8]);
+        if let Some(level) = looks_like_battery(&buf) {
+            return Ok(level);
+        }
+    }
 
-    let ret = unsafe { libc::ioctl(fd, hidiocgfeature(65), buf.as_mut_ptr()) };
+    // Fallback: flush+poll/drain.
+    for attempt in 0..MAX_ATTEMPTS {
+        // Push next queued response (if any) into the readable buffer
+        send_dongle_flush_fd(fd)?;
+        thread::sleep(Duration::from_millis(if attempt == 0 { 100 } else { 20 }));
+
+        buf.fill(0);
+        buf[0] = 0x05;
+        let ret = unsafe { libc::ioctl(fd, hidiocgfeature(65), buf.as_mut_ptr()) };
+        if ret < 0 {
+            continue;
+        }
+        last_head.copy_from_slice(&buf[..8]);
+        if let Some(level) = looks_like_battery(&buf) {
+            return Ok(level);
+        }
+    }
+
+    bail!(
+        "No valid battery response after {MAX_ATTEMPTS} attempts; last head={:02x?}",
+        last_head
+    )
+}
+
+/// Send the dongle flush/NOP command (0xFC) to push buffered response out.
+///
+/// This uses the same Bit7 checksum scheme as other dongle commands.
+pub fn send_dongle_flush(hidraw_path: &str) -> Result<()> {
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(hidraw_path)
+        .with_context(|| format!("Failed to open {hidraw_path}"))?;
+    send_dongle_flush_fd(file.as_raw_fd())
+}
+
+fn send_dongle_flush_fd(fd: i32) -> Result<()> {
+    let mut buf = [0u8; 65];
+    buf[0] = 0x00;
+    buf[1] = 0xFC;
+    let sum: u16 = buf[1..8].iter().map(|&x| x as u16).sum();
+    buf[8] = 255 - (sum & 0xFF) as u8;
+
+    let ret = unsafe { libc::ioctl(fd, hidiocsfeature(65), buf.as_mut_ptr()) };
     if ret < 0 {
         bail!(
-            "GET_FEATURE failed: {}",
+            "SET_FEATURE flush failed: {}",
             std::io::Error::last_os_error()
         );
     }
+    Ok(())
+}
 
-    // Battery is at offset 1 (Report ID 0 is at offset 0 due to firmware quirk)
-    // The firmware returns Report ID 0x00 instead of 0x05
-    let battery = if (buf[0] == 0x00 || buf[0] == 0x05) && buf[1] <= 100 {
-        buf[1]
-    } else {
-        tracing::warn!("Unexpected battery response: {:02x?}", &buf[..8]);
-        0
-    };
+/// Send a dongle command (SET_FEATURE) without reading any response.
+///
+/// Useful for reproducing the "buffered unrelated report" behavior by spamming
+/// GET-type commands (which will accumulate responses in the dongle buffer).
+pub fn send_dongle_command_no_read(hidraw_path: &str, cmd: u8) -> Result<()> {
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(hidraw_path)
+        .with_context(|| format!("Failed to open {hidraw_path}"))?;
 
-    Ok(battery)
+    let fd = file.as_raw_fd();
+    let mut buf = [0u8; 65];
+    buf[0] = 0x00;
+    buf[1] = cmd;
+    let sum: u16 = buf[1..8].iter().map(|&x| x as u16).sum();
+    buf[8] = 255 - (sum & 0xFF) as u8;
+
+    let ret = unsafe { libc::ioctl(fd, hidiocsfeature(65), buf.as_mut_ptr()) };
+    if ret < 0 {
+        bail!(
+            "SET_FEATURE cmd=0x{cmd:02x} failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(())
 }
 
 /// Rebind HID device to apply descriptor changes

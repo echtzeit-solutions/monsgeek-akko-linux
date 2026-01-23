@@ -52,11 +52,62 @@ macro_rules! trace {
 // Constants
 // =============================================================================
 
-/// BPF revision number - INCREMENT THIS when making changes to help identify loaded version
-const REVISION: u32 = 2;
+/// BPF revision number - printed in trace output to confirm which version is loaded.
+const REVISION: u32 = 23;
+
+/// Calculate Bit7 checksum for command buffer
+/// Checksum = 255 - (sum of bytes[0..7])
+/// Note: This operates on the command data starting at buf[1], so we pass &buf[1..]
+#[inline(always)]
+fn bit7_checksum(data: &[u8]) -> u8 {
+    let mut sum: u32 = 0;
+    // Sum first 7 bytes
+    if data.len() > 0 { sum += data[0] as u32; }
+    if data.len() > 1 { sum += data[1] as u32; }
+    if data.len() > 2 { sum += data[2] as u32; }
+    if data.len() > 3 { sum += data[3] as u32; }
+    if data.len() > 4 { sum += data[4] as u32; }
+    if data.len() > 5 { sum += data[5] as u32; }
+    if data.len() > 6 { sum += data[6] as u32; }
+    (255u32.wrapping_sub(sum & 0xFF)) as u8
+}
 
 /// Battery Feature Report ID
 const BATTERY_REPORT_ID: u8 = 0x05;
+
+/// Flush/NOP command - pushes buffered response
+const DONGLE_FLUSH_NOP: u8 = 0xFC;
+
+/// Validate that a response looks like the dongle's battery reply.
+///
+/// Observed format (65 bytes):
+/// - [0] = 0x00 (firmware quirk: returns 0 even when requesting report 0x05)
+/// - [1] = battery level (0..=100)
+/// - [2] = 0x00
+/// - [3] = idle flag
+/// - [4] = online flag
+/// - [5] = 0x01
+/// - [6] = 0x01
+#[inline(always)]
+fn parse_battery_response(buf: &[u8; 65], ret: i32) -> Option<(u8, u8, u8)> {
+    if ret < 7 {
+        return None;
+    }
+    if buf[0] != 0x00 {
+        return None;
+    }
+    let level = buf[1];
+    if level == 0 || level > 100 {
+        return None;
+    }
+    if buf[2] != 0x00 {
+        return None;
+    }
+    if buf[5] != 0x01 || buf[6] != 0x01 {
+        return None;
+    }
+    Some((level, buf[3], buf[4]))
+}
 
 /// Keyboard HID descriptor signature: Usage Page (Generic Desktop), Usage (Keyboard)
 const KEYBOARD_SIGNATURE: [u8; 4] = [0x05, 0x01, 0x09, 0x06];
@@ -69,6 +120,14 @@ const KEYBOARD_SIGNATURE: [u8; 4] = [0x05, 0x01, 0x09, 0x06];
 /// This avoids having to read hid_device.id from kernel struct (complex offset)
 #[btf_map]
 static VENDOR_HID_MAP: Array<u32, 1> = Array::new();
+
+/// Battery cache map:
+/// - index 0: last known good battery percentage (0..=100, 0 = unknown)
+///
+/// This prevents sysfs from getting stuck at 0 when the dongle fails to produce
+/// a fresh battery response within our bounded polling budget.
+#[btf_map]
+static BATTERY_CACHE_MAP: Array<u32, 1> = Array::new();
 
 // =============================================================================
 // struct_ops definitions
@@ -213,7 +272,7 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko_rev%d: RDESC appending battery, orig=%d", REVISION, orig_size as u32);
+    trace!(b"akko_rev%d: RDESC append battery orig=%d", REVISION, orig_size as u32);
 
     // Append battery descriptor using safe copy
     if !data.copy_from_slice(orig_size, &BATTERY_FEATURE_DESC) {
@@ -221,7 +280,7 @@ pub extern "C" fn akko_on_demand_rdesc_fixup(ctx_wrapper: *mut u64) -> i32 {
     }
 
     let new_size = orig_size + BATTERY_FEATURE_DESC.len();
-    trace!(b"akko_rev%d: RDESC new size=%d bytes", REVISION, new_size as u32);
+    trace!(b"akko_rev%d: RDESC new size=%d", REVISION, new_size as u32);
 
     new_size as i32
 }
@@ -252,60 +311,118 @@ pub extern "C" fn akko_on_demand_hw_request(ctx_wrapper: *mut u64) -> i32 {
         return 0;
     }
 
-    trace!(b"akko_rev%d: REQUEST report_id=%d", REVISION, report_id as u32);
+    trace!(b"akko_rev%d: REQ report_id=%d", REVISION, report_id as u32);
 
     // Vendor hid_id is set by loader in VENDOR_HID_MAP
     let Some(&vendor_hid_id) = VENDOR_HID_MAP.get(0) else {
-        trace!(b"akko_rev%d: ERROR vendor_hid_id not set", REVISION);
+        trace!(b"akko_rev%d: ERR vendor_hid_id unset", REVISION);
         return 0;
     };
 
     if vendor_hid_id == 0 {
-        trace!(b"akko_rev%d: ERROR vendor_hid_id=0", REVISION);
+        trace!(b"akko_rev%d: ERR vendor_hid_id=0", REVISION);
         return 0;
     }
 
     // RAII guard - context automatically released on drop (even on early return)
     let Some(vendor) = AllocatedContext::new(vendor_hid_id) else {
-        trace!(b"akko_rev%d: ERROR failed to alloc vendor ctx", REVISION);
+        trace!(b"akko_rev%d: ERR alloc vendor ctx", REVISION);
         return 0;
     };
 
-    // Send F7 command to tell dongle to query keyboard battery
-    // F7 queries do NOT wake the keyboard (verified via idle flag)
-    let mut f7_buf: [u8; 65] = [0; 65];
-    f7_buf[0] = 0x00; // Report ID
-    f7_buf[1] = 0xF7; // F7 command
-    let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
-    trace!(b"akko_rev%d: F7_SEND %db", REVISION, ret);
+    // Pre-build flush command (reused)
+    let mut flush_buf: [u8; 65] = [0; 65];
+    flush_buf[1] = DONGLE_FLUSH_NOP;
+    flush_buf[8] = bit7_checksum(&flush_buf[1..]);
 
-    // Read battery response via GET_FEATURE Report 5
+    // Response buffer (reused)
     let mut response: [u8; 65] = [0; 65];
-    response[0] = 0x05; // Request Report ID 5
-    let ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
-    trace!(b"akko_rev%d: VENDOR_GET %db [%02x %02x %02x %02x]", REVISION, ret,
-        response[0] as u32, response[1] as u32, response[2] as u32, response[3] as u32);
-    trace!(b"akko_rev%d: VENDOR_GET [%02x %02x %02x %02x]", REVISION,
-        response[4] as u32, response[5] as u32, response[6] as u32, response[7] as u32);
 
-    if ret < 2 {
-        trace!(b"akko_rev%d: ERROR VENDOR_GET failed", REVISION);
-        return 0;
+    // Send F7 command ONCE to query keyboard battery.
+    // F7 queries do NOT wake the keyboard (verified via idle flag).
+    let mut f7_buf: [u8; 65] = [0; 65];
+    f7_buf[0] = 0x00; // Report ID 0 for SET
+    f7_buf[1] = 0xF7; // F7 command
+    f7_buf[8] = bit7_checksum(&f7_buf[1..]);
+    let ret = vendor.hw_request(&mut f7_buf, HidReportType::Feature, HidClassRequest::SetReport);
+    trace!(b"akko_rev%d: F7 send ret=%d", REVISION, ret);
+
+    // NOTE: Do NOT flush after F7! The flush surfaces stale responses (like 0x8F)
+    // that were already in the buffer, blocking the F7 response. The F7 response
+    // appears naturally after a short delay. The poll loop below handles retries
+    // with flush if needed.
+
+    // Last-known-good cache (seeded from userspace at load time, and updated on success).
+    let cached_battery: u8 = BATTERY_CACHE_MAP.get(0).map(|v| *v as u8).unwrap_or(0);
+
+    // Poll loop (flush + get) for a battery-shaped response.
+    let mut battery = 0u8;
+    let mut _idle = 0u8;
+    let mut _online = 0u8;
+    let mut last_get_ret: i32 = 0;
+
+    // Phase 1: Multiple direct GETs without flush.
+    // Each hw_request has USB round-trip latency (~1-5ms), providing implicit delay
+    // for the F7 response to become available. This avoids surfacing stale data.
+    // 30 iterations = ~30-150ms of implicit waiting for idle keyboards.
+    for _ in 0..30u32 {
+        response[0] = BATTERY_REPORT_ID;
+        last_get_ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+        if let Some((b, i, o)) = parse_battery_response(&response, last_get_ret) {
+            battery = b;
+            _idle = i;
+            _online = o;
+            break;
+        }
     }
 
-    let raw_battery = response[1];
-    let idle = response[3];
-    let online = response[4];
-
-    // Log abnormal values for debugging
-    if raw_battery > 100 {
-        trace!(b"akko_rev%d: WARN abnormal value=%d", REVISION, raw_battery as u32);
+    // Phase 2: If direct GETs failed, try FLUSH + GET as last resort.
+    // FLUSH can surface stale responses (like 0x8F), so we only do this if
+    // phase 1 failed completely. The stale data will be consumed by the first
+    // GET after flush, and subsequent GETs should see fresh data.
+    // 10 iterations of FLUSH+GET adds more time for very slow keyboards.
+    if battery == 0 {
+        for _ in 0..10u32 {
+            vendor.hw_request(&mut flush_buf, HidReportType::Feature, HidClassRequest::SetReport);
+            response[0] = BATTERY_REPORT_ID;
+            last_get_ret = vendor.hw_request(&mut response, HidReportType::Feature, HidClassRequest::GetReport);
+            if let Some((b, i, o)) = parse_battery_response(&response, last_get_ret) {
+                battery = b;
+                _idle = i;
+                _online = o;
+                break;
+            }
+        }
     }
 
-    // Clamp to 100 to avoid reporting invalid percentages
-    let battery = if raw_battery > 100 { 100 } else { raw_battery };
+    // Update cache if we got a new valid value.
+    if battery > 0 && battery <= 100 {
+        let _ = BATTERY_CACHE_MAP.set(0, battery as u32, 0);
+    }
 
-    trace!(b"akko_rev%d: RESULT bat=%d%% idle=%d online=%d", REVISION, battery as u32, idle as u32, online as u32);
+    // Fall back to cache if we failed to get a fresh response.
+    if battery == 0 && cached_battery > 0 && cached_battery <= 100 {
+        trace!(b"akko_rev%d: CACHE using %d", REVISION, cached_battery as u32);
+        battery = cached_battery;
+    }
+
+    trace!(b"akko_rev%d: RES bat=%d idle=%d online=%d", REVISION, battery as u32, _idle as u32, _online as u32);
+    if battery == 0 {
+        // Extra debug when we fail to get a valid battery-shaped response:
+        // dump the first bytes of the last read so we can see what we're consuming.
+        trace!(
+            b"akko_rev%d: RES0 lastret=%d b0=%d b1=%d b2=%d b3=%d b4=%d b5=%d b6=%d",
+            REVISION,
+            last_get_ret,
+            response[0] as i32,
+            response[1] as i32,
+            response[2] as i32,
+            response[3] as i32,
+            response[4] as i32,
+            response[5] as i32,
+            response[6] as i32
+        );
+    }
 
     // Write battery response to kernel's buffer
     // Format: [report_id, battery_level]

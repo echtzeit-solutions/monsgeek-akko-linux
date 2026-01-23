@@ -12,9 +12,10 @@ use std::process::Command;
 use anyhow::{anyhow, Context, Result};
 use tracing::{debug, info, warn};
 
-/// VID/PID for Akko 2.4GHz dongle
-pub const VID_AKKO: u16 = 0x3151;
-pub const PID_DONGLE: u16 = 0x5038;
+use crate::hal;
+
+/// VID for Akko devices (from hal)
+pub const VID_AKKO: u16 = hal::VENDOR_ID;
 
 /// Default path for compiled BPF object
 pub const DEFAULT_BPF_PATH: &str = "/usr/share/akko-keyboard/akko_dongle.bpf.o";
@@ -86,16 +87,19 @@ impl AkkoBpfLoader {
             return None;
         }
 
-        // Look for device matching 0003:3151:5038.*
-        let pattern = format!("0003:{VID_AKKO:04X}:{PID_DONGLE:04X}");
-
+        // Look for device matching any dongle PID: 0003:3151:XXXX.*
         if let Ok(entries) = fs::read_dir(hid_devices) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with(&pattern) {
-                    debug!("Found dongle at {:?}", entry.path());
-                    return Some(entry.path());
+
+                // Check each known dongle PID
+                for &pid in hal::DONGLE_PIDS {
+                    let pattern = format!("0003:{VID_AKKO:04X}:{pid:04X}");
+                    if name_str.starts_with(&pattern) {
+                        debug!("Found dongle at {:?}", entry.path());
+                        return Some(entry.path());
+                    }
                 }
             }
         }
@@ -117,16 +121,19 @@ impl AkkoBpfLoader {
             return None;
         }
 
-        // Look for hid-0003:3151:5038* pattern
-        let pattern = format!("hid-0003:{VID_AKKO:04X}:{PID_DONGLE:04X}");
-
+        // Look for hid-0003:3151:XXXX* pattern for any dongle PID
         if let Ok(entries) = fs::read_dir(power_supply_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with(&pattern) {
-                    debug!("Found power_supply at {:?}", entry.path());
-                    return Some(entry.path());
+
+                // Check each known dongle PID
+                for &pid in hal::DONGLE_PIDS {
+                    let pattern = format!("hid-0003:{VID_AKKO:04X}:{pid:04X}");
+                    if name_str.starts_with(&pattern) {
+                        debug!("Found power_supply at {:?}", entry.path());
+                        return Some(entry.path());
+                    }
                 }
             }
         }

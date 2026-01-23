@@ -154,7 +154,12 @@ pub fn verify(bpf_path: Option<&Path>) -> Result<()> {
 /// # Arguments
 /// * `hid_id` - HID device ID for the keyboard interface
 /// * `bpf_path` - Optional path to BPF object file. If None, uses default search paths.
-pub fn load(hid_id: u32, bpf_path: Option<&Path>) -> Result<()> {
+pub fn load(
+    hid_id: u32,
+    vendor_hid_id_opt: Option<u32>,
+    initial_battery_opt: Option<u8>,
+    bpf_path: Option<&Path>,
+) -> Result<()> {
     let bpf_path = match bpf_path {
         Some(p) => p.to_path_buf(),
         None => get_bpf_path()?,
@@ -180,10 +185,15 @@ pub fn load(hid_id: u32, bpf_path: Option<&Path>) -> Result<()> {
     bpf.load_struct_ops(&btf)
         .context("Failed to load struct_ops programs")?;
 
-    // Set the vendor hid_id (vendor interface is keyboard + 2)
-    let vendor_hid_id = hid_id + 2;
+    // Set the vendor hid_id
+    let vendor_hid_id = vendor_hid_id_opt.unwrap_or_else(|| {
+        // Fallback: assume vendor is keyboard + 2 (may be wrong after rebind)
+        let fallback = hid_id + 2;
+        warn!("No vendor_hid_id provided, using fallback: {} (keyboard + 2)", fallback);
+        fallback
+    });
     info!(
-        "Setting VENDOR_HID_MAP: vendor_hid_id={} (keyboard={} + 2)",
+        "Setting VENDOR_HID_MAP: vendor_hid_id={} (keyboard={})",
         vendor_hid_id, hid_id
     );
 
@@ -196,6 +206,26 @@ pub fn load(hid_id: u32, bpf_path: Option<&Path>) -> Result<()> {
     vendor_map
         .set(0, vendor_hid_id, 0)
         .context("Failed to set vendor_hid_id")?;
+
+    // Seed cached battery so early sysfs reads don't return 0 if the dongle
+    // doesn't produce a fresh response immediately.
+    if let Some(bat) = initial_battery_opt {
+        if bat > 0 && bat <= 100 {
+            if let Some(map) = bpf.map_mut("BATTERY_CACHE_MAP") {
+                let mut cache: Array<_, u32> = map
+                    .try_into()
+                    .context("Failed to convert BATTERY_CACHE_MAP")?;
+                cache
+                    .set(0, bat as u32, 0)
+                    .context("Failed to seed BATTERY_CACHE_MAP")?;
+                info!("Seeded BATTERY_CACHE_MAP with {}%", bat);
+            } else {
+                // Continue load; cache is optional.
+                // (Without it, sysfs may still show 0 on occasional timeouts.)
+                warn!("BATTERY_CACHE_MAP not found in BPF (cache seeding skipped)");
+            }
+        }
+    }
 
     debug!("Looking for struct_ops map: {}", STRUCT_OPS_NAME);
 
