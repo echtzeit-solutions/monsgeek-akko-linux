@@ -30,12 +30,22 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
         has_magnetism: true,
         has_sidelight: false,
     },
-    // MonsGeek M1 V5 HE Wireless
+    // MonsGeek M1 V5 HE Wireless (2.4GHz dongle)
     DeviceDefinition {
         vid: hal::VENDOR_ID,
         pid: hal::PRODUCT_ID_M1_V5_WIRELESS,
         name: "m1v5he_wireless",
         display_name: "MonsGeek M1 V5 HE (Wireless)",
+        key_count: 98,
+        has_magnetism: true,
+        has_sidelight: false,
+    },
+    // MonsGeek M1 V5 HE Bluetooth (BLE HID)
+    DeviceDefinition {
+        vid: hal::VENDOR_ID,
+        pid: hal::PRODUCT_ID_M1_V5_BLUETOOTH,
+        name: "m1v5he_bluetooth",
+        display_name: "MonsGeek M1 V5 HE (Bluetooth)",
         key_count: 98,
         has_magnetism: true,
         has_sidelight: false,
@@ -428,14 +438,16 @@ mod tests {
     fn test_is_supported() {
         assert!(is_supported(0x3151, 0x5030)); // Wired
         assert!(is_supported(0x3151, 0x5038)); // 2.4GHz dongle
+        assert!(is_supported(0x3151, 0x5027)); // Bluetooth
         assert!(!is_supported(0x1234, 0x5678));
     }
 
     #[test]
     fn test_get_pids() {
         let pids = get_pids_for_vid(0x3151);
-        assert_eq!(pids.len(), 4);
+        assert_eq!(pids.len(), 5);
         assert!(pids.contains(&0x5030)); // Wired
         assert!(pids.contains(&0x5038)); // 2.4GHz dongle
+        assert!(pids.contains(&0x5027)); // Bluetooth
     }
 }
