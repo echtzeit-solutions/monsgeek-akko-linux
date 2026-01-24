@@ -1,21 +1,30 @@
-# MonsGeek/Akko/RongYuan HE Keyboards
-# Install: sudo make install-udev install-bpf install-systemd
+# MonsGeek/Akko Keyboard udev rules
+# Install: sudo cp udev/99-monsgeek.rules /etc/udev/rules.d/
 # Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# Allow non-root access to hidraw devices for all Akko/MonsGeek products (VID 3151)
+# =============================================================================
+# All MonsGeek/Akko devices (VID 0x3151)
+# =============================================================================
+
+# USB HID devices (wired, 2.4GHz dongle)
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="3151", MODE="0666"
 
-# Fix UPower classification for 2.4GHz dongle (PID 5038)
-# System Control interface is misdetected as joystick, causing "gaming-input" icon
-ACTION=="add|change", SUBSYSTEM=="input", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5038", \
-    ENV{ID_INPUT_JOYSTICK}="0"
+# Bluetooth HID devices (via hid-over-gatt, bus type 0005)
+SUBSYSTEM=="hidraw", KERNELS=="0005:3151:*", MODE="0666"
 
-# Start BPF battery loader when keyboard interface is detected
-# Loader exits after pinning BPF links - service remains active via RemainAfterExit
+# =============================================================================
+# Fixes
+# =============================================================================
+
+# Prevent UPower gaming-input icon (dongle System Control misdetected as joystick)
+ACTION=="add|change", SUBSYSTEM=="input", ATTRS{idVendor}=="3151", ENV{ID_INPUT_JOYSTICK}="0"
+
+# =============================================================================
+# BPF battery service (optional, for 2.4GHz dongle PID 5038)
+# =============================================================================
+
 ACTION=="add", SUBSYSTEM=="hid", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5038", \
     TAG+="systemd", ENV{SYSTEMD_WANTS}="akko-bpf-battery.service"
 
-# Unload BPF when device is removed
 ACTION=="remove", SUBSYSTEM=="hid", ENV{ID_VENDOR_ID}=="3151", ENV{ID_MODEL_ID}=="5038", \
     RUN+="/usr/bin/systemctl stop akko-bpf-battery.service"
