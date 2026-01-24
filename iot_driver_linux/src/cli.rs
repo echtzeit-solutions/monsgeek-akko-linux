@@ -398,6 +398,13 @@ pub enum Commands {
     /// Run interactive terminal UI
     Tui,
 
+    /// Watch for settings changes via Fn key combinations
+    ///
+    /// Queries all settings, waits for settings ack, then queries again
+    /// to show what changed. Useful for reverse engineering Fn key actions.
+    #[command(visible_alias = "watch")]
+    WatchSettings,
+
     /// Run joystick mapper (maps magnetic keys to virtual joystick axes)
     #[command(visible_alias = "joy")]
     Joystick {
