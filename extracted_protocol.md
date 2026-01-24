@@ -284,6 +284,92 @@ From the code:
 - Bluetooth needs extra delays: 60ms send, 100ms read
 - Some operations need 2000ms (reset), 1000ms (flash operations)
 
+## Bluetooth (BLE) Protocol
+
+**IMPORTANT LIMITATIONS**: The Bluetooth HID protocol is severely limited compared to USB:
+
+### What Works
+- **Vendor Events**: Fn key notifications are received
+- **Battery**: Via standard BLE Battery Service (UUID 0x180F)
+- **Keyboard Input**: Standard HID keyboard works normally
+
+### What Doesn't Work
+- **GET Commands**: ATT writes succeed but keyboard doesn't send notification response
+- **SET Commands**: ATT writes succeed but keyboard ignores them
+
+### Technical Investigation (Jan 2026)
+
+**GATT Structure:**
+| Characteristic | Report ID | Type | Flags | Notes |
+|---------------|-----------|------|-------|-------|
+| char0032 | 6 | Input | read, notify | Vendor responses (65 bytes) |
+| char0039 | 6 | Output | write | Vendor commands (65 bytes) |
+| char0036 | 1 | Output | write | Keyboard LED output |
+
+**Protocol Analysis:**
+
+1. **Vendor protocol is transported over GATT (HOGP)** using Report characteristics.
+2. **Commands are written to the vendor Output Report** and responses arrive via **notifications**
+   on the vendor Input Report.
+3. In USBPcap "BT over USB" captures, the leading `0x02` and the `0x82` endpoint are **HCI ACL**
+   transport details, **not HID report IDs**.
+4. The actual vendor payload is framed with a leading marker byte:
+   - **0x55**: command/response channel
+   - **0x66**: event channel
+5. The checksum is the same Bit7/Bit8 algorithm as USB, but it applies starting at the `cmd`
+   byte (i.e. skipping the 0x55 marker).
+
+**Windows USB Capture Analysis:**
+```
+# Windows BT electron app (works):
+OUT (HCI ACL, ep 0x02): ... L2CAP(CID=0x0004 ATT) ATT.WriteCommand(handle=0x003a, value[65])
+  value starts with: 55 8f ...
+
+IN  (HCI ACL, ep 0x82): ... ATT.HandleValueNotification(handle=0x0033, value[65])
+  value starts with: 55 8f 85 0b ... (device id 0x0b85)
+
+# Summary:
+# - Write vendor commands to handle 0x003a (Output report)
+# - Read responses from notifications on handle 0x0033 (Input report)
+```
+
+**Possible causes:**
+- Linux HOGP usage was sending the wrong on-wire framing (missing 0x55 marker / wrong checksum offset).
+- Direct GATT access can be blocked while the kernel HOGP driver is bound, depending on system config.
+
+### BLE Event Format
+
+Events use a different format than USB:
+```
+USB:       [Report ID 0x05] [type] [value] ...
+Bluetooth: [Report ID 0x06] [0x66] [type] [value] ...
+```
+
+The `0x66` byte is a BLE-specific notification marker.
+
+### BLE Device Identification
+```
+VID:        0x3151
+PID:        0x5027 (M1 V5 HE Bluetooth)
+Bus Type:   Bluetooth (0x0005)
+Usage Page: 0xFF55 (vendor)
+Usage:      0x0202 (vendor)
+Report ID:  6
+```
+
+### Accessing Battery Level
+
+Battery is NOT available via vendor commands over BLE. Use:
+```bash
+bluetoothctl info F4:EE:25:AF:3A:38 | grep "Battery Percentage"
+```
+
+Or via D-Bus:
+```
+org.bluez /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX
+org.bluez.Battery1 interface -> Percentage property
+```
+
 ## Linux-Specific: HID Feature Report Buffering
 
 **CRITICAL DISCOVERY**: On Linux with hidraw, there's a response delay/buffering behavior:
