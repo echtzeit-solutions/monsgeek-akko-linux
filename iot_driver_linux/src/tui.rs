@@ -35,7 +35,7 @@ use monsgeek_keyboard::{
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
     SleepTimeSettings, VendorEvent,
 };
-use monsgeek_transport::{DeviceDiscovery, HidDiscovery};
+use monsgeek_transport::HidDiscovery;
 
 /// Battery data source
 #[derive(Debug, Clone)]
@@ -504,19 +504,13 @@ impl App {
     }
 
     async fn connect(&mut self) -> Result<(), String> {
-        // Use async device discovery
+        // Use async device discovery with smart probing
         let discovery = HidDiscovery::new();
-        let devices = discovery
-            .list_devices()
-            .await
-            .map_err(|e| format!("Failed to list devices: {e}"))?;
 
-        if devices.is_empty() {
-            return Err("No supported device found".to_string());
-        }
-
+        // Probe all devices to find which ones actually respond
+        // This handles cases where dongle is plugged in but keyboard is on BT
         let transport = discovery
-            .open_device(&devices[0])
+            .open_preferred()
             .await
             .map_err(|e| format!("Failed to open device: {e}"))?;
 
@@ -1611,6 +1605,9 @@ impl App {
             }
             VendorEvent::DialModeToggle => {
                 self.status_msg = "Dial mode toggled".to_string();
+            }
+            VendorEvent::FnLayerToggle { layer } => {
+                self.status_msg = format!("Fn layer: {}", layer);
             }
             VendorEvent::SettingsAck { started } => {
                 // Settings ACK is low-level, only show in debug
