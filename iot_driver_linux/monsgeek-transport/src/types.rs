@@ -115,6 +115,11 @@ pub enum VendorEvent {
     },
     /// Backlight toggle via Fn+L (action 0x09)
     BacklightToggle,
+    /// Fn layer toggled via Fn+Alt (action 0x08)
+    FnLayerToggle {
+        /// Fn layer index (0 = default, 1 = alternate)
+        layer: u8,
+    },
     /// Dial mode toggle via dial button (action 0x11)
     DialModeToggle,
     /// Unknown keyboard function notification

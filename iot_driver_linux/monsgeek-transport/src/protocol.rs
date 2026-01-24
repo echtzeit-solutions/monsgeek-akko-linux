@@ -152,12 +152,14 @@ pub mod device {
     pub const PID_M1_V5_WIRED: u16 = 0x5030;
     /// M1 V5 HE 2.4GHz wireless dongle
     pub const PID_M1_V5_DONGLE: u16 = 0x5038;
+    /// M1 V5 HE Bluetooth
+    pub const PID_M1_V5_BLUETOOTH: u16 = 0x5027;
 
-    /// HID usage page for vendor-defined
+    /// HID usage page for vendor-defined (USB)
     pub const USAGE_PAGE: u16 = 0xFFFF;
-    /// HID usage for feature interface
+    /// HID usage for feature interface (USB)
     pub const USAGE_FEATURE: u16 = 0x02;
-    /// HID usage for input interface
+    /// HID usage for input interface (USB)
     pub const USAGE_INPUT: u16 = 0x01;
 
     /// Feature interface number
@@ -168,6 +170,11 @@ pub mod device {
     /// Check if a PID indicates a wireless dongle
     pub fn is_dongle_pid(pid: u16) -> bool {
         pid == PID_M1_V5_DONGLE
+    }
+
+    /// Check if a PID indicates a Bluetooth device
+    pub fn is_bluetooth_pid(pid: u16) -> bool {
+        pid == PID_M1_V5_BLUETOOTH
     }
 }
 

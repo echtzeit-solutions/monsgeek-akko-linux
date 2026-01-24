@@ -327,6 +327,9 @@ fn parse_kb_func(payload: &[u8]) -> VendorEvent {
         0x03 => VendorEvent::WasdSwapToggle {
             swapped: category == 8, // category 8 = swapped, category 0 = normal
         },
+        0x08 => VendorEvent::FnLayerToggle {
+            layer: category, // 0 = default, 1 = alternate
+        },
         0x09 => VendorEvent::BacklightToggle,
         0x11 => VendorEvent::DialModeToggle,
         _ => VendorEvent::UnknownKbFunc { category, action },
@@ -391,21 +394,10 @@ fn parse_vendor_event(data: &[u8]) -> VendorEvent {
         // LED color changed via Fn+\
         0x07 => VendorEvent::LedColor { color: value },
 
-        // Settings ACK (magnetism start/stop shares this type)
-        0x0F => {
-            // Magnetism control uses specific byte patterns
-            if payload.len() >= 3 {
-                if payload[1] == 0x01 && payload[2] == 0x00 {
-                    return VendorEvent::MagnetismStart;
-                } else if payload[1] == 0x00 && payload[2] == 0x00 {
-                    return VendorEvent::MagnetismStop;
-                }
-            }
-            // Generic settings ack
-            VendorEvent::SettingsAck {
-                started: value != 0,
-            }
-        }
+        // Settings ACK: value=1 means change started, value=0 means change complete
+        0x0F => VendorEvent::SettingsAck {
+            started: value != 0,
+        },
 
         // Key depth report (magnetism)
         0x1B if payload.len() >= 5 => {

@@ -5,7 +5,7 @@
 //!
 //! - HID Wired (direct USB connection)
 //! - HID Dongle (2.4GHz wireless via USB dongle)
-//! - Bluetooth GATT (future)
+//! - HID Bluetooth (BLE via kernel's hid-over-gatt driver)
 //! - WebRTC (future, for remote access)
 
 pub mod command;
@@ -15,6 +15,7 @@ pub mod protocol;
 pub mod types;
 
 mod discovery;
+mod hid_bluetooth;
 mod hid_dongle;
 mod hid_wired;
 mod sync_adapter;
@@ -58,13 +59,16 @@ pub use command::{
     SleepTimeResponse,
     TransportExt,
 };
-pub use device_registry::{is_dongle_pid, DONGLE_PIDS, VENDOR_ID};
+pub use device_registry::{
+    is_bluetooth_pid, is_dongle_pid, BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID,
+};
 pub use error::TransportError;
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType, VendorEvent,
 };
 
-pub use discovery::{DeviceDiscovery, HidDiscovery};
+pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice};
+pub use hid_bluetooth::HidBluetoothTransport;
 pub use hid_dongle::HidDongleTransport;
 pub use hid_wired::HidWiredTransport;
 pub use sync_adapter::{list_devices_sync, open_device_sync, SyncTransport};
