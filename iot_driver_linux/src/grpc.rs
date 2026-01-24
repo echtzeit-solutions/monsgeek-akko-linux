@@ -1,20 +1,24 @@
 // gRPC server implementation for iot_driver compatibility
 // Provides the same interface as the original Windows iot_driver.exe
+//
+// Now uses the transport abstraction layer for unified device access
+// across wired, 2.4GHz dongle, and Bluetooth connections.
 
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
-use hidapi::{HidApi, HidDevice};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_udev::{EventType, MonitorBuilder};
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
-use iot_driver::hal::{self, device_registry, HidInterface};
-use iot_driver::protocol::{self, cmd};
+use iot_driver::hal::HidInterface;
+use monsgeek_transport::{
+    ChecksumType, DeviceDiscovery, HidDiscovery, Transport, TransportType, VendorEvent,
+};
 
 #[allow(non_camel_case_types)] // Proto types use camelCase to match original iot_driver.exe
 #[allow(clippy::enum_variant_names)] // Proto enum variants have Yzw prefix
@@ -29,45 +33,27 @@ pub use driver::*;
 const DEVICE_CHANNEL_SIZE: usize = 16;
 const VENDOR_CHANNEL_SIZE: usize = 256;
 
-// Device definitions now come from hal::device_registry()
-
-/// Connected HID device handle
-struct ConnectedDevice {
-    device: HidDevice,
-    _vid: u16,
-    _pid: u16,
-    _path: String,
+/// Pending command for split send/read API
+#[derive(Clone)]
+struct PendingCommand {
+    cmd: u8,
+    data: Vec<u8>,
+    checksum: ChecksumType,
 }
 
-/// Calculate checksum for HID message (uses proto CheckSumType)
-fn calculate_checksum(data: &[u8], checksum_type: CheckSumType) -> u8 {
-    match checksum_type {
-        CheckSumType::Bit7 => {
-            let sum: u32 = data.iter().take(7).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        CheckSumType::Bit8 => {
-            let sum: u32 = data.iter().take(8).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        CheckSumType::None => 0,
-    }
+/// Connected device with transport
+struct ConnectedTransport {
+    transport: Arc<dyn Transport>,
+    /// Pending command waiting for read_msg
+    pending: Option<PendingCommand>,
 }
 
-/// Apply checksum to message
-fn apply_checksum(data: &mut [u8], checksum_type: CheckSumType) {
-    match checksum_type {
-        CheckSumType::Bit7 => {
-            if data.len() >= 8 {
-                data[7] = calculate_checksum(data, checksum_type);
-            }
-        }
-        CheckSumType::Bit8 => {
-            if data.len() >= 9 {
-                data[8] = calculate_checksum(data, checksum_type);
-            }
-        }
-        CheckSumType::None => {}
+/// Convert proto CheckSumType to transport ChecksumType
+fn proto_to_transport_checksum(proto: CheckSumType) -> ChecksumType {
+    match proto {
+        CheckSumType::Bit7 => ChecksumType::Bit7,
+        CheckSumType::Bit8 => ChecksumType::Bit8,
+        CheckSumType::None => ChecksumType::None,
     }
 }
 
@@ -76,60 +62,97 @@ fn parse_device_path(path: &str) -> Option<(u16, u16, u16, u16, i32)> {
     HidInterface::parse_path_key(path)
 }
 
-/// Driver service implementation
+/// Convert a VendorEvent to raw bytes for the gRPC protocol
+fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
+    match event {
+        VendorEvent::KeyDepth {
+            key_index,
+            depth_raw,
+        } => {
+            // Format: [0x1B, key_index, depth_low, depth_high]
+            vec![
+                0x1B,
+                *key_index,
+                (*depth_raw & 0xFF) as u8,
+                (*depth_raw >> 8) as u8,
+            ]
+        }
+        VendorEvent::MagnetismStart => vec![0x0F, 0x01],
+        VendorEvent::MagnetismStop => vec![0x0F, 0x00],
+        VendorEvent::Wake => vec![0x00],
+        VendorEvent::ProfileChange { profile } => vec![0x01, *profile],
+        VendorEvent::SettingsAck { started } => vec![0x0F, if *started { 0x01 } else { 0x00 }],
+        VendorEvent::LedEffectMode { effect_id } => vec![0x04, *effect_id],
+        VendorEvent::LedEffectSpeed { speed } => vec![0x05, *speed],
+        VendorEvent::BrightnessLevel { level } => vec![0x06, *level],
+        VendorEvent::LedColor { color } => vec![0x07, *color],
+        VendorEvent::WinLockToggle { locked } => vec![0x03, if *locked { 1 } else { 0 }, 0x01],
+        VendorEvent::WasdSwapToggle { swapped } => vec![0x03, if *swapped { 8 } else { 0 }, 0x03],
+        VendorEvent::BacklightToggle => vec![0x03, 0, 0x09],
+        VendorEvent::FnLayerToggle { layer } => vec![0x03, *layer, 0x08],
+        VendorEvent::DialModeToggle => vec![0x03, 0, 0x11],
+        VendorEvent::UnknownKbFunc { category, action } => vec![0x03, *category, *action],
+        VendorEvent::BatteryStatus {
+            level,
+            charging,
+            online,
+        } => {
+            vec![
+                0x88,
+                *level,
+                if *charging { 1 } else { 0 },
+                if *online { 1 } else { 0 },
+            ]
+        }
+        VendorEvent::Unknown(data) => data.clone(),
+    }
+}
+
+/// Driver service implementation using transport abstraction layer
 pub struct DriverService {
-    hidapi: Arc<Mutex<HidApi>>,
-    devices: Arc<Mutex<HashMap<String, ConnectedDevice>>>,
+    discovery: Arc<HidDiscovery>,
+    devices: Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
     device_tx: broadcast::Sender<DjDev>,
     vendor_tx: broadcast::Sender<VenderMsg>,
-    vendor_polling: Arc<Mutex<bool>>,
-    hotplug_running: Arc<Mutex<bool>>,
-    /// Tracks the expected response command byte for each device path (for dongle correlation)
-    pending_commands: Arc<Mutex<HashMap<String, u8>>>,
-    /// Cache of out-of-order responses from dongle (responses that arrived for different commands)
-    response_cache: Arc<Mutex<HashMap<String, Vec<Vec<u8>>>>>,
+    vendor_polling: Arc<AsyncMutex<bool>>,
+    hotplug_running: Arc<std::sync::Mutex<bool>>,
 }
 
 impl DriverService {
-    pub fn new() -> Result<Self, hidapi::HidError> {
-        let hidapi = HidApi::new()?;
+    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (device_tx, _) = broadcast::channel(DEVICE_CHANNEL_SIZE);
         let (vendor_tx, _) = broadcast::channel(VENDOR_CHANNEL_SIZE);
 
         Ok(Self {
-            hidapi: Arc::new(Mutex::new(hidapi)),
-            devices: Arc::new(Mutex::new(HashMap::new())),
+            discovery: Arc::new(HidDiscovery::new()),
+            devices: Arc::new(AsyncMutex::new(HashMap::new())),
             device_tx,
             vendor_tx,
-            vendor_polling: Arc::new(Mutex::new(false)),
-            hotplug_running: Arc::new(Mutex::new(false)),
-            pending_commands: Arc::new(Mutex::new(HashMap::new())),
-            response_cache: Arc::new(Mutex::new(HashMap::new())),
+            vendor_polling: Arc::new(AsyncMutex::new(false)),
+            hotplug_running: Arc::new(std::sync::Mutex::new(false)),
         })
     }
 
     /// Start background polling for vendor events from connected devices
     fn start_vendor_polling(&self) {
-        let mut polling = self.vendor_polling.lock().unwrap();
-        if *polling {
-            return;
-        }
-        *polling = true;
-        drop(polling);
-
-        // Auto-open all detected devices so we can read vendor events
-        self.open_all_devices();
-
         let devices = Arc::clone(&self.devices);
         let vendor_tx = self.vendor_tx.clone();
         let vendor_polling = Arc::clone(&self.vendor_polling);
 
         tokio::spawn(async move {
+            {
+                let mut polling = vendor_polling.lock().await;
+                if *polling {
+                    return;
+                }
+                *polling = true;
+            }
+
             info!("Started vendor event polling");
 
             loop {
                 {
-                    let polling = vendor_polling.lock().unwrap();
+                    let polling = vendor_polling.lock().await;
                     if !*polling {
                         break;
                     }
@@ -137,23 +160,21 @@ impl DriverService {
 
                 let mut got_event = false;
                 {
-                    let devices_guard = devices.lock().unwrap();
+                    let devices_guard = devices.lock().await;
                     for (path, connected) in devices_guard.iter() {
-                        let mut buf = [0u8; protocol::INPUT_REPORT_SIZE];
-                        match connected.device.read_timeout(&mut buf, 10) {
-                            Ok(len) if len > 0 => {
-                                debug!(
-                                    "Vendor event from {}: {:02x?}",
-                                    path,
-                                    &buf[..std::cmp::min(len, 16)]
-                                );
-                                let event = VenderMsg {
-                                    msg: buf[..len].to_vec(),
-                                };
-                                let _ = vendor_tx.send(event);
+                        // Try to read event with short timeout
+                        match connected.transport.read_event(10).await {
+                            Ok(Some(event)) => {
+                                debug!("Vendor event from {}: {:?}", path, event);
+                                // Convert VendorEvent to raw bytes for gRPC protocol
+                                let msg = vendor_event_to_bytes(&event);
+                                let _ = vendor_tx.send(VenderMsg { msg });
                                 got_event = true;
                             }
-                            _ => {}
+                            Ok(None) => {}
+                            Err(e) => {
+                                debug!("Event read error for {}: {}", path, e);
+                            }
                         }
                     }
                 }
@@ -167,50 +188,6 @@ impl DriverService {
         });
     }
 
-    /// Open all detected devices so they're available for vendor polling
-    fn open_all_devices(&self) {
-        let registry = device_registry();
-        let hidapi = self.hidapi.lock().unwrap();
-        let mut devices = self.devices.lock().unwrap();
-
-        for device_info in hidapi.device_list() {
-            // Check if this device matches any known interface
-            if let Some(known) = registry.find_matching(device_info) {
-                let path = known.path_key();
-
-                // Skip if already opened
-                if devices.contains_key(&path) {
-                    continue;
-                }
-
-                let vid = device_info.vendor_id();
-                let pid = device_info.product_id();
-                let usage = device_info.usage();
-
-                match device_info.open_device(&hidapi) {
-                    Ok(device) => {
-                        info!(
-                            "Auto-opened device for vendor polling: {} (usage=0x{:02x})",
-                            path, usage
-                        );
-                        devices.insert(
-                            path.clone(),
-                            ConnectedDevice {
-                                device,
-                                _vid: vid,
-                                _pid: pid,
-                                _path: path,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to auto-open device: {}", e);
-                    }
-                }
-            }
-        }
-    }
-
     /// Start hot-plug monitoring using udev (runs in a separate thread)
     pub fn start_hotplug_monitor(&self) {
         let mut running = self.hotplug_running.lock().unwrap();
@@ -220,7 +197,7 @@ impl DriverService {
         *running = true;
         drop(running);
 
-        let hidapi = Arc::clone(&self.hidapi);
+        let discovery = Arc::clone(&self.discovery);
         let devices = Arc::clone(&self.devices);
         let device_tx = self.device_tx.clone();
         let hotplug_running = Arc::clone(&self.hotplug_running);
@@ -257,6 +234,18 @@ impl DriverService {
             use std::os::unix::io::AsRawFd;
             let fd = socket.as_raw_fd();
 
+            // Create a runtime for async operations
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    error!("Failed to create tokio runtime: {}", e);
+                    return;
+                }
+            };
+
             loop {
                 {
                     let running = hotplug_running.lock().unwrap();
@@ -286,21 +275,15 @@ impl DriverService {
                     match event.event_type() {
                         EventType::Add => {
                             info!("Device added: {:?}", devnode);
-                            // Refresh hidapi and scan for new devices
-                            if let Ok(mut api) = hidapi.lock() {
-                                let _ = api.refresh_devices();
-                            }
                             // Re-scan and broadcast new devices
-                            Self::rescan_devices_static(&hidapi, &devices, &device_tx);
+                            rt.block_on(Self::rescan_devices_static(
+                                &discovery, &devices, &device_tx,
+                            ));
                         }
                         EventType::Remove => {
                             info!("Device removed: {:?}", devnode);
-                            // Refresh hidapi
-                            if let Ok(mut api) = hidapi.lock() {
-                                let _ = api.refresh_devices();
-                            }
                             // Clean up disconnected devices
-                            Self::cleanup_disconnected_static(&hidapi, &devices, &device_tx);
+                            rt.block_on(Self::cleanup_disconnected_static(&discovery, &devices));
                         }
                         _ => {}
                     }
@@ -311,98 +294,94 @@ impl DriverService {
         });
     }
 
-    /// Static helper to re-scan devices (called from async context)
-    fn rescan_devices_static(
-        hidapi: &Arc<Mutex<HidApi>>,
-        devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
+    /// Static helper to re-scan devices (called from udev thread)
+    async fn rescan_devices_static(
+        discovery: &Arc<HidDiscovery>,
+        devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
         device_tx: &broadcast::Sender<DjDev>,
     ) {
-        let registry = device_registry();
-        let api = match hidapi.lock() {
-            Ok(api) => api,
-            Err(_) => return,
-        };
-        let mut devs = match devices.lock() {
+        let discovered = match discovery.list_devices().await {
             Ok(d) => d,
-            Err(_) => return,
+            Err(e) => {
+                warn!("Failed to list devices: {}", e);
+                return;
+            }
         };
 
-        for device_info in api.device_list() {
-            if let Some(known) = registry.find_matching(device_info) {
-                let path = known.path_key();
+        let mut devs = devices.lock().await;
 
-                if devs.contains_key(&path) {
-                    continue;
+        for dev in discovered {
+            let path = Self::make_path_key(&dev.info);
+
+            if devs.contains_key(&path) {
+                continue;
+            }
+
+            match discovery.open_device(&dev).await {
+                Ok(transport) => {
+                    info!("Hot-plug: opened new device {}", path);
+
+                    // Query device ID
+                    let device_id = Self::query_device_id_static(&transport).await.unwrap_or(0);
+
+                    // Query battery for dongles
+                    let (battery, is_online) = if dev.info.is_dongle {
+                        match transport.get_battery_status().await {
+                            Ok((level, online, _idle)) => (level as u32, online),
+                            Err(_) => (100, true),
+                        }
+                    } else {
+                        (100, true)
+                    };
+
+                    let dev_info = Device {
+                        dev_type: DeviceType::YzwKeyboard as i32,
+                        is24: dev.info.is_dongle,
+                        path: path.clone(),
+                        id: device_id,
+                        battery,
+                        is_online,
+                        vid: dev.info.vid as u32,
+                        pid: dev.info.pid as u32,
+                    };
+
+                    // Broadcast new device
+                    let _ = device_tx.send(DjDev {
+                        oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
+                    });
+
+                    devs.insert(
+                        path,
+                        ConnectedTransport {
+                            transport,
+                            pending: None,
+                        },
+                    );
                 }
-
-                let vid = device_info.vendor_id();
-                let pid = device_info.product_id();
-
-                match device_info.open_device(&api) {
-                    Ok(device) => {
-                        info!("Hot-plug: opened new device {}", path);
-
-                        // Query device ID
-                        let device_id = Self::query_device_id_static(&device).unwrap_or(0);
-
-                        let dev_info = Device {
-                            dev_type: DeviceType::YzwKeyboard as i32,
-                            is24: false,
-                            path: path.clone(),
-                            id: device_id,
-                            battery: 100,
-                            is_online: true,
-                            vid: vid as u32,
-                            pid: pid as u32,
-                        };
-
-                        // Broadcast new device
-                        let _ = device_tx.send(DjDev {
-                            oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
-                        });
-
-                        devs.insert(
-                            path.clone(),
-                            ConnectedDevice {
-                                device,
-                                _vid: vid,
-                                _pid: pid,
-                                _path: path,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Hot-plug: failed to open device: {}", e);
-                    }
+                Err(e) => {
+                    warn!("Hot-plug: failed to open device: {}", e);
                 }
             }
         }
     }
 
     /// Static helper to clean up disconnected devices
-    fn cleanup_disconnected_static(
-        hidapi: &Arc<Mutex<HidApi>>,
-        devices: &Arc<Mutex<HashMap<String, ConnectedDevice>>>,
-        _device_tx: &broadcast::Sender<DjDev>,
+    async fn cleanup_disconnected_static(
+        discovery: &Arc<HidDiscovery>,
+        devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
     ) {
-        let registry = device_registry();
-        let api = match hidapi.lock() {
-            Ok(api) => api,
-            Err(_) => return,
-        };
-        let mut devs = match devices.lock() {
+        let discovered = match discovery.list_devices().await {
             Ok(d) => d,
             Err(_) => return,
         };
 
-        // Get current device paths from hidapi
-        let mut current_paths = std::collections::HashSet::new();
+        let mut devs = devices.lock().await;
 
-        for device_info in api.device_list() {
-            if let Some(known) = registry.find_matching(device_info) {
-                current_paths.insert(known.path_key());
-            }
-        }
+        // Get current device paths
+        let current_paths: std::collections::HashSet<String> = discovered
+            .iter()
+            .map(|d| Self::make_path_key(&d.info))
+            .collect();
 
         // Remove devices no longer present
         let to_remove: Vec<String> = devs
@@ -414,501 +393,280 @@ impl DriverService {
         for path in to_remove {
             info!("Hot-plug: removing disconnected device {}", path);
             devs.remove(&path);
-            // TODO: Could broadcast device removal here
         }
     }
 
-    /// Query battery status from 2.4GHz dongle
-    /// Returns (battery_level, is_online) if successful
-    ///
-    /// Byte offsets confirmed via Windows iot_driver.exe decompilation:
-    /// - byte[1] = battery level (0-100)
-    /// - byte[4] = is_online flag
-    fn query_dongle_battery(device: &HidDevice) -> Option<(u32, bool)> {
-        let mut buf = [0u8; 65];
-        buf[0] = 0x05; // Report ID for vendor interface
-
-        match device.get_feature_report(&mut buf) {
-            Ok(len) if len >= 5 => {
-                let battery = buf[1] as u32;
-                let online = buf[4] != 0; // byte[4] = is_online (confirmed)
-
-                // Sanity check battery level
-                if battery <= 100 {
-                    Some((battery, online))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+    /// Create a path key compatible with the original protocol format
+    fn make_path_key(info: &monsgeek_transport::TransportDeviceInfo) -> String {
+        // Format: vid-pid-usage_page-usage-interface
+        // For compatibility with browser client
+        let usage_page = 0xFFFF_u16;
+        let usage = 0x02_u16;
+        let interface = match info.transport_type {
+            TransportType::Bluetooth => 0,
+            TransportType::HidWired | TransportType::HidDongle => 1,
+            _ => 0,
+        };
+        format!(
+            "{:04x}-{:04x}-{:04x}-{:04x}-{}",
+            info.vid, info.pid, usage_page, usage, interface
+        )
     }
 
-    /// Static helper to query device ID
-    fn query_device_id_static(device: &HidDevice) -> Option<i32> {
-        let cmd_buf =
-            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
+    /// Query device ID using GET_USB_VERSION command
+    async fn query_device_id_static(transport: &Arc<dyn Transport>) -> Option<i32> {
+        use monsgeek_transport::protocol::cmd;
 
-        if device.send_feature_report(&cmd_buf).is_err() {
-            return None;
-        }
-
-        let mut response = [0u8; 65];
-        match device.get_feature_report(&mut response) {
-            Ok(len) if len >= 6 && response[1] == cmd::GET_USB_VERSION => {
-                let device_id =
-                    u32::from_le_bytes([response[2], response[3], response[4], response[5]]) as i32;
+        match transport
+            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
+            .await
+        {
+            Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
+                let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]) as i32;
+                info!("Device ID: {}", device_id);
                 Some(device_id)
             }
-            _ => None,
-        }
-    }
-
-    /// Query device ID using GET_USB_VERSION (0x8F) command
-    fn query_device_id(&self, device: &HidDevice, is_dongle: bool) -> Option<i32> {
-        if is_dongle {
-            return self.query_device_id_dongle(device);
-        }
-
-        let cmd_buf =
-            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
-
-        for attempt in 0..3 {
-            match device.send_feature_report(&cmd_buf) {
-                Ok(_) => break,
-                Err(e) => {
-                    if attempt == 2 {
-                        warn!("Failed to send device ID query after 3 attempts: {}", e);
-                        return None;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-            }
-        }
-
-        let mut response = [0u8; 65];
-        match device.get_feature_report(&mut response) {
-            Ok(len) if len >= 6 => {
-                if response[1] == cmd::GET_USB_VERSION {
-                    let device_id =
-                        u32::from_le_bytes([response[2], response[3], response[4], response[5]])
-                            as i32;
-                    info!("Device ID: {}", device_id);
-                    return Some(device_id);
-                } else {
-                    warn!(
-                        "Device ID query: unexpected response cmd 0x{:02x} (expected 0x{:02x}), data: {:02x?}",
-                        response[1],
-                        cmd::GET_USB_VERSION,
-                        &response[..std::cmp::min(len, 16)]
-                    );
-                }
-            }
-            Ok(len) => {
-                warn!("Short response from device ID query: {} bytes", len);
+            Ok(resp) => {
+                warn!(
+                    "Unexpected response to device ID query: {:02x?}",
+                    &resp[..resp.len().min(16)]
+                );
+                None
             }
             Err(e) => {
-                warn!("Failed to read device ID: {}", e);
+                warn!("Failed to query device ID: {}", e);
+                None
             }
         }
-        None
-    }
-
-    /// Query device ID from 2.4GHz dongle using flush pattern
-    /// The dongle has a delayed response buffer - we need to send 0xFC flush to push out responses
-    fn query_device_id_dongle(&self, device: &HidDevice) -> Option<i32> {
-        let cmd_buf =
-            protocol::build_command(cmd::GET_USB_VERSION, &[], protocol::ChecksumType::Bit7);
-
-        // Send the command
-        if device.send_feature_report(&cmd_buf).is_err() {
-            warn!("Failed to send device ID query to dongle");
-            return None;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
-
-        // Build flush command once
-        let flush_buf =
-            protocol::build_command(cmd::DONGLE_FLUSH_NOP, &[], protocol::ChecksumType::Bit7);
-
-        // Try to read response with flush/retry pattern
-        const MAX_ATTEMPTS: usize = 5;
-        for attempt in 0..MAX_ATTEMPTS {
-            // Send DONGLE_FLUSH_NOP (0xFC) to push out the response
-            if device.send_feature_report(&flush_buf).is_err() {
-                warn!("Failed to send flush command to dongle");
-                return None;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(if attempt == 0 {
-                100
-            } else {
-                50
-            }));
-
-            // Read response
-            let mut response = [0u8; 65];
-            match device.get_feature_report(&mut response) {
-                Ok(len) if len >= 6 => {
-                    if response[1] == cmd::GET_USB_VERSION {
-                        let device_id = u32::from_le_bytes([
-                            response[2],
-                            response[3],
-                            response[4],
-                            response[5],
-                        ]) as i32;
-                        info!("Device ID (dongle): {}", device_id);
-                        return Some(device_id);
-                    }
-                    // Got a different response, continue flushing
-                    debug!(
-                        "Dongle flush attempt {}: got cmd 0x{:02x} instead of 0x{:02x}",
-                        attempt,
-                        response[1],
-                        cmd::GET_USB_VERSION
-                    );
-                }
-                Ok(len) => {
-                    debug!(
-                        "Dongle flush attempt {}: short response {} bytes",
-                        attempt, len
-                    );
-                }
-                Err(e) => {
-                    debug!("Dongle flush attempt {}: read error: {}", attempt, e);
-                }
-            }
-        }
-
-        warn!(
-            "Failed to get device ID from dongle after {} attempts",
-            MAX_ATTEMPTS
-        );
-        None
     }
 
     /// Scan for and connect to known devices (only returns client-facing interfaces)
-    pub fn scan_devices(&self) -> Vec<DjDev> {
+    pub async fn scan_devices(&self) -> Vec<DjDev> {
         let mut found = Vec::new();
-        let registry = device_registry();
-        let hidapi = self.hidapi.lock().unwrap();
 
-        for device_info in hidapi.device_list() {
-            // Check if device matches a known interface
-            if let Some(known) = registry.find_matching(device_info) {
-                // Only report client-facing interfaces (FEATURE, not INPUT)
-                if !known.is_client_facing() {
-                    continue;
-                }
+        let discovered = match self.discovery.list_devices().await {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Failed to list devices: {}", e);
+                return found;
+            }
+        };
 
-                let vid = device_info.vendor_id();
-                let pid = device_info.product_id();
-                let path = known.path_key();
-                let hid_path = device_info.path().to_string_lossy().to_string();
+        for dev in discovered {
+            let path = Self::make_path_key(&dev.info);
 
-                info!(
-                    "Found device: VID={:04x} PID={:04x} path={}",
-                    vid, pid, hid_path
-                );
+            info!(
+                "Found device: VID={:04x} PID={:04x} type={:?}",
+                dev.info.vid, dev.info.pid, dev.info.transport_type
+            );
 
-                // Check if this is a 2.4GHz dongle
-                let is_dongle = hal::is_dongle_pid(pid);
+            // Open device to query ID and battery
+            let (device_id, battery, is_online) = match self.discovery.open_device(&dev).await {
+                Ok(transport) => {
+                    debug!(
+                        "Opened device (type={:?}), querying device ID...",
+                        dev.info.transport_type
+                    );
 
-                let (device_id, battery, is_online) = match device_info.open_device(&hidapi) {
-                    Ok(hid_device) => {
-                        debug!(
-                            "Opened device (is_dongle={}), querying device ID...",
-                            is_dongle
+                    let id = Self::query_device_id_static(&transport).await.unwrap_or(0);
+
+                    // Query battery status for dongles
+                    let (batt, online) = if dev.info.is_dongle {
+                        match transport.get_battery_status().await {
+                            Ok((level, online, _idle)) => (level as u32, online),
+                            Err(_) => (100, true),
+                        }
+                    } else {
+                        (100, true)
+                    };
+
+                    // Store transport for later use
+                    {
+                        let mut devices = self.devices.lock().await;
+                        devices.insert(
+                            path.clone(),
+                            ConnectedTransport {
+                                transport,
+                                pending: None,
+                            },
                         );
-                        let id = self.query_device_id(&hid_device, is_dongle).unwrap_or(0);
-                        debug!("Device ID query returned: {}", id);
-
-                        // Query battery status for dongles
-                        let (batt, online) = if is_dongle {
-                            Self::query_dongle_battery(&hid_device).unwrap_or((100, true))
-                        } else {
-                            (100, true) // Wired devices always "online" with "full" battery
-                        };
-
-                        (id, batt, online)
                     }
-                    Err(e) => {
-                        warn!("Could not open device to query ID: {}", e);
-                        (0, 100, true)
-                    }
-                };
 
-                if is_dongle {
-                    // 2.4GHz dongle - use DangleCommon format
-                    let keyboard_status = DangleStatus {
-                        dangle_dev: Some(dangle_status::DangleDev::Status(Status24 {
-                            battery,
-                            is_online,
-                        })),
-                    };
-                    let mouse_status = DangleStatus {
-                        dangle_dev: Some(dangle_status::DangleDev::Empty(Empty {})),
-                    };
-                    let dongle = DangleCommon {
-                        keyboard: Some(keyboard_status),
-                        mouse: Some(mouse_status),
-                        path: path.clone(),
-                        keyboard_id: device_id as u32,
-                        mouse_id: 0,
-                        vid: vid as u32,
-                        pid: pid as u32,
-                    };
-                    found.push(DjDev {
-                        oneof_dev: Some(dj_dev::OneofDev::DangleCommonDev(dongle)),
-                    });
-                } else {
-                    // Wired device - use Device format
-                    let device = Device {
-                        dev_type: DeviceType::YzwKeyboard as i32,
-                        is24: false,
-                        path: path.clone(),
-                        id: device_id,
+                    (id, batt, online)
+                }
+                Err(e) => {
+                    warn!("Could not open device to query ID: {}", e);
+                    (0, 100, true)
+                }
+            };
+
+            if dev.info.is_dongle {
+                // 2.4GHz dongle - use DangleCommon format
+                let keyboard_status = DangleStatus {
+                    dangle_dev: Some(dangle_status::DangleDev::Status(Status24 {
                         battery,
                         is_online,
-                        vid: vid as u32,
-                        pid: pid as u32,
-                    };
-                    found.push(DjDev {
-                        oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
-                    });
-                }
+                    })),
+                };
+                let mouse_status = DangleStatus {
+                    dangle_dev: Some(dangle_status::DangleDev::Empty(Empty {})),
+                };
+                let dongle = DangleCommon {
+                    keyboard: Some(keyboard_status),
+                    mouse: Some(mouse_status),
+                    path: path.clone(),
+                    keyboard_id: device_id as u32,
+                    mouse_id: 0,
+                    vid: dev.info.vid as u32,
+                    pid: dev.info.pid as u32,
+                };
+                found.push(DjDev {
+                    oneof_dev: Some(dj_dev::OneofDev::DangleCommonDev(dongle)),
+                });
+            } else {
+                // Wired or Bluetooth device - use Device format
+                let device = Device {
+                    dev_type: DeviceType::YzwKeyboard as i32,
+                    is24: false,
+                    path: path.clone(),
+                    id: device_id,
+                    battery,
+                    is_online,
+                    vid: dev.info.vid as u32,
+                    pid: dev.info.pid as u32,
+                };
+                found.push(DjDev {
+                    oneof_dev: Some(dj_dev::OneofDev::Dev(device)),
+                });
             }
         }
 
         found
     }
 
-    #[allow(clippy::result_large_err)]
-    fn open_device(&self, device_path: &str) -> Result<(), Status> {
+    async fn open_device(&self, device_path: &str) -> Result<(), Status> {
+        // Check if already open
+        {
+            let devices = self.devices.lock().await;
+            if devices.contains_key(device_path) {
+                return Ok(());
+            }
+        }
+
+        // Parse path to get VID/PID
         let (vid, pid, _usage_page, _usage, _interface) = parse_device_path(device_path)
             .ok_or_else(|| Status::invalid_argument("Invalid device path format"))?;
 
-        let hidapi = self.hidapi.lock().unwrap();
+        // Find and open the device
+        let discovered = self
+            .discovery
+            .list_devices()
+            .await
+            .map_err(|e| Status::internal(format!("Discovery error: {}", e)))?;
 
-        for device_info in hidapi.device_list() {
-            if device_info.vendor_id() == vid && device_info.product_id() == pid {
-                match device_info.open_device(&hidapi) {
-                    Ok(device) => {
-                        let connected = ConnectedDevice {
-                            device,
-                            _vid: vid,
-                            _pid: pid,
-                            _path: device_path.to_string(),
-                        };
-                        self.devices
-                            .lock()
-                            .unwrap()
-                            .insert(device_path.to_string(), connected);
-                        info!("Opened device: {}", device_path);
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Failed to open device {}: {}", device_path, e);
-                        return Err(Status::internal(format!("Failed to open device: {e}")));
-                    }
-                }
+        for dev in discovered {
+            if dev.info.vid == vid && dev.info.pid == pid {
+                let transport = self
+                    .discovery
+                    .open_device(&dev)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to open device: {}", e)))?;
+
+                let mut devices = self.devices.lock().await;
+                devices.insert(
+                    device_path.to_string(),
+                    ConnectedTransport {
+                        transport,
+                        pending: None,
+                    },
+                );
+
+                info!("Opened device: {}", device_path);
+                return Ok(());
             }
         }
 
         Err(Status::not_found("Device not found"))
     }
 
-    /// Check if a device path corresponds to a 2.4GHz dongle
-    fn is_dongle_path(device_path: &str) -> bool {
-        // Path format: "vid-pid-usage_page-usage-interface"
-        if let Some((_, pid, _, _, _)) = HidInterface::parse_path_key(device_path) {
-            hal::is_dongle_pid(pid)
+    /// Send a command (stores for later read_msg to complete the query)
+    async fn send_command(
+        &self,
+        device_path: &str,
+        data: &[u8],
+        checksum: ChecksumType,
+    ) -> Result<(), Status> {
+        // Ensure device is open
+        self.open_device(device_path).await?;
+
+        let mut devices = self.devices.lock().await;
+        let connected = devices
+            .get_mut(device_path)
+            .ok_or_else(|| Status::not_found("Device not connected"))?;
+
+        if data.is_empty() {
+            return Err(Status::invalid_argument("Empty command data"));
+        }
+
+        let cmd = data[0];
+        let payload = if data.len() > 1 {
+            data[1..].to_vec()
         } else {
-            false
-        }
+            Vec::new()
+        };
+
+        debug!("Storing pending command 0x{:02x} for {}", cmd, device_path);
+
+        // Store pending command for read_msg
+        connected.pending = Some(PendingCommand {
+            cmd,
+            data: payload,
+            checksum,
+        });
+
+        // Actually send the command (fire-and-forget style)
+        // The transport layer handles dongle flush patterns internally
+        connected
+            .transport
+            .send_command(cmd, &connected.pending.as_ref().unwrap().data, checksum)
+            .await
+            .map_err(|e| Status::internal(format!("Send error: {}", e)))?;
+
+        Ok(())
     }
 
-    /// Delay after sending a command to dongle before it processes it (ms)
-    const DONGLE_POST_SEND_DELAY_MS: u64 = 150;
+    /// Read response to previously sent command
+    async fn read_response(&self, device_path: &str) -> Result<Vec<u8>, Status> {
+        // Ensure device is open
+        self.open_device(device_path).await?;
 
-    /// Send the DONGLE_FLUSH_NOP command to push buffered response out
-    fn send_dongle_flush(device: &HidDevice) -> Result<(), hidapi::HidError> {
-        let flush_buf =
-            protocol::build_command(cmd::DONGLE_FLUSH_NOP, &[], protocol::ChecksumType::Bit7);
-        debug!("Sending dongle flush (0xFC)");
-        device.send_feature_report(&flush_buf)
-    }
-
-    #[allow(clippy::result_large_err)]
-    fn send_feature(&self, device_path: &str, data: &[u8]) -> Result<(), Status> {
-        {
-            let devices = self.devices.lock().unwrap();
-            if !devices.contains_key(device_path) {
-                drop(devices);
-                self.open_device(device_path)?;
-            }
-        }
-
-        let is_dongle = Self::is_dongle_path(device_path);
-        let devices = self.devices.lock().unwrap();
+        let mut devices = self.devices.lock().await;
         let connected = devices
-            .get(device_path)
+            .get_mut(device_path)
             .ok_or_else(|| Status::not_found("Device not connected"))?;
 
-        let mut buf = vec![0u8; 65];
-        buf[0] = 0;
-        let len = std::cmp::min(data.len(), 64);
-        buf[1..1 + len].copy_from_slice(&data[..len]);
+        // Get pending command
+        let pending = connected.pending.take().ok_or_else(|| {
+            Status::failed_precondition("No pending command - call send_msg first")
+        })?;
 
-        debug!("Sending feature report: {:02x?}", &buf[..9]);
+        debug!("Executing query for pending command 0x{:02x}", pending.cmd);
 
-        // For dongles: track the expected response command for correlation
-        if is_dongle && !data.is_empty() {
-            let cmd = data[0];
-            debug!("Tracking pending command 0x{:02x} for {}", cmd, device_path);
-            self.pending_commands
-                .lock()
-                .unwrap()
-                .insert(device_path.to_string(), cmd);
-        }
+        // Use query_command which handles all transport-specific logic
+        // (dongle flush, retries, etc.)
+        let response = connected
+            .transport
+            .query_command(pending.cmd, &pending.data, pending.checksum)
+            .await
+            .map_err(|e| Status::internal(format!("Query error: {}", e)))?;
 
-        match connected.device.send_feature_report(&buf) {
-            Ok(_) => {
-                // Dongles need time to process command
-                if is_dongle {
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        Self::DONGLE_POST_SEND_DELAY_MS,
-                    ));
-                }
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to send feature report: {}", e);
-                Err(Status::internal(format!("HID error: {e}")))
-            }
-        }
-    }
+        debug!(
+            "Response for 0x{:02x}: {:02x?}",
+            pending.cmd,
+            &response[..response.len().min(16)]
+        );
 
-    #[allow(clippy::result_large_err)]
-    fn read_feature(&self, device_path: &str) -> Result<Vec<u8>, Status> {
-        {
-            let devices = self.devices.lock().unwrap();
-            if !devices.contains_key(device_path) {
-                drop(devices);
-                self.open_device(device_path)?;
-            }
-        }
-
-        let is_dongle = Self::is_dongle_path(device_path);
-        let devices = self.devices.lock().unwrap();
-        let connected = devices
-            .get(device_path)
-            .ok_or_else(|| Status::not_found("Device not connected"))?;
-
-        let mut buf = vec![0u8; 65];
-        buf[0] = 0;
-
-        // For dongles: use response caching and correlation pattern (like TUI)
-        // The dongle's delayed response buffer can return responses out of order.
-        if is_dongle {
-            // Get the expected command byte from pending_commands
-            let expected_cmd = self
-                .pending_commands
-                .lock()
-                .unwrap()
-                .get(device_path)
-                .copied();
-
-            if let Some(cmd) = expected_cmd {
-                debug!("Looking for response to command 0x{:02x}", cmd);
-
-                // First check if we have a cached response for this command
-                {
-                    let mut cache = self.response_cache.lock().unwrap();
-                    if let Some(device_cache) = cache.get_mut(device_path) {
-                        if let Some(idx) = device_cache.iter().position(|r| r.first() == Some(&cmd))
-                        {
-                            let resp = device_cache.remove(idx);
-                            debug!(
-                                "Found cached response for 0x{:02x}: {:02x?}",
-                                cmd,
-                                &resp[..9.min(resp.len())]
-                            );
-                            return Ok(resp);
-                        }
-                    }
-                }
-
-                // Send flush and read with correlation
-                const MAX_READ_ATTEMPTS: usize = 5;
-                for attempt in 0..MAX_READ_ATTEMPTS {
-                    // Send flush to push response out
-                    let _ = Self::send_dongle_flush(&connected.device);
-                    std::thread::sleep(std::time::Duration::from_millis(if attempt == 0 {
-                        100
-                    } else {
-                        50
-                    }));
-
-                    // Read response
-                    buf.fill(0);
-                    buf[0] = 0;
-                    if let Ok(len) = connected.device.get_feature_report(&mut buf) {
-                        if len > 0 {
-                            let resp_cmd = buf[1];
-                            debug!(
-                                "Dongle read attempt {}: cmd=0x{:02x} (want 0x{:02x}) data={:02x?}",
-                                attempt,
-                                resp_cmd,
-                                cmd,
-                                &buf[..9]
-                            );
-
-                            if resp_cmd == cmd {
-                                // Got our response!
-                                return Ok(buf[1..].to_vec());
-                            } else if resp_cmd != 0 && resp_cmd != cmd::DONGLE_FLUSH_NOP {
-                                // Got a valid response for a different command - cache it
-                                debug!("Caching out-of-order response for 0x{:02x}", resp_cmd);
-                                let mut cache = self.response_cache.lock().unwrap();
-                                let device_cache =
-                                    cache.entry(device_path.to_string()).or_default();
-                                // Limit cache size to prevent memory growth
-                                if device_cache.len() < 16 {
-                                    device_cache.push(buf[1..].to_vec());
-                                }
-                            }
-                        }
-                    }
-                }
-                // Return last read even if not matching
-                debug!(
-                    "Dongle read: giving up after {} attempts, returning: {:02x?}",
-                    MAX_READ_ATTEMPTS,
-                    &buf[..9]
-                );
-                return Ok(buf[1..].to_vec());
-            } else {
-                // No pending command - just read directly
-                debug!("No pending command, reading directly");
-                let _ = connected.device.get_feature_report(&mut buf);
-                return Ok(buf[1..].to_vec());
-            }
-        }
-
-        match connected.device.get_feature_report(&mut buf) {
-            Ok(len) => {
-                debug!(
-                    "Received feature report ({} bytes): {:02x?}",
-                    len,
-                    &buf[..std::cmp::min(len, 9)]
-                );
-                Ok(buf[1..].to_vec())
-            }
-            Err(e) => {
-                error!("Failed to read feature report: {}", e);
-                Err(Status::internal(format!("HID error: {e}")))
-            }
-        }
+        Ok(response)
     }
 }
 
@@ -926,7 +684,7 @@ impl DriverGrpc for DriverService {
     ) -> Result<Response<Self::watchDevListStream>, Status> {
         info!("watch_dev_list called");
 
-        let initial_devices = self.scan_devices();
+        let initial_devices = self.scan_devices().await;
         info!(
             "Sending {} initial devices to client",
             initial_devices.len()
@@ -974,7 +732,11 @@ impl DriverGrpc for DriverService {
             msg.msg.len()
         );
 
-        match self.send_feature(&msg.device_path, &msg.msg) {
+        // For raw feature, don't apply checksum
+        match self
+            .send_command(&msg.device_path, &msg.msg, ChecksumType::None)
+            .await
+        {
             Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
             Err(e) => Ok(Response::new(ResSend {
                 err: e.message().to_string(),
@@ -989,7 +751,7 @@ impl DriverGrpc for DriverService {
         let msg = request.into_inner();
         debug!("read_raw_feature: path={}", msg.device_path);
 
-        match self.read_feature(&msg.device_path) {
+        match self.read_response(&msg.device_path).await {
             Ok(data) => Ok(Response::new(ResRead {
                 err: String::new(),
                 msg: data,
@@ -1008,16 +770,14 @@ impl DriverGrpc for DriverService {
             msg.device_path, msg.check_sum_type
         );
 
-        let mut data = msg.msg.clone();
-        if data.len() < 64 {
-            data.resize(64, 0);
-        }
-
         let checksum_type =
             CheckSumType::try_from(msg.check_sum_type).unwrap_or(CheckSumType::Bit7);
-        apply_checksum(&mut data, checksum_type);
+        let transport_checksum = proto_to_transport_checksum(checksum_type);
 
-        match self.send_feature(&msg.device_path, &data) {
+        match self
+            .send_command(&msg.device_path, &msg.msg, transport_checksum)
+            .await
+        {
             Ok(_) => Ok(Response::new(ResSend { err: String::new() })),
             Err(e) => Ok(Response::new(ResSend {
                 err: e.message().to_string(),
@@ -1029,7 +789,7 @@ impl DriverGrpc for DriverService {
         let msg = request.into_inner();
         debug!("read_msg: path={}", msg.device_path);
 
-        match self.read_feature(&msg.device_path) {
+        match self.read_response(&msg.device_path).await {
             Ok(data) => Ok(Response::new(ResRead {
                 err: String::new(),
                 msg: data,
