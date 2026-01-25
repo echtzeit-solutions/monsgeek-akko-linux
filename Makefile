@@ -165,14 +165,16 @@ uninstall: uninstall-driver uninstall-bpf
 # Paths for dev sudoers (must be absolute)
 DEV_WRAPPER := $(CURDIR)/scripts/bpf-dev-wrapper.sh
 SUDOERS_FILE := /etc/sudoers.d/akko-bpf-dev
+# Use SUDO_USER when run with sudo, otherwise fall back to USER
+DEV_USER := $(if $(SUDO_USER),$(SUDO_USER),$(USER))
 
 ## Install sudoers rule for passwordless BPF dev operations (requires sudo)
 ## This allows the pre-push hook to verify BPF without password prompts
 install-dev-sudoers:
-	@echo "Installing development sudoers rule..."
+	@echo "Installing development sudoers rule for $(DEV_USER)..."
 	@echo "# Allow passwordless BPF operations for development" > /tmp/akko-bpf-dev
 	@echo "# Installed by: make install-dev-sudoers" >> /tmp/akko-bpf-dev
-	@echo "$(USER) ALL=(ALL) NOPASSWD: $(DEV_WRAPPER)" >> /tmp/akko-bpf-dev
+	@echo "$(DEV_USER) ALL=(ALL) NOPASSWD: $(DEV_WRAPPER)" >> /tmp/akko-bpf-dev
 	$(INSTALL) -m 440 /tmp/akko-bpf-dev $(SUDOERS_FILE)
 	@rm /tmp/akko-bpf-dev
 	@echo "Sudoers rule installed at $(SUDOERS_FILE)"
