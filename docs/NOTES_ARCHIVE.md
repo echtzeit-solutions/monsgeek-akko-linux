@@ -1,4 +1,13 @@
-# MonsGeek M1 V5 HE Magnetic Keyboard - Linux Reverse Engineering
+# MonsGeek M1 V5 HE - Historical Reverse Engineering Notes
+
+> **Archive Notice:** This file preserves the original reverse engineering discovery process. For current protocol documentation, see [PROTOCOL.md](PROTOCOL.md).
+
+## Initial Problem (December 2024)
+
+- Akko Cloud Driver (web-based) doesn't work on Linux
+- Wants an "iot driver" native helper that doesn't exist for Linux
+- VIA doesn't recognize this keyboard
+- WebHID test pages can see the device but can't configure it
 
 ## Keyboard Info
 
@@ -8,14 +17,7 @@
 - **Firmware:** 4.05
 - **Connection:** USB 2.0 High Speed (480Mbps)
 
-## Problem
-
-- Akko Cloud Driver (web-based) doesn't work on Linux
-- Wants an "iot driver" native helper that doesn't exist for Linux
-- VIA doesn't recognize this keyboard
-- WebHID test pages can see the device
-
-## HID Interfaces
+## HID Interface Discovery
 
 The keyboard presents 3 HID interfaces:
 
@@ -25,7 +27,7 @@ The keyboard presents 3 HID interfaces:
 | hidraw5 | 171 bytes | Multi-function: Consumer Control (Report ID 03), System Control (02), NKRO (01), Mouse (06), Vendor (05, 31 bytes) |
 | hidraw12 | 20 bytes | **Config interface** - Vendor page 0xFFFF, 64-byte feature reports |
 
-## Report Descriptors (hex dumps)
+## Report Descriptor Hex Dumps
 
 ### hidraw2 (Standard Keyboard)
 ```
@@ -59,7 +61,7 @@ Decoded:
 - Usage 0x02
 - Feature Report: 64 bytes (0x40), signed bytes (-128 to 127)
 
-## Probing Results
+## Initial Probing Results
 
 ### Feature Reports (hidraw12)
 - Most report IDs return all zeros or echo sent data
@@ -70,17 +72,27 @@ Got some responses but they appear to be keyboard state reports, not protocol re
 - Pattern 0x07 → `0000100000000000`
 - Pattern 0x08 → `0000101200000000`
 - Pattern 0x09 → `0000120000000000`
-- etc.
 
-## Files in This Directory
+## Wine Testing Results
 
-- `99-monsgeek.rules` - udev rules for hidraw permissions (already installed to /etc/udev/rules.d/)
-- `monsgeek_probe.py` - Basic probe using feature reports
-- `monsgeek_probe2.py` - Advanced probe using interrupt read/write
+### iot_driver.exe under Wine
 
-## Akko Cloud Driver Architecture (Reverse Engineered)
+**Status: PARTIALLY WORKS**
 
-### Overview
+```bash
+wine ./iot_driver.exe
+# Output:
+# addr :: 127.0.0.1:3814
+# SSSSSSSSSSSTTTTTTTTTTTTTTTAAAAAAAAAAAARRRRRRRRRRRTTTTTTTTTTT!!!!!!!
+# HH 测试 调用 ----
+```
+
+- gRPC server starts and listens on port 3814
+- Web app can connect to it
+- Wine's HID passthrough can be unreliable
+- Native Linux driver is more reliable
+
+## Akko Cloud Driver Architecture Discovery
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -115,7 +127,7 @@ Got some responses but they appear to be keyboard state reports, not protocol re
 - Browser makes requests to `http://127.0.0.1:3814/driver.DriverGrpc/*`
 - Without iot_driver running, page shows blank/loading
 
-### gRPC Endpoints (driver.DriverGrpc service)
+### gRPC Endpoints Discovered (driver.DriverGrpc service)
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -128,7 +140,7 @@ Got some responses but they appear to be keyboard state reports, not protocol re
 | `/insertDb` | Write to local database |
 | `/upgradeOTAGATT` | Firmware update via BLE |
 
-### Protobuf Messages
+### Protobuf Messages Extracted
 
 ```protobuf
 // Send a HID feature report
@@ -152,80 +164,20 @@ enum CheckSumType {
 }
 ```
 
-## HID Protocol
+## Verified Device Data (First Successful Query)
 
-### Message Format
+| Field | Value |
+|-------|-------|
+| Device ID | 2949 (0x0B85) |
+| Firmware Version | 1029 (v10.29) |
+| Default Profile | 0 |
+| LED Mode | 1 (Constant/Static) |
+| LED Brightness | 2 |
+| LED Speed | 4 |
+| LED Color | RGB(7, 255, 255) |
+| Precision | 0.1mm (factor=10) |
 
-- **Size:** 64 bytes (padded with zeros)
-- **Byte 0:** Command ID
-- **Bytes 1-6:** Parameters
-- **Byte 7:** Checksum (for Bit7 mode)
-- **Checksum:** `255 - (sum(bytes[0:7]) & 0xFF)`
-
-### Response Validation
-
-- Byte 1 = `0xAA` (170) indicates success
-
-### Command IDs (FEA_CMD_*)
-
-| ID | Hex | Command | Description |
-|----|-----|---------|-------------|
-| 1 | 0x01 | SET_RESET | Reset device |
-| 3-4 | 0x03-04 | SET_REPORT | Set report rate |
-| 4-5 | 0x04-05 | SET_PROFILE | Set active profile |
-| 6 | 0x06 | SET_DEBOUNCE | Set debounce time |
-| 7 | 0x07 | SET_LEDPARAM | Set LED parameters |
-| 8 | 0x08 | SET_SLEDPARAM | Set secondary LED |
-| 9-10 | 0x09-0A | SET_KEYMATRIX | Set key mappings |
-| 11 | 0x0B | SET_MACRO | Set macro |
-| 16 | 0x10 | SET_FN | Set Fn layer |
-| 27 | 0x1B | SET_MAGNETISM_REPORT | Magnetic switch report |
-| 28 | 0x1C | SET_MAGNETISM_CAL | Calibrate magnetic switches |
-| 101 | 0x65 | SET_MULTI_MAGNETISM | Set RT/DKS per-key |
-| 128 | 0x80 | GET_REV / GET_RF_VERSION | Get firmware version |
-| 131 | 0x83 | GET_REPORT | Get report rate |
-| 132-133 | 0x84-85 | GET_PROFILE | Get active profile |
-| 134 | 0x86 | GET_DEBOUNCE | Get debounce |
-| 135 | 0x87 | GET_LEDPARAM | Get LED params |
-| 137-138 | 0x89-8A | GET_KEYMATRIX | Get key mappings |
-| 139 | 0x8B | GET_MACRO | Get macro |
-| 143 | 0x8F | GET_USB_VERSION | Get USB version |
-| 144 | 0x90 | GET_FN | Get Fn layer |
-| 229 | 0xE5 | GET_MULTI_MAGNETISM | Get RT/DKS settings |
-| 230 | 0xE6 | GET_FEATURE_LIST | Get supported features |
-
-### Device Database Entry
-
-Our keyboard in iot_driver:
-```
-{ vid = 0x3151, pid = 0x5030, usage = 0x2, usage_page = 0xffff, interface_number = 2 }
-```
-
-## Wine Testing
-
-### iot_driver.exe under Wine
-
-**Status: PARTIALLY WORKS**
-
-```bash
-wine ./iot_driver.exe
-# Output:
-# addr :: 127.0.0.1:3814
-# SSSSSSSSSSSTTTTTTTTTTTTTTTAAAAAAAAAAAARRRRRRRRRRRTTTTTTTTTTT!!!!!!!
-# HH 测试 调用 ----
-```
-
-- gRPC server starts and listens on port 3814
-- Web app can connect to it
-- **Unknown:** Whether Wine's HID passthrough works with the keyboard
-
-## Next Steps
-
-1. **Test Wine HID access** - See if iot_driver under Wine can actually see the keyboard
-2. **Write Python iot_driver replacement** - Reimplement the gRPC server for native Linux
-3. **Test protocol commands** - Use the extracted command IDs to probe the keyboard
-
-## Useful Commands
+## Useful Debug Commands
 
 ```bash
 # Check permissions
@@ -242,8 +194,13 @@ python3 monsgeek_probe2.py
 sudo cat /dev/hidraw12 | xxd
 ```
 
-## Resources
+## Resources Found
 
-- No existing Linux reverse-engineering project found
+- No existing Linux reverse-engineering project found at time of research
 - Official MonsGeek GitHub has firmware but no protocol docs: https://github.com/MonsGeek/m1_v5
 - SRGBmods QMK fork exists but doesn't help with proprietary protocol
+- Windows driver debug strings reference `D:\work\dj_code\dj_hid_sdk_rs\`
+
+---
+
+*Original notes from December 2024 - January 2025*

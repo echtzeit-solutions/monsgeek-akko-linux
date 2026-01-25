@@ -397,19 +397,14 @@ The TUI requires a proper terminal. It won't work in background mode or without 
 
 ## Protocol Documentation
 
-The driver implements the MonsGeek/Akko HID protocol:
-- Feature reports on interface 2 (usage 0x02, page 0xFFFF)
-- Input reports on interface 1 (usage 0x01, page 0xFFFF) for key depth
-- 65-byte reports with command byte and checksum
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the complete HID protocol specification, including:
 
-Key commands:
-- `0x8F` - GET_USB_VERSION (device ID, firmware)
-- `0x8C` - GET_LEDPARAM (LED settings)
-- `0x0C` - SET_LEDPARAM (set LED)
-- `0x65` - SET_MULTI_MAGNETISM (per-key settings)
-- `0xE5` - GET_MULTI_MAGNETISM (read per-key)
-- `0x0D` - SET_AUDIO_VIZ (audio reactive data)
-- `0x0E` - SET_SCREEN_COLOR (screen sync RGB)
+- Transport layer details (USB wired, 2.4GHz dongle, Bluetooth LE)
+- Message format and checksum algorithms
+- Complete command reference (SET/GET commands)
+- Data structures (LED params, trigger settings, key matrix)
+- Event notifications and key depth monitoring
+- Device database (VID/PID table)
 
 ## License
 

@@ -20,10 +20,12 @@ pub mod cmd {
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
     pub const SET_AUTOOS_EN: u8 = 0x17;
+    pub const SET_LEDONOFF: u8 = 0x05; // LED master on/off
     pub const SET_MAGNETISM_REPORT: u8 = 0x1B;
     pub const SET_MAGNETISM_CAL: u8 = 0x1C;
     pub const SET_MAGNETISM_MAX_CAL: u8 = 0x1E;
     pub const SET_KEY_MAGNETISM_MODE: u8 = 0x1D;
+    pub const SET_USERGIFSTART: u8 = 0x18; // Start animation upload
     pub const SET_MULTI_MAGNETISM: u8 = 0x65;
 
     // Undocumented/variant-specific SET commands (from firmware analysis)
@@ -42,6 +44,8 @@ pub mod cmd {
     pub const SET_OLEDBOOTLOADER: u8 = 0x30;
     /// OLED boot start
     pub const SET_OLEDBOOTSTART: u8 = 0x31;
+    /// TFT flash data
+    pub const SET_TFTFLASHDATA: u8 = 0x32;
     /// Factory SKU setting (manufacturing only)
     pub const SET_SKU: u8 = 0x50;
     /// Factory reset - DANGEROUS: erases flash
@@ -74,7 +78,9 @@ pub mod cmd {
     pub const GET_FN: u8 = 0x90; // Get Fn layer
     pub const GET_SLEEPTIME: u8 = 0x91; // Get sleep timeout
     pub const GET_AUTOOS_EN: u8 = 0x97; // Get auto-OS setting
+    pub const GET_MAGNETISM_CAL: u8 = 0x9C; // Calibration data (min)
     pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
+    pub const GET_MAGNETISM_CALMAX: u8 = 0x9E; // Calibration data (max)
     pub const GET_MULTI_MAGNETISM: u8 = 0xE5; // Get RT/DKS per-key settings
     pub const GET_FEATURE_LIST: u8 = 0xE6; // Get supported features
 
@@ -93,6 +99,8 @@ pub mod cmd {
     pub const GET_OLEDBOOTLOADER: u8 = 0xB0;
     /// OLED firmware checksum
     pub const GET_OLEDBOOTCHECKSUM: u8 = 0xB1;
+    /// TFT flash data readback
+    pub const GET_TFTFLASHDATA: u8 = 0xB2;
     /// Factory SKU readback
     pub const GET_SKU: u8 = 0xD0;
 
@@ -292,6 +300,7 @@ pub mod cmd {
             SET_RESET => "SET_RESET",
             SET_REPORT => "SET_REPORT",
             SET_PROFILE => "SET_PROFILE",
+            SET_LEDONOFF => "SET_LEDONOFF",
             SET_DEBOUNCE => "SET_DEBOUNCE",
             SET_LEDPARAM => "SET_LEDPARAM",
             SET_SLEDPARAM => "SET_SLEDPARAM",
@@ -305,6 +314,7 @@ pub mod cmd {
             SET_SLEEPTIME => "SET_SLEEPTIME",
             SET_USERGIF => "SET_USERGIF",
             SET_AUTOOS_EN => "SET_AUTOOS_EN",
+            SET_USERGIFSTART => "SET_USERGIFSTART",
             SET_MAGNETISM_REPORT => "SET_MAGNETISM_REPORT",
             SET_MAGNETISM_CAL => "SET_MAGNETISM_CAL",
             SET_MAGNETISM_MAX_CAL => "SET_MAGNETISM_MAX_CAL",
@@ -318,6 +328,7 @@ pub mod cmd {
             SET_SCREEN_24BITDATA => "SET_SCREEN_24BITDATA",
             SET_OLEDBOOTLOADER => "SET_OLEDBOOTLOADER",
             SET_OLEDBOOTSTART => "SET_OLEDBOOTSTART",
+            SET_TFTFLASHDATA => "SET_TFTFLASHDATA",
             SET_SKU => "SET_SKU",
             FACTORY_RESET => "FACTORY_RESET",
             SET_FLASHCHIPERASSE => "SET_FLASHCHIPERASSE",
@@ -337,13 +348,16 @@ pub mod cmd {
             GET_FN => "GET_FN",
             GET_SLEEPTIME => "GET_SLEEPTIME",
             GET_AUTOOS_EN => "GET_AUTOOS_EN",
+            GET_MAGNETISM_CAL => "GET_MAGNETISM_CAL",
             GET_KEY_MAGNETISM_MODE => "GET_KEY_MAGNETISM_MODE",
+            GET_MAGNETISM_CALMAX => "GET_MAGNETISM_CALMAX",
             GET_TFTLCDDATA => "GET_TFTLCDDATA",
             GET_SCREEN_24BITDATA => "GET_SCREEN_24BITDATA",
             GET_OLED_VERSION => "GET_OLED_VERSION",
             GET_MLED_VERSION => "GET_MLED_VERSION",
             GET_OLEDBOOTLOADER => "GET_OLEDBOOTLOADER",
             GET_OLEDBOOTCHECKSUM => "GET_OLEDBOOTCHECKSUM",
+            GET_TFTFLASHDATA => "GET_TFTFLASHDATA",
             GET_SKU => "GET_SKU",
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
@@ -1105,11 +1119,62 @@ pub mod audio_viz {
     }
 }
 
-/// Keyboard-initiated events (INT-IN endpoint)
+/// Keyboard-initiated events (INT-IN endpoint / EP2)
 /// These are notifications sent by the keyboard, not responses to commands
+/// All events use Report ID 0x05: [0x05, event_type, value1, value2, ...]
 pub mod events {
     /// Report ID for vendor events on Linux
     pub const REPORT_ID: u8 = 0x05;
+
+    // Event types (byte 1 after report ID)
+
+    /// Wake from sleep - all zeros after report ID
+    pub const WAKE: u8 = 0x00;
+
+    /// Profile changed (via Fn+F9..F12)
+    /// Format: [0x05, 0x01, profile, ...]
+    pub const PROFILE_CHANGE: u8 = 0x01;
+
+    /// Keyboard function events (Win lock, WASD swap, Fn layer, backlight, dial mode)
+    /// Format: [0x05, 0x03, state, sub_type, ...]
+    pub const KB_FUNC: u8 = 0x03;
+
+    /// Main LED effect mode changed (via Fn+Home/PgUp/End/PgDn)
+    /// Format: [0x05, 0x04, mode, ...]
+    pub const LED_EFFECT_MODE: u8 = 0x04;
+
+    /// Main LED speed changed (via Fn+←/→)
+    /// Format: [0x05, 0x05, speed, ...]
+    pub const LED_EFFECT_SPEED: u8 = 0x05;
+
+    /// Main LED brightness changed (via Fn+↑/↓ or dial)
+    /// Format: [0x05, 0x06, level, ...]
+    pub const LED_BRIGHTNESS: u8 = 0x06;
+
+    /// Main LED color changed (via Fn+\)
+    /// Format: [0x05, 0x07, color, ...]
+    pub const LED_COLOR: u8 = 0x07;
+
+    /// Side LED effect mode changed
+    /// Format: [0x05, 0x08, mode, ...]
+    pub const SIDE_LED_MODE: u8 = 0x08;
+
+    /// Side LED speed changed
+    /// Format: [0x05, 0x09, speed, ...]
+    pub const SIDE_LED_SPEED: u8 = 0x09;
+
+    /// Side LED brightness changed
+    /// Format: [0x05, 0x0A, level, ...]
+    pub const SIDE_LED_BRIGHTNESS: u8 = 0x0A;
+
+    /// Side LED color changed
+    /// Format: [0x05, 0x0B, color, ...]
+    pub const SIDE_LED_COLOR: u8 = 0x0B;
+
+    /// Factory reset triggered (via Fn+~)
+    /// Format: [0x05, 0x0D, 0x00, ...]
+    /// Followed by SETTINGS_ACK (0x0F 0x01) then (0x0F 0x00) when complete
+    pub const RESET_TRIGGERED: u8 = 0x0D;
 
     /// Settings acknowledgment event
     /// Sent when keyboard settings change (via Fn keys or commands)
@@ -1117,38 +1182,500 @@ pub mod events {
     /// status: 0x01 = change in progress, 0x00 = change complete
     pub const SETTINGS_ACK: u8 = 0x0F;
 
-    /// Factory reset event
-    /// Sent when factory reset is triggered via Fn-~ key combination
-    /// Format: [0x05, 0x0D, 0x00, ...]
-    /// Followed by SETTINGS_ACK (0x0F 0x01) then (0x0F 0x00) when complete
-    pub const RESET_TRIGGERED: u8 = 0x0D;
+    /// Sleep mode change
+    /// Format: [0x05, 0x13, state, ...]
+    pub const SLEEP_MODE_CHANGE: u8 = 0x13;
 
-    /// Settings ack status values
+    /// Key depth report (when magnetism monitoring enabled)
+    /// Format: [0x05, 0x1B, depth_lo, depth_hi, key_index, ...]
+    pub const KEY_DEPTH: u8 = 0x1B;
+
+    /// Magnetic mode changed (per-key mode)
+    /// Format: [0x05, 0x1D, mode, ...]
+    pub const MAGNETIC_MODE_CHANGE: u8 = 0x1D;
+
+    /// Screen clear complete (OLED/TFT)
+    /// Format: [0x05, 0x2C, 0x00, ...]
+    pub const SCREEN_CLEAR_DONE: u8 = 0x2C;
+
+    /// Battery status (via dongle EP2 after F7)
+    /// Format: [0x05, 0x88, 0x00, 0x00, level, flags, ...]
+    pub const BATTERY_STATUS: u8 = 0x88;
+
+    // KB_FUNC sub-types (byte 3)
+
+    /// Win key lock toggle - state in byte 2 (0=unlocked, 1=locked)
+    pub const KB_FUNC_WIN_LOCK: u8 = 0x01;
+
+    /// WASD/Arrow swap toggle - state in byte 2 (0=normal, 8=swapped)
+    pub const KB_FUNC_WASD_SWAP: u8 = 0x03;
+
+    /// Fn layer toggle - layer in byte 2 (0=default, 1=alternate)
+    pub const KB_FUNC_FN_LAYER: u8 = 0x08;
+
+    /// Backlight toggle - byte 2=0x04
+    pub const KB_FUNC_BACKLIGHT: u8 = 0x09;
+
+    /// Dial mode toggle (volume ↔ brightness) - byte 2=0x00
+    pub const KB_FUNC_DIAL_MODE: u8 = 0x11;
+
+    // Settings ack status values
+
+    /// Settings save started
     pub const SETTINGS_ACK_START: u8 = 0x01;
+    /// Settings save complete
     pub const SETTINGS_ACK_DONE: u8 = 0x00;
 
+    // Battery flags (byte 5 of BATTERY_STATUS)
+
+    /// Keyboard is online/connected
+    pub const BATTERY_FLAG_ONLINE: u8 = 0x01;
+    /// Keyboard is charging
+    pub const BATTERY_FLAG_CHARGING: u8 = 0x02;
+
+    /// Parsed event with typed payload
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum Event {
+        Wake,
+        ProfileChange {
+            profile: u8,
+        },
+        WinLockToggle {
+            locked: bool,
+        },
+        WasdSwapToggle {
+            swapped: bool,
+        },
+        FnLayerToggle {
+            layer: u8,
+        },
+        BacklightToggle,
+        DialModeToggle,
+        LedEffectMode {
+            mode: u8,
+        },
+        LedEffectSpeed {
+            speed: u8,
+        },
+        LedBrightness {
+            level: u8,
+        },
+        LedColor {
+            color: u8,
+        },
+        SideLedMode {
+            mode: u8,
+        },
+        SideLedSpeed {
+            speed: u8,
+        },
+        SideLedBrightness {
+            level: u8,
+        },
+        SideLedColor {
+            color: u8,
+        },
+        ResetTriggered,
+        SettingsAck {
+            started: bool,
+        },
+        SleepModeChange {
+            state: u8,
+        },
+        KeyDepth {
+            depth: u16,
+            key_index: u8,
+        },
+        MagneticModeChange {
+            mode: u8,
+        },
+        ScreenClearDone,
+        BatteryStatus {
+            level: u8,
+            online: bool,
+            charging: bool,
+        },
+        Unknown {
+            event_type: u8,
+            data: [u8; 4],
+        },
+    }
+
     /// Parse an event from raw HID buffer
-    /// Returns (event_type, status_byte) or None if not a recognized event
-    pub fn parse(buf: &[u8]) -> Option<(u8, u8)> {
+    /// Returns parsed Event or None if buffer is too short
+    pub fn parse(buf: &[u8]) -> Option<Event> {
+        if buf.len() < 2 {
+            return None;
+        }
+
+        // Check report ID
+        if buf[0] != REPORT_ID {
+            return None;
+        }
+
+        let event_type = buf[1];
+        let b2 = buf.get(2).copied().unwrap_or(0);
+        let b3 = buf.get(3).copied().unwrap_or(0);
+        let b4 = buf.get(4).copied().unwrap_or(0);
+        let b5 = buf.get(5).copied().unwrap_or(0);
+
+        Some(match event_type {
+            WAKE if b2 == 0 && b3 == 0 && b4 == 0 => Event::Wake,
+            PROFILE_CHANGE => Event::ProfileChange { profile: b2 },
+            KB_FUNC => match b3 {
+                KB_FUNC_WIN_LOCK => Event::WinLockToggle { locked: b2 != 0 },
+                KB_FUNC_WASD_SWAP => Event::WasdSwapToggle { swapped: b2 == 8 },
+                KB_FUNC_FN_LAYER => Event::FnLayerToggle { layer: b2 },
+                KB_FUNC_BACKLIGHT => Event::BacklightToggle,
+                KB_FUNC_DIAL_MODE => Event::DialModeToggle,
+                _ => Event::Unknown {
+                    event_type,
+                    data: [b2, b3, b4, b5],
+                },
+            },
+            LED_EFFECT_MODE => Event::LedEffectMode { mode: b2 },
+            LED_EFFECT_SPEED => Event::LedEffectSpeed { speed: b2 },
+            LED_BRIGHTNESS => Event::LedBrightness { level: b2 },
+            LED_COLOR => Event::LedColor { color: b2 },
+            SIDE_LED_MODE => Event::SideLedMode { mode: b2 },
+            SIDE_LED_SPEED => Event::SideLedSpeed { speed: b2 },
+            SIDE_LED_BRIGHTNESS => Event::SideLedBrightness { level: b2 },
+            SIDE_LED_COLOR => Event::SideLedColor { color: b2 },
+            RESET_TRIGGERED => Event::ResetTriggered,
+            SETTINGS_ACK => Event::SettingsAck {
+                started: b2 == SETTINGS_ACK_START,
+            },
+            SLEEP_MODE_CHANGE => Event::SleepModeChange { state: b2 },
+            KEY_DEPTH => Event::KeyDepth {
+                depth: (b2 as u16) | ((b3 as u16) << 8),
+                key_index: b4,
+            },
+            MAGNETIC_MODE_CHANGE => Event::MagneticModeChange { mode: b2 },
+            SCREEN_CLEAR_DONE => Event::ScreenClearDone,
+            BATTERY_STATUS => Event::BatteryStatus {
+                level: b4,
+                online: (b5 & BATTERY_FLAG_ONLINE) != 0,
+                charging: (b5 & BATTERY_FLAG_CHARGING) != 0,
+            },
+            _ => Event::Unknown {
+                event_type,
+                data: [b2, b3, b4, b5],
+            },
+        })
+    }
+
+    /// Parse raw event returning (event_type, status_byte) - legacy API
+    pub fn parse_raw(buf: &[u8]) -> Option<(u8, u8)> {
         if buf.len() >= 3 && buf[0] == REPORT_ID {
-            let event = buf[1];
-            let status = buf[2];
-            match event {
-                SETTINGS_ACK | RESET_TRIGGERED => Some((event, status)),
-                _ => None,
-            }
+            Some((buf[1], buf[2]))
         } else {
             None
         }
     }
 
     /// Get event name for display
-    pub fn name(event: u8) -> &'static str {
-        match event {
-            SETTINGS_ACK => "SETTINGS_ACK",
+    pub fn name(event_type: u8) -> &'static str {
+        match event_type {
+            WAKE => "WAKE",
+            PROFILE_CHANGE => "PROFILE_CHANGE",
+            KB_FUNC => "KB_FUNC",
+            LED_EFFECT_MODE => "LED_EFFECT_MODE",
+            LED_EFFECT_SPEED => "LED_EFFECT_SPEED",
+            LED_BRIGHTNESS => "LED_BRIGHTNESS",
+            LED_COLOR => "LED_COLOR",
+            SIDE_LED_MODE => "SIDE_LED_MODE",
+            SIDE_LED_SPEED => "SIDE_LED_SPEED",
+            SIDE_LED_BRIGHTNESS => "SIDE_LED_BRIGHTNESS",
+            SIDE_LED_COLOR => "SIDE_LED_COLOR",
             RESET_TRIGGERED => "RESET_TRIGGERED",
+            SETTINGS_ACK => "SETTINGS_ACK",
+            SLEEP_MODE_CHANGE => "SLEEP_MODE_CHANGE",
+            KEY_DEPTH => "KEY_DEPTH",
+            MAGNETIC_MODE_CHANGE => "MAGNETIC_MODE_CHANGE",
+            SCREEN_CLEAR_DONE => "SCREEN_CLEAR_DONE",
+            BATTERY_STATUS => "BATTERY_STATUS",
             _ => "UNKNOWN",
         }
+    }
+}
+
+/// FEATURE report command reference (observed from USB captures)
+///
+/// These commands are sent via SET_REPORT/GET_REPORT HID requests on the control endpoint.
+/// Format: `[cmd, param1, param2, param3, param4, param5, param6, checksum, ...]`
+/// Checksum at byte 7 = 255 - (sum of bytes 0-6)
+///
+/// # Protocol Commands (not data commands)
+/// - `0xF7` - WAKE/INIT: Wakes dongle, triggers pending response retrieval
+/// - `0xFC` - FLUSH: No-op that flushes response buffer without overwriting
+///
+/// # GET Commands (read settings)
+/// | Cmd  | Name | Description |
+/// |------|------|-------------|
+/// | 0x80 | GET_REV | Firmware revision |
+/// | 0x83 | GET_LED_MODE | LED effect mode (0-25) |
+/// | 0x84 | GET_LED_BRIGHTNESS | LED brightness level (0-4) |
+/// | 0x86 | GET_LED_SPEED | LED animation speed (0-4) |
+/// | 0x87 | GET_LED_COLOR | LED color index (0-7) |
+/// | 0x88 | GET_DEBOUNCE | Debounce time in ms |
+/// | 0x89 | GET_POLLING_RATE | Polling rate code (0-6) |
+/// | 0x8F | GET_ALL_SETTINGS | Bulk settings read |
+/// | 0x91 | GET_KB_OPTIONS | Keyboard options (WASD swap, Win lock, etc.) |
+/// | 0x97 | GET_AUTOOS_EN | Auto OS detection enabled (boolean) |
+/// | 0xAD | GET_OLED_VERSION | OLED screen firmware version (u16 LE) |
+/// | 0xAE | GET_MLED_VERSION | Matrix LED firmware version (u16 LE) |
+/// | 0xE5 | GET_MULTI_MAGNETISM | Per-key actuation/RT settings |
+///
+/// # SET Commands (write settings)
+/// | Cmd  | Name | Format |
+/// |------|------|--------|
+/// | 0x04 | SET_PROFILE | `[0x04, profile, 0, 0, 0, 0, 0, chk]` |
+/// | 0x8A | SET_ACTUATION | `[0x8A, profile, value, col, row, 0, 0, chk]` |
+/// | 0x90 | SET_RT | `[0x90, profile, value, col, row, 0, 0, chk]` |
+/// | 0xE5 | SET_MULTI_MAGNETISM | Extended per-key settings |
+///
+/// # E5 Extended Command Format
+/// GET: `[0xE5, type, 0x01, profile, 0, 0, 0, chk]`
+/// | Type | Description |
+/// |------|-------------|
+/// | 0x00 | Actuation per-key data, page 0 |
+/// | 0x01 | Actuation per-key data, page 1 |
+/// | 0x06 | Rapid Trigger per-key data, page 0 |
+/// | 0x07 | Rapid Trigger per-key data, page 1 |
+/// | 0xFB | Extended trigger data 1 |
+/// | 0xFC | Extended trigger data 2 |
+///
+/// # 8A/90 Per-Key Command Format
+/// `[cmd, profile, value, col, row, 0, 0, checksum]`
+/// - profile: 0-1 (only 2 profiles observed, though 0-3 may be valid)
+/// - value: 0xFF = max (use default actuation/RT distance)
+/// - col: 0-7 (key column in matrix)
+/// - row: 0-3 (key row in matrix)
+///
+/// Iterates through all keys: profiles 0-1, cols 0-7, rows 0-3 (64 commands total)
+pub mod feature_cmds {
+    // Protocol commands
+    pub const WAKE: u8 = 0xF7;
+    pub const FLUSH: u8 = 0xFC;
+
+    // Core GET commands
+    pub const GET_REV: u8 = 0x80;
+    pub const GET_REPORT: u8 = 0x83; // Polling rate
+    pub const GET_PROFILE: u8 = 0x84;
+    pub const GET_LEDONOFF: u8 = 0x85;
+    pub const GET_DEBOUNCE: u8 = 0x86;
+    pub const GET_LEDPARAM: u8 = 0x87;
+    pub const GET_SLEDPARAM: u8 = 0x88;
+    pub const GET_KBOPTION: u8 = 0x89;
+    pub const GET_KEYMATRIX: u8 = 0x8A;
+    pub const GET_MACRO: u8 = 0x8B;
+    pub const GET_USERPIC: u8 = 0x8C;
+    pub const GET_USB_VERSION: u8 = 0x8F;
+    pub const GET_FN: u8 = 0x90;
+    pub const GET_SLEEPTIME: u8 = 0x91;
+    pub const GET_AUTOOS_EN: u8 = 0x97;
+
+    // Magnetism GET commands
+    pub const GET_MAGNETISM_CAL: u8 = 0x9C;
+    pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
+    pub const GET_MAGNETISM_CALMAX: u8 = 0x9E;
+
+    // Version GET commands
+    pub const GET_OLED_VERSION: u8 = 0xAD;
+    pub const GET_MLED_VERSION: u8 = 0xAE;
+
+    // Extended GET commands
+    pub const GET_MULTI_MAGNETISM: u8 = 0xE5;
+    pub const GET_FEATURE_LIST: u8 = 0xE6;
+
+    // Core SET commands
+    pub const SET_RESET: u8 = 0x01;
+    pub const SET_REPORT: u8 = 0x03; // Polling rate
+    pub const SET_PROFILE: u8 = 0x04;
+    pub const SET_LEDONOFF: u8 = 0x05;
+    pub const SET_DEBOUNCE: u8 = 0x06;
+    pub const SET_LEDPARAM: u8 = 0x07;
+    pub const SET_SLEDPARAM: u8 = 0x08;
+    pub const SET_KBOPTION: u8 = 0x09;
+    pub const SET_KEYMATRIX: u8 = 0x0A;
+    pub const SET_MACRO: u8 = 0x0B;
+    pub const SET_USERPIC: u8 = 0x0C;
+    pub const SET_AUDIO: u8 = 0x0D;
+    pub const SET_SCREEN_COLOR: u8 = 0x0E;
+    pub const SET_FN: u8 = 0x10;
+    pub const SET_SLEEPTIME: u8 = 0x11;
+    pub const SET_USERGIF: u8 = 0x12;
+    pub const SET_AUTOOS_EN: u8 = 0x17;
+    pub const SET_USERGIFSTART: u8 = 0x18;
+
+    // Magnetism SET commands
+    pub const SET_MAGNETISM_REPORT: u8 = 0x1B;
+    pub const SET_MAGNETISM_CAL: u8 = 0x1C;
+    pub const SET_KEY_MAGNETISM_MODE: u8 = 0x1D;
+    pub const SET_MAGNETISM_MAX_CAL: u8 = 0x1E;
+    pub const SET_MULTI_MAGNETISM: u8 = 0x65;
+
+    // Per-key SET commands (observed from Windows dongle capture)
+    // Note: These overlap with GET commands - same byte, different meaning based on params:
+    // - No params = GET (query)
+    // - With [profile, value, col, row] = SET (per-key)
+    pub const SET_ACTUATION: u8 = 0x8A; // Same as GET_KEYMATRIX
+    pub const SET_RT: u8 = 0x90; // Same as GET_FN
+
+    // E5 subtypes (byte 1 of E5 command)
+    pub mod e5 {
+        /// Actuation per-key data, page 0
+        pub const ACTUATION_PAGE0: u8 = 0x00;
+        /// Actuation per-key data, page 1
+        pub const ACTUATION_PAGE1: u8 = 0x01;
+        /// Rapid Trigger per-key data, page 0
+        pub const RT_PAGE0: u8 = 0x06;
+        /// Rapid Trigger per-key data, page 1
+        pub const RT_PAGE1: u8 = 0x07;
+        /// Extended trigger data 1
+        pub const EXTENDED1: u8 = 0xFB;
+        /// Extended trigger data 2
+        pub const EXTENDED2: u8 = 0xFC;
+
+        pub fn name(subtype: u8) -> &'static str {
+            match subtype {
+                ACTUATION_PAGE0 => "ACTUATION_PAGE0",
+                ACTUATION_PAGE1 => "ACTUATION_PAGE1",
+                RT_PAGE0 => "RT_PAGE0",
+                RT_PAGE1 => "RT_PAGE1",
+                EXTENDED1 => "EXTENDED1",
+                EXTENDED2 => "EXTENDED2",
+                _ => "UNKNOWN",
+            }
+        }
+    }
+
+    /// Get command name for display/debugging
+    pub fn name(cmd: u8) -> &'static str {
+        match cmd {
+            // Protocol
+            WAKE => "WAKE",
+            FLUSH => "FLUSH",
+            // Core GET
+            GET_REV => "GET_REV",
+            GET_REPORT => "GET_REPORT",
+            GET_PROFILE => "GET_PROFILE",
+            GET_LEDONOFF => "GET_LEDONOFF",
+            GET_DEBOUNCE => "GET_DEBOUNCE",
+            GET_LEDPARAM => "GET_LEDPARAM",
+            GET_SLEDPARAM => "GET_SLEDPARAM",
+            GET_KBOPTION => "GET_KBOPTION",
+            GET_KEYMATRIX => "GET_KEYMATRIX",
+            GET_MACRO => "GET_MACRO",
+            GET_USERPIC => "GET_USERPIC",
+            GET_USB_VERSION => "GET_USB_VERSION",
+            GET_FN => "GET_FN",
+            GET_SLEEPTIME => "GET_SLEEPTIME",
+            GET_AUTOOS_EN => "GET_AUTOOS_EN",
+            // Magnetism GET
+            GET_MAGNETISM_CAL => "GET_MAGNETISM_CAL",
+            GET_KEY_MAGNETISM_MODE => "GET_KEY_MAGNETISM_MODE",
+            GET_MAGNETISM_CALMAX => "GET_MAGNETISM_CALMAX",
+            // Version GET
+            GET_OLED_VERSION => "GET_OLED_VERSION",
+            GET_MLED_VERSION => "GET_MLED_VERSION",
+            // Extended GET
+            GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
+            GET_FEATURE_LIST => "GET_FEATURE_LIST",
+            // Core SET
+            SET_RESET => "SET_RESET",
+            SET_REPORT => "SET_REPORT",
+            SET_PROFILE => "SET_PROFILE",
+            SET_LEDONOFF => "SET_LEDONOFF",
+            SET_DEBOUNCE => "SET_DEBOUNCE",
+            SET_LEDPARAM => "SET_LEDPARAM",
+            SET_SLEDPARAM => "SET_SLEDPARAM",
+            SET_KBOPTION => "SET_KBOPTION",
+            SET_KEYMATRIX => "SET_KEYMATRIX",
+            SET_MACRO => "SET_MACRO",
+            SET_USERPIC => "SET_USERPIC",
+            SET_AUDIO => "SET_AUDIO",
+            SET_SCREEN_COLOR => "SET_SCREEN_COLOR",
+            SET_FN => "SET_FN",
+            SET_SLEEPTIME => "SET_SLEEPTIME",
+            SET_USERGIF => "SET_USERGIF",
+            SET_AUTOOS_EN => "SET_AUTOOS_EN",
+            SET_USERGIFSTART => "SET_USERGIFSTART",
+            // Magnetism SET
+            SET_MAGNETISM_REPORT => "SET_MAGNETISM_REPORT",
+            SET_MAGNETISM_CAL => "SET_MAGNETISM_CAL",
+            SET_KEY_MAGNETISM_MODE => "SET_KEY_MAGNETISM_MODE",
+            SET_MAGNETISM_MAX_CAL => "SET_MAGNETISM_MAX_CAL",
+            SET_MULTI_MAGNETISM => "SET_MULTI_MAGNETISM",
+            // Note: SET_ACTUATION (0x8A) and SET_RT (0x90) overlap with GET_KEYMATRIX and GET_FN
+            // They use the same byte but different params - handled by GET names above
+            _ => "UNKNOWN",
+        }
+    }
+
+    /// Check if command is a GET (read) command
+    pub fn is_get(cmd: u8) -> bool {
+        matches!(
+            cmd,
+            GET_REV
+                | GET_REPORT
+                | GET_PROFILE
+                | GET_LEDONOFF
+                | GET_DEBOUNCE
+                | GET_LEDPARAM
+                | GET_SLEDPARAM
+                | GET_KBOPTION
+                | GET_KEYMATRIX
+                | GET_MACRO
+                | GET_USERPIC
+                | GET_USB_VERSION
+                | GET_FN
+                | GET_SLEEPTIME
+                | GET_AUTOOS_EN
+                | GET_MAGNETISM_CAL
+                | GET_KEY_MAGNETISM_MODE
+                | GET_MAGNETISM_CALMAX
+                | GET_OLED_VERSION
+                | GET_MLED_VERSION
+                | GET_MULTI_MAGNETISM
+                | GET_FEATURE_LIST
+        )
+    }
+
+    /// Check if command is a SET (write) command
+    /// Note: Some commands (0x8A, 0x90) are dual-purpose GET/SET based on params
+    pub fn is_set(cmd: u8) -> bool {
+        matches!(
+            cmd,
+            SET_RESET
+                | SET_REPORT
+                | SET_PROFILE
+                | SET_LEDONOFF
+                | SET_DEBOUNCE
+                | SET_LEDPARAM
+                | SET_SLEDPARAM
+                | SET_KBOPTION
+                | SET_KEYMATRIX
+                | SET_MACRO
+                | SET_USERPIC
+                | SET_AUDIO
+                | SET_SCREEN_COLOR
+                | SET_FN
+                | SET_SLEEPTIME
+                | SET_USERGIF
+                | SET_AUTOOS_EN
+                | SET_USERGIFSTART
+                | SET_MAGNETISM_REPORT
+                | SET_MAGNETISM_CAL
+                | SET_KEY_MAGNETISM_MODE
+                | SET_MAGNETISM_MAX_CAL
+                | SET_MULTI_MAGNETISM // SET_ACTUATION (0x8A) and SET_RT (0x90) excluded - overlap with GET_KEYMATRIX/GET_FN
+        )
+    }
+
+    /// Check if command is a protocol command (not data)
+    pub fn is_protocol(cmd: u8) -> bool {
+        matches!(cmd, WAKE | FLUSH)
     }
 }
 

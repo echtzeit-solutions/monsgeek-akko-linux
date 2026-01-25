@@ -201,48 +201,9 @@ Key files extracted:
 - `devices_electron.json` - All supported devices with parameters
 - `akko_business_logic.js` - Core HID communication logic
 
-## HID Protocol Summary
+## HID Protocol
 
-### Message Format
-
-- **Size:** 64 bytes (padded with zeros)
-- **Byte 0:** Command ID
-- **Bytes 1-6:** Parameters
-- **Byte 7:** Checksum (for Bit7 mode)
-- **Checksum:** `255 - (sum(bytes[0:7]) & 0xFF)`
-
-### Response Validation
-
-- Byte 0 echoes the command ID
-- Byte 1 = `0xAA` (170) indicates success
-
-### Key Commands
-
-| Command | ID | Description |
-|---------|-----|-------------|
-| GET_REV | 0x80 | Firmware version |
-| GET_USB_VERSION | 0x8F | Device ID |
-| GET_PROFILE | 0x84 | Active profile |
-| GET_LEDPARAM | 0x87 | LED settings |
-| GET_SLEDPARAM | 0x88 | Side LED settings |
-| GET_KBOPTION | 0x89 | Keyboard options |
-| GET_MULTI_MAGNETISM | 0xE5 | Per-key trigger settings |
-| SET_PROFILE | 0x04 | Set profile |
-| SET_LEDPARAM | 0x07 | Set LED |
-| SET_MULTI_MAGNETISM | 0x65 | Set triggers |
-
-### Per-Key Trigger Settings (GET/SET_MULTI_MAGNETISM)
-
-Sub-commands:
-| Sub-cmd | Description |
-|---------|-------------|
-| 0 | Press travel (actuation point) |
-| 1 | Lift travel (release point) |
-| 2 | Rapid Trigger press sensitivity |
-| 3 | Rapid Trigger lift sensitivity |
-| 7 | Key mode (Normal/RT/DKS/ModTap/Toggle/SnapTap) |
-
-Values are in "precision units" - divide by 100 or 200 depending on firmware version to get mm.
+For complete protocol documentation including message format, all commands, data structures, and transport-specific details, see **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 
 ## Files in This Project
 
