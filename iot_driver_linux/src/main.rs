@@ -2147,7 +2147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Tui) => {
             iot_driver::tui::run().await?;
         }
-        Some(Commands::WatchSettings) => {
+        Some(Commands::Monitor) => {
             watch_settings_changes().await?;
         }
         Some(Commands::Joystick { config, headless }) => {
