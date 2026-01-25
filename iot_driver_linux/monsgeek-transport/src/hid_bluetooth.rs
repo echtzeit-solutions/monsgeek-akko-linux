@@ -44,6 +44,7 @@
 //! - Event format: `[06, 66, type, value]` vs USB's `[05, type, value]`
 //! - Battery status via BLE Battery Service (bluetoothctl or D-Bus)
 
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,7 +53,7 @@ use async_trait::async_trait;
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::error::TransportError;
 use crate::protocol::{self, timing};
@@ -407,28 +408,29 @@ impl Transport for HidBluetoothTransport {
     }
 
     async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
-        // For Bluetooth, we could query via:
-        // 1. BLE Battery Service (0x180F) - but that requires bluer/btleplug
-        // 2. Vendor command 0xF7 - if keyboard supports it over BLE
-        //
-        // For now, try the vendor command approach
-        // If it doesn't work, return a default value
-        match self.query_command(0xF7, &[], ChecksumType::Bit7).await {
-            Ok(resp) if resp.len() > 5 => {
-                // resp is [cmd, ...] after stripping 0x55 framing in query_command()
-                // Follow wired/dongle semantics: [1]=level, [3]=idle, [4]=online (best-effort)
-                let level = resp[1];
-                let online = resp.get(4).map(|&b| b != 0).unwrap_or(true);
-                let idle = resp.get(3).map(|&b| b != 0).unwrap_or(false);
-                Ok((level.min(100), online, idle))
-            }
-            _ => {
-                // Battery query not supported over BLE, return unknown
-                // The caller can use bluetoothctl or other means to get battery
-                debug!("Battery query not supported over BLE");
-                Ok((0, true, false)) // Level 0 indicates unknown
+        // For Bluetooth, query via BlueZ Battery1 interface
+        // The keyboard sends battery level as BLE notifications on handle 0x0e
+        // which BlueZ exposes via org.bluez.Battery1
+
+        // Extract MAC address from serial (format: "F4:EE:25:AF:3A:38" or similar)
+        if let Some(ref serial) = self.info.serial {
+            if let Some(level) = query_bluez_battery(serial) {
+                debug!("BLE battery from BlueZ: {}%", level);
+                return Ok((level, true, false));
             }
         }
+
+        // Fallback: try to find by product name
+        if let Some(ref name) = self.info.product_name {
+            if let Some(level) = query_bluez_battery_by_name(name) {
+                debug!("BLE battery from BlueZ (by name): {}%", level);
+                return Ok((level, true, false));
+            }
+        }
+
+        // Battery query failed - device might be disconnected or BlueZ doesn't have it
+        trace!("Could not get BLE battery from BlueZ");
+        Ok((0, true, false)) // Level 0 indicates unknown
     }
 }
 
@@ -437,6 +439,86 @@ impl Drop for HidBluetoothTransport {
         self.shutdown.store(true, Ordering::SeqCst);
         debug!("HidBluetoothTransport dropped, signaling event reader shutdown");
     }
+}
+
+/// Query BlueZ for battery level by MAC address
+///
+/// Uses `bluetoothctl info <mac>` to get the Battery Percentage.
+fn query_bluez_battery(mac_or_serial: &str) -> Option<u8> {
+    // Try to extract/normalize MAC address
+    // Serial might be MAC with colons, or some other format
+    let mac = if mac_or_serial.contains(':') && mac_or_serial.len() >= 17 {
+        // Already looks like a MAC address
+        mac_or_serial.to_string()
+    } else {
+        // Try to find the device by listing all and matching
+        return None;
+    };
+
+    let output = Command::new("bluetoothctl")
+        .args(["info", &mac])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Look for "Battery Percentage: 0x5e (94)"
+    for line in stdout.lines() {
+        if line.contains("Battery Percentage:") {
+            // Parse the decimal value in parentheses
+            if let Some(start) = line.rfind('(') {
+                if let Some(end) = line.rfind(')') {
+                    if let Ok(level) = line[start + 1..end].parse::<u8>() {
+                        return Some(level.min(100));
+                    }
+                }
+            }
+            // Try parsing hex value after "0x"
+            if let Some(hex_start) = line.find("0x") {
+                let hex_str = &line[hex_start + 2..];
+                let hex_end = hex_str
+                    .find(|c: char| !c.is_ascii_hexdigit())
+                    .unwrap_or(hex_str.len());
+                if let Ok(level) = u8::from_str_radix(&hex_str[..hex_end], 16) {
+                    return Some(level.min(100));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Query BlueZ for battery level by device name
+///
+/// Lists all paired devices and finds one matching the name.
+fn query_bluez_battery_by_name(name: &str) -> Option<u8> {
+    // List all paired devices
+    let output = Command::new("bluetoothctl")
+        .args(["devices"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Format: "Device F4:EE:25:AF:3A:38 M1 V5 HE BT1"
+    for line in stdout.lines() {
+        if line.contains(name) || (name.contains("M1") && line.contains("M1")) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 && parts[0] == "Device" {
+                let mac = parts[1];
+                if let Some(level) = query_bluez_battery(mac) {
+                    return Some(level);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Dedicated event reader loop for Bluetooth HID
