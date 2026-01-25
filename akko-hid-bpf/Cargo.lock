@@ -107,6 +107,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "aya"
 version = "0.13.2"
+source = "git+https://github.com/heeen/aya.git?branch=hid-bpf#4e6d786df46ce6e7b57e450cb10df00431f8cd60"
 dependencies = [
  "assert_matches",
  "aya-obj",
@@ -123,6 +124,7 @@ dependencies = [
 [[package]]
 name = "aya-obj"
 version = "0.2.2"
+source = "git+https://github.com/heeen/aya.git?branch=hid-bpf#4e6d786df46ce6e7b57e450cb10df00431f8cd60"
 dependencies = [
  "bytes",
  "hashbrown",
@@ -780,7 +782,3 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
-
-[[patch.unused]]
-name = "aya-ebpf"
-version = "0.1.2"

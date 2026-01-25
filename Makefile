@@ -24,7 +24,8 @@ LOADER_BIN := akko-loader
         test check fmt help \
         install-tray uninstall-tray run-tray \
         install-dev-sudoers uninstall-dev-sudoers \
-        update-device-db update-device-db-full install-data uninstall-data
+        update-device-db update-device-db-full install-data uninstall-data \
+        test-integration test-cli test-bpf test-all
 
 # Tray app directory
 TRAY_DIR := plasma-tray
@@ -245,6 +246,45 @@ uninstall-data:
 	@echo "Device data uninstalled."
 
 # ============================================================================
+# Integration Tests (require hardware)
+# ============================================================================
+
+# Test directory (anchored to Makefile location)
+TEST_DIR := $(CURDIR)/tests
+
+## Run all integration tests (build + cli + transport)
+test-integration:
+	$(TEST_DIR)/run_tests.sh all
+
+## Run build tests only
+test-build:
+	$(TEST_DIR)/run_tests.sh build
+
+## Run CLI tests (requires hardware)
+test-cli:
+	$(TEST_DIR)/run_tests.sh cli
+
+## Run transport tests (requires hardware)
+test-transport:
+	$(TEST_DIR)/run_tests.sh transport
+
+## Run BPF battery tests (requires root + hardware)
+test-bpf:
+	$(TEST_DIR)/run_tests.sh bpf
+
+## Run full test suite including root tests
+test-all:
+	sudo $(TEST_DIR)/run_tests.sh all
+
+## Run CLI setting roundtrip tests
+test-roundtrip:
+	$(TEST_DIR)/scripts/test_cli_roundtrip.sh
+
+## Run TUI basic tests
+test-tui:
+	$(TEST_DIR)/scripts/test_tui_basic.sh
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -287,6 +327,15 @@ help:
 	@echo "  update-device-db-full Also include Electron driver (slower)"
 	@echo "  install-data          Install device data to $(DATA_DIR)"
 	@echo "  uninstall-data        Remove installed device data"
+	@echo ""
+	@echo "Integration test targets:"
+	@echo "  test-integration Run build + cli tests"
+	@echo "  test-build       Run build tests only"
+	@echo "  test-cli         Run CLI tests (requires hardware)"
+	@echo "  test-bpf         Run BPF tests (requires sudo + hardware)"
+	@echo "  test-all         Run full suite including root tests"
+	@echo "  test-roundtrip   Run CLI setting roundtrip tests"
+	@echo "  test-tui         Run TUI basic tests"
 	@echo ""
 	@echo "Variables:"
 	@echo "  PREFIX=$(PREFIX)"

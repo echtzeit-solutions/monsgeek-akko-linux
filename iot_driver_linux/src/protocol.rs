@@ -1105,6 +1105,53 @@ pub mod audio_viz {
     }
 }
 
+/// Keyboard-initiated events (INT-IN endpoint)
+/// These are notifications sent by the keyboard, not responses to commands
+pub mod events {
+    /// Report ID for vendor events on Linux
+    pub const REPORT_ID: u8 = 0x05;
+
+    /// Settings acknowledgment event
+    /// Sent when keyboard settings change (via Fn keys or commands)
+    /// Format: [0x05, 0x0F, status, ...]
+    /// status: 0x01 = change in progress, 0x00 = change complete
+    pub const SETTINGS_ACK: u8 = 0x0F;
+
+    /// Factory reset event
+    /// Sent when factory reset is triggered via Fn-~ key combination
+    /// Format: [0x05, 0x0D, 0x00, ...]
+    /// Followed by SETTINGS_ACK (0x0F 0x01) then (0x0F 0x00) when complete
+    pub const RESET_TRIGGERED: u8 = 0x0D;
+
+    /// Settings ack status values
+    pub const SETTINGS_ACK_START: u8 = 0x01;
+    pub const SETTINGS_ACK_DONE: u8 = 0x00;
+
+    /// Parse an event from raw HID buffer
+    /// Returns (event_type, status_byte) or None if not a recognized event
+    pub fn parse(buf: &[u8]) -> Option<(u8, u8)> {
+        if buf.len() >= 3 && buf[0] == REPORT_ID {
+            let event = buf[1];
+            let status = buf[2];
+            match event {
+                SETTINGS_ACK | RESET_TRIGGERED => Some((event, status)),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get event name for display
+    pub fn name(event: u8) -> &'static str {
+        match event {
+            SETTINGS_ACK => "SETTINGS_ACK",
+            RESET_TRIGGERED => "RESET_TRIGGERED",
+            _ => "UNKNOWN",
+        }
+    }
+}
+
 /// Screen color protocol (command 0x0E)
 /// Streams average screen RGB color to the keyboard's built-in screen reactive mode (mode 21)
 pub mod screen_color {
