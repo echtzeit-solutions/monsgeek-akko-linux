@@ -163,6 +163,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore] // Requires uinput access (run with: cargo test -- --ignored)
     fn test_create_joystick() {
         let axes = vec![AxisId::X, AxisId::Y];
         let joystick = VirtualJoystick::new("Test Joystick", &axes);

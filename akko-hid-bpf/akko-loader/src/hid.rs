@@ -329,6 +329,7 @@ pub fn send_f7_command(hidraw_path: &str) -> Result<u8> {
 /// Send the dongle flush/NOP command (0xFC) to push buffered response out.
 ///
 /// This uses the same Bit7 checksum scheme as other dongle commands.
+#[allow(dead_code)]
 pub fn send_dongle_flush(hidraw_path: &str) -> Result<()> {
     let file = File::options()
         .read(true)
@@ -359,6 +360,7 @@ fn send_dongle_flush_fd(fd: i32) -> Result<()> {
 ///
 /// Useful for reproducing the "buffered unrelated report" behavior by spamming
 /// GET-type commands (which will accumulate responses in the dongle buffer).
+#[allow(dead_code)]
 pub fn send_dongle_command_no_read(hidraw_path: &str, cmd: u8) -> Result<()> {
     let file = File::options()
         .read(true)
