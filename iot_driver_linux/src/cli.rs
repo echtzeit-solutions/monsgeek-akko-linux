@@ -68,14 +68,6 @@ pub enum Commands {
         vendor: bool,
     },
 
-    /// Monitor battery continuously and export to /run/akko-keyboard
-    #[command(visible_aliases = ["batmon", "monitor"])]
-    BatteryMonitor {
-        /// Polling interval in seconds (default: 30)
-        #[arg(short, long, default_value = "30")]
-        interval: u64,
-    },
-
     // === Set Commands ===
     /// Set active profile
     #[command(visible_alias = "sp")]
