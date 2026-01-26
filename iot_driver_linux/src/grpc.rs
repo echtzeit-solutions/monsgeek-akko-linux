@@ -150,6 +150,12 @@ impl DriverService {
 
             info!("Started vendor event polling");
 
+            // Track persistent receivers per device path
+            // Using subscribe_events() gives us a receiver that persists across the loop,
+            // so we don't miss events between iterations (unlike read_event() which
+            // creates a new receiver each call)
+            let mut receivers: HashMap<String, broadcast::Receiver<VendorEvent>> = HashMap::new();
+
             loop {
                 {
                     let polling = vendor_polling.lock().await;
@@ -158,24 +164,42 @@ impl DriverService {
                     }
                 }
 
-                let mut got_event = false;
+                // Update receivers for new/removed devices
                 {
                     let devices_guard = devices.lock().await;
+
+                    // Remove receivers for disconnected devices
+                    receivers.retain(|path, _| devices_guard.contains_key(path));
+
+                    // Add receivers for new devices
                     for (path, connected) in devices_guard.iter() {
-                        // Try to read event with short timeout
-                        match connected.transport.read_event(10).await {
-                            Ok(Some(event)) => {
-                                debug!("Vendor event from {}: {:?}", path, event);
-                                // Convert VendorEvent to raw bytes for gRPC protocol
-                                let msg = vendor_event_to_bytes(&event);
-                                let _ = vendor_tx.send(VenderMsg { msg });
-                                got_event = true;
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                debug!("Event read error for {}: {}", path, e);
+                        if !receivers.contains_key(path) {
+                            if let Some(rx) = connected.transport.subscribe_events() {
+                                debug!("Subscribed to events for device {}", path);
+                                receivers.insert(path.clone(), rx);
                             }
                         }
+                    }
+                }
+
+                // Poll all receivers with short timeout
+                let mut got_event = false;
+                for (path, rx) in receivers.iter_mut() {
+                    match tokio::time::timeout(std::time::Duration::from_millis(1), rx.recv()).await
+                    {
+                        Ok(Ok(event)) => {
+                            debug!("Vendor event from {}: {:?}", path, event);
+                            let msg = vendor_event_to_bytes(&event);
+                            let _ = vendor_tx.send(VenderMsg { msg });
+                            got_event = true;
+                        }
+                        Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
+                            debug!("Event receiver for {} lagged by {} events", path, n);
+                        }
+                        Ok(Err(broadcast::error::RecvError::Closed)) => {
+                            debug!("Event channel closed for {}", path);
+                        }
+                        Err(_) => {} // Timeout, no event
                     }
                 }
 
