@@ -1,33 +1,22 @@
 // Color conversion utilities
+//
+// This module provides color conversion helpers.
+// For RGB types and HSV conversion, prefer using `monsgeek_keyboard::led::RgbColor::from_hsv()`.
 
-/// Convert HSV to RGB
-/// h: hue (0-360)
-/// s: saturation (0-1)
-/// v: value/brightness (0-1)
+use monsgeek_keyboard::led::RgbColor;
+
+/// Convert HSV to RGB tuple
+///
+/// This is a convenience wrapper around `RgbColor::from_hsv()`.
+/// Consider using `RgbColor::from_hsv()` directly when working with `RgbColor`.
+///
+/// # Arguments
+/// * `h` - hue (0-360)
+/// * `s` - saturation (0-1)
+/// * `v` - value/brightness (0-1)
 pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r, g, b) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    (
-        ((r + m) * 255.0) as u8,
-        ((g + m) * 255.0) as u8,
-        ((b + m) * 255.0) as u8,
-    )
+    let color = RgbColor::from_hsv(h, s, v);
+    (color.r, color.g, color.b)
 }
 
 #[cfg(test)]

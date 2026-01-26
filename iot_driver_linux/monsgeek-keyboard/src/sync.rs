@@ -23,6 +23,48 @@ fn block_on<F: std::future::Future>(f: F) -> F::Output {
     futures::executor::block_on(f)
 }
 
+/// Macro to generate synchronous wrapper methods
+///
+/// Reduces boilerplate by auto-generating `block_on(self.inner.method())` calls.
+///
+/// # Usage patterns:
+/// - `sync_method!(name() -> Type)` - no args, returns Result<Type, Error>
+/// - `sync_method!(name() -> ())` - no args, returns Result<(), Error>
+/// - `sync_method!(name(arg: Type) -> RetType)` - with args
+/// - `sync_method!(name(&arg: &Type) -> RetType)` - with ref args
+macro_rules! sync_method {
+    // No arguments, with return type
+    ($name:ident() -> $ret:ty) => {
+        pub fn $name(&self) -> $ret {
+            block_on(self.inner.$name())
+        }
+    };
+    // Single argument by value
+    ($name:ident($arg:ident: $ty:ty) -> $ret:ty) => {
+        pub fn $name(&self, $arg: $ty) -> $ret {
+            block_on(self.inner.$name($arg))
+        }
+    };
+    // Single argument by reference
+    ($name:ident(&$arg:ident: &$ty:ty) -> $ret:ty) => {
+        pub fn $name(&self, $arg: &$ty) -> $ret {
+            block_on(self.inner.$name($arg))
+        }
+    };
+    // Two arguments
+    ($name:ident($arg1:ident: $ty1:ty, $arg2:ident: $ty2:ty) -> $ret:ty) => {
+        pub fn $name(&self, $arg1: $ty1, $arg2: $ty2) -> $ret {
+            block_on(self.inner.$name($arg1, $arg2))
+        }
+    };
+    // Three arguments
+    ($name:ident($arg1:ident: $ty1:ty, $arg2:ident: $ty2:ty, $arg3:ident: $ty3:ty) -> $ret:ty) => {
+        pub fn $name(&self, $arg1: $ty1, $arg2: $ty2, $arg3: $ty3) -> $ret {
+            block_on(self.inner.$name($arg1, $arg2, $arg3))
+        }
+    };
+}
+
 /// Synchronous wrapper around KeyboardInterface
 pub struct SyncKeyboard {
     inner: KeyboardInterface,
@@ -95,125 +137,35 @@ impl SyncKeyboard {
         self.inner.is_wireless()
     }
 
-    /// Get device ID
-    pub fn get_device_id(&self) -> Result<u32, KeyboardError> {
-        block_on(self.inner.get_device_id())
-    }
-
-    /// Get firmware version
-    pub fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
-        block_on(self.inner.get_version())
-    }
-
-    /// Get battery info
-    pub fn get_battery(&self) -> Result<BatteryInfo, KeyboardError> {
-        block_on(self.inner.get_battery())
-    }
+    // Device queries using macro
+    sync_method!(get_device_id() -> Result<u32, KeyboardError>);
+    sync_method!(get_version() -> Result<FirmwareVersion, KeyboardError>);
+    sync_method!(get_battery() -> Result<BatteryInfo, KeyboardError>);
 
     // === LED ===
-
-    /// Get LED parameters
-    pub fn get_led_params(&self) -> Result<LedParams, KeyboardError> {
-        block_on(self.inner.get_led_params())
-    }
-
-    /// Set LED parameters
-    pub fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_led_params(params))
-    }
-
-    /// Get side LED parameters
-    pub fn get_side_led_params(&self) -> Result<LedParams, KeyboardError> {
-        block_on(self.inner.get_side_led_params())
-    }
-
-    /// Set side LED parameters
-    pub fn set_side_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_side_led_params(params))
-    }
-
-    /// Set all keys to a single color
-    pub fn set_all_keys_color(&self, color: RgbColor, layer: u8) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_all_keys_color(color, layer))
-    }
+    sync_method!(get_led_params() -> Result<LedParams, KeyboardError>);
+    sync_method!(set_led_params(&params: &LedParams) -> Result<(), KeyboardError>);
+    sync_method!(get_side_led_params() -> Result<LedParams, KeyboardError>);
+    sync_method!(set_side_led_params(&params: &LedParams) -> Result<(), KeyboardError>);
+    sync_method!(set_all_keys_color(color: RgbColor, layer: u8) -> Result<(), KeyboardError>);
 
     // === Settings ===
-
-    /// Get current profile
-    pub fn get_profile(&self) -> Result<u8, KeyboardError> {
-        block_on(self.inner.get_profile())
-    }
-
-    /// Set current profile
-    pub fn set_profile(&self, profile: u8) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_profile(profile))
-    }
-
-    /// Get polling rate
-    pub fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
-        block_on(self.inner.get_polling_rate())
-    }
-
-    /// Set polling rate
-    pub fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_polling_rate(rate))
-    }
-
-    /// Get debounce time
-    pub fn get_debounce(&self) -> Result<u8, KeyboardError> {
-        block_on(self.inner.get_debounce())
-    }
-
-    /// Set debounce time
-    pub fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_debounce(ms))
-    }
-
-    /// Get sleep time settings for all wireless modes
-    pub fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
-        block_on(self.inner.get_sleep_time())
-    }
-
-    /// Set sleep time settings for all wireless modes
-    pub fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_sleep_time(settings))
-    }
-
-    /// Get keyboard options
-    pub fn get_kb_options(&self) -> Result<KeyboardOptions, KeyboardError> {
-        block_on(self.inner.get_kb_options())
-    }
-
-    /// Set keyboard options
-    pub fn set_kb_options(&self, options: &KeyboardOptions) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_kb_options(options))
-    }
-
-    /// Get feature list
-    pub fn get_feature_list(&self) -> Result<FeatureList, KeyboardError> {
-        block_on(self.inner.get_feature_list())
-    }
-
-    /// Get precision level for travel/trigger settings
-    ///
-    /// This method tries to get precision from the feature list first.
-    /// If the keyboard doesn't support the feature list command,
-    /// it falls back to inferring precision from the firmware version.
-    pub fn get_precision(&self) -> Result<Precision, KeyboardError> {
-        block_on(self.inner.get_precision())
-    }
+    sync_method!(get_profile() -> Result<u8, KeyboardError>);
+    sync_method!(set_profile(profile: u8) -> Result<(), KeyboardError>);
+    sync_method!(get_polling_rate() -> Result<PollingRate, KeyboardError>);
+    sync_method!(set_polling_rate(rate: PollingRate) -> Result<(), KeyboardError>);
+    sync_method!(get_debounce() -> Result<u8, KeyboardError>);
+    sync_method!(set_debounce(ms: u8) -> Result<(), KeyboardError>);
+    sync_method!(get_sleep_time() -> Result<SleepTimeSettings, KeyboardError>);
+    sync_method!(set_sleep_time(&settings: &SleepTimeSettings) -> Result<(), KeyboardError>);
+    sync_method!(get_kb_options() -> Result<KeyboardOptions, KeyboardError>);
+    sync_method!(set_kb_options(&options: &KeyboardOptions) -> Result<(), KeyboardError>);
+    sync_method!(get_feature_list() -> Result<FeatureList, KeyboardError>);
+    sync_method!(get_precision() -> Result<Precision, KeyboardError>);
 
     // === Magnetism ===
-
-    /// Start magnetism reporting
-    pub fn start_magnetism_report(&self) -> Result<(), KeyboardError> {
-        block_on(self.inner.start_magnetism_report())
-    }
-
-    /// Stop magnetism reporting
-    pub fn stop_magnetism_report(&self) -> Result<(), KeyboardError> {
-        block_on(self.inner.stop_magnetism_report())
-    }
+    sync_method!(start_magnetism_report() -> Result<(), KeyboardError>);
+    sync_method!(stop_magnetism_report() -> Result<(), KeyboardError>);
 
     /// Read key depth event
     pub fn read_key_depth(
@@ -240,47 +192,16 @@ impl SyncKeyboard {
         block_on(self.inner.poll_notification(timeout_ms))
     }
 
-    /// Get trigger settings for a key
-    pub fn get_key_trigger(&self, key_index: u8) -> Result<KeyTriggerSettings, KeyboardError> {
-        block_on(self.inner.get_key_trigger(key_index))
-    }
-
-    /// Set trigger settings for a key
-    pub fn set_key_trigger(&self, settings: &KeyTriggerSettings) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_key_trigger(settings))
-    }
-
-    /// Get all trigger settings
-    pub fn get_all_triggers(&self) -> Result<TriggerSettings, KeyboardError> {
-        block_on(self.inner.get_all_triggers())
-    }
+    sync_method!(get_key_trigger(key_index: u8) -> Result<KeyTriggerSettings, KeyboardError>);
+    sync_method!(set_key_trigger(&settings: &KeyTriggerSettings) -> Result<(), KeyboardError>);
+    sync_method!(get_all_triggers() -> Result<TriggerSettings, KeyboardError>);
 
     // === Bulk Trigger Setters ===
-
-    /// Set actuation point for all keys (u16 raw value)
-    pub fn set_actuation_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_actuation_all_u16(travel))
-    }
-
-    /// Set release point for all keys (u16 raw value)
-    pub fn set_release_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_release_all_u16(travel))
-    }
-
-    /// Set Rapid Trigger press sensitivity for all keys (u16 raw value)
-    pub fn set_rt_press_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_rt_press_all_u16(sensitivity))
-    }
-
-    /// Set Rapid Trigger release sensitivity for all keys (u16 raw value)
-    pub fn set_rt_lift_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_rt_lift_all_u16(sensitivity))
-    }
-
-    /// Enable/disable Rapid Trigger for all keys
-    pub fn set_rapid_trigger_all(&self, enable: bool) -> Result<(), KeyboardError> {
-        block_on(self.inner.set_rapid_trigger_all(enable))
-    }
+    sync_method!(set_actuation_all_u16(travel: u16) -> Result<(), KeyboardError>);
+    sync_method!(set_release_all_u16(travel: u16) -> Result<(), KeyboardError>);
+    sync_method!(set_rt_press_all_u16(sensitivity: u16) -> Result<(), KeyboardError>);
+    sync_method!(set_rt_lift_all_u16(sensitivity: u16) -> Result<(), KeyboardError>);
+    sync_method!(set_rapid_trigger_all(enable: bool) -> Result<(), KeyboardError>);
 
     // === Extended LED Control ===
 
@@ -338,11 +259,7 @@ impl SyncKeyboard {
     }
 
     // === Animation Upload ===
-
-    /// Initialize per-key RGB/animation mode
-    pub fn start_user_gif(&self) -> Result<(), KeyboardError> {
-        block_on(self.inner.start_user_gif())
-    }
+    sync_method!(start_user_gif() -> Result<(), KeyboardError>);
 
     /// Upload a complete animation to the keyboard
     ///
@@ -356,30 +273,14 @@ impl SyncKeyboard {
     }
 
     // === Calibration ===
-
-    /// Start/stop minimum position calibration
-    pub fn calibrate_min(&self, start: bool) -> Result<(), KeyboardError> {
-        block_on(self.inner.calibrate_min(start))
-    }
-
-    /// Start/stop maximum position calibration
-    pub fn calibrate_max(&self, start: bool) -> Result<(), KeyboardError> {
-        block_on(self.inner.calibrate_max(start))
-    }
+    sync_method!(calibrate_min(start: bool) -> Result<(), KeyboardError>);
+    sync_method!(calibrate_max(start: bool) -> Result<(), KeyboardError>);
 
     // === Factory Reset ===
-
-    /// Factory reset the keyboard
-    pub fn reset(&self) -> Result<(), KeyboardError> {
-        block_on(self.inner.reset())
-    }
+    sync_method!(reset() -> Result<(), KeyboardError>);
 
     // === Raw Commands ===
-
-    /// Send a raw command and get response
-    pub fn query_raw_cmd(&self, cmd: u8) -> Result<Vec<u8>, KeyboardError> {
-        block_on(self.inner.query_raw_cmd(cmd))
-    }
+    sync_method!(query_raw_cmd(cmd: u8) -> Result<Vec<u8>, KeyboardError>);
 
     /// Send raw command with data
     pub fn query_raw_cmd_data(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>, KeyboardError> {
@@ -431,11 +332,7 @@ impl SyncKeyboard {
     }
 
     // === Macros ===
-
-    /// Get macro data for a macro slot
-    pub fn get_macro(&self, macro_index: u8) -> Result<Vec<u8>, KeyboardError> {
-        block_on(self.inner.get_macro(macro_index))
-    }
+    sync_method!(get_macro(macro_index: u8) -> Result<Vec<u8>, KeyboardError>);
 
     /// Set macro data for a macro slot
     pub fn set_macro(
@@ -485,10 +382,7 @@ impl SyncKeyboard {
         block_on(self.inner.is_connected())
     }
 
-    /// Close connection
-    pub fn close(&self) -> Result<(), KeyboardError> {
-        block_on(self.inner.close())
-    }
+    sync_method!(close() -> Result<(), KeyboardError>);
 }
 
 /// List all connected devices
