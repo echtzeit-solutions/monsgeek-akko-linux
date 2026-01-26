@@ -56,25 +56,10 @@ use tokio::sync::broadcast;
 use tracing::{debug, trace, warn};
 
 use crate::error::TransportError;
-use crate::protocol::{self, timing};
+use crate::event_parser::{parse_ble_event, run_event_reader_loop, EventReaderConfig};
+use crate::protocol::{self, ble, timing};
 use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
-
-/// Bluetooth HID report ID for vendor commands
-/// This is determined by the device's report descriptor
-const BLUETOOTH_VENDOR_REPORT_ID: u8 = 0x06;
-
-/// BLE framing marker for vendor command/response channel
-const BLE_VENDOR_MAGIC_CMDRESP: u8 = 0x55;
-
-/// BLE framing marker for vendor event channel
-const BLE_VENDOR_MAGIC_EVENT: u8 = 0x66;
-
-/// Buffer size for Bluetooth reports (65 bytes + report ID)
-const BLE_REPORT_SIZE: usize = 66;
-
-/// Default command delay for Bluetooth (higher than USB due to BLE latency)
-const BLE_DEFAULT_DELAY_MS: u64 = 150;
 
 /// Broadcast channel capacity for vendor events
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -126,7 +111,13 @@ impl HidBluetoothTransport {
             std::thread::Builder::new()
                 .name("bt-event-reader".into())
                 .spawn(move || {
-                    bt_event_reader_loop(input, tx_clone, shutdown_clone);
+                    run_event_reader_loop(
+                        input,
+                        tx_clone,
+                        shutdown_clone,
+                        parse_ble_event,
+                        EventReaderConfig::bluetooth(),
+                    );
                 })
                 .expect("Failed to spawn Bluetooth event reader thread");
 
@@ -138,7 +129,7 @@ impl HidBluetoothTransport {
         Self {
             vendor_device: Mutex::new(vendor_device),
             info,
-            command_delay_ms: BLE_DEFAULT_DELAY_MS,
+            command_delay_ms: ble::DEFAULT_DELAY_MS,
             event_tx,
             shutdown,
         }
@@ -147,19 +138,6 @@ impl HidBluetoothTransport {
     /// Set delay after commands (default 150ms for BLE)
     pub fn set_command_delay(&mut self, ms: u64) {
         self.command_delay_ms = ms;
-    }
-
-    /// Build command buffer with Report ID 6, BLE marker (0x55) and checksum
-    fn build_command(&self, cmd: u8, data: &[u8], checksum: ChecksumType) -> Vec<u8> {
-        let mut buf = vec![0u8; BLE_REPORT_SIZE];
-        buf[0] = BLUETOOTH_VENDOR_REPORT_ID; // Report ID 6 for BLE
-        buf[1] = BLE_VENDOR_MAGIC_CMDRESP;
-        buf[2] = cmd;
-        let len = std::cmp::min(data.len(), BLE_REPORT_SIZE - 3);
-        buf[3..3 + len].copy_from_slice(&data[..len]);
-        // Apply checksum starting from cmd byte (index 2)
-        protocol::apply_checksum(&mut buf[2..], checksum);
-        buf
     }
 
     /// Send output report and wait
@@ -175,7 +153,7 @@ impl HidBluetoothTransport {
     /// We may receive other notifications (0x66 events) while waiting; those are ignored here.
     fn read_response(&self, expected_cmd: u8, timeout_ms: u32) -> Result<Vec<u8>, TransportError> {
         let device = self.vendor_device.lock();
-        let mut buf = vec![0u8; BLE_REPORT_SIZE];
+        let mut buf = vec![0u8; ble::REPORT_SIZE];
         let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms as u64);
 
         while std::time::Instant::now() < deadline {
@@ -186,13 +164,13 @@ impl HidBluetoothTransport {
 
                     // We expect: [0x06][0x55][cmd]...
                     if n >= 3
-                        && buf[0] == BLUETOOTH_VENDOR_REPORT_ID
-                        && buf[1] == BLE_VENDOR_MAGIC_CMDRESP
+                        && buf[0] == ble::VENDOR_REPORT_ID
+                        && buf[1] == ble::CMDRESP_MARKER
                         && buf[2] == expected_cmd
                     {
                         // Prefer non-empty data, but also accept a normal USB-style status OK (0xAA)
                         // at position 3 (since buf[2]=cmd).
-                        let window_end = n.min(BLE_REPORT_SIZE);
+                        let window_end = n.min(ble::REPORT_SIZE);
                         let has_data = buf[3..window_end].iter().any(|&b| b != 0);
                         let has_ok = buf.get(3).copied() == Some(0xAA);
                         if has_data || has_ok {
@@ -203,10 +181,7 @@ impl HidBluetoothTransport {
                     }
 
                     // Ignore 0x66-framed events while waiting for response
-                    if n >= 2
-                        && buf[0] == BLUETOOTH_VENDOR_REPORT_ID
-                        && buf[1] == BLE_VENDOR_MAGIC_EVENT
-                    {
+                    if n >= 2 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::EVENT_MARKER {
                         continue;
                     }
                 }
@@ -229,7 +204,7 @@ impl Transport for HidBluetoothTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_ble_command(cmd, data, checksum);
         debug!("BLE sending command 0x{:02X}: {:02X?}", cmd, &buf[..10]);
 
         for attempt in 0..timing::SEND_RETRIES {
@@ -254,7 +229,7 @@ impl Transport for HidBluetoothTransport {
         checksum: ChecksumType,
         delay_ms: u64,
     ) -> Result<(), TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_ble_command(cmd, data, checksum);
         let device = self.vendor_device.lock();
         device.write(&buf)?;
         if delay_ms > 0 {
@@ -269,7 +244,7 @@ impl Transport for HidBluetoothTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_ble_command(cmd, data, checksum);
         debug!("BLE querying command 0x{:02X}: {:02X?}", cmd, &buf[..10]);
 
         for attempt in 0..timing::QUERY_RETRIES {
@@ -293,8 +268,8 @@ impl Transport for HidBluetoothTransport {
                     // Return USB-style payload (strip report id + BLE marker)
                     // [0]=report id, [1]=0x55, [2]=cmd -> return [cmd..] like other transports
                     if resp.len() >= 3
-                        && resp[0] == BLUETOOTH_VENDOR_REPORT_ID
-                        && resp[1] == BLE_VENDOR_MAGIC_CMDRESP
+                        && resp[0] == ble::VENDOR_REPORT_ID
+                        && resp[1] == ble::CMDRESP_MARKER
                     {
                         return Ok(resp[2..].to_vec());
                     }
@@ -319,7 +294,7 @@ impl Transport for HidBluetoothTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_ble_command(cmd, data, checksum);
         debug!(
             "BLE querying raw command 0x{:02X}: {:02X?}",
             cmd,
@@ -337,14 +312,14 @@ impl Transport for HidBluetoothTransport {
             std::thread::sleep(Duration::from_millis(50));
 
             let device = self.vendor_device.lock();
-            let mut resp = vec![0u8; BLE_REPORT_SIZE];
+            let mut resp = vec![0u8; ble::REPORT_SIZE];
 
             match device.read_timeout(&mut resp, 500) {
                 Ok(n) if n > 0 => {
                     // Prefer 0x55-framed responses; otherwise accept any non-zero blob
                     if resp.len() >= 2
-                        && resp[0] == BLUETOOTH_VENDOR_REPORT_ID
-                        && resp[1] == BLE_VENDOR_MAGIC_CMDRESP
+                        && resp[0] == ble::VENDOR_REPORT_ID
+                        && resp[1] == ble::CMDRESP_MARKER
                     {
                         debug!(
                             "BLE got raw 0x55 response: {:02X?}",
@@ -519,111 +494,4 @@ fn query_bluez_battery_by_name(name: &str) -> Option<u8> {
         }
     }
     None
-}
-
-/// Dedicated event reader loop for Bluetooth HID
-fn bt_event_reader_loop(
-    input_device: HidDevice,
-    tx: broadcast::Sender<VendorEvent>,
-    shutdown: Arc<AtomicBool>,
-) {
-    debug!("Bluetooth event reader thread started");
-    let mut buf = [0u8; 64];
-
-    while !shutdown.load(Ordering::Relaxed) {
-        match input_device.read_timeout(&mut buf, 10) {
-            Ok(len) if len > 0 => {
-                debug!(
-                    "BLE event reader got {} bytes: {:02X?}",
-                    len,
-                    &buf[..len.min(16)]
-                );
-                let event = parse_bt_vendor_event(&buf[..len]);
-                let _ = tx.send(event);
-            }
-            Ok(_) => {
-                // Timeout, continue
-            }
-            Err(e) => {
-                warn!("BLE event reader error: {}", e);
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-
-    debug!("Bluetooth event reader thread exiting");
-}
-
-/// Parse keyboard function notification (type 0x03)
-fn parse_kb_func(payload: &[u8]) -> VendorEvent {
-    let category = payload.get(1).copied().unwrap_or(0);
-    let action = payload.get(2).copied().unwrap_or(0);
-
-    match action {
-        0x01 => VendorEvent::WinLockToggle {
-            locked: category != 0,
-        },
-        0x03 => VendorEvent::WasdSwapToggle {
-            swapped: category == 8,
-        },
-        0x08 => VendorEvent::FnLayerToggle { layer: category },
-        0x09 => VendorEvent::BacklightToggle,
-        0x11 => VendorEvent::DialModeToggle,
-        _ => VendorEvent::UnknownKbFunc { category, action },
-    }
-}
-
-/// Parse vendor event from Bluetooth HID input report
-///
-/// Bluetooth format differs from USB:
-/// - USB:       [05, type, value, ...]
-/// - Bluetooth: [06, 66, type, value, ...]
-///
-/// The 0x66 byte appears to be a BLE-specific notification marker.
-fn parse_bt_vendor_event(data: &[u8]) -> VendorEvent {
-    if data.len() < 3 {
-        return VendorEvent::Unknown(data.to_vec());
-    }
-
-    // Bluetooth vendor events: [06, 66, type, value, ...]
-    let payload = if data[0] == 0x06 && data[1] == 0x66 && data.len() > 2 {
-        &data[2..] // Skip report ID (06) and BLE marker (66)
-    } else if data[0] == 0x05 && data.len() > 1 {
-        // Fallback: USB-style events [05, type, value, ...]
-        &data[1..]
-    } else if data[0] == 0x06 && data.len() > 1 {
-        // Alternate: just report ID 6 without 0x66 marker
-        &data[1..]
-    } else {
-        return VendorEvent::Unknown(data.to_vec());
-    };
-
-    if payload.is_empty() {
-        return VendorEvent::Unknown(data.to_vec());
-    }
-
-    let notif_type = payload[0];
-    let value = payload.get(1).copied().unwrap_or(0);
-
-    match notif_type {
-        0x00 if payload.iter().skip(1).all(|&b| b == 0) => VendorEvent::Wake,
-        0x01 => VendorEvent::ProfileChange { profile: value },
-        0x03 => parse_kb_func(payload),
-        0x04 => VendorEvent::LedEffectMode { effect_id: value },
-        0x05 => VendorEvent::LedEffectSpeed { speed: value },
-        0x06 => VendorEvent::BrightnessLevel { level: value },
-        0x07 => VendorEvent::LedColor { color: value },
-        0x0F => VendorEvent::SettingsAck {
-            started: value != 0,
-        },
-        0x1B if payload.len() >= 5 => {
-            let depth_raw = u16::from_le_bytes([payload[1], payload[2]]);
-            let key_index = payload[3];
-            VendorEvent::KeyDepth {
-                key_index,
-                depth_raw,
-            }
-        }
-        _ => VendorEvent::Unknown(data.to_vec()),
-    }
 }

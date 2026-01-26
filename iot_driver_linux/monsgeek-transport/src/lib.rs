@@ -11,6 +11,7 @@
 pub mod command;
 pub mod device_registry;
 pub mod error;
+pub mod event_parser;
 pub mod protocol;
 pub mod types;
 

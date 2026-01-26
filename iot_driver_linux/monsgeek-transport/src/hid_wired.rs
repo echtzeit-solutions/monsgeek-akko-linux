@@ -7,9 +7,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use hidapi::HidDevice;
 use tokio::sync::broadcast;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::error::TransportError;
+use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
 use crate::protocol::{self, timing, REPORT_SIZE};
 use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
@@ -57,7 +58,13 @@ impl HidWiredTransport {
             std::thread::Builder::new()
                 .name("hid-event-reader".into())
                 .spawn(move || {
-                    event_reader_loop(input, tx_clone, shutdown_clone);
+                    run_event_reader_loop(
+                        input,
+                        tx_clone,
+                        shutdown_clone,
+                        parse_usb_event,
+                        EventReaderConfig::usb(),
+                    );
                 })
                 .expect("Failed to spawn HID event reader thread");
 
@@ -78,17 +85,6 @@ impl HidWiredTransport {
     /// Set delay after commands (default 100ms)
     pub fn set_command_delay(&mut self, ms: u64) {
         self.command_delay_ms = ms;
-    }
-
-    /// Build command buffer with checksum
-    fn build_command(&self, cmd: u8, data: &[u8], checksum: ChecksumType) -> Vec<u8> {
-        let mut buf = vec![0u8; REPORT_SIZE];
-        buf[0] = 0; // Report ID
-        buf[1] = cmd;
-        let len = std::cmp::min(data.len(), REPORT_SIZE - 2);
-        buf[2..2 + len].copy_from_slice(&data[..len]);
-        protocol::apply_checksum(&mut buf[1..], checksum);
-        buf
     }
 
     /// Send feature report and wait
@@ -117,7 +113,7 @@ impl Transport for HidWiredTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_command(cmd, data, checksum);
         debug!("Sending command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
 
         for attempt in 0..timing::SEND_RETRIES {
@@ -142,7 +138,7 @@ impl Transport for HidWiredTransport {
         checksum: ChecksumType,
         delay_ms: u64,
     ) -> Result<(), TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_command(cmd, data, checksum);
         let device = self.feature_device.lock().unwrap();
         device.send_feature_report(&buf)?;
         if delay_ms > 0 {
@@ -157,7 +153,7 @@ impl Transport for HidWiredTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_command(cmd, data, checksum);
         debug!("Querying command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
 
         for attempt in 0..timing::QUERY_RETRIES {
@@ -191,7 +187,7 @@ impl Transport for HidWiredTransport {
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        let buf = self.build_command(cmd, data, checksum);
+        let buf = protocol::build_command(cmd, data, checksum);
         debug!("Querying raw command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
 
         for attempt in 0..timing::QUERY_RETRIES {
@@ -270,152 +266,5 @@ impl Drop for HidWiredTransport {
         // Signal shutdown to event reader thread
         self.shutdown.store(true, Ordering::SeqCst);
         debug!("HidWiredTransport dropped, signaling event reader shutdown");
-    }
-}
-
-/// Dedicated event reader loop running in its own thread
-///
-/// Reads from the HID input device and broadcasts events to all subscribers.
-/// Wakes immediately when data arrives (hidapi read_timeout behavior).
-/// The 5ms timeout is only for checking the shutdown flag during idle periods.
-fn event_reader_loop(
-    input_device: HidDevice,
-    tx: broadcast::Sender<VendorEvent>,
-    shutdown: Arc<AtomicBool>,
-) {
-    debug!("HID event reader thread started");
-    let mut buf = [0u8; 64];
-
-    while !shutdown.load(Ordering::Relaxed) {
-        // Read with short timeout - wakes immediately on data
-        // Timeout only affects how often we check shutdown flag when idle
-        match input_device.read_timeout(&mut buf, 5) {
-            Ok(len) if len > 0 => {
-                debug!(
-                    "Event reader got {} bytes: {:02X?}",
-                    len,
-                    &buf[..len.min(16)]
-                );
-                let event = parse_vendor_event(&buf[..len]);
-                // Send to all subscribers (ignores if no receivers)
-                let _ = tx.send(event);
-            }
-            Ok(_) => {
-                // Timeout, no data - loop continues to check shutdown
-            }
-            Err(e) => {
-                // Log error but keep trying (device might recover)
-                warn!("HID event reader error: {}", e);
-                // Brief sleep to avoid spinning on persistent errors
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-
-    debug!("HID event reader thread exiting");
-}
-
-/// Parse keyboard function notification (type 0x03)
-fn parse_kb_func(payload: &[u8]) -> VendorEvent {
-    let category = payload.get(1).copied().unwrap_or(0);
-    let action = payload.get(2).copied().unwrap_or(0);
-
-    match action {
-        0x01 => VendorEvent::WinLockToggle {
-            locked: category != 0,
-        },
-        0x03 => VendorEvent::WasdSwapToggle {
-            swapped: category == 8, // category 8 = swapped, category 0 = normal
-        },
-        0x08 => VendorEvent::FnLayerToggle {
-            layer: category, // 0 = default, 1 = alternate
-        },
-        0x09 => VendorEvent::BacklightToggle,
-        0x11 => VendorEvent::DialModeToggle,
-        _ => VendorEvent::UnknownKbFunc { category, action },
-    }
-}
-
-/// Parse vendor event from input report data (EP2 notifications)
-///
-/// Report format (Report ID 0x05):
-/// - Byte 0: Notification type
-/// - Byte 1+: Notification data
-///
-/// Notification types:
-/// - 0x00: Wake (all zeros)
-/// - 0x01: Profile changed (data = profile 0-3)
-/// - 0x03: KB function (category, action)
-/// - 0x04: LED effect mode (effect ID 1-20)
-/// - 0x05: LED effect speed (0-4)
-/// - 0x06: Brightness level (0-4)
-/// - 0x07: LED color (0-7)
-/// - 0x0F: Settings ACK (0=done, 1=start)
-/// - 0x1B: Key depth (magnetism report)
-/// - 0x88: Battery status (dongle)
-fn parse_vendor_event(data: &[u8]) -> VendorEvent {
-    if data.is_empty() {
-        return VendorEvent::Unknown(data.to_vec());
-    }
-
-    // Skip report ID if present (0x05)
-    let payload = if data[0] == 0x05 && data.len() > 1 {
-        &data[1..]
-    } else {
-        data
-    };
-
-    if payload.is_empty() {
-        return VendorEvent::Unknown(data.to_vec());
-    }
-
-    let notif_type = payload[0];
-    let value = payload.get(1).copied().unwrap_or(0);
-
-    match notif_type {
-        // Wake notification: type 0x00 with all zeros
-        0x00 if payload.iter().skip(1).all(|&b| b == 0) => VendorEvent::Wake,
-
-        // Profile changed via Fn+F9..F12
-        0x01 => VendorEvent::ProfileChange { profile: value },
-
-        // Keyboard function notification (Win lock, WASD swap, etc.)
-        0x03 => parse_kb_func(payload),
-
-        // LED effect mode changed via Fn+Home/PgUp/End/PgDn
-        0x04 => VendorEvent::LedEffectMode { effect_id: value },
-
-        // LED effect speed changed via Fn+←/→
-        0x05 => VendorEvent::LedEffectSpeed { speed: value },
-
-        // Brightness level changed via Fn+↑/↓
-        0x06 => VendorEvent::BrightnessLevel { level: value },
-
-        // LED color changed via Fn+\
-        0x07 => VendorEvent::LedColor { color: value },
-
-        // Settings ACK: value=1 means change started, value=0 means change complete
-        0x0F => VendorEvent::SettingsAck {
-            started: value != 0,
-        },
-
-        // Key depth report (magnetism)
-        0x1B if payload.len() >= 5 => {
-            let depth_raw = u16::from_le_bytes([payload[1], payload[2]]);
-            let key_index = payload[3];
-            VendorEvent::KeyDepth {
-                key_index,
-                depth_raw,
-            }
-        }
-
-        // Battery status (from dongle)
-        0x88 if payload.len() >= 5 => VendorEvent::BatteryStatus {
-            level: payload[3],
-            charging: payload[4] & 0x02 != 0,
-            online: payload[4] & 0x01 != 0,
-        },
-
-        _ => VendorEvent::Unknown(data.to_vec()),
     }
 }
