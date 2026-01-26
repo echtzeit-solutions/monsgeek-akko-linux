@@ -28,7 +28,7 @@ use crate::hid::BatteryInfo;
 use crate::power_supply::{
     find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
 };
-use crate::{cmd, devices, hal, key_mode, magnetism, DeviceInfo, TriggerSettings};
+use crate::{cmd, devices, key_mode, magnetism, DeviceInfo, TriggerSettings};
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
@@ -48,7 +48,6 @@ enum BatterySource {
 
 /// Application state
 struct App {
-    input_device: Option<hidapi::HidDevice>, // Separate INPUT interface for depth reports
     info: DeviceInfo,
     tab: usize,
     selected: usize,
@@ -110,6 +109,8 @@ struct App {
     content_area: StdCell<Rect>,
     // Scroll view state for content area
     scroll_state: ScrollViewState,
+    // Trigger edit modal
+    trigger_edit_modal: Option<TriggerEditModal>,
 }
 
 /// Which color is being edited with hex input
@@ -174,6 +175,365 @@ enum TriggerViewMode {
     #[default]
     List, // Scrollable list of keys
     Layout, // Visual keyboard layout
+}
+
+/// Configuration for a spinner (numeric value with left/right adjustment)
+/// Reusable across different tabs and modals
+#[derive(Debug, Clone, Copy)]
+struct SpinnerConfig {
+    /// Minimum value
+    min: f32,
+    /// Maximum value
+    max: f32,
+    /// Step size for normal adjustment
+    step: f32,
+    /// Step size when shift is held (coarse adjustment)
+    step_coarse: f32,
+    /// Number of decimal places to display
+    decimals: u8,
+    /// Unit suffix (e.g., "mm", "%", "")
+    unit: &'static str,
+}
+
+impl SpinnerConfig {
+    /// Increment value by step (or coarse step if shift held)
+    fn increment(&self, value: f32, coarse: bool) -> f32 {
+        let step = if coarse { self.step_coarse } else { self.step };
+        (value + step).min(self.max)
+    }
+
+    /// Decrement value by step (or coarse step if shift held)
+    fn decrement(&self, value: f32, coarse: bool) -> f32 {
+        let step = if coarse { self.step_coarse } else { self.step };
+        (value - step).max(self.min)
+    }
+
+    /// Increment u8 value (for RGB components)
+    fn increment_u8(&self, value: u8, coarse: bool) -> u8 {
+        let step = if coarse { self.step_coarse } else { self.step } as u8;
+        value.saturating_add(step).min(self.max as u8)
+    }
+
+    /// Decrement u8 value (for RGB components)
+    fn decrement_u8(&self, value: u8, coarse: bool) -> u8 {
+        let step = if coarse { self.step_coarse } else { self.step } as u8;
+        value.saturating_sub(step).max(self.min as u8)
+    }
+
+    /// Format value for display
+    fn format(&self, value: f32) -> String {
+        match self.decimals {
+            0 => format!("{:.0}", value),
+            1 => format!("{:.1}", value),
+            _ => format!("{:.2}", value),
+        }
+    }
+}
+
+/// Spinner config for RGB color components (0-255)
+const RGB_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 255.0,
+    step: 1.0,
+    step_coarse: 10.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for LED brightness (0-4)
+const BRIGHTNESS_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 4.0,
+    step: 1.0,
+    step_coarse: 1.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for LED speed (0-4)
+const SPEED_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 4.0,
+    step: 1.0,
+    step_coarse: 1.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for Fn layer (0-3)
+const FN_LAYER_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 3.0,
+    step: 1.0,
+    step_coarse: 1.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for RT stability (0-125, step 25)
+const RT_STABILITY_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 125.0,
+    step: 25.0,
+    step_coarse: 25.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for sleep time in seconds (0-3600, step 60s, coarse 300s)
+const SLEEP_TIME_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 3600.0,
+    step: 60.0,
+    step_coarse: 300.0,
+    decimals: 0,
+    unit: "s",
+};
+
+/// Trigger edit modal target - what we're editing
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TriggerEditTarget {
+    /// Edit global settings (applies to all keys)
+    Global,
+    /// Edit specific key settings
+    PerKey { key_index: usize },
+}
+
+/// Editable field in trigger settings
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TriggerField {
+    Actuation,
+    Release,
+    RtPress,
+    RtLift,
+    TopDeadzone,
+    BottomDeadzone,
+    Mode,
+}
+
+impl TriggerField {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Actuation => "Actuation",
+            Self::Release => "Release",
+            Self::RtPress => "RT Press",
+            Self::RtLift => "RT Lift",
+            Self::TopDeadzone => "Top DZ",
+            Self::BottomDeadzone => "Bottom DZ",
+            Self::Mode => "Mode",
+        }
+    }
+
+    fn all() -> &'static [TriggerField] {
+        &[
+            Self::Actuation,
+            Self::Release,
+            Self::RtPress,
+            Self::RtLift,
+            Self::TopDeadzone,
+            Self::BottomDeadzone,
+            Self::Mode,
+        ]
+    }
+
+    /// Get spinner configuration for this field (None for Mode which is cycled)
+    fn spinner_config(&self) -> Option<SpinnerConfig> {
+        match self {
+            Self::Actuation | Self::Release => Some(SpinnerConfig {
+                min: 0.1,
+                max: 4.0,
+                step: 0.05,
+                step_coarse: 0.2,
+                decimals: 2,
+                unit: "mm",
+            }),
+            Self::RtPress | Self::RtLift => Some(SpinnerConfig {
+                min: 0.1,
+                max: 2.0,
+                step: 0.05,
+                step_coarse: 0.1,
+                decimals: 2,
+                unit: "mm",
+            }),
+            Self::TopDeadzone | Self::BottomDeadzone => Some(SpinnerConfig {
+                min: 0.0,
+                max: 1.0,
+                step: 0.05,
+                step_coarse: 0.1,
+                decimals: 2,
+                unit: "mm",
+            }),
+            Self::Mode => None, // Mode is cycled, not a spinner
+        }
+    }
+}
+
+/// Trigger edit modal state
+#[derive(Debug, Clone)]
+struct TriggerEditModal {
+    /// What we're editing (global or per-key)
+    target: TriggerEditTarget,
+    /// Currently focused field
+    field_index: usize,
+    /// Depth history for the chart (samples over time)
+    depth_history: VecDeque<f32>,
+    /// Key to filter depth reports (None = show all active keys)
+    depth_filter: Option<usize>,
+    /// Current values being edited
+    actuation_mm: f32,
+    release_mm: f32,
+    rt_press_mm: f32,
+    rt_lift_mm: f32,
+    top_dz_mm: f32,
+    bottom_dz_mm: f32,
+    mode: u8,
+}
+
+impl TriggerEditModal {
+    /// Create modal for editing global settings
+    fn new_global(triggers: &TriggerSettings, precision: Precision) -> Self {
+        let factor = precision.factor() as f32;
+        // Decode first key's u16 values as representative global values
+        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+            if idx * 2 + 1 < data.len() {
+                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+            } else {
+                0
+            }
+        };
+
+        Self {
+            target: TriggerEditTarget::Global,
+            field_index: 0,
+            depth_history: VecDeque::with_capacity(100),
+            depth_filter: None,
+            actuation_mm: decode_u16(&triggers.press_travel, 0) as f32 / factor,
+            release_mm: decode_u16(&triggers.lift_travel, 0) as f32 / factor,
+            rt_press_mm: decode_u16(&triggers.rt_press, 0) as f32 / factor,
+            rt_lift_mm: decode_u16(&triggers.rt_lift, 0) as f32 / factor,
+            top_dz_mm: decode_u16(&triggers.top_deadzone, 0) as f32 / factor,
+            bottom_dz_mm: decode_u16(&triggers.bottom_deadzone, 0) as f32 / factor,
+            mode: triggers.key_modes.first().copied().unwrap_or(0),
+        }
+    }
+
+    /// Create modal for editing a specific key
+    fn new_per_key(key_index: usize, triggers: &TriggerSettings, precision: Precision) -> Self {
+        let factor = precision.factor() as f32;
+        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+            if idx * 2 + 1 < data.len() {
+                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
+            } else {
+                0
+            }
+        };
+
+        Self {
+            target: TriggerEditTarget::PerKey { key_index },
+            field_index: 0,
+            depth_history: VecDeque::with_capacity(100),
+            depth_filter: Some(key_index),
+            actuation_mm: decode_u16(&triggers.press_travel, key_index) as f32 / factor,
+            release_mm: decode_u16(&triggers.lift_travel, key_index) as f32 / factor,
+            rt_press_mm: decode_u16(&triggers.rt_press, key_index) as f32 / factor,
+            rt_lift_mm: decode_u16(&triggers.rt_lift, key_index) as f32 / factor,
+            top_dz_mm: decode_u16(&triggers.top_deadzone, key_index) as f32 / factor,
+            bottom_dz_mm: decode_u16(&triggers.bottom_deadzone, key_index) as f32 / factor,
+            mode: triggers.key_modes.get(key_index).copied().unwrap_or(0),
+        }
+    }
+
+    fn current_field(&self) -> TriggerField {
+        TriggerField::all()[self.field_index]
+    }
+
+    fn next_field(&mut self) {
+        self.field_index = (self.field_index + 1) % TriggerField::all().len();
+    }
+
+    fn prev_field(&mut self) {
+        self.field_index = if self.field_index == 0 {
+            TriggerField::all().len() - 1
+        } else {
+            self.field_index - 1
+        };
+    }
+
+    /// Get the current value for the selected field
+    fn current_value(&self) -> f32 {
+        match self.current_field() {
+            TriggerField::Actuation => self.actuation_mm,
+            TriggerField::Release => self.release_mm,
+            TriggerField::RtPress => self.rt_press_mm,
+            TriggerField::RtLift => self.rt_lift_mm,
+            TriggerField::TopDeadzone => self.top_dz_mm,
+            TriggerField::BottomDeadzone => self.bottom_dz_mm,
+            TriggerField::Mode => self.mode as f32,
+        }
+    }
+
+    /// Set the value for the selected field
+    fn set_current_value(&mut self, value: f32) {
+        match self.current_field() {
+            TriggerField::Actuation => self.actuation_mm = value,
+            TriggerField::Release => self.release_mm = value,
+            TriggerField::RtPress => self.rt_press_mm = value,
+            TriggerField::RtLift => self.rt_lift_mm = value,
+            TriggerField::TopDeadzone => self.top_dz_mm = value,
+            TriggerField::BottomDeadzone => self.bottom_dz_mm = value,
+            TriggerField::Mode => {} // Mode is cycled, not set directly
+        }
+    }
+
+    /// Increment the current field value (using spinner config)
+    fn increment_current(&mut self, coarse: bool) {
+        if let Some(config) = self.current_field().spinner_config() {
+            let new_value = config.increment(self.current_value(), coarse);
+            self.set_current_value(new_value);
+        } else if self.current_field() == TriggerField::Mode {
+            self.cycle_mode();
+        }
+    }
+
+    /// Decrement the current field value (using spinner config)
+    fn decrement_current(&mut self, coarse: bool) {
+        if let Some(config) = self.current_field().spinner_config() {
+            let new_value = config.decrement(self.current_value(), coarse);
+            self.set_current_value(new_value);
+        } else if self.current_field() == TriggerField::Mode {
+            self.cycle_mode_reverse();
+        }
+    }
+
+    /// Cycle mode forward: Normal -> RT -> DKS -> SnapTap -> Normal
+    fn cycle_mode(&mut self) {
+        self.mode = match self.mode & 0x7F {
+            0 => 0x80,                       // Normal -> RT
+            _ if self.mode & 0x80 != 0 => 2, // RT -> DKS
+            2 => 7,                          // DKS -> SnapTap
+            7 => 0,                          // SnapTap -> Normal
+            _ => 0,                          // Unknown -> Normal
+        };
+    }
+
+    /// Cycle mode backward: Normal <- RT <- DKS <- SnapTap <- Normal
+    fn cycle_mode_reverse(&mut self) {
+        self.mode = match self.mode & 0x7F {
+            0 if self.mode & 0x80 != 0 => 0, // RT -> Normal
+            0 => 7,                          // Normal -> SnapTap
+            2 => 0x80,                       // DKS -> RT
+            7 => 2,                          // SnapTap -> DKS
+            _ => 0,                          // Unknown -> Normal
+        };
+    }
+
+    /// Add a depth sample to history
+    fn push_depth(&mut self, depth_mm: f32) {
+        if self.depth_history.len() >= 100 {
+            self.depth_history.pop_front();
+        }
+        self.depth_history.push_back(depth_mm);
+    }
 }
 
 /// Loading state for async data fetching
@@ -364,23 +724,33 @@ const TUI_KEYBINDS: &[Keybind] = &[
         context: KeyContext::Triggers,
     },
     Keybind {
+        keys: "Enter / e",
+        description: "Edit selected key",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
+        keys: "g",
+        description: "Edit global (all keys)",
+        context: KeyContext::Triggers,
+    },
+    Keybind {
         keys: "n / N",
-        description: "Actuation -/+ 0.1mm",
+        description: "Normal mode (key/all)",
         context: KeyContext::Triggers,
     },
     Keybind {
         keys: "t / T",
-        description: "RT press sens -/+ 0.1mm",
+        description: "RT mode (key/all)",
         context: KeyContext::Triggers,
     },
     Keybind {
         keys: "d / D",
-        description: "RT release sens -/+ 0.1mm",
+        description: "DKS mode (key/all)",
         context: KeyContext::Triggers,
     },
     Keybind {
         keys: "s / S",
-        description: "DKS sensitivity -/+ 0.1mm",
+        description: "SnapTap mode (key/all)",
         context: KeyContext::Triggers,
     },
     // Macros tab
@@ -442,7 +812,6 @@ impl App {
     fn new() -> (Self, mpsc::UnboundedReceiver<AsyncResult>) {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         let app = Self {
-            input_device: None,
             info: DeviceInfo::default(),
             tab: 0,
             selected: 0,
@@ -499,6 +868,8 @@ impl App {
             content_area: StdCell::new(Rect::default()),
             // Scroll view state
             scroll_state: ScrollViewState::new(),
+            // Trigger edit modal
+            trigger_edit_modal: None,
         };
         (app, result_rx)
     }
@@ -562,9 +933,6 @@ impl App {
         self.depth_last_update = vec![Instant::now(); self.key_count as usize];
         self.active_keys.clear();
         self.selected_keys.clear();
-
-        // Also open the INPUT interface for depth reports
-        self.input_device = open_input_interface(vid, pid).ok();
 
         // Detect battery source (kernel power_supply if eBPF loaded, else vendor)
         if self.is_wireless {
@@ -1453,49 +1821,13 @@ impl App {
             return;
         }
 
-        let precision = self.precision.factor() as f32;
+        // Depth events are now handled via handle_vendor_notification from the transport layer.
+        // This function handles stale key cleanup and history updates on tick.
+
         let now = Instant::now();
         // Long timeout as fallback - primary release detection is via depth < 0.05 threshold
         // This only catches truly stale keys (e.g., missed release reports)
         let stale_timeout = Duration::from_secs(2);
-
-        // Read from INPUT interface (where depth reports come from)
-        if let Some(ref input_dev) = self.input_device {
-            let mut buf = [0u8; 64];
-            while let Ok(len) = input_dev.read_timeout(&mut buf, 5) {
-                if len == 0 {
-                    break;
-                }
-                if let Some(report) = crate::protocol::depth_report::parse(&buf[..len]) {
-                    let depth_mm = report.depth_mm(precision);
-                    let key_index = report.key_index as usize;
-                    if key_index < self.key_depths.len() {
-                        self.key_depths[key_index] = depth_mm;
-                        // Update timestamp for this key
-                        if key_index < self.depth_last_update.len() {
-                            self.depth_last_update[key_index] = now;
-                        }
-                        // Track max observed depth for bar chart scaling
-                        if depth_mm > self.max_observed_depth {
-                            self.max_observed_depth = depth_mm;
-                        }
-                        // Mark key as active when pressed, remove when fully released
-                        if depth_mm > 0.1 {
-                            self.active_keys.insert(key_index);
-                        } else if depth_mm < 0.05 {
-                            // Only remove when depth is very close to rest position
-                            // This handles the "key released" report from keyboard
-                            self.active_keys.remove(&key_index);
-                            // Clear time series history for this key
-                            if key_index < self.depth_history.len() {
-                                self.depth_history[key_index].clear();
-                            }
-                        }
-                        // Note: depths between 0.05-0.1 keep current state (hysteresis)
-                    }
-                }
-            }
-        }
 
         // Reset keys that haven't been updated recently (considered released)
         let stale_keys: Vec<usize> = self
@@ -1620,8 +1952,52 @@ impl App {
             VendorEvent::MagnetismStart | VendorEvent::MagnetismStop => {
                 // Handled separately by depth monitoring
             }
-            VendorEvent::KeyDepth { .. } => {
-                // Key depth is handled by read_input_reports
+            VendorEvent::KeyDepth {
+                key_index,
+                depth_raw,
+            } => {
+                let precision = self.precision.factor() as f32;
+                let depth_mm = depth_raw as f32 / precision;
+                let key_index = key_index as usize;
+
+                if key_index < self.key_depths.len() {
+                    self.key_depths[key_index] = depth_mm;
+
+                    // Feed depth to modal if open and matching filter
+                    if let Some(ref mut modal) = self.trigger_edit_modal {
+                        let should_sample = match modal.depth_filter {
+                            Some(filter_key) => filter_key == key_index,
+                            None => true, // No filter = sample all keys (use max)
+                        };
+                        if should_sample {
+                            modal.push_depth(depth_mm);
+                        }
+                    }
+
+                    // Update timestamp for this key
+                    if key_index < self.depth_last_update.len() {
+                        self.depth_last_update[key_index] = Instant::now();
+                    }
+
+                    // Track max observed depth for bar chart scaling
+                    if depth_mm > self.max_observed_depth {
+                        self.max_observed_depth = depth_mm;
+                    }
+
+                    // Mark key as active when pressed, remove when fully released
+                    if depth_mm > 0.1 {
+                        self.active_keys.insert(key_index);
+                    } else if depth_mm < 0.05 {
+                        // Only remove when depth is very close to rest position
+                        // This handles the "key released" report from keyboard
+                        self.active_keys.remove(&key_index);
+                        // Clear time series history for this key
+                        if key_index < self.depth_history.len() {
+                            self.depth_history[key_index].clear();
+                        }
+                    }
+                    // Note: depths between 0.05-0.1 keep current state (hysteresis)
+                }
             }
             VendorEvent::BatteryStatus {
                 level,
@@ -1682,6 +2058,140 @@ impl App {
             TriggerViewMode::Layout => TriggerViewMode::List,
         };
         self.status_msg = format!("Trigger view: {:?}", self.trigger_view_mode);
+    }
+
+    /// Open trigger edit modal for global settings
+    async fn open_trigger_edit_global(&mut self) {
+        if let Some(ref triggers) = self.triggers {
+            let modal = TriggerEditModal::new_global(triggers, self.precision);
+            self.trigger_edit_modal = Some(modal);
+            // Enable depth monitoring for the modal
+            if !self.depth_monitoring {
+                if let Some(ref keyboard) = self.keyboard {
+                    let _ = keyboard.start_magnetism_report().await;
+                }
+                self.depth_monitoring = true;
+            }
+            self.status_msg = "Editing global triggers (press keys to see depth)".to_string();
+        } else {
+            self.status_msg = "No trigger data loaded".to_string();
+        }
+    }
+
+    /// Open trigger edit modal for a specific key
+    async fn open_trigger_edit_key(&mut self, key_index: usize) {
+        if let Some(ref triggers) = self.triggers {
+            let modal = TriggerEditModal::new_per_key(key_index, triggers, self.precision);
+            self.trigger_edit_modal = Some(modal);
+            // Enable depth monitoring for the modal
+            if !self.depth_monitoring {
+                if let Some(ref keyboard) = self.keyboard {
+                    let _ = keyboard.start_magnetism_report().await;
+                }
+                self.depth_monitoring = true;
+            }
+            let key_name = get_key_label(key_index);
+            self.status_msg = format!(
+                "Editing key {} ({}) - press it to see depth",
+                key_index, key_name
+            );
+        } else {
+            self.status_msg = "No trigger data loaded".to_string();
+        }
+    }
+
+    /// Close trigger edit modal without saving
+    fn close_trigger_edit_modal(&mut self) {
+        self.trigger_edit_modal = None;
+        self.status_msg = "Edit cancelled".to_string();
+    }
+
+    /// Save trigger edit modal changes
+    async fn save_trigger_edit_modal(&mut self) {
+        let modal = match self.trigger_edit_modal.take() {
+            Some(m) => m,
+            None => return,
+        };
+
+        let Some(ref keyboard) = self.keyboard else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let precision = self.precision;
+        let factor = precision.factor() as f32;
+
+        match modal.target {
+            TriggerEditTarget::Global => {
+                // Apply all global settings
+                let actuation_raw = (modal.actuation_mm * factor) as u16;
+                let release_raw = (modal.release_mm * factor) as u16;
+                let rt_press_raw = (modal.rt_press_mm * factor) as u16;
+                let rt_lift_raw = (modal.rt_lift_mm * factor) as u16;
+                let top_dz_raw = (modal.top_dz_mm * factor) as u16;
+                let bottom_dz_raw = (modal.bottom_dz_mm * factor) as u16;
+
+                let mut errors = Vec::new();
+
+                if let Err(e) = keyboard.set_actuation_all_u16(actuation_raw).await {
+                    errors.push(format!("actuation: {e}"));
+                }
+                if let Err(e) = keyboard.set_release_all_u16(release_raw).await {
+                    errors.push(format!("release: {e}"));
+                }
+                if let Err(e) = keyboard.set_rt_press_all_u16(rt_press_raw).await {
+                    errors.push(format!("rt_press: {e}"));
+                }
+                if let Err(e) = keyboard.set_rt_lift_all_u16(rt_lift_raw).await {
+                    errors.push(format!("rt_lift: {e}"));
+                }
+                if let Err(e) = keyboard.set_top_deadzone_all_u16(top_dz_raw).await {
+                    errors.push(format!("top_dz: {e}"));
+                }
+                if let Err(e) = keyboard.set_bottom_deadzone_all_u16(bottom_dz_raw).await {
+                    errors.push(format!("bottom_dz: {e}"));
+                }
+
+                if errors.is_empty() {
+                    self.status_msg = format!(
+                        "Global triggers saved: act={:.2}mm rel={:.2}mm",
+                        modal.actuation_mm, modal.release_mm
+                    );
+                    // Reload triggers to reflect changes
+                    self.load_triggers();
+                } else {
+                    self.status_msg = format!("Errors: {}", errors.join(", "));
+                }
+            }
+            TriggerEditTarget::PerKey { key_index } => {
+                // Per-key uses u8 values with factor of 10 (0.1mm precision)
+                let settings = monsgeek_keyboard::KeyTriggerSettings {
+                    key_index: key_index as u8,
+                    actuation: (modal.actuation_mm * 10.0) as u8,
+                    deactuation: (modal.release_mm * 10.0) as u8,
+                    mode: monsgeek_keyboard::KeyMode::from_u8(modal.mode),
+                };
+
+                match keyboard.set_key_trigger(&settings).await {
+                    Ok(()) => {
+                        let key_name = get_key_label(key_index);
+                        self.status_msg = format!(
+                            "Key {} ({}) saved: act={:.1}mm rel={:.1}mm mode={:?}",
+                            key_index,
+                            key_name,
+                            modal.actuation_mm,
+                            modal.release_mm,
+                            settings.mode
+                        );
+                        // Reload triggers to reflect changes
+                        self.load_triggers();
+                    }
+                    Err(e) => {
+                        self.status_msg = format!("Failed to save key {}: {}", key_index, e);
+                    }
+                }
+            }
+        }
     }
 
     /// Navigate to next valid key in layout view (Tab key)
@@ -1891,6 +2401,37 @@ pub async fn run() -> io::Result<()> {
                         continue;
                     }
 
+                    // Trigger edit modal - uses spinners with Left/Right to adjust values
+                    if app.trigger_edit_modal.is_some() {
+                        let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
+                        match key.code {
+                            KeyCode::Esc => app.close_trigger_edit_modal(),
+                            KeyCode::Enter => app.save_trigger_edit_modal().await,
+                            KeyCode::Tab | KeyCode::Down => {
+                                if let Some(ref mut modal) = app.trigger_edit_modal {
+                                    modal.next_field();
+                                }
+                            }
+                            KeyCode::BackTab | KeyCode::Up => {
+                                if let Some(ref mut modal) = app.trigger_edit_modal {
+                                    modal.prev_field();
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                if let Some(ref mut modal) = app.trigger_edit_modal {
+                                    modal.decrement_current(coarse);
+                                }
+                            }
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                if let Some(ref mut modal) = app.trigger_edit_modal {
+                                    modal.increment_current(coarse);
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
                         // Help toggle
                         KeyCode::Char('?') | KeyCode::F(1) => {
@@ -1939,8 +2480,15 @@ pub async fn run() -> io::Result<()> {
                             } else if app.tab == 3 {
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_up();
-                                } else if app.trigger_scroll > 0 {
-                                    app.trigger_scroll -= 1;
+                                } else {
+                                    // List view: move selection up
+                                    if app.trigger_selected_key > 0 {
+                                        app.trigger_selected_key -= 1;
+                                        // Keep selection visible in scroll window
+                                        if app.trigger_selected_key < app.trigger_scroll {
+                                            app.trigger_scroll = app.trigger_selected_key;
+                                        }
+                                    }
                                 }
                             } else if app.tab == 5 {
                                 if app.macro_selected > 0 {
@@ -1965,11 +2513,17 @@ pub async fn run() -> io::Result<()> {
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_down();
                                 } else {
-                                    let max_scroll = app.triggers.as_ref()
-                                        .map(|t| t.key_modes.len().saturating_sub(15))
+                                    // List view: move selection down
+                                    let max_key = app.triggers.as_ref()
+                                        .map(|t| t.key_modes.len().saturating_sub(1))
                                         .unwrap_or(0);
-                                    if app.trigger_scroll < max_scroll {
-                                        app.trigger_scroll += 1;
+                                    if app.trigger_selected_key < max_key {
+                                        app.trigger_selected_key += 1;
+                                        // Keep selection visible in scroll window (assume ~15 visible rows)
+                                        let visible_rows = 15usize;
+                                        if app.trigger_selected_key >= app.trigger_scroll + visible_rows {
+                                            app.trigger_scroll = app.trigger_selected_key.saturating_sub(visible_rows - 1);
+                                        }
                                     }
                                 }
                             } else if app.tab == 5 {
@@ -1988,43 +2542,44 @@ pub async fn run() -> io::Result<()> {
                             } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_left();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.selected {
-                                    0 if app.info.led_mode > 0 => app.set_led_mode(app.info.led_mode - 1).await,
-                                    1 if app.info.led_brightness > 0 => app.set_brightness(app.info.led_brightness - 1).await,
+                                    0 => app.set_led_mode(app.info.led_mode.saturating_sub(1)).await,
+                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)).await,
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
-                                        if current > 0 { app.set_speed(current - 1).await; }
+                                        app.set_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
                                     }
-                                    3 => { let r = app.info.led_r.saturating_sub(step); app.set_color(r, app.info.led_g, app.info.led_b).await; }
-                                    4 => { let g = app.info.led_g.saturating_sub(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
-                                    5 => { let b = app.info.led_b.saturating_sub(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
+                                    3 => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
+                                    4 => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b).await; }
+                                    5 => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b).await; }
                                     7 => app.toggle_dazzle().await,
                                     // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight && app.info.side_mode > 0 => app.set_side_mode(app.info.side_mode - 1).await,
-                                    10 if app.has_sidelight && app.info.side_brightness > 0 => app.set_side_brightness(app.info.side_brightness - 1).await,
+                                    9 if app.has_sidelight => app.set_side_mode(app.info.side_mode.saturating_sub(1)).await,
+                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)).await,
                                     11 if app.has_sidelight => {
                                         let current = 4 - app.info.side_speed.min(4);
-                                        if current > 0 { app.set_side_speed(current - 1).await; }
+                                        app.set_side_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
                                     }
-                                    12 if app.has_sidelight => { let r = app.info.side_r.saturating_sub(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 if app.has_sidelight => { let g = app.info.side_g.saturating_sub(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 if app.has_sidelight => { let b = app.info.side_b.saturating_sub(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    12 if app.has_sidelight => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 if app.has_sidelight => { let g = RGB_SPINNER.decrement_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 if app.has_sidelight => { let b = RGB_SPINNER.decrement_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
                                     16 if app.has_sidelight => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
+                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer > 0 => app.set_fn_layer(opts.fn_layer - 1).await,
+                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.decrement_u8(opts.fn_layer, coarse)).await,
                                         1 => app.toggle_wasd_swap().await,
                                         2 => app.toggle_anti_mistouch().await,
-                                        3 if opts.rt_stability >= 25 => app.set_rt_stability(opts.rt_stability - 25).await,
-                                        // Sleep time sliders: -60s per press
-                                        4 => app.update_sleep_time(SleepField::IdleBt, -60).await,
-                                        5 => app.update_sleep_time(SleepField::Idle24g, -60).await,
-                                        6 => app.update_sleep_time(SleepField::DeepBt, -60).await,
-                                        7 => app.update_sleep_time(SleepField::Deep24g, -60).await,
+                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.decrement_u8(opts.rt_stability, coarse)).await,
+                                        // Sleep time sliders
+                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, -step).await; }
+                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step).await; }
+                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step).await; }
+                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step).await; }
                                         _ => {}
                                     }
                                 }
@@ -2039,43 +2594,44 @@ pub async fn run() -> io::Result<()> {
                             } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_right();
                             } else if app.tab == 1 {
-                                let step: u8 = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.selected {
-                                    0 if app.info.led_mode < cmd::LED_MODE_MAX => app.set_led_mode(app.info.led_mode + 1).await,
-                                    1 if app.info.led_brightness < 4 => app.set_brightness(app.info.led_brightness + 1).await,
+                                    0 => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)).await,
+                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)).await,
                                     2 => {
                                         let current = 4 - app.info.led_speed.min(4);
-                                        if current < 4 { app.set_speed(current + 1).await; }
+                                        app.set_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
                                     }
-                                    3 => { let r = app.info.led_r.saturating_add(step); app.set_color(r, app.info.led_g, app.info.led_b).await; }
-                                    4 => { let g = app.info.led_g.saturating_add(step); app.set_color(app.info.led_r, g, app.info.led_b).await; }
-                                    5 => { let b = app.info.led_b.saturating_add(step); app.set_color(app.info.led_r, app.info.led_g, b).await; }
+                                    3 => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
+                                    4 => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b).await; }
+                                    5 => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b).await; }
                                     7 => app.toggle_dazzle().await,
                                     // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight && app.info.side_mode < cmd::LED_MODE_MAX => app.set_side_mode(app.info.side_mode + 1).await,
-                                    10 if app.has_sidelight && app.info.side_brightness < 4 => app.set_side_brightness(app.info.side_brightness + 1).await,
+                                    9 if app.has_sidelight => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)).await,
+                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)).await,
                                     11 if app.has_sidelight => {
                                         let current = 4 - app.info.side_speed.min(4);
-                                        if current < 4 { app.set_side_speed(current + 1).await; }
+                                        app.set_side_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
                                     }
-                                    12 if app.has_sidelight => { let r = app.info.side_r.saturating_add(step); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 if app.has_sidelight => { let g = app.info.side_g.saturating_add(step); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 if app.has_sidelight => { let b = app.info.side_b.saturating_add(step); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
+                                    12 if app.has_sidelight => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
+                                    13 if app.has_sidelight => { let g = RGB_SPINNER.increment_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
+                                    14 if app.has_sidelight => { let b = RGB_SPINNER.increment_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
                                     16 if app.has_sidelight => app.toggle_side_dazzle().await,
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
+                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 if opts.fn_layer < 3 => app.set_fn_layer(opts.fn_layer + 1).await,
+                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.increment_u8(opts.fn_layer, coarse)).await,
                                         1 => app.toggle_wasd_swap().await,
                                         2 => app.toggle_anti_mistouch().await,
-                                        3 if opts.rt_stability < 125 => app.set_rt_stability(opts.rt_stability + 25).await,
-                                        // Sleep time sliders: +60s per press
-                                        4 => app.update_sleep_time(SleepField::IdleBt, 60).await,
-                                        5 => app.update_sleep_time(SleepField::Idle24g, 60).await,
-                                        6 => app.update_sleep_time(SleepField::DeepBt, 60).await,
-                                        7 => app.update_sleep_time(SleepField::Deep24g, 60).await,
+                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.increment_u8(opts.rt_stability, coarse)).await,
+                                        // Sleep time sliders
+                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, step).await; }
+                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step).await; }
+                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step).await; }
+                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step).await; }
                                         _ => {}
                                     }
                                 }
@@ -2178,6 +2734,18 @@ pub async fn run() -> io::Result<()> {
                         KeyCode::Char('p') if app.tab == 1 => app.apply_per_key_color().await,
                         KeyCode::Char('v') if app.tab == 2 => app.toggle_depth_view(),
                         KeyCode::Char('v') if app.tab == 3 => app.toggle_trigger_view(),
+                        KeyCode::Enter if app.tab == 3 => {
+                            // Open trigger edit modal for selected key (both views)
+                            app.open_trigger_edit_key(app.trigger_selected_key).await;
+                        }
+                        KeyCode::Char('e') if app.tab == 3 => {
+                            // 'e' also opens edit modal for selected key
+                            app.open_trigger_edit_key(app.trigger_selected_key).await;
+                        }
+                        KeyCode::Char('g') if app.tab == 3 => {
+                            // 'g' opens global edit modal
+                            app.open_trigger_edit_global().await;
+                        }
                         KeyCode::Char('x') if app.tab == 2 => app.clear_depth_data(),
                         KeyCode::Char(' ') if app.tab == 2 => {
                             if app.depth_view_mode == DepthViewMode::BarChart {
@@ -2472,6 +3040,11 @@ fn ui(f: &mut Frame, app: &mut App) {
     if app.show_help {
         render_help_popup(f, f.area());
     }
+
+    // Trigger edit modal (renders on top)
+    if app.trigger_edit_modal.is_some() {
+        render_trigger_edit_modal(f, app, f.area());
+    }
 }
 
 /// Render help popup with all keybindings
@@ -2589,6 +3162,262 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
         )
         .wrap(Wrap { trim: false });
     f.render_widget(kb_help, columns[1]);
+}
+
+/// Render trigger edit modal with depth chart
+fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: Rect) {
+    let modal = match &app.trigger_edit_modal {
+        Some(m) => m,
+        None => return,
+    };
+
+    // Calculate popup size (70% width, 80% height)
+    let popup_width = (area.width as f32 * 0.70).min(80.0) as u16;
+    let popup_height = (area.height as f32 * 0.80).min(30.0) as u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, popup_area);
+
+    // Title based on target
+    let title = match modal.target {
+        TriggerEditTarget::Global => " Edit Global Trigger Settings ".to_string(),
+        TriggerEditTarget::PerKey { key_index } => {
+            let key_name = get_key_label(key_index);
+            format!(" Edit Key {} ({}) ", key_index, key_name)
+        }
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    // Split into chart area and fields area
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(8),    // Depth chart
+            Constraint::Length(9), // Fields
+            Constraint::Length(2), // Help line
+        ])
+        .split(inner);
+
+    // Render depth chart
+    render_modal_depth_chart(f, modal, app, chunks[0]);
+
+    // Render editable fields
+    render_modal_fields(f, modal, chunks[1]);
+
+    // Render help line
+    let help_text = "Tab/↑↓: navigate | 0-9.: edit | m: cycle mode | Enter: save | Esc: cancel";
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    f.render_widget(help, chunks[2]);
+}
+
+/// Render the depth chart within the modal
+fn render_modal_depth_chart(f: &mut Frame, modal: &TriggerEditModal, app: &App, area: Rect) {
+    use ratatui::widgets::{Axis, Chart, Dataset, GraphType};
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Key Depth ")
+        .title_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Build depth data from history
+    let depth_data: Vec<(f64, f64)> = modal
+        .depth_history
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| (i as f64, d as f64))
+        .collect();
+
+    // Also get current depth for filtered key or max active key
+    let current_depth = if let Some(key_idx) = modal.depth_filter {
+        app.key_depths.get(key_idx).copied().unwrap_or(0.0)
+    } else {
+        // Show max depth across all active keys
+        app.key_depths.iter().copied().fold(0.0f32, |a, b| a.max(b))
+    };
+
+    // Create threshold lines
+    let max_samples = 100.0;
+    let actuation_line: Vec<(f64, f64)> = vec![
+        (0.0, modal.actuation_mm as f64),
+        (max_samples, modal.actuation_mm as f64),
+    ];
+    let release_line: Vec<(f64, f64)> = vec![
+        (0.0, modal.release_mm as f64),
+        (max_samples, modal.release_mm as f64),
+    ];
+    let top_dz_line: Vec<(f64, f64)> = vec![
+        (0.0, modal.top_dz_mm as f64),
+        (max_samples, modal.top_dz_mm as f64),
+    ];
+    let bottom_dz_line: Vec<(f64, f64)> = vec![
+        (0.0, (4.0 - modal.bottom_dz_mm) as f64),
+        (max_samples, (4.0 - modal.bottom_dz_mm) as f64),
+    ];
+
+    let mut datasets = vec![
+        // Depth trace
+        Dataset::default()
+            .name("Depth")
+            .marker(ratatui::symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::White))
+            .data(&depth_data),
+        // Actuation threshold
+        Dataset::default()
+            .name("Act")
+            .marker(ratatui::symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Yellow))
+            .data(&actuation_line),
+        // Release threshold
+        Dataset::default()
+            .name("Rel")
+            .marker(ratatui::symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&release_line),
+    ];
+
+    // Only show deadzone lines if non-zero
+    if modal.top_dz_mm > 0.01 {
+        datasets.push(
+            Dataset::default()
+                .name("TopDZ")
+                .marker(ratatui::symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::Green))
+                .data(&top_dz_line),
+        );
+    }
+    if modal.bottom_dz_mm > 0.01 {
+        datasets.push(
+            Dataset::default()
+                .name("BotDZ")
+                .marker(ratatui::symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::Red))
+                .data(&bottom_dz_line),
+        );
+    }
+
+    // Current depth indicator
+    let depth_str = format!("{:.2}mm", current_depth);
+
+    let chart = Chart::new(datasets)
+        .x_axis(
+            Axis::default()
+                .title("Time")
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([0.0, max_samples]),
+        )
+        .y_axis(
+            Axis::default()
+                .title(depth_str)
+                .style(Style::default().fg(Color::DarkGray))
+                .labels(vec![
+                    Span::raw("0"),
+                    Span::raw("1"),
+                    Span::raw("2"),
+                    Span::raw("3"),
+                    Span::raw("4"),
+                ])
+                .bounds([0.0, 4.0]),
+        );
+
+    f.render_widget(chart, inner);
+}
+
+/// Render the editable fields in the modal using spinner style
+fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
+    let fields = TriggerField::all();
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, field) in fields.iter().enumerate() {
+        let is_selected = i == modal.field_index;
+        let label = format!("{:12}", field.label());
+
+        // Get value and unit from spinner config, or special handling for Mode
+        let (value, unit) = if let Some(config) = field.spinner_config() {
+            let val = match field {
+                TriggerField::Actuation => modal.actuation_mm,
+                TriggerField::Release => modal.release_mm,
+                TriggerField::RtPress => modal.rt_press_mm,
+                TriggerField::RtLift => modal.rt_lift_mm,
+                TriggerField::TopDeadzone => modal.top_dz_mm,
+                TriggerField::BottomDeadzone => modal.bottom_dz_mm,
+                TriggerField::Mode => 0.0, // Won't reach here
+            };
+            (config.format(val), config.unit)
+        } else {
+            (magnetism::mode_name(modal.mode).to_string(), "")
+        };
+
+        // Spinner-style display: < value > when selected, just value when not
+        let display_value = if is_selected {
+            format!("< {} >", value)
+        } else {
+            format!("  {}  ", value)
+        };
+
+        let label_style = Style::default().fg(Color::Gray);
+        let value_style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let unit_style = Style::default().fg(Color::DarkGray);
+
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled(label, label_style),
+            Span::styled(display_value, value_style),
+        ];
+        if !unit.is_empty() {
+            spans.push(Span::styled(format!(" {}", unit), unit_style));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    // Add help text at bottom
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  ←/→", Style::default().fg(Color::Cyan)),
+        Span::raw(" adjust  "),
+        Span::styled("Shift", Style::default().fg(Color::Cyan)),
+        Span::raw(" coarse  "),
+        Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+        Span::raw(" select  "),
+        Span::styled("Enter", Style::default().fg(Color::Green)),
+        Span::raw(" save  "),
+        Span::styled("Esc", Style::default().fg(Color::Red)),
+        Span::raw(" cancel"),
+    ]));
+
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, area);
 }
 
 fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
@@ -3096,24 +3925,6 @@ fn render_depth_monitor(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(help, inner[2]);
 }
 
-/// Open the INPUT interface for depth reports
-fn open_input_interface(vid: u16, pid: u16) -> Result<hidapi::HidDevice, String> {
-    let hidapi = hidapi::HidApi::new().map_err(|e| format!("HID init failed: {e}"))?;
-
-    for dev_info in hidapi.device_list() {
-        if dev_info.vendor_id() == vid
-            && dev_info.product_id() == pid
-            && dev_info.usage_page() == hal::USAGE_PAGE
-            && dev_info.usage() == hal::USAGE_INPUT
-        {
-            return dev_info
-                .open_device(&hidapi)
-                .map_err(|e| format!("Failed to open input interface: {e}"));
-        }
-    }
-    Err(format!("Input interface for {vid:04x}:{pid:04x} not found"))
-}
-
 /// Get key label for display - use device profile matrix key names
 fn get_key_label(index: usize) -> String {
     use crate::profile::builtin::M1V5HeProfile;
@@ -3412,13 +4223,16 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(format!("{num_keys}"), Style::default().fg(Color::Green)),
                 Span::raw("  |  "),
                 Span::styled("View: List", Style::default().fg(Color::Yellow)),
-                Span::styled(" (v to toggle)", Style::default().fg(Color::DarkGray)),
+                Span::styled(" (v: layout)", Style::default().fg(Color::DarkGray)),
             ]),
             Line::from(""),
-            Line::from(vec![Span::styled(
-                "Global Settings (all keys same): ",
-                Style::default().add_modifier(Modifier::BOLD),
-            )]),
+            Line::from(vec![
+                Span::styled(
+                    "Global Settings ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("[g to edit all keys]", Style::default().fg(Color::DarkGray)),
+            ]),
             Line::from(vec![
                 Span::raw("  Actuation: "),
                 Span::styled(
@@ -3485,6 +4299,7 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
             .min(triggers.press_travel.len() / 2);
 
         // Build ALL rows for table (ScrollView handles viewport)
+        let selected_key = app.trigger_selected_key;
         let rows: Vec<Row> = (0..num_keys)
             .map(|i| {
                 let press = decode_u16(&triggers.press_travel, i);
@@ -3493,8 +4308,9 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
                 let rt_l = decode_u16(&triggers.rt_lift, i);
                 let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
                 let key_name = get_key_label(i);
+                let is_selected = i == selected_key;
 
-                Row::new(vec![
+                let row = Row::new(vec![
                     Cell::from(format!("{i:3}")),
                     Cell::from(if key_name.is_empty() {
                         "-".to_string()
@@ -3506,7 +4322,13 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format!("{:.2}", rt_p as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_l as f32 / factor)),
                     Cell::from(magnetism::mode_name(mode)),
-                ])
+                ]);
+
+                if is_selected {
+                    row.style(Style::default().bg(Color::Blue).fg(Color::White))
+                } else {
+                    row
+                }
             })
             .collect();
 
@@ -3517,9 +4339,9 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
         );
 
         // Render the block border first
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Per-Key [{num_keys} keys] n/t/d/s:SetAll v:Layout"));
+        let block = Block::default().borders(Borders::ALL).title(format!(
+            "Per-Key [{num_keys} keys] ↑↓:Select  Enter:Edit  g:Global  v:Layout"
+        ));
         let inner_area = block.inner(chunks[1]);
         f.render_widget(block, chunks[1]);
 
@@ -3591,17 +4413,12 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Render keyboard layout
     let layout_area = chunks[0];
-    let inner = Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
-        .title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]")
-        .inner(layout_area);
+        .title("Keyboard Layout [↑↓←→:Move  Enter:Edit  v:List  n/t/d/s:Mode]");
+    let inner = block.inner(layout_area);
 
-    f.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Keyboard Layout [↑↓←→:Navigate v:List n/t/d/s:Mode]"),
-        layout_area,
-    );
+    f.render_widget(block, layout_area);
 
     // Calculate key cell dimensions
     // Layout is 16 main columns + nav cluster (5 more columns) = ~21 columns
