@@ -33,9 +33,10 @@ impl Precision {
     /// Older firmware doesn't support feature list, so precision is
     /// inferred from version number thresholds.
     pub fn from_firmware_version(version: u16) -> Self {
-        if version >= 1280 {
+        use monsgeek_transport::protocol::precision;
+        if version >= precision::FINE_VERSION {
             Self::Fine // 0.005mm
-        } else if version >= 768 {
+        } else if version >= precision::MEDIUM_VERSION {
             Self::Medium // 0.01mm
         } else {
             Self::Coarse // 0.1mm
@@ -128,9 +129,10 @@ impl FirmwareVersion {
 
     /// Get precision factor from raw version number (static)
     pub fn precision_factor_from_raw(version: u16) -> f32 {
-        if version >= 1280 {
+        use monsgeek_transport::protocol::precision;
+        if version >= precision::FINE_VERSION {
             200.0 // 0.005mm precision
-        } else if version >= 768 {
+        } else if version >= precision::MEDIUM_VERSION {
             100.0 // 0.01mm precision
         } else {
             10.0 // 0.1mm precision

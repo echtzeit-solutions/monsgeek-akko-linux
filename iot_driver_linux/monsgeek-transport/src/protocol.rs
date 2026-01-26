@@ -139,8 +139,37 @@ pub mod rgb {
     pub const LAST_PAGE_SIZE: usize = 42;
     /// LED matrix positions (keys)
     pub const MATRIX_SIZE: usize = 126;
+    /// Number of keys to send per chunk in streaming mode
+    pub const CHUNK_SIZE: usize = 18;
     /// Magic value for per-key color commands
     pub const MAGIC_VALUE: u8 = 255;
+}
+
+/// Bluetooth Low Energy protocol constants
+pub mod ble {
+    /// Vendor report ID for BLE HID
+    pub const VENDOR_REPORT_ID: u8 = 0x06;
+    /// Marker byte for command/response channel
+    pub const CMDRESP_MARKER: u8 = 0x55;
+    /// Marker byte for event channel
+    pub const EVENT_MARKER: u8 = 0x66;
+    /// Buffer size for BLE reports (65 bytes + report ID)
+    pub const REPORT_SIZE: usize = 66;
+    /// Default command delay for BLE (higher than USB due to latency)
+    pub const DEFAULT_DELAY_MS: u64 = 150;
+}
+
+/// Precision version thresholds
+///
+/// These constants define firmware version boundaries for different
+/// precision levels in travel/trigger settings.
+pub mod precision {
+    /// Version threshold for fine precision (0.005mm steps)
+    /// Firmware versions >= 1280 (0x500) support fine precision
+    pub const FINE_VERSION: u16 = 1280;
+    /// Version threshold for medium precision (0.01mm steps)
+    /// Firmware versions >= 768 (0x300) support medium precision
+    pub const MEDIUM_VERSION: u16 = 768;
 }
 
 /// Device identification constants
@@ -210,7 +239,9 @@ pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
     }
 }
 
-/// Build a command buffer with checksum
+/// Build a USB command buffer with checksum
+///
+/// Format: `[report_id=0] [cmd] [data...] [checksum...]`
 pub fn build_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u8> {
     let mut buf = vec![0u8; REPORT_SIZE];
     buf[0] = 0; // Report ID
@@ -218,5 +249,23 @@ pub fn build_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u
     let len = std::cmp::min(data.len(), REPORT_SIZE - 2);
     buf[2..2 + len].copy_from_slice(&data[..len]);
     apply_checksum(&mut buf[1..], checksum_type);
+    buf
+}
+
+/// Build a BLE command buffer with checksum
+///
+/// BLE uses a different framing than USB:
+/// Format: `[report_id=0x06] [0x55 marker] [cmd] [data...] [checksum...]`
+///
+/// The checksum is calculated starting from the cmd byte (skipping the 0x55 marker).
+pub fn build_ble_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u8> {
+    let mut buf = vec![0u8; ble::REPORT_SIZE];
+    buf[0] = ble::VENDOR_REPORT_ID; // Report ID 6 for BLE
+    buf[1] = ble::CMDRESP_MARKER; // 0x55 marker
+    buf[2] = cmd;
+    let len = std::cmp::min(data.len(), ble::REPORT_SIZE - 3);
+    buf[3..3 + len].copy_from_slice(&data[..len]);
+    // Apply checksum starting from cmd byte (index 2)
+    apply_checksum(&mut buf[2..], checksum_type);
     buf
 }
