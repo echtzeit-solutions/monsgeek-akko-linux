@@ -13,7 +13,8 @@ pub mod sync;
 pub use error::KeyboardError;
 pub use led::{LedMode, LedParams, RgbColor};
 pub use magnetism::{
-    KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, TriggerSettings,
+    KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, TravelDepth,
+    TriggerSettings,
 };
 pub use settings::{
     BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
@@ -686,6 +687,23 @@ impl KeyboardInterface {
         let mode = if enable { 1u8 } else { 0u8 };
         let values = vec![mode; self.key_count as usize];
         self.set_magnetism_u8(mag_cmd::KEY_MODE, &values).await
+    }
+
+    /// Set bottom deadzone for all keys (u16 raw value)
+    ///
+    /// Bottom deadzone is the distance from bottom of travel that is ignored.
+    pub async fn set_bottom_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+        let values = vec![travel; self.key_count as usize];
+        self.set_magnetism_u16(mag_cmd::BOTTOM_DEADZONE, &values)
+            .await
+    }
+
+    /// Set top deadzone for all keys (u16 raw value)
+    ///
+    /// Top deadzone is the distance from top of travel that is ignored.
+    pub async fn set_top_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+        let values = vec![travel; self.key_count as usize];
+        self.set_magnetism_u16(mag_cmd::TOP_DEADZONE, &values).await
     }
 
     // === Extended LED Control ===

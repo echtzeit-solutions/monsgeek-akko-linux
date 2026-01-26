@@ -1,5 +1,53 @@
 //! Magnetism (Hall Effect) related types for trigger settings
 
+use crate::settings::Precision;
+
+/// Travel distance in raw firmware units
+///
+/// Provides type-safe conversion to/from millimeters based on firmware precision.
+/// The raw value is stored as u16 and represents travel distance in precision-dependent units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TravelDepth(u16);
+
+impl TravelDepth {
+    /// Create from raw firmware value
+    pub const fn from_raw(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    /// Create from millimeters using the given precision
+    pub fn from_mm(mm: f32, precision: Precision) -> Self {
+        Self(precision.mm_to_raw(mm as f64))
+    }
+
+    /// Get the raw firmware value
+    pub const fn raw(&self) -> u16 {
+        self.0
+    }
+
+    /// Convert to millimeters using the given precision
+    pub fn to_mm(&self, precision: Precision) -> f32 {
+        precision.raw_to_mm(self.0) as f32
+    }
+
+    /// Format as string with mm suffix (e.g., "1.50mm")
+    pub fn format(&self, precision: Precision) -> String {
+        format!("{:.2}mm", self.to_mm(precision))
+    }
+}
+
+impl From<u16> for TravelDepth {
+    fn from(raw: u16) -> Self {
+        Self(raw)
+    }
+}
+
+impl From<TravelDepth> for u16 {
+    fn from(depth: TravelDepth) -> Self {
+        depth.0
+    }
+}
+
 /// Key depth event from magnetism report
 #[derive(Debug, Clone)]
 pub struct KeyDepthEvent {

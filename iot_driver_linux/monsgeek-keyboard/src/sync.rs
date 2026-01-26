@@ -202,6 +202,8 @@ impl SyncKeyboard {
     sync_method!(set_rt_press_all_u16(sensitivity: u16) -> Result<(), KeyboardError>);
     sync_method!(set_rt_lift_all_u16(sensitivity: u16) -> Result<(), KeyboardError>);
     sync_method!(set_rapid_trigger_all(enable: bool) -> Result<(), KeyboardError>);
+    sync_method!(set_bottom_deadzone_all_u16(travel: u16) -> Result<(), KeyboardError>);
+    sync_method!(set_top_deadzone_all_u16(travel: u16) -> Result<(), KeyboardError>);
 
     // === Extended LED Control ===
 
