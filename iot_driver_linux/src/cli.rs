@@ -176,6 +176,43 @@ pub enum Commands {
         value: String,
     },
 
+    /// Set release point for all keys
+    #[command(visible_alias = "srl")]
+    SetRelease {
+        /// Release point in mm (e.g., 0.5, 1.0, 2.0)
+        mm: f32,
+    },
+
+    /// Set bottom deadzone for all keys
+    #[command(visible_alias = "sbd")]
+    SetBottomDeadzone {
+        /// Bottom deadzone in mm (e.g., 0.2, 0.3)
+        mm: f32,
+    },
+
+    /// Set top deadzone for all keys
+    #[command(visible_alias = "std")]
+    SetTopDeadzone {
+        /// Top deadzone in mm (e.g., 0.1, 0.2)
+        mm: f32,
+    },
+
+    /// Set trigger settings for a specific key
+    #[command(visible_alias = "skt")]
+    SetKeyTrigger {
+        /// Key index (0-125)
+        key: u8,
+        /// Actuation point in mm (optional)
+        #[arg(long)]
+        actuation: Option<f32>,
+        /// Release point in mm (optional)
+        #[arg(long)]
+        release: Option<f32>,
+        /// Key mode: normal, rt, dks, snaptap (optional)
+        #[arg(long)]
+        mode: Option<String>,
+    },
+
     // === Per-key Color Commands ===
     /// Set all keys to a single color
     #[command(visible_aliases = ["color-all", "sc"])]

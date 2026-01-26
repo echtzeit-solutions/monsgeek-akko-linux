@@ -1036,6 +1036,106 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => eprintln!("No device found: {e}"),
         },
+        Some(Commands::SetRelease { mm }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
+                let raw = (mm * factor) as u16;
+                match keyboard.set_release_all_u16(raw) {
+                    Ok(_) => println!("Release point set to {mm:.2}mm (raw: {raw}) for all keys"),
+                    Err(e) => eprintln!("Failed to set release point: {e}"),
+                }
+            }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetBottomDeadzone { mm }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
+                let raw = (mm * factor) as u16;
+                match keyboard.set_bottom_deadzone_all_u16(raw) {
+                    Ok(_) => println!("Bottom deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
+                    Err(e) => eprintln!("Failed to set bottom deadzone: {e}"),
+                }
+            }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetTopDeadzone { mm }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                let precision = keyboard.get_precision().unwrap_or_default();
+                let factor = precision.factor() as f32;
+                let raw = (mm * factor) as u16;
+                match keyboard.set_top_deadzone_all_u16(raw) {
+                    Ok(_) => println!("Top deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
+                    Err(e) => eprintln!("Failed to set top deadzone: {e}"),
+                }
+            }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
+        Some(Commands::SetKeyTrigger {
+            key,
+            actuation,
+            release,
+            mode,
+        }) => match SyncKeyboard::open_any() {
+            Ok(keyboard) => {
+                // Get current settings first
+                let current = match keyboard.get_key_trigger(key) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to get current settings for key {key}: {e}");
+                        return Ok(());
+                    }
+                };
+
+                let precision = keyboard.get_precision().unwrap_or_default();
+                // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
+                let factor = 10.0f32;
+
+                // Build settings with modifications
+                let settings = monsgeek_keyboard::KeyTriggerSettings {
+                    key_index: key,
+                    actuation: actuation
+                        .map(|mm| (mm * factor) as u8)
+                        .unwrap_or(current.actuation),
+                    deactuation: release
+                        .map(|mm| (mm * factor) as u8)
+                        .unwrap_or(current.deactuation),
+                    mode: mode
+                        .as_ref()
+                        .map(|m| match m.to_lowercase().as_str() {
+                            "normal" | "n" => monsgeek_keyboard::KeyMode::Normal,
+                            "rt" | "rapid" | "rapidtrigger" => {
+                                monsgeek_keyboard::KeyMode::RapidTrigger
+                            }
+                            "dks" | "dynamic" => monsgeek_keyboard::KeyMode::DynamicKeystroke,
+                            "snaptap" | "snap" | "st" => monsgeek_keyboard::KeyMode::SnapTap,
+                            "modtap" | "mt" => monsgeek_keyboard::KeyMode::ModTap,
+                            "toggle" | "tgl" => monsgeek_keyboard::KeyMode::ToggleHold,
+                            _ => current.mode,
+                        })
+                        .unwrap_or(current.mode),
+                };
+
+                match keyboard.set_key_trigger(&settings) {
+                    Ok(_) => {
+                        println!("Key {key} trigger settings updated:");
+                        println!(
+                            "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {:?}",
+                            settings.actuation as f32 / factor,
+                            settings.deactuation as f32 / factor,
+                            settings.mode
+                        );
+                        println!(
+                            "  (precision: {}, bulk commands use higher precision)",
+                            precision.as_str()
+                        );
+                    }
+                    Err(e) => eprintln!("Failed to set key trigger: {e}"),
+                }
+            }
+            Err(e) => eprintln!("No device found: {e}"),
+        },
 
         // === Per-key Color Commands ===
         Some(Commands::SetColorAll { r, g, b, layer }) => match SyncKeyboard::open_any() {
