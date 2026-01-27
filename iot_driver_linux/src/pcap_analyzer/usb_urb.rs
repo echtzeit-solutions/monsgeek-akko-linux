@@ -368,24 +368,46 @@ pub fn parse_usb_packet(raw: &[u8]) -> Option<UsbPacket> {
 
     match urb.transfer_type {
         TransferType::Control => {
-            // Control transfers have 8-byte setup packet after header
-            if raw.len() < header_len + 8 {
-                return Some(UsbPacket::Other { urb });
-            }
-
-            let setup = parse_control_setup(&raw[header_len..header_len + 8])?;
-            let data_start = header_len + 8;
-            // USBPcap data_len includes the setup packet, so actual data is data_len - 8
+            // Control transfers: OUT (submit) has setup + data, IN (complete) has data only
             let data_len = urb.data_len as usize;
-            let actual_data_len = data_len.saturating_sub(8);
 
-            let data = if raw.len() >= data_start + actual_data_len && actual_data_len > 0 {
-                raw[data_start..data_start + actual_data_len].to_vec()
+            if urb.direction == Direction::Out {
+                // OUT packet: setup packet (8 bytes) followed by data
+                // USBPcap data_len includes the setup packet
+                if raw.len() < header_len + 8 {
+                    return Some(UsbPacket::Other { urb });
+                }
+
+                let setup = parse_control_setup(&raw[header_len..header_len + 8])?;
+                let data_start = header_len + 8;
+                let actual_data_len = data_len.saturating_sub(8);
+
+                let data = if raw.len() >= data_start + actual_data_len && actual_data_len > 0 {
+                    raw[data_start..data_start + actual_data_len].to_vec()
+                } else {
+                    Vec::new()
+                };
+
+                Some(UsbPacket::Control { urb, setup, data })
             } else {
-                Vec::new()
-            };
+                // IN packet (response): no setup in packet, data directly after header
+                // We create a dummy setup - the real setup was in the corresponding OUT packet
+                let setup = ControlSetup {
+                    bm_request_type: 0x80, // IN, standard, device (placeholder)
+                    b_request: 0,
+                    w_value: 0,
+                    w_index: 0,
+                    w_length: data_len as u16,
+                };
 
-            Some(UsbPacket::Control { urb, setup, data })
+                let data = if raw.len() >= header_len + data_len && data_len > 0 {
+                    raw[header_len..header_len + data_len].to_vec()
+                } else {
+                    Vec::new()
+                };
+
+                Some(UsbPacket::Control { urb, setup, data })
+            }
         }
         TransferType::Interrupt => {
             let data_len = urb.data_len as usize;

@@ -204,9 +204,11 @@ impl Printer {
                         );
                     }
                 } else {
-                    // Try to decode as UTF-16LE if it looks like text
-                    let decoded = if is_response && data.len() >= 4 && looks_like_utf16le(data) {
-                        decode_utf16le(data)
+                    // Try to decode as USB string descriptor or raw UTF-16LE
+                    let decoded = if is_response && data.len() >= 4 {
+                        // Try as string descriptor first (handles 2-byte header),
+                        // falls back to raw UTF-16LE
+                        decode_usb_string(data)
                     } else {
                         None
                     };
@@ -282,26 +284,4 @@ fn decode_utf16le(data: &[u8]) -> Option<String> {
     } else {
         Some(decoded)
     }
-}
-
-/// Check if data looks like UTF-16LE text (ASCII range with zero high bytes)
-fn looks_like_utf16le(data: &[u8]) -> bool {
-    if data.len() < 4 || !data.len().is_multiple_of(2) {
-        return false;
-    }
-
-    // Check if most characters are in ASCII range (high byte = 0)
-    // and low bytes are printable ASCII
-    let mut ascii_count = 0;
-    for chunk in data.chunks_exact(2) {
-        let low = chunk[0];
-        let high = chunk[1];
-        // ASCII printable range with zero high byte
-        if high == 0 && (0x20..=0x7E).contains(&low) {
-            ascii_count += 1;
-        }
-    }
-
-    // At least 50% should look like ASCII
-    ascii_count * 2 >= data.len() / 2
 }
