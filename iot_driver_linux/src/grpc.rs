@@ -63,48 +63,66 @@ fn parse_device_path(path: &str) -> Option<(u16, u16, u16, u16, i32)> {
 }
 
 /// Convert a VendorEvent to raw bytes for the gRPC protocol
+/// Emits raw USB HID format with report ID prefix expected by webapp
 fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
+    // Prepend USB report ID (0x05) to match raw HID format expected by webapp
+    const REPORT_ID: u8 = 0x05;
+
     match event {
         VendorEvent::KeyDepth {
             key_index,
             depth_raw,
         } => {
-            // Format: [0x1B, key_index, depth_low, depth_high]
+            // USB format: [0x05, 0x1B, depth_low, depth_high, key_index]
             vec![
+                REPORT_ID,
                 0x1B,
-                *key_index,
                 (*depth_raw & 0xFF) as u8,
                 (*depth_raw >> 8) as u8,
+                *key_index,
             ]
         }
-        VendorEvent::MagnetismStart => vec![0x0F, 0x01],
-        VendorEvent::MagnetismStop => vec![0x0F, 0x00],
-        VendorEvent::Wake => vec![0x00],
-        VendorEvent::ProfileChange { profile } => vec![0x01, *profile],
-        VendorEvent::SettingsAck { started } => vec![0x0F, if *started { 0x01 } else { 0x00 }],
-        VendorEvent::LedEffectMode { effect_id } => vec![0x04, *effect_id],
-        VendorEvent::LedEffectSpeed { speed } => vec![0x05, *speed],
-        VendorEvent::BrightnessLevel { level } => vec![0x06, *level],
-        VendorEvent::LedColor { color } => vec![0x07, *color],
-        VendorEvent::WinLockToggle { locked } => vec![0x03, if *locked { 1 } else { 0 }, 0x01],
-        VendorEvent::WasdSwapToggle { swapped } => vec![0x03, if *swapped { 8 } else { 0 }, 0x03],
-        VendorEvent::BacklightToggle => vec![0x03, 0, 0x09],
-        VendorEvent::FnLayerToggle { layer } => vec![0x03, *layer, 0x08],
-        VendorEvent::DialModeToggle => vec![0x03, 0, 0x11],
-        VendorEvent::UnknownKbFunc { category, action } => vec![0x03, *category, *action],
+        VendorEvent::MagnetismStart => vec![REPORT_ID, 0x0F, 0x01, 0x00],
+        VendorEvent::MagnetismStop => vec![REPORT_ID, 0x0F, 0x00, 0x00],
+        VendorEvent::Wake => vec![REPORT_ID, 0x00, 0x00, 0x00],
+        VendorEvent::ProfileChange { profile } => vec![REPORT_ID, 0x01, *profile, 0x00],
+        VendorEvent::SettingsAck { started } => {
+            vec![REPORT_ID, 0x0F, if *started { 0x01 } else { 0x00 }, 0x00]
+        }
+        VendorEvent::LedEffectMode { effect_id } => vec![REPORT_ID, 0x04, *effect_id, 0x00],
+        VendorEvent::LedEffectSpeed { speed } => vec![REPORT_ID, 0x05, *speed, 0x00],
+        VendorEvent::BrightnessLevel { level } => vec![REPORT_ID, 0x06, *level, 0x00],
+        VendorEvent::LedColor { color } => vec![REPORT_ID, 0x07, *color, 0x00],
+        VendorEvent::WinLockToggle { locked } => {
+            vec![REPORT_ID, 0x03, if *locked { 1 } else { 0 }, 0x01]
+        }
+        VendorEvent::WasdSwapToggle { swapped } => {
+            vec![REPORT_ID, 0x03, if *swapped { 8 } else { 0 }, 0x03]
+        }
+        VendorEvent::BacklightToggle => vec![REPORT_ID, 0x03, 0x00, 0x09],
+        VendorEvent::FnLayerToggle { layer } => vec![REPORT_ID, 0x03, *layer, 0x08],
+        VendorEvent::DialModeToggle => vec![REPORT_ID, 0x03, 0x00, 0x11],
+        VendorEvent::UnknownKbFunc { category, action } => {
+            vec![REPORT_ID, 0x03, *category, *action]
+        }
         VendorEvent::BatteryStatus {
             level,
             charging,
             online,
         } => {
-            vec![
-                0x88,
-                *level,
-                if *charging { 1 } else { 0 },
-                if *online { 1 } else { 0 },
-            ]
+            let flags = if *charging { 0x02 } else { 0 } | if *online { 0x01 } else { 0 };
+            vec![REPORT_ID, 0x88, 0x00, 0x00, *level, flags]
         }
-        VendorEvent::Unknown(data) => data.clone(),
+        VendorEvent::Unknown(data) => {
+            // Already has report ID if from raw HID
+            if data.first() == Some(&REPORT_ID) {
+                data.clone()
+            } else {
+                let mut out = vec![REPORT_ID];
+                out.extend(data);
+                out
+            }
+        }
     }
 }
 
