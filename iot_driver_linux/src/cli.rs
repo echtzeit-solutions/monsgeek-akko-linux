@@ -453,6 +453,14 @@ pub enum Commands {
         /// Show detailed packet statistics
         #[arg(short, long)]
         verbose: bool,
+
+        /// Show Debug-derived fields for events (full struct dump)
+        #[arg(short, long)]
+        debug: bool,
+
+        /// Show raw hex dump alongside decoded output
+        #[arg(short = 'x', long)]
+        hex: bool,
     },
 
     /// Run joystick mapper (maps magnetic keys to virtual joystick axes)

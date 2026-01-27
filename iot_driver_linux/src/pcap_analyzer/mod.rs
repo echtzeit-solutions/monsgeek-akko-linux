@@ -85,6 +85,18 @@ impl PcapAnalyzer {
         self
     }
 
+    /// Enable debug field output for events
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.printer = self.printer.with_debug(debug);
+        self
+    }
+
+    /// Enable raw hex dump output
+    pub fn with_hex(mut self, hex: bool) -> Self {
+        self.printer = self.printer.with_hex(hex);
+        self
+    }
+
     /// Analyze a pcapng file and print decoded packets
     pub fn analyze_file(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let file = File::open(path)?;
@@ -291,7 +303,7 @@ impl PcapAnalyzer {
                 if first_byte == report_id::USB_VENDOR_EVENT {
                     stats.vendor_events += 1;
                     let event = parse_usb_event(data);
-                    self.printer.print_event(timestamp, &event);
+                    self.printer.print_event(timestamp, &event, Some(data));
                 } else {
                     // Other interrupt data - commands/responses or unknown
                     stats.vendor_commands += 1;
@@ -327,13 +339,18 @@ pub fn run_pcap_analysis(
     format: OutputFormat,
     filter: Option<&str>,
     verbose: bool,
+    debug: bool,
+    hex: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = match filter {
         Some(f) => PacketFilter::from_str(f)?,
         None => PacketFilter::All,
     };
 
-    let analyzer = PcapAnalyzer::new(format, filter).with_verbose(verbose);
+    let analyzer = PcapAnalyzer::new(format, filter)
+        .with_verbose(verbose)
+        .with_debug(debug)
+        .with_hex(hex);
     analyzer.analyze_file(path)
 }
 

@@ -67,11 +67,32 @@ pub enum DecodedPacket {
 pub struct Printer {
     format: OutputFormat,
     filter: PacketFilter,
+    /// Show Debug-derived fields for events
+    show_debug: bool,
+    /// Show raw hex dump alongside decoded output
+    show_hex: bool,
 }
 
 impl Printer {
     pub fn new(format: OutputFormat, filter: PacketFilter) -> Self {
-        Self { format, filter }
+        Self {
+            format,
+            filter,
+            show_debug: false,
+            show_hex: false,
+        }
+    }
+
+    /// Enable debug field output
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.show_debug = debug;
+        self
+    }
+
+    /// Enable raw hex dump output
+    pub fn with_hex(mut self, hex: bool) -> Self {
+        self.show_hex = hex;
+        self
     }
 
     fn should_show_command(&self, cmd: u8) -> bool {
@@ -87,16 +108,26 @@ impl Printer {
         matches!(&self.filter, PacketFilter::All | PacketFilter::Events)
     }
 
-    /// Print a vendor event using Debug formatting
-    pub fn print_event(&self, timestamp: f64, event: &VendorEvent) {
+    /// Print a vendor event
+    pub fn print_event(&self, timestamp: f64, event: &VendorEvent, raw_data: Option<&[u8]>) {
         if !self.should_show_events() {
             return;
         }
 
         match self.format {
             OutputFormat::Text => {
-                // Use Debug for full field visibility
-                println!("{:.6} EVENT {:#?}", timestamp, event);
+                if self.show_debug {
+                    // Full Debug output with all fields
+                    println!("{:.6} EVENT {:#?}", timestamp, event);
+                } else {
+                    // Compact single-line format
+                    println!("{:.6} EVENT {:?}", timestamp, event);
+                }
+                if self.show_hex {
+                    if let Some(data) = raw_data {
+                        println!("         HEX   {:02x?}", data);
+                    }
+                }
             }
             OutputFormat::Json => {
                 let packet = DecodedPacket::Event {
@@ -126,11 +157,25 @@ impl Printer {
 
         match self.format {
             OutputFormat::Text => {
-                // Show endpoint, command name and ALL data bytes for analysis
-                println!(
-                    "{:.6} {} EP{:02x} 0x{:02x} {} {:02x?}",
-                    timestamp, direction, endpoint, cmd_byte, cmd_name, data
-                );
+                if self.show_hex {
+                    // Compact header, hex on separate line
+                    println!(
+                        "{:.6} {} EP{:02x} 0x{:02x} {} len={}",
+                        timestamp,
+                        direction,
+                        endpoint,
+                        cmd_byte,
+                        cmd_name,
+                        data.len()
+                    );
+                    println!("         HEX   {:02x?}", data);
+                } else {
+                    // Show endpoint, command name and ALL data bytes for analysis
+                    println!(
+                        "{:.6} {} EP{:02x} 0x{:02x} {} {:02x?}",
+                        timestamp, direction, endpoint, cmd_byte, cmd_name, data
+                    );
+                }
             }
             OutputFormat::Json => {
                 let packet = DecodedPacket::Command {
@@ -224,6 +269,10 @@ impl Printer {
                             timestamp, endpoint, direction, request_name, data
                         );
                     }
+                }
+                // Show raw hex dump on separate line if enabled
+                if self.show_hex && !data.is_empty() {
+                    println!("         HEX   {:02x?}", data);
                 }
             }
             OutputFormat::Json => {
