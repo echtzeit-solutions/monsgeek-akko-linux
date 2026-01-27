@@ -2250,6 +2250,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Monitor) => {
             watch_settings_changes().await?;
         }
+        Some(Commands::Pcap {
+            file,
+            format,
+            filter,
+        }) => {
+            use iot_driver::pcap_analyzer::{self, OutputFormat};
+            let output_format = match format {
+                cli::PcapOutputFormat::Text => OutputFormat::Text,
+                cli::PcapOutputFormat::Json => OutputFormat::Json,
+            };
+            pcap_analyzer::run_pcap_analysis(&file, output_format, filter.as_deref())?;
+        }
         Some(Commands::Joystick { config, headless }) => {
             // Launch the joystick mapper
             // We can either spawn it as a subprocess or call into the library directly

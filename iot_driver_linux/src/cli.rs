@@ -434,6 +434,23 @@ pub enum Commands {
     #[command(visible_alias = "watch")]
     Monitor,
 
+    /// Analyze pcapng USB capture file
+    ///
+    /// Reads pcapng captures of USB HID traffic and decodes MonsGeek vendor
+    /// protocol packets using the existing transport parsers.
+    Pcap {
+        /// Path to pcapng file
+        file: PathBuf,
+
+        /// Output format (text or json)
+        #[arg(long, value_enum, default_value = "text")]
+        format: PcapOutputFormat,
+
+        /// Filter packets (all, events, commands, cmd=0xNN, 0xNN)
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
     /// Run joystick mapper (maps magnetic keys to virtual joystick axes)
     #[command(visible_alias = "joy")]
     Joystick {
@@ -488,6 +505,15 @@ impl AudioMode {
             AudioMode::Gradient => "gradient",
         }
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
+pub enum PcapOutputFormat {
+    /// Human-readable text output
+    #[default]
+    Text,
+    /// JSON output (one object per line)
+    Json,
 }
 
 /// Firmware commands (DRY-RUN ONLY - no actual flashing)

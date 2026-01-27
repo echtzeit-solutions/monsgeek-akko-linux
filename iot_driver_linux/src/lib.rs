@@ -11,6 +11,7 @@ pub mod firmware_api;
 pub mod gif;
 pub mod hal;
 pub mod hid;
+pub mod pcap_analyzer;
 pub mod power_supply;
 pub mod profile;
 pub mod protocol;

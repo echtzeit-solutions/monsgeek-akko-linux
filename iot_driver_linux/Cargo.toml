@@ -73,6 +73,9 @@ aya = { version = "0.13", optional = true }
 # GIF/Image processing
 image = { version = "0.25", default-features = false, features = ["gif", "png"] }
 
+# PCAP analysis
+pcap-parser = "0.16"
+
 # New transport abstraction layer
 monsgeek-transport = { path = "monsgeek-transport" }
 monsgeek-keyboard = { path = "monsgeek-keyboard" }
