@@ -118,11 +118,10 @@ pub struct ControlSetup {
 }
 
 /// HID report types
+#[allow(dead_code)]
 pub mod hid_report_type {
-    #[allow(dead_code)]
     pub const INPUT: u8 = 1;
     pub const OUTPUT: u8 = 2;
-    #[allow(dead_code)]
     pub const FEATURE: u8 = 3;
 }
 
@@ -316,20 +315,20 @@ pub fn parse_usb_packet(raw: &[u8]) -> Option<UsbPacket> {
 
 /// Extract HID report data from a USB packet
 ///
-/// For control transfers (SET/GET_REPORT), extracts Feature report data,
-/// skipping the report ID byte (first byte).
-/// For interrupt/bulk transfers, extracts the data directly (report ID is already
-/// included in the payload for vendor events).
+/// For control transfers (SET/GET_REPORT), extracts report data,
+/// skipping the report ID byte (first byte) for HID class requests.
+/// For interrupt/bulk transfers, extracts the data directly.
 pub fn extract_hid_data(packet: &UsbPacket) -> Option<&[u8]> {
     match packet {
         UsbPacket::Control { setup, data, .. } => {
-            // Consider all HID SET_REPORT/GET_REPORT for feature and output reports
-            // Feature (3) and Output (2) reports can contain vendor commands
+            // Extract data from HID SET_REPORT/GET_REPORT requests
             let is_hid_report = setup.is_set_report() || setup.is_get_report();
-            let is_vendor_report = setup.report_type() >= hid_report_type::OUTPUT;
-            if is_hid_report && is_vendor_report && data.len() > 1 {
+            if is_hid_report && data.len() > 1 {
                 // Skip the report ID byte (first byte) to get to the command byte
                 Some(&data[1..])
+            } else if !data.is_empty() {
+                // Return raw data for non-HID control transfers
+                Some(data)
             } else {
                 None
             }
@@ -341,7 +340,12 @@ pub fn extract_hid_data(packet: &UsbPacket) -> Option<&[u8]> {
                 None
             }
         }
-        UsbPacket::Other { .. } => None,
+        UsbPacket::Other { urb } => {
+            // For Other packets, we don't have parsed data but return None
+            // The raw data is in the packet but we can't extract it here
+            let _ = urb; // silence unused warning
+            None
+        }
     }
 }
 

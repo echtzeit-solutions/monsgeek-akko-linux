@@ -2254,13 +2254,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             file,
             format,
             filter,
+            verbose,
         }) => {
             use iot_driver::pcap_analyzer::{self, OutputFormat};
             let output_format = match format {
                 cli::PcapOutputFormat::Text => OutputFormat::Text,
                 cli::PcapOutputFormat::Json => OutputFormat::Json,
             };
-            pcap_analyzer::run_pcap_analysis(&file, output_format, filter.as_deref())?;
+            pcap_analyzer::run_pcap_analysis(&file, output_format, filter.as_deref(), verbose)?;
         }
         Some(Commands::Joystick { config, headless }) => {
             // Launch the joystick mapper

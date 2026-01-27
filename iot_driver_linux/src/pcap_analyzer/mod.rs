@@ -27,9 +27,47 @@ use pcap_parser::{create_reader, PcapBlockOwned, PcapError};
 
 use monsgeek_transport::event_parser::{parse_usb_event, report_id};
 
+/// Packet statistics for debugging
+#[derive(Default)]
+struct PacketStats {
+    parse_failed: u64,
+    no_hid_data: u64,
+    control_no_data: u64,
+    control_not_hid: u64,
+    interrupt_no_data: u64,
+    interrupt_out: u64,
+    control_transfers: u64,
+    interrupt_transfers: u64,
+    bulk_transfers: u64,
+    keyboard_reports: u64,
+    vendor_events: u64,
+    vendor_commands: u64,
+    other: u64,
+}
+
+impl PacketStats {
+    fn print_summary(&self) {
+        eprintln!("\nPacket statistics:");
+        eprintln!("  Parse failed:       {}", self.parse_failed);
+        eprintln!("  No HID data:        {}", self.no_hid_data);
+        eprintln!("    Control no data:  {}", self.control_no_data);
+        eprintln!("    Control not HID:  {}", self.control_not_hid);
+        eprintln!("    Interrupt no data:{}", self.interrupt_no_data);
+        eprintln!("    Interrupt OUT:    {}", self.interrupt_out);
+        eprintln!("  Control transfers:  {}", self.control_transfers);
+        eprintln!("  Interrupt transfers:{}", self.interrupt_transfers);
+        eprintln!("  Bulk transfers:     {}", self.bulk_transfers);
+        eprintln!("  Keyboard reports:   {}", self.keyboard_reports);
+        eprintln!("  Vendor events:      {}", self.vendor_events);
+        eprintln!("  Vendor commands:    {}", self.vendor_commands);
+        eprintln!("  Other:              {}", self.other);
+    }
+}
+
 /// PCAP analyzer for MonsGeek USB HID traffic
 pub struct PcapAnalyzer {
     printer: Printer,
+    verbose: bool,
 }
 
 impl PcapAnalyzer {
@@ -37,7 +75,14 @@ impl PcapAnalyzer {
     pub fn new(format: OutputFormat, filter: PacketFilter) -> Self {
         Self {
             printer: Printer::new(format, filter),
+            verbose: false,
         }
+    }
+
+    /// Enable verbose mode to show skipped packet statistics
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 
     /// Analyze a pcapng file and print decoded packets
@@ -48,6 +93,9 @@ impl PcapAnalyzer {
         let mut packet_count = 0u64;
         let mut decoded_count = 0u64;
         let mut last_incomplete_index = 0u64;
+
+        // Statistics for verbose mode
+        let mut stats = PacketStats::default();
 
         loop {
             // Extract data we need from the block before calling consume/refill
@@ -87,7 +135,7 @@ impl PcapAnalyzer {
                         };
 
                         packet_count += 1;
-                        if self.process_packet(ts, &data) {
+                        if self.process_packet_with_stats(ts, &data, &mut stats) {
                             decoded_count += 1;
                         }
                     }
@@ -119,29 +167,77 @@ impl PcapAnalyzer {
             "\n--- Analyzed {} packets, {} decoded ---",
             packet_count, decoded_count
         );
+
+        if self.verbose {
+            stats.print_summary();
+        }
+
         Ok(())
     }
 
-    /// Process a single packet and return true if it was a HID packet
-    fn process_packet(&self, timestamp: f64, raw_data: &[u8]) -> bool {
+    /// Process a single packet with statistics tracking
+    fn process_packet_with_stats(
+        &self,
+        timestamp: f64,
+        raw_data: &[u8],
+        stats: &mut PacketStats,
+    ) -> bool {
         // Parse USB URB packet
         let packet = match parse_usb_packet(raw_data) {
             Some(p) => p,
-            None => return false,
+            None => {
+                stats.parse_failed += 1;
+                return false;
+            }
         };
+
+        // Track transfer type
+        match &packet {
+            UsbPacket::Control { .. } => stats.control_transfers += 1,
+            UsbPacket::Interrupt { .. } => stats.interrupt_transfers += 1,
+            UsbPacket::Bulk { .. } => stats.bulk_transfers += 1,
+            UsbPacket::Other { .. } => stats.other += 1,
+        }
 
         // Extract HID data from the packet
         let data = match usb_urb::extract_hid_data(&packet) {
             Some(d) if !d.is_empty() => d,
-            _ => return false,
+            _ => {
+                stats.no_hid_data += 1;
+                // Track why packets are skipped
+                match &packet {
+                    UsbPacket::Control { setup, data, .. } => {
+                        if data.is_empty() || data.len() <= 1 {
+                            stats.control_no_data += 1;
+                        } else if !setup.is_set_report() && !setup.is_get_report() {
+                            stats.control_not_hid += 1;
+                        }
+                    }
+                    UsbPacket::Interrupt { data, urb } => {
+                        if data.is_empty() {
+                            stats.interrupt_no_data += 1;
+                        } else if urb.direction == Direction::Out {
+                            stats.interrupt_out += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                return false;
+            }
         };
 
-        self.decode_and_print(timestamp, data, &packet);
+        self.decode_and_print_with_stats(timestamp, data, &packet, stats);
         true
     }
 
     /// Decode HID data and print using the appropriate format
-    fn decode_and_print(&self, timestamp: f64, data: &[u8], packet: &UsbPacket) {
+    fn decode_and_print_with_stats(
+        &self,
+        timestamp: f64,
+        data: &[u8],
+        packet: &UsbPacket,
+        stats: &mut PacketStats,
+    ) {
         if data.is_empty() {
             return;
         }
@@ -153,6 +249,7 @@ impl PcapAnalyzer {
         match packet {
             UsbPacket::Control { setup, .. } => {
                 // Feature/Output report via control endpoint - these are vendor commands/responses
+                stats.vendor_commands += 1;
                 let is_response = setup.is_get_report() && urb.direction == Direction::In;
                 self.printer
                     .print_command(timestamp, first_byte, data, is_response);
@@ -160,24 +257,37 @@ impl PcapAnalyzer {
             UsbPacket::Interrupt { .. } => {
                 // Interrupt endpoint - process vendor events (report ID 0x05)
                 if first_byte == report_id::USB_VENDOR_EVENT {
+                    stats.vendor_events += 1;
                     let event = parse_usb_event(data);
                     self.printer.print_event(timestamp, &event);
-                } else if urb.direction == Direction::In && first_byte != 0x00 {
-                    // Other non-keyboard interrupt data - might be vendor responses
+                } else if urb.direction == Direction::In {
+                    if first_byte == 0x00 && data.len() <= 8 {
+                        // Standard keyboard HID reports (short reports with first byte 0x00)
+                        stats.keyboard_reports += 1;
+                        return;
+                    }
+                    // Other interrupt data - might be vendor responses or unknown data
+                    stats.vendor_commands += 1;
                     let is_response = first_byte & 0x80 != 0;
                     self.printer
                         .print_command(timestamp, first_byte, data, is_response);
+                } else {
+                    // Interrupt OUT - shouldn't happen for IN endpoint, dump it
+                    stats.other += 1;
+                    self.printer.print_unknown(timestamp, data);
                 }
-                // Silently ignore keyboard HID reports (first byte 0x00)
             }
             UsbPacket::Bulk { .. } => {
                 // Bulk transfers - determine by direction
+                stats.vendor_commands += 1;
                 let is_response = urb.direction == Direction::In;
                 self.printer
                     .print_command(timestamp, first_byte, data, is_response);
             }
             UsbPacket::Other { .. } => {
-                // Unknown transfer type
+                // Unknown transfer type - dump it
+                stats.other += 1;
+                self.printer.print_unknown(timestamp, data);
             }
         }
     }
@@ -188,13 +298,14 @@ pub fn run_pcap_analysis(
     path: &Path,
     format: OutputFormat,
     filter: Option<&str>,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = match filter {
         Some(f) => PacketFilter::from_str(f)?,
         None => PacketFilter::All,
     };
 
-    let analyzer = PcapAnalyzer::new(format, filter);
+    let analyzer = PcapAnalyzer::new(format, filter).with_verbose(verbose);
     analyzer.analyze_file(path)
 }
 

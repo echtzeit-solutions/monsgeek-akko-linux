@@ -449,6 +449,10 @@ pub enum Commands {
         /// Filter packets (all, events, commands, cmd=0xNN, 0xNN)
         #[arg(long)]
         filter: Option<String>,
+
+        /// Show detailed packet statistics
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Run joystick mapper (maps magnetic keys to virtual joystick axes)
