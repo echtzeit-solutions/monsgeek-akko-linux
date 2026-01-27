@@ -199,28 +199,54 @@ impl PcapAnalyzer {
             UsbPacket::Other { .. } => stats.other += 1,
         }
 
-        // Extract HID data from the packet
+        // Handle control transfers specially - they can be HID or USB standard
+        if let UsbPacket::Control { urb, setup, data } = &packet {
+            if !data.is_empty() {
+                // Check if it's a HID report or USB standard request
+                if setup.is_set_report() || setup.is_get_report() {
+                    // HID report - extract and process
+                    if let Some(hid_data) = usb_urb::extract_hid_data(&packet) {
+                        if !hid_data.is_empty() {
+                            self.decode_and_print_with_stats(timestamp, hid_data, &packet, stats);
+                            return true;
+                        }
+                    }
+                } else {
+                    // Non-HID control transfer (GET_DESCRIPTOR, etc.)
+                    let is_response = urb.direction == Direction::In;
+                    let descriptor_info = if setup.is_get_descriptor() {
+                        Some((setup.descriptor_type_name(), setup.descriptor_index()))
+                    } else {
+                        None
+                    };
+                    self.printer.print_usb_control(
+                        timestamp,
+                        setup.request_name(),
+                        descriptor_info,
+                        data,
+                        is_response,
+                        urb.endpoint,
+                    );
+                    return true;
+                }
+            }
+            stats.no_hid_data += 1;
+            stats.control_no_data += 1;
+            return false;
+        }
+
+        // Extract HID data from non-control packets
         let data = match usb_urb::extract_hid_data(&packet) {
             Some(d) if !d.is_empty() => d,
             _ => {
                 stats.no_hid_data += 1;
                 // Track why packets are skipped
-                match &packet {
-                    UsbPacket::Control { setup, data, .. } => {
-                        if data.is_empty() || data.len() <= 1 {
-                            stats.control_no_data += 1;
-                        } else if !setup.is_set_report() && !setup.is_get_report() {
-                            stats.control_not_hid += 1;
-                        }
+                if let UsbPacket::Interrupt { data, urb } = &packet {
+                    if data.is_empty() {
+                        stats.interrupt_no_data += 1;
+                    } else if urb.direction == Direction::Out {
+                        stats.interrupt_out += 1;
                     }
-                    UsbPacket::Interrupt { data, urb } => {
-                        if data.is_empty() {
-                            stats.interrupt_no_data += 1;
-                        } else if urb.direction == Direction::Out {
-                            stats.interrupt_out += 1;
-                        }
-                    }
-                    _ => {}
                 }
                 return false;
             }
@@ -248,7 +274,7 @@ impl PcapAnalyzer {
         // Determine packet type based on transfer type and data
         match packet {
             UsbPacket::Control { setup, .. } => {
-                // Feature/Output report via control endpoint - these are vendor commands/responses
+                // HID Feature/Output report via control endpoint
                 stats.vendor_commands += 1;
                 let is_response = setup.is_get_report() && urb.direction == Direction::In;
                 self.printer

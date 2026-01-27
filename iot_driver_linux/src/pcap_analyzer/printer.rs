@@ -165,4 +165,143 @@ impl Printer {
             }
         }
     }
+
+    /// Print a USB control transfer (non-HID)
+    pub fn print_usb_control(
+        &self,
+        timestamp: f64,
+        request_name: &str,
+        descriptor_info: Option<(&str, u8)>, // (type_name, index)
+        data: &[u8],
+        is_response: bool,
+        endpoint: u8,
+    ) {
+        if matches!(self.filter, PacketFilter::Cmd(_) | PacketFilter::Events) {
+            return;
+        }
+
+        let direction = if is_response { "<<<" } else { ">>>" };
+
+        match self.format {
+            OutputFormat::Text => {
+                if let Some((desc_type, index)) = descriptor_info {
+                    // For descriptors, try to decode the data
+                    let decoded = if desc_type == "STRING" && data.len() >= 2 {
+                        decode_usb_string(data)
+                    } else {
+                        None
+                    };
+
+                    if let Some(s) = decoded {
+                        println!(
+                            "{:.6} USB  EP{:02x} {} {} {}[{}] \"{}\"",
+                            timestamp, endpoint, direction, request_name, desc_type, index, s
+                        );
+                    } else {
+                        println!(
+                            "{:.6} USB  EP{:02x} {} {} {}[{}] {:02x?}",
+                            timestamp, endpoint, direction, request_name, desc_type, index, data
+                        );
+                    }
+                } else {
+                    // Try to decode as UTF-16LE if it looks like text
+                    let decoded = if is_response && data.len() >= 4 && looks_like_utf16le(data) {
+                        decode_utf16le(data)
+                    } else {
+                        None
+                    };
+
+                    if let Some(s) = decoded {
+                        println!(
+                            "{:.6} USB  EP{:02x} {} {} \"{}\"",
+                            timestamp, endpoint, direction, request_name, s
+                        );
+                    } else {
+                        println!(
+                            "{:.6} USB  EP{:02x} {} {} {:02x?}",
+                            timestamp, endpoint, direction, request_name, data
+                        );
+                    }
+                }
+            }
+            OutputFormat::Json => {
+                // For JSON, include raw data and decoded if available
+                let packet = DecodedPacket::Unknown {
+                    timestamp,
+                    data: format!("{} {:02x?}", request_name, data),
+                };
+                println!("{}", serde_json::to_string(&packet).unwrap());
+            }
+        }
+    }
+}
+
+/// Decode USB string descriptor (UTF-16LE with length/type header)
+fn decode_usb_string(data: &[u8]) -> Option<String> {
+    if data.len() < 2 {
+        return None;
+    }
+
+    // USB string descriptor format:
+    // Byte 0: bLength (total length including header)
+    // Byte 1: bDescriptorType (0x03 for STRING)
+    // Bytes 2+: Unicode string in UTF-16LE
+
+    let b_length = data[0] as usize;
+    let b_descriptor_type = data[1];
+
+    // Check if it's a valid string descriptor
+    if b_descriptor_type != 0x03 || b_length < 2 || b_length > data.len() {
+        // Try decoding as raw UTF-16LE (no header)
+        return decode_utf16le(data);
+    }
+
+    // Skip the 2-byte header, decode the rest as UTF-16LE
+    let string_data = &data[2..b_length.min(data.len())];
+    decode_utf16le(string_data)
+}
+
+/// Decode UTF-16LE bytes to String
+fn decode_utf16le(data: &[u8]) -> Option<String> {
+    if data.len() < 2 || !data.len().is_multiple_of(2) {
+        return None;
+    }
+
+    let u16_iter = data
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
+
+    // Decode UTF-16, stopping at null terminator
+    let decoded: String = char::decode_utf16(u16_iter)
+        .take_while(|r| r.as_ref().map(|&c| c != '\0').unwrap_or(false))
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if decoded.is_empty() {
+        None
+    } else {
+        Some(decoded)
+    }
+}
+
+/// Check if data looks like UTF-16LE text (ASCII range with zero high bytes)
+fn looks_like_utf16le(data: &[u8]) -> bool {
+    if data.len() < 4 || !data.len().is_multiple_of(2) {
+        return false;
+    }
+
+    // Check if most characters are in ASCII range (high byte = 0)
+    // and low bytes are printable ASCII
+    let mut ascii_count = 0;
+    for chunk in data.chunks_exact(2) {
+        let low = chunk[0];
+        let high = chunk[1];
+        // ASCII printable range with zero high byte
+        if high == 0 && (0x20..=0x7E).contains(&low) {
+            ascii_count += 1;
+        }
+    }
+
+    // At least 50% should look like ASCII
+    ascii_count * 2 >= data.len() / 2
 }

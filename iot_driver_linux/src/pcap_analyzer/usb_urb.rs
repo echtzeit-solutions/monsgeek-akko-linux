@@ -125,15 +125,60 @@ pub mod hid_report_type {
     pub const FEATURE: u8 = 3;
 }
 
+/// USB standard request codes (bRequest)
+#[allow(dead_code)]
+pub mod usb_request {
+    pub const GET_STATUS: u8 = 0x00;
+    pub const CLEAR_FEATURE: u8 = 0x01;
+    pub const SET_FEATURE: u8 = 0x03;
+    pub const SET_ADDRESS: u8 = 0x05;
+    pub const GET_DESCRIPTOR: u8 = 0x06;
+    pub const SET_DESCRIPTOR: u8 = 0x07;
+    pub const GET_CONFIGURATION: u8 = 0x08;
+    pub const SET_CONFIGURATION: u8 = 0x09;
+    pub const GET_INTERFACE: u8 = 0x0A;
+    pub const SET_INTERFACE: u8 = 0x0B;
+    // HID class requests
+    pub const HID_GET_REPORT: u8 = 0x01;
+    pub const HID_SET_REPORT: u8 = 0x09;
+}
+
+/// USB descriptor types (high byte of wValue for GET_DESCRIPTOR)
+#[allow(dead_code)]
+pub mod descriptor_type {
+    pub const DEVICE: u8 = 0x01;
+    pub const CONFIGURATION: u8 = 0x02;
+    pub const STRING: u8 = 0x03;
+    pub const INTERFACE: u8 = 0x04;
+    pub const ENDPOINT: u8 = 0x05;
+    pub const HID: u8 = 0x21;
+    pub const HID_REPORT: u8 = 0x22;
+}
+
 impl ControlSetup {
-    /// Check if this is a SET_REPORT request (bRequest = 9)
+    /// Check if this is a SET_REPORT request (bRequest = 9, class request)
     pub fn is_set_report(&self) -> bool {
-        self.b_request == 9
+        self.b_request == usb_request::HID_SET_REPORT && self.is_class_request()
     }
 
-    /// Check if this is a GET_REPORT request (bRequest = 1)
+    /// Check if this is a GET_REPORT request (bRequest = 1, class request)
     pub fn is_get_report(&self) -> bool {
-        self.b_request == 1
+        self.b_request == usb_request::HID_GET_REPORT && self.is_class_request()
+    }
+
+    /// Check if this is a class request (bmRequestType bits 5-6 = 01)
+    pub fn is_class_request(&self) -> bool {
+        (self.bm_request_type & 0x60) == 0x20
+    }
+
+    /// Check if this is a standard request (bmRequestType bits 5-6 = 00)
+    pub fn is_standard_request(&self) -> bool {
+        (self.bm_request_type & 0x60) == 0x00
+    }
+
+    /// Check if this is GET_DESCRIPTOR
+    pub fn is_get_descriptor(&self) -> bool {
+        self.b_request == usb_request::GET_DESCRIPTOR && self.is_standard_request()
     }
 
     /// Check if this is a Feature report (report type 3)
@@ -149,6 +194,57 @@ impl ControlSetup {
     /// Get the report ID (from low byte of wValue)
     pub fn report_id(&self) -> u8 {
         (self.w_value & 0xFF) as u8
+    }
+
+    /// Get descriptor type (high byte of wValue for GET_DESCRIPTOR)
+    pub fn descriptor_type(&self) -> u8 {
+        (self.w_value >> 8) as u8
+    }
+
+    /// Get descriptor index (low byte of wValue for GET_DESCRIPTOR)
+    pub fn descriptor_index(&self) -> u8 {
+        (self.w_value & 0xFF) as u8
+    }
+
+    /// Get request name for display
+    pub fn request_name(&self) -> &'static str {
+        if self.is_class_request() {
+            match self.b_request {
+                usb_request::HID_GET_REPORT => "HID_GET_REPORT",
+                usb_request::HID_SET_REPORT => "HID_SET_REPORT",
+                _ => "CLASS_REQUEST",
+            }
+        } else if self.is_standard_request() {
+            match self.b_request {
+                usb_request::GET_STATUS => "GET_STATUS",
+                usb_request::CLEAR_FEATURE => "CLEAR_FEATURE",
+                usb_request::SET_FEATURE => "SET_FEATURE",
+                usb_request::SET_ADDRESS => "SET_ADDRESS",
+                usb_request::GET_DESCRIPTOR => "GET_DESCRIPTOR",
+                usb_request::SET_DESCRIPTOR => "SET_DESCRIPTOR",
+                usb_request::GET_CONFIGURATION => "GET_CONFIGURATION",
+                usb_request::SET_CONFIGURATION => "SET_CONFIGURATION",
+                usb_request::GET_INTERFACE => "GET_INTERFACE",
+                usb_request::SET_INTERFACE => "SET_INTERFACE",
+                _ => "STANDARD_REQUEST",
+            }
+        } else {
+            "VENDOR_REQUEST"
+        }
+    }
+
+    /// Get descriptor type name
+    pub fn descriptor_type_name(&self) -> &'static str {
+        match self.descriptor_type() {
+            descriptor_type::DEVICE => "DEVICE",
+            descriptor_type::CONFIGURATION => "CONFIGURATION",
+            descriptor_type::STRING => "STRING",
+            descriptor_type::INTERFACE => "INTERFACE",
+            descriptor_type::ENDPOINT => "ENDPOINT",
+            descriptor_type::HID => "HID",
+            descriptor_type::HID_REPORT => "HID_REPORT",
+            _ => "UNKNOWN",
+        }
     }
 }
 
