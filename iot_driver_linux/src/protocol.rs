@@ -62,6 +62,10 @@ pub mod cmd {
     /// Returns 0xFF (no data) but pushes out pending responses without overwriting them
     /// Used after real commands to retrieve their responses from the delayed buffer
     pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
+    /// FD command - appears in calibration captures, possibly factory data
+    pub const CMD_FD: u8 = 0xFD;
+    /// FE calibration - reads per-profile calibration values
+    pub const GET_CALIBRATION: u8 = 0xFE;
 
     // GET commands (0x80 - 0xE6)
     pub const GET_REV: u8 = 0x80; // Get firmware revision
@@ -361,6 +365,11 @@ pub mod cmd {
             GET_SKU => "GET_SKU",
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
+            // Dongle/calibration commands
+            BATTERY_REFRESH => "BATTERY_REFRESH",
+            DONGLE_FLUSH_NOP => "FLUSH",
+            CMD_FD => "CMD_FD",
+            GET_CALIBRATION => "GET_CALIBRATION",
             _ => "UNKNOWN",
         }
     }

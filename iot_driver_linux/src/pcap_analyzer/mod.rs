@@ -252,29 +252,31 @@ impl PcapAnalyzer {
                 stats.vendor_commands += 1;
                 let is_response = setup.is_get_report() && urb.direction == Direction::In;
                 self.printer
-                    .print_command(timestamp, first_byte, data, is_response);
+                    .print_command(timestamp, first_byte, data, is_response, urb.endpoint);
             }
             UsbPacket::Interrupt { .. } => {
-                // Interrupt endpoint - process vendor events (report ID 0x05)
+                // Skip standard keyboard HID reports (they'd flood the output)
+                if first_byte == 0x00 && data.len() <= 8 {
+                    stats.keyboard_reports += 1;
+                    return;
+                }
+
+                // Vendor events have report ID 0x05
                 if first_byte == report_id::USB_VENDOR_EVENT {
                     stats.vendor_events += 1;
                     let event = parse_usb_event(data);
                     self.printer.print_event(timestamp, &event);
-                } else if urb.direction == Direction::In {
-                    if first_byte == 0x00 && data.len() <= 8 {
-                        // Standard keyboard HID reports (short reports with first byte 0x00)
-                        stats.keyboard_reports += 1;
-                        return;
-                    }
-                    // Other interrupt data - might be vendor responses or unknown data
+                } else {
+                    // Other interrupt data - commands/responses or unknown
                     stats.vendor_commands += 1;
                     let is_response = first_byte & 0x80 != 0;
-                    self.printer
-                        .print_command(timestamp, first_byte, data, is_response);
-                } else {
-                    // Interrupt OUT - shouldn't happen for IN endpoint, dump it
-                    stats.other += 1;
-                    self.printer.print_unknown(timestamp, data);
+                    self.printer.print_command(
+                        timestamp,
+                        first_byte,
+                        data,
+                        is_response,
+                        urb.endpoint,
+                    );
                 }
             }
             UsbPacket::Bulk { .. } => {
@@ -282,7 +284,7 @@ impl PcapAnalyzer {
                 stats.vendor_commands += 1;
                 let is_response = urb.direction == Direction::In;
                 self.printer
-                    .print_command(timestamp, first_byte, data, is_response);
+                    .print_command(timestamp, first_byte, data, is_response, urb.endpoint);
             }
             UsbPacket::Other { .. } => {
                 // Unknown transfer type - dump it

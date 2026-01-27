@@ -279,10 +279,12 @@ pub fn parse_usb_packet(raw: &[u8]) -> Option<UsbPacket> {
 
             let setup = parse_control_setup(&raw[header_len..header_len + 8])?;
             let data_start = header_len + 8;
+            // USBPcap data_len includes the setup packet, so actual data is data_len - 8
             let data_len = urb.data_len as usize;
+            let actual_data_len = data_len.saturating_sub(8);
 
-            let data = if raw.len() >= data_start + data_len && data_len > 0 {
-                raw[data_start..data_start + data_len].to_vec()
+            let data = if raw.len() >= data_start + actual_data_len && actual_data_len > 0 {
+                raw[data_start..data_start + actual_data_len].to_vec()
             } else {
                 Vec::new()
             };
@@ -317,16 +319,26 @@ pub fn parse_usb_packet(raw: &[u8]) -> Option<UsbPacket> {
 ///
 /// For control transfers (SET/GET_REPORT), extracts report data,
 /// skipping the report ID byte (first byte) for HID class requests.
+/// Only extracts data from the correct direction:
+/// - SET_REPORT: OUT (submit) packet contains command data
+/// - GET_REPORT: IN (complete) packet contains response data
+///
 /// For interrupt/bulk transfers, extracts the data directly.
 pub fn extract_hid_data(packet: &UsbPacket) -> Option<&[u8]> {
     match packet {
-        UsbPacket::Control { setup, data, .. } => {
-            // Extract data from HID SET_REPORT/GET_REPORT requests
-            let is_hid_report = setup.is_set_report() || setup.is_get_report();
-            if is_hid_report && data.len() > 1 {
+        UsbPacket::Control { urb, setup, data } => {
+            // For HID SET_REPORT/GET_REPORT, filter by direction:
+            // - SET_REPORT data is in OUT packets (host sends command)
+            // - GET_REPORT data is in IN packets (device sends response)
+            let is_set_with_data =
+                setup.is_set_report() && urb.direction == Direction::Out && data.len() > 1;
+            let is_get_with_data =
+                setup.is_get_report() && urb.direction == Direction::In && data.len() > 1;
+
+            if is_set_with_data || is_get_with_data {
                 // Skip the report ID byte (first byte) to get to the command byte
                 Some(&data[1..])
-            } else if !data.is_empty() {
+            } else if !data.is_empty() && data.len() > 1 {
                 // Return raw data for non-HID control transfers
                 Some(data)
             } else {
