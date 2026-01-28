@@ -357,23 +357,6 @@ pub enum Commands {
     /// List all available LED modes
     Modes,
 
-    // === Demo Commands ===
-    /// Real-time rainbow sweep animation
-    Rainbow,
-
-    /// Checkerboard pattern demo
-    #[command(visible_alias = "checker")]
-    Checkerboard,
-
-    /// Sweeping line animation demo
-    Sweep,
-
-    /// Set all keys to red (demo)
-    Red,
-
-    /// Real-time wave animation demo
-    Wave,
-
     // === Audio Commands ===
     /// Run audio reactive LED mode
     Audio {

@@ -186,17 +186,6 @@ pub mod cmd {
         UserColor = 25, // Dynamic per-key animation (GIF)
     }
 
-    // Backwards compatibility aliases (deprecated, use the enum variants directly)
-    #[allow(non_upper_case_globals)]
-    #[deprecated(note = "Use LedMode::MusicPatterns instead")]
-    pub const Music3: LedMode = LedMode::MusicPatterns;
-    #[allow(non_upper_case_globals)]
-    #[deprecated(note = "Use LedMode::MusicBars instead")]
-    pub const Music2: LedMode = LedMode::MusicBars;
-    #[allow(non_upper_case_globals)]
-    #[deprecated(note = "Use LedMode::ScreenSync instead")]
-    pub const ScreenColor: LedMode = LedMode::ScreenSync;
-
     impl LedMode {
         /// Convert from u8, returns None if invalid
         pub fn from_u8(value: u8) -> Option<Self> {
@@ -1371,15 +1360,6 @@ pub mod events {
                 data: [b2, b3, b4, b5],
             },
         })
-    }
-
-    /// Parse raw event returning (event_type, status_byte) - legacy API
-    pub fn parse_raw(buf: &[u8]) -> Option<(u8, u8)> {
-        if buf.len() >= 3 && buf[0] == REPORT_ID {
-            Some((buf[1], buf[2]))
-        } else {
-            None
-        }
     }
 
     /// Get event name for display
