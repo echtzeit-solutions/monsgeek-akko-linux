@@ -3,32 +3,232 @@
 use super::CommandResult;
 use iot_driver::protocol::magnetism;
 use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, SyncKeyboard};
+use std::collections::HashSet;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-/// Run calibration (min + max)
+/// Run calibration (min + max) with per-key progress display
 pub fn calibrate() -> CommandResult {
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => {
-            println!("Starting calibration...");
-            println!("Step 1: Calibrating minimum (released) position...");
-            println!("        Keep all keys released!");
-            let _ = keyboard.calibrate_min(true);
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let _ = keyboard.calibrate_min(false);
-            println!("        Done.");
-            println!();
-            println!("Step 2: Calibrating maximum (pressed) position...");
-            println!("        Press and hold ALL keys firmly for 3 seconds!");
-            let _ = keyboard.calibrate_max(true);
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            let _ = keyboard.calibrate_max(false);
-            println!("        Done.");
-            println!();
-            println!("Calibration complete!");
+    let keyboard = match SyncKeyboard::open_any() {
+        Ok(kb) => kb,
+        Err(e) => {
+            eprintln!("No device found: {e}");
+            return Ok(());
         }
-        Err(e) => eprintln!("No device found: {e}"),
+    };
+
+    let key_count = keyboard.key_count() as usize;
+
+    // Set up Ctrl+C handler
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let int_clone = interrupted.clone();
+    if let Err(e) = ctrlc::set_handler(move || {
+        int_clone.store(true, Ordering::SeqCst);
+    }) {
+        eprintln!("Warning: Could not set Ctrl+C handler: {e}");
     }
+
+    println!("Starting calibration for {} keys...", key_count);
+    println!("  Ctrl+C = abort (no save)");
+    println!("  Press Enter during max calibration = save partial and exit");
+    println!();
+
+    // Phase 1: Min calibration (released position)
+    println!("Step 1: Calibrating minimum (released) position");
+    println!("        Keep all keys RELEASED for 2 seconds...");
+
+    if let Err(e) = keyboard.calibrate_min(true) {
+        eprintln!("Failed to start min calibration: {e}");
+        return Ok(());
+    }
+
+    // Show countdown (check for interrupt)
+    for i in (1..=2).rev() {
+        if interrupted.load(Ordering::SeqCst) {
+            println!("\n\nAborted during min calibration.");
+            let _ = keyboard.calibrate_min(false);
+            return Ok(());
+        }
+        print!("\r        {} seconds remaining...", i);
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    println!("\r        Done.                    ");
+    let _ = keyboard.calibrate_min(false);
+
+    // Phase 2: Max calibration with progress display
+    println!();
+    println!("Step 2: Calibrating maximum (pressed) position");
+    println!("        Press ALL keys firmly and hold...");
+
+    if let Err(e) = keyboard.calibrate_max(true) {
+        eprintln!("Failed to start max calibration: {e}");
+        return Ok(());
+    }
+
+    // Poll and display progress
+    let mut finished = HashSet::new();
+    let pages = key_count.div_ceil(32);
+
+    // Set stdin to non-blocking for checking Enter key
+    let stdin_check = setup_stdin_nonblocking();
+
+    loop {
+        // Check for Ctrl+C (abort)
+        if interrupted.load(Ordering::SeqCst) {
+            let _ = keyboard.calibrate_max(false);
+            println!("\n\nCalibration aborted (not saved).");
+            restore_stdin(&stdin_check);
+            return Ok(());
+        }
+
+        // Check for Enter key (graceful end with partial save)
+        if check_stdin_ready(&stdin_check) {
+            let _ = keyboard.calibrate_max(false);
+            println!(
+                "\n\nPartial calibration saved ({}/{} keys).",
+                finished.len(),
+                key_count
+            );
+            restore_stdin(&stdin_check);
+            return Ok(());
+        }
+
+        // Poll each page for calibration progress
+        for page in 0..pages as u8 {
+            match keyboard.get_calibration_progress(page) {
+                Ok(values) => {
+                    for (i, &val) in values.iter().enumerate() {
+                        let key_idx = page as usize * 32 + i;
+                        if key_idx < key_count && val >= 300 && !finished.contains(&key_idx) {
+                            finished.insert(key_idx);
+                        }
+                    }
+                }
+                Err(_) => continue, // Ignore errors, retry next iteration
+            }
+        }
+
+        print!(
+            "\r        Progress: {}/{} keys calibrated",
+            finished.len(),
+            key_count
+        );
+        let _ = std::io::stdout().flush();
+
+        if finished.len() >= key_count {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = keyboard.calibrate_max(false);
+    restore_stdin(&stdin_check);
+    println!("\n\nCalibration complete!");
     Ok(())
 }
+
+/// Platform-specific stdin setup for non-blocking input
+#[cfg(unix)]
+struct StdinState {
+    old_termios: Option<libc::termios>,
+}
+
+#[cfg(unix)]
+fn setup_stdin_nonblocking() -> StdinState {
+    use std::os::unix::io::AsRawFd;
+
+    let fd = std::io::stdin().as_raw_fd();
+    let mut old_termios: libc::termios = unsafe { std::mem::zeroed() };
+
+    // Get current terminal settings
+    if unsafe { libc::tcgetattr(fd, &mut old_termios) } != 0 {
+        return StdinState { old_termios: None };
+    }
+
+    // Set non-canonical mode with no echo
+    let mut new_termios = old_termios;
+    new_termios.c_lflag &= !(libc::ICANON | libc::ECHO);
+    new_termios.c_cc[libc::VMIN] = 0;
+    new_termios.c_cc[libc::VTIME] = 0;
+
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &new_termios) } != 0 {
+        return StdinState { old_termios: None };
+    }
+
+    StdinState {
+        old_termios: Some(old_termios),
+    }
+}
+
+#[cfg(unix)]
+fn check_stdin_ready(state: &StdinState) -> bool {
+    if state.old_termios.is_none() {
+        return false;
+    }
+
+    use std::os::unix::io::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+
+    let mut fds: libc::fd_set = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::FD_ZERO(&mut fds);
+        libc::FD_SET(fd, &mut fds);
+    }
+
+    let mut timeout = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+
+    let result = unsafe {
+        libc::select(
+            fd + 1,
+            &mut fds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut timeout,
+        )
+    };
+
+    if result > 0 {
+        // Read the character to consume it
+        let mut buf = [0u8; 1];
+        let _ = std::io::Read::read(&mut std::io::stdin(), &mut buf);
+        buf[0] == b'\n' || buf[0] == b'\r'
+    } else {
+        false
+    }
+}
+
+#[cfg(unix)]
+fn restore_stdin(state: &StdinState) {
+    if let Some(ref old_termios) = state.old_termios {
+        use std::os::unix::io::AsRawFd;
+        let fd = std::io::stdin().as_raw_fd();
+        unsafe {
+            libc::tcsetattr(fd, libc::TCSANOW, old_termios);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct StdinState;
+
+#[cfg(not(unix))]
+fn setup_stdin_nonblocking() -> StdinState {
+    StdinState
+}
+
+#[cfg(not(unix))]
+fn check_stdin_ready(_state: &StdinState) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn restore_stdin(_state: &StdinState) {}
 
 /// Show current trigger settings
 pub fn triggers() -> CommandResult {

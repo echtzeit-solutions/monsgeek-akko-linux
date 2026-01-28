@@ -277,6 +277,7 @@ impl SyncKeyboard {
     // === Calibration ===
     sync_method!(calibrate_min(start: bool) -> Result<(), KeyboardError>);
     sync_method!(calibrate_max(start: bool) -> Result<(), KeyboardError>);
+    sync_method!(get_calibration_progress(page: u8) -> Result<Vec<u16>, KeyboardError>);
 
     // === Factory Reset ===
     sync_method!(reset() -> Result<(), KeyboardError>);

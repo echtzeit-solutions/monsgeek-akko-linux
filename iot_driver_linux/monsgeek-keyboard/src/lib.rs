@@ -974,6 +974,33 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    /// Get calibration progress for a page of keys (32 keys per page)
+    ///
+    /// During max calibration, polls the keyboard for per-key calibration values.
+    /// Values >= 300 indicate the key has been calibrated (pressed to bottom).
+    ///
+    /// # Arguments
+    /// * `page` - Page number (0-3, each page has 32 keys)
+    ///
+    /// # Returns
+    /// Vector of 16-bit calibration values for up to 32 keys
+    pub async fn get_calibration_progress(&self, page: u8) -> Result<Vec<u16>, KeyboardError> {
+        let data = [mag_cmd::CALIBRATION, 1, page]; // subcmd, flag, page
+        let response = self
+            .transport
+            .query_raw(cmd::GET_MULTI_MAGNETISM, &data, ChecksumType::Bit7)
+            .await?;
+
+        // Decode 16-bit LE values from response (64 bytes = 32 values)
+        let mut values = Vec::with_capacity(32);
+        for chunk in response.chunks(2) {
+            if chunk.len() == 2 {
+                values.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+        }
+        Ok(values)
+    }
+
     // === Factory Reset ===
 
     /// Factory reset the keyboard
