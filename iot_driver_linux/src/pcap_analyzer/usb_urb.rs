@@ -435,8 +435,8 @@ pub fn parse_usb_packet(raw: &[u8]) -> Option<UsbPacket> {
 
 /// Extract HID report data from a USB packet
 ///
-/// For control transfers (SET/GET_REPORT), extracts report data,
-/// skipping the report ID byte (first byte) for HID class requests.
+/// For control transfers (SET/GET_REPORT), extracts report data.
+/// USB HID only includes a report ID byte in data when report_id != 0.
 /// Only extracts data from the correct direction:
 /// - SET_REPORT: OUT (submit) packet contains command data
 /// - GET_REPORT: IN (complete) packet contains response data
@@ -449,14 +449,21 @@ pub fn extract_hid_data(packet: &UsbPacket) -> Option<&[u8]> {
             // - SET_REPORT data is in OUT packets (host sends command)
             // - GET_REPORT data is in IN packets (device sends response)
             let is_set_with_data =
-                setup.is_set_report() && urb.direction == Direction::Out && data.len() > 1;
+                setup.is_set_report() && urb.direction == Direction::Out && !data.is_empty();
             let is_get_with_data =
-                setup.is_get_report() && urb.direction == Direction::In && data.len() > 1;
+                setup.is_get_report() && urb.direction == Direction::In && !data.is_empty();
 
             if is_set_with_data || is_get_with_data {
-                // Skip the report ID byte (first byte) to get to the command byte
-                Some(&data[1..])
-            } else if !data.is_empty() && data.len() > 1 {
+                // USB HID: report ID byte is only present when report_id != 0
+                // When report_id=0, data starts directly with the command byte
+                if setup.report_id() != 0 && data.len() > 1 {
+                    // Skip the report ID byte (first byte)
+                    Some(&data[1..])
+                } else {
+                    // No report ID prefix - data is the command directly
+                    Some(data)
+                }
+            } else if !data.is_empty() {
                 // Return raw data for non-HID control transfers
                 Some(data)
             } else {

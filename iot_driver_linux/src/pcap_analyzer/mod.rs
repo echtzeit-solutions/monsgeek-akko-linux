@@ -97,6 +97,12 @@ impl PcapAnalyzer {
         self
     }
 
+    /// Enable showing all HID reports (keyboard, consumer, NKRO)
+    pub fn with_all_hid(mut self, all: bool) -> Self {
+        self.printer = self.printer.with_all_hid(all);
+        self
+    }
+
     /// Analyze a pcapng file and print decoded packets
     pub fn analyze_file(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let file = File::open(path)?;
@@ -293,14 +299,36 @@ impl PcapAnalyzer {
                     .print_command(timestamp, first_byte, data, is_response, urb.endpoint);
             }
             UsbPacket::Interrupt { .. } => {
-                // Skip standard keyboard HID reports (they'd flood the output)
+                // Standard keyboard HID reports (report ID 0x00)
                 if first_byte == 0x00 && data.len() <= 8 {
                     stats.keyboard_reports += 1;
+                    if self.printer.show_all_hid() {
+                        self.printer
+                            .print_hid_input(timestamp, 0x00, data, urb.endpoint);
+                    }
+                    return;
+                }
+                // Consumer control reports (report ID 0x03)
+                if first_byte == 0x03 && data.len() <= 4 {
+                    stats.keyboard_reports += 1;
+                    if self.printer.show_all_hid() {
+                        self.printer
+                            .print_hid_input(timestamp, 0x03, data, urb.endpoint);
+                    }
+                    return;
+                }
+                // NKRO reports (report ID 0x01)
+                if first_byte == 0x01 {
+                    stats.keyboard_reports += 1;
+                    if self.printer.show_all_hid() {
+                        self.printer
+                            .print_hid_input(timestamp, 0x01, data, urb.endpoint);
+                    }
                     return;
                 }
 
-                // Vendor events have report ID 0x05
-                if first_byte == report_id::USB_VENDOR_EVENT {
+                // Vendor events (report ID 0x05) and mouse reports (report ID 0x02)
+                if first_byte == report_id::USB_VENDOR_EVENT || first_byte == report_id::MOUSE {
                     stats.vendor_events += 1;
                     let event = parse_usb_event(data);
                     self.printer.print_event(timestamp, &event, Some(data));
@@ -341,6 +369,7 @@ pub fn run_pcap_analysis(
     verbose: bool,
     debug: bool,
     hex: bool,
+    all_hid: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = match filter {
         Some(f) => PacketFilter::from_str(f)?,
@@ -350,7 +379,8 @@ pub fn run_pcap_analysis(
     let analyzer = PcapAnalyzer::new(format, filter)
         .with_verbose(verbose)
         .with_debug(debug)
-        .with_hex(hex);
+        .with_hex(hex)
+        .with_all_hid(all_hid);
     analyzer.analyze_file(path)
 }
 

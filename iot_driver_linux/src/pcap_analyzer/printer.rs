@@ -1,12 +1,59 @@
 //! Output formatting for pcap analyzer
 //!
 //! This module provides formatting for decoded USB HID packets.
-//! The goal is to catch unknown commands/events we haven't implemented yet.
+//! Uses monsgeek-transport parsers as the single source of truth.
+//! The key value is highlighting UNKNOWN packets for protocol discovery.
 
 use crate::protocol::cmd;
-use monsgeek_transport::VendorEvent;
+use colored::Colorize;
+use monsgeek_transport::{
+    try_parse_command, try_parse_response, ParsedCommand, ParsedResponse, VendorEvent,
+};
 use serde::Serialize;
+use std::fmt::Write;
 use std::str::FromStr;
+
+/// Format bytes with run-length encoding for sparse data
+/// e.g., `[0, 0, 0, 0, 0x6c, 0x5f, 0, 0]` becomes `"5×00 6c 5f 2×00"`
+pub fn format_sparse_hex(data: &[u8]) -> String {
+    if data.is_empty() {
+        return String::from("[]");
+    }
+
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i < data.len() {
+        let byte = data[i];
+        let mut count = 1;
+
+        // Count consecutive identical bytes
+        while i + count < data.len() && data[i + count] == byte && count < 255 {
+            count += 1;
+        }
+
+        if !result.is_empty() {
+            result.push(' ');
+        }
+
+        if count >= 3 {
+            // Use run-length encoding for 3+ consecutive bytes
+            let _ = write!(result, "{}×{:02x}", count, byte);
+        } else {
+            // Write individual bytes
+            for j in 0..count {
+                if j > 0 {
+                    result.push(' ');
+                }
+                let _ = write!(result, "{:02x}", data[i + j]);
+            }
+        }
+
+        i += count;
+    }
+
+    result
+}
 
 /// Output format for the analyzer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +118,8 @@ pub struct Printer {
     show_debug: bool,
     /// Show raw hex dump alongside decoded output
     show_hex: bool,
+    /// Show standard HID reports (keyboard, consumer, NKRO)
+    show_all_hid: bool,
 }
 
 impl Printer {
@@ -80,6 +129,7 @@ impl Printer {
             filter,
             show_debug: false,
             show_hex: false,
+            show_all_hid: false,
         }
     }
 
@@ -93,6 +143,79 @@ impl Printer {
     pub fn with_hex(mut self, hex: bool) -> Self {
         self.show_hex = hex;
         self
+    }
+
+    /// Enable showing all HID reports (keyboard, consumer, NKRO)
+    pub fn with_all_hid(mut self, all: bool) -> Self {
+        self.show_all_hid = all;
+        self
+    }
+
+    /// Check if all HID reports should be shown
+    pub fn show_all_hid(&self) -> bool {
+        self.show_all_hid
+    }
+
+    /// Print a standard HID input report (keyboard, consumer, NKRO)
+    pub fn print_hid_input(&self, timestamp: f64, report_id: u8, data: &[u8], endpoint: u8) {
+        if !self.show_all_hid {
+            return;
+        }
+
+        let report_type = match report_id {
+            0x00 => "KEYBOARD",
+            0x01 => "NKRO",
+            0x02 => "MOUSE",
+            0x03 => "CONSUMER",
+            _ => "HID",
+        };
+
+        match self.format {
+            OutputFormat::Text => {
+                // Format based on report type
+                let info = match report_id {
+                    0x00 => {
+                        // Standard keyboard: modifier, reserved, keycodes[6]
+                        if data.len() >= 8 {
+                            let mods = data[1];
+                            let keycodes: Vec<u8> =
+                                data[3..8].iter().copied().filter(|&k| k != 0).collect();
+                            format!("mod=0x{:02x} keys={:?}", mods, keycodes)
+                        } else {
+                            format!("{:02x?}", data)
+                        }
+                    }
+                    0x03 => {
+                        // Consumer control: 2-byte usage code
+                        if data.len() >= 3 {
+                            let usage = u16::from_le_bytes([data[1], data[2]]);
+                            format!("usage=0x{:04x}", usage)
+                        } else {
+                            format!("{:02x?}", data)
+                        }
+                    }
+                    _ => format!("{:02x?}", data),
+                };
+                println!(
+                    "{:.6} {}  EP{:02x} {} {}",
+                    format!("{:.6}", timestamp).dimmed(),
+                    "HID".blue(),
+                    endpoint,
+                    report_type.cyan(),
+                    info
+                );
+                if self.show_hex {
+                    println!("         {}   {:02x?}", "HEX".dimmed(), data);
+                }
+            }
+            OutputFormat::Json => {
+                let packet = DecodedPacket::Event {
+                    timestamp,
+                    event: format!("{}:{:02x?}", report_type, data),
+                };
+                println!("{}", serde_json::to_string(&packet).unwrap());
+            }
+        }
     }
 
     fn should_show_command(&self, cmd: u8) -> bool {
@@ -118,14 +241,24 @@ impl Printer {
             OutputFormat::Text => {
                 if self.show_debug {
                     // Full Debug output with all fields
-                    println!("{:.6} EVENT {:#?}", timestamp, event);
+                    println!(
+                        "{} {} {:#?}",
+                        format!("{:.6}", timestamp).dimmed(),
+                        "EVENT".yellow().bold(),
+                        event
+                    );
                 } else {
                     // Compact single-line format
-                    println!("{:.6} EVENT {:?}", timestamp, event);
+                    println!(
+                        "{} {} {:?}",
+                        format!("{:.6}", timestamp).dimmed(),
+                        "EVENT".yellow().bold(),
+                        event
+                    );
                 }
                 if self.show_hex {
                     if let Some(data) = raw_data {
-                        println!("         HEX   {:02x?}", data);
+                        println!("         {}   {:02x?}", "HEX".dimmed(), data);
                     }
                 }
             }
@@ -140,6 +273,9 @@ impl Printer {
     }
 
     /// Print a command/response with raw data
+    ///
+    /// For responses (cmd & 0x80 != 0), uses monsgeek-transport parsers.
+    /// Unknown responses are flagged prominently for protocol discovery.
     pub fn print_command(
         &self,
         timestamp: f64,
@@ -152,32 +288,107 @@ impl Printer {
             return;
         }
 
-        let direction = if is_response { "RSP" } else { "CMD" };
-        let cmd_name = cmd::name(cmd_byte);
+        let (direction, dir_color): (&str, fn(&str) -> colored::ColoredString) = if is_response {
+            ("RSP", |s| s.green().bold())
+        } else {
+            ("CMD", |s| s.cyan().bold())
+        };
 
         match self.format {
             OutputFormat::Text => {
-                if self.show_hex {
-                    // Compact header, hex on separate line
-                    println!(
-                        "{:.6} {} EP{:02x} 0x{:02x} {} len={}",
-                        timestamp,
-                        direction,
-                        endpoint,
-                        cmd_byte,
-                        cmd_name,
-                        data.len()
-                    );
-                    println!("         HEX   {:02x?}", data);
+                if is_response {
+                    // Use transport parsers for responses - single source of truth
+                    let parsed = try_parse_response(data);
+                    match &parsed {
+                        ParsedResponse::Empty => {
+                            // Empty/stale buffer - dimmed output
+                            println!(
+                                "{} {} EP{:02x} {}",
+                                format!("{:.6}", timestamp).dimmed(),
+                                dir_color(direction),
+                                endpoint,
+                                "(empty)".dimmed()
+                            );
+                        }
+                        ParsedResponse::Unknown { cmd, data: raw } => {
+                            // Flag for investigation - use compressed hex
+                            let cmd_name = cmd::name(*cmd);
+                            println!(
+                                "{} {} EP{:02x} 0x{:02x} {} {} {}",
+                                format!("{:.6}", timestamp).dimmed(),
+                                dir_color(direction),
+                                endpoint,
+                                cmd,
+                                cmd_name.yellow(),
+                                "UNKNOWN".red().bold(),
+                                format_sparse_hex(raw)
+                            );
+                        }
+                        _ => {
+                            // Known response - use Debug derive
+                            if self.show_debug {
+                                println!(
+                                    "{} {} EP{:02x} {:#?}",
+                                    format!("{:.6}", timestamp).dimmed(),
+                                    dir_color(direction),
+                                    endpoint,
+                                    parsed
+                                );
+                            } else {
+                                println!(
+                                    "{} {} EP{:02x} {:?}",
+                                    format!("{:.6}", timestamp).dimmed(),
+                                    dir_color(direction),
+                                    endpoint,
+                                    parsed
+                                );
+                            }
+                        }
+                    }
                 } else {
-                    // Show endpoint, command name and ALL data bytes for analysis
-                    println!(
-                        "{:.6} {} EP{:02x} 0x{:02x} {} {:02x?}",
-                        timestamp, direction, endpoint, cmd_byte, cmd_name, data
-                    );
+                    // Commands - try to parse as typed struct
+                    let parsed = try_parse_command(data);
+                    match &parsed {
+                        ParsedCommand::Unknown { cmd, data: raw } => {
+                            let cmd_name = cmd::name(*cmd);
+                            println!(
+                                "{} {} EP{:02x} 0x{:02x} {} {:02x?}",
+                                format!("{:.6}", timestamp).dimmed(),
+                                dir_color(direction),
+                                endpoint,
+                                cmd,
+                                cmd_name.yellow(),
+                                raw
+                            );
+                        }
+                        _ => {
+                            if self.show_debug {
+                                println!(
+                                    "{} {} EP{:02x} {:#?}",
+                                    format!("{:.6}", timestamp).dimmed(),
+                                    dir_color(direction),
+                                    endpoint,
+                                    parsed
+                                );
+                            } else {
+                                println!(
+                                    "{} {} EP{:02x} {:?}",
+                                    format!("{:.6}", timestamp).dimmed(),
+                                    dir_color(direction),
+                                    endpoint,
+                                    parsed
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if self.show_hex {
+                    println!("         {}   {:02x?}", "HEX".dimmed(), data);
                 }
             }
             OutputFormat::Json => {
+                let cmd_name = cmd::name(cmd_byte);
                 let packet = DecodedPacket::Command {
                     timestamp,
                     cmd: cmd_byte,
@@ -199,7 +410,12 @@ impl Printer {
         match self.format {
             OutputFormat::Text => {
                 // Print ALL data for unknown packets - this is what we're looking for!
-                println!("{:.6} UNKNOWN {:02x?}", timestamp, data);
+                println!(
+                    "{} {} {:02x?}",
+                    format!("{:.6}", timestamp).dimmed(),
+                    "UNKNOWN".red().bold(),
+                    data
+                );
             }
             OutputFormat::Json => {
                 let packet = DecodedPacket::Unknown {
@@ -212,6 +428,10 @@ impl Printer {
     }
 
     /// Print a USB control transfer (non-HID)
+    ///
+    /// Note: Some USB captures show HID responses as generic control transfers
+    /// (e.g., GET_STATUS) rather than properly tagged HID GET_REPORT responses.
+    /// We detect these by checking if the data looks like a HID response.
     pub fn print_usb_control(
         &self,
         timestamp: f64,
@@ -221,11 +441,31 @@ impl Printer {
         is_response: bool,
         endpoint: u8,
     ) {
+        // Check if this looks like a HID response (first byte is a known command echo)
+        // This handles captures where HID responses come through as generic control transfers
+        if is_response && !data.is_empty() {
+            let first_byte = data[0];
+            // Check if first byte looks like a command response (has bit 7 set for GET commands,
+            // or matches known command bytes)
+            let looks_like_hid = first_byte & 0x80 != 0 // GET command responses
+                || matches!(first_byte, 0x00..=0x1F | 0x65); // SET command ACKs
+
+            if looks_like_hid {
+                // Route to print_command instead
+                self.print_command(timestamp, first_byte, data, true, endpoint);
+                return;
+            }
+        }
+
         if matches!(self.filter, PacketFilter::Cmd(_) | PacketFilter::Events) {
             return;
         }
 
-        let direction = if is_response { "<<<" } else { ">>>" };
+        let direction = if is_response {
+            "<<<".green()
+        } else {
+            ">>>".cyan()
+        };
 
         match self.format {
             OutputFormat::Text => {
@@ -239,40 +479,44 @@ impl Printer {
 
                     if let Some(s) = decoded {
                         println!(
-                            "{:.6} USB  EP{:02x} {} {} {}[{}] \"{}\"",
-                            timestamp, endpoint, direction, request_name, desc_type, index, s
+                            "{} {}  EP{:02x} {} {} {}[{}] \"{}\"",
+                            format!("{:.6}", timestamp).dimmed(),
+                            "USB".magenta(),
+                            endpoint,
+                            direction,
+                            request_name.yellow(),
+                            desc_type,
+                            index,
+                            s.bright_white()
                         );
                     } else {
                         println!(
-                            "{:.6} USB  EP{:02x} {} {} {}[{}] {:02x?}",
-                            timestamp, endpoint, direction, request_name, desc_type, index, data
+                            "{} {}  EP{:02x} {} {} {}[{}] {:02x?}",
+                            format!("{:.6}", timestamp).dimmed(),
+                            "USB".magenta(),
+                            endpoint,
+                            direction,
+                            request_name.yellow(),
+                            desc_type,
+                            index,
+                            data
                         );
                     }
                 } else {
-                    // Try to decode as USB string descriptor or raw UTF-16LE
-                    let decoded = if is_response && data.len() >= 4 {
-                        // Try as string descriptor first (handles 2-byte header),
-                        // falls back to raw UTF-16LE
-                        decode_usb_string(data)
-                    } else {
-                        None
-                    };
-
-                    if let Some(s) = decoded {
-                        println!(
-                            "{:.6} USB  EP{:02x} {} {} \"{}\"",
-                            timestamp, endpoint, direction, request_name, s
-                        );
-                    } else {
-                        println!(
-                            "{:.6} USB  EP{:02x} {} {} {:02x?}",
-                            timestamp, endpoint, direction, request_name, data
-                        );
-                    }
+                    // Non-descriptor control transfer - just show hex
+                    println!(
+                        "{} {}  EP{:02x} {} {} {:02x?}",
+                        format!("{:.6}", timestamp).dimmed(),
+                        "USB".magenta(),
+                        endpoint,
+                        direction,
+                        request_name.yellow(),
+                        data
+                    );
                 }
                 // Show raw hex dump on separate line if enabled
                 if self.show_hex && !data.is_empty() {
-                    println!("         HEX   {:02x?}", data);
+                    println!("         {}   {:02x?}", "HEX".dimmed(), data);
                 }
             }
             OutputFormat::Json => {
@@ -332,5 +576,41 @@ fn decode_utf16le(data: &[u8]) -> Option<String> {
         None
     } else {
         Some(decoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_sparse_hex() {
+        // Empty
+        assert_eq!(format_sparse_hex(&[]), "[]");
+
+        // Single byte
+        assert_eq!(format_sparse_hex(&[0x6c]), "6c");
+
+        // Two identical (no compression)
+        assert_eq!(format_sparse_hex(&[0x00, 0x00]), "00 00");
+
+        // Three identical (compressed)
+        assert_eq!(format_sparse_hex(&[0x00, 0x00, 0x00]), "3×00");
+
+        // Mixed
+        assert_eq!(
+            format_sparse_hex(&[0x00, 0x00, 0x00, 0x6c, 0x5f, 0x00, 0x00]),
+            "3×00 6c 5f 00 00"
+        );
+
+        // Long run
+        let zeros = vec![0u8; 32];
+        assert_eq!(format_sparse_hex(&zeros), "32×00");
+
+        // Sparse with data in middle
+        let mut data = vec![0u8; 10];
+        data[4] = 0x6c;
+        data[5] = 0x5f;
+        assert_eq!(format_sparse_hex(&data), "4×00 6c 5f 4×00");
     }
 }
