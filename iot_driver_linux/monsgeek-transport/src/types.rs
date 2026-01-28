@@ -141,6 +141,22 @@ pub enum VendorEvent {
         online: bool,
     },
 
+    // === HID Input Reports ===
+    /// Mouse report (Report ID 0x02) - keyboard's built-in mouse function
+    ///
+    /// Used for gaming macros, dial mouse mode, or other pointing features.
+    /// Format: [02, buttons, 00, X_lo, X_hi, Y_lo, Y_hi, wheel_lo, wheel_hi]
+    MouseReport {
+        /// Button state bitmap (bit 0 = left, bit 1 = right, bit 2 = middle)
+        buttons: u8,
+        /// X movement (signed, negative = left)
+        x: i16,
+        /// Y movement (signed, negative = up)
+        y: i16,
+        /// Wheel movement (signed, negative = scroll up)
+        wheel: i16,
+    },
+
     /// Unknown event type (raw bytes for debugging)
     Unknown(Vec<u8>),
 }

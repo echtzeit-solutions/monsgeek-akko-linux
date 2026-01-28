@@ -81,7 +81,7 @@ Report ID:      0
 | Interface | Descriptor | Purpose | Report IDs |
 |-----------|------------|---------|------------|
 | 0 | Boot Keyboard | Standard 6KRO keyboard | 0x01 |
-| 1 | Multi-function | Consumer (0x03), NKRO (0x01), Vendor Input (0x05) | 0x01, 0x03, 0x05 |
+| 1 | Multi-function | Mouse (0x02), Consumer (0x03), NKRO (0x01), Vendor Input (0x05) | 0x01, 0x02, 0x03, 0x05 |
 | 2 | Vendor Config | Feature reports for configuration | 0x00 |
 
 **Report Descriptors:**
@@ -732,7 +732,31 @@ Via dongle EP2 after F7 command:
 | 0x2C | 00 - - | ScreenClearDone | Screen clear complete |
 | 0x88 | 00 00 lvl flags | BatteryStatus | After F7 query |
 
-### 6.2 Consumer Reports (Report ID 0x03)
+### 6.2 Mouse Reports (Report ID 0x02)
+
+The keyboard includes a built-in mouse function for gaming macros, dial mouse mode, or other pointing features. Mouse reports are sent on Interface 1 (EP2 IN, 0x82).
+
+**Report Format (9 bytes):**
+```
+[0x02] [buttons] [00] [X_lo] [X_hi] [Y_lo] [Y_hi] [wheel_lo] [wheel_hi]
+```
+
+| Byte | Field | Description |
+|------|-------|-------------|
+| 0 | Report ID | 0x02 |
+| 1 | Buttons | Bitmap: bit 0 = left, bit 1 = right, bit 2 = middle |
+| 2 | Reserved | Always 0x00 |
+| 3-4 | X movement | Signed 16-bit LE (negative = left) |
+| 5-6 | Y movement | Signed 16-bit LE (negative = up) |
+| 7-8 | Wheel | Signed 16-bit LE (negative = scroll up) |
+
+**Example:**
+```
+02 00 00 ff ff 00 00 00 00   # X=-1, Y=0 (small leftward movement)
+02 01 00 05 00 fb ff 00 00   # Left button + X=5, Y=-5
+```
+
+### 6.3 Consumer Reports (Report ID 0x03)
 
 Standard HID Consumer Page codes (16-bit LE usage):
 
@@ -747,7 +771,7 @@ Standard HID Consumer Page codes (16-bit LE usage):
 | 03 8a 01 | 0x018A | Email |
 | 03 00 00 | - | Release |
 
-### 6.3 Key Depth Monitoring (0x1B)
+### 6.4 Key Depth Monitoring (0x1B)
 
 **Enable/Disable:**
 ```
@@ -766,7 +790,7 @@ Disable: [0x1B, 0x00, 0, 0, 0, 0, 0, checksum]
 - Depth values typically range 0-400+ depending on switch travel
 - Decode: `depth = (byte3 << 8) | byte2`, `key_index = byte4`
 
-### 6.4 Calibration Events
+### 6.5 Calibration Events
 
 | Bytes | Event |
 |-------|-------|

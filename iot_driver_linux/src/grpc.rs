@@ -113,6 +113,25 @@ fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
             let flags = if *charging { 0x02 } else { 0 } | if *online { 0x01 } else { 0 };
             vec![REPORT_ID, 0x88, 0x00, 0x00, *level, flags]
         }
+        VendorEvent::MouseReport {
+            buttons,
+            x,
+            y,
+            wheel,
+        } => {
+            // Mouse report uses report ID 0x02
+            vec![
+                0x02,
+                *buttons,
+                0x00,
+                (*x & 0xFF) as u8,
+                (*x >> 8) as u8,
+                (*y & 0xFF) as u8,
+                (*y >> 8) as u8,
+                (*wheel & 0xFF) as u8,
+                (*wheel >> 8) as u8,
+            ]
+        }
         VendorEvent::Unknown(data) => {
             // Already has report ID if from raw HID
             if data.first() == Some(&REPORT_ID) {

@@ -43,6 +43,8 @@ pub mod notif {
 
 /// USB report ID constants
 pub mod report_id {
+    /// Mouse report ID (keyboard's built-in mouse function)
+    pub const MOUSE: u8 = 0x02;
     /// Vendor event report ID (USB wired/dongle)
     pub const USB_VENDOR_EVENT: u8 = 0x05;
     /// Vendor report ID (Bluetooth)
@@ -87,11 +89,11 @@ fn parse_kb_func(payload: &[u8]) -> VendorEvent {
 ///
 /// Used by both wired and dongle transports. The format is identical.
 ///
-/// Report format (Report ID 0x05):
-/// - Byte 0: Notification type
-/// - Byte 1+: Notification data
+/// Report formats:
+/// - Report ID 0x02: Mouse report [02, buttons, 00, X_lo, X_hi, Y_lo, Y_hi, wheel_lo, wheel_hi]
+/// - Report ID 0x05: Vendor event [05, type, value, ...]
 ///
-/// Notification types:
+/// Vendor notification types (Report ID 0x05):
 /// - 0x00: Wake (all zeros)
 /// - 0x01: Profile changed (data = profile 0-3)
 /// - 0x03: KB function (category, action)
@@ -105,6 +107,25 @@ fn parse_kb_func(payload: &[u8]) -> VendorEvent {
 pub fn parse_usb_event(data: &[u8]) -> VendorEvent {
     if data.is_empty() {
         return VendorEvent::Unknown(data.to_vec());
+    }
+
+    // Handle mouse reports (Report ID 0x02)
+    // Format: [02, buttons, 00, X_lo, X_hi, Y_lo, Y_hi, wheel_lo, wheel_hi]
+    if data[0] == report_id::MOUSE && data.len() >= 7 {
+        let buttons = data[1];
+        let x = i16::from_le_bytes([data[3], data[4]]);
+        let y = i16::from_le_bytes([data[5], data[6]]);
+        let wheel = if data.len() >= 9 {
+            i16::from_le_bytes([data[7], data[8]])
+        } else {
+            0
+        };
+        return VendorEvent::MouseReport {
+            buttons,
+            x,
+            y,
+            wheel,
+        };
     }
 
     // Skip report ID if present (0x05)
@@ -387,6 +408,44 @@ mod tests {
                 assert_eq!(depth_raw, 0x0064); // 100 in little-endian
             }
             _ => panic!("Expected KeyDepth"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mouse_report() {
+        // Mouse report: [02, buttons, 00, X_lo, X_hi, Y_lo, Y_hi, wheel_lo, wheel_hi]
+        // Example: small leftward movement (X=-1, Y=0)
+        let event = parse_usb_event(&[0x02, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00]);
+        match event {
+            VendorEvent::MouseReport {
+                buttons,
+                x,
+                y,
+                wheel,
+            } => {
+                assert_eq!(buttons, 0);
+                assert_eq!(x, -1); // 0xffff as i16
+                assert_eq!(y, 0);
+                assert_eq!(wheel, 0);
+            }
+            _ => panic!("Expected MouseReport, got {:?}", event),
+        }
+
+        // Example with button press and movement
+        let event = parse_usb_event(&[0x02, 0x01, 0x00, 0x05, 0x00, 0xfb, 0xff, 0x00, 0x00]);
+        match event {
+            VendorEvent::MouseReport {
+                buttons,
+                x,
+                y,
+                wheel,
+            } => {
+                assert_eq!(buttons, 1); // left button
+                assert_eq!(x, 5);
+                assert_eq!(y, -5); // 0xfffb as i16
+                assert_eq!(wheel, 0);
+            }
+            _ => panic!("Expected MouseReport"),
         }
     }
 }
