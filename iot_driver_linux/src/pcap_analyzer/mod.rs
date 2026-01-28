@@ -1,7 +1,7 @@
 //! PCAPNG analyzer for MonsGeek USB HID protocol
 //!
 //! This module reads pcapng captures of USB HID traffic and decodes
-//! MonsGeek vendor protocol packets using the existing transport parsers.
+//! MonsGeek vendor protocol packets using the unified Printer from monsgeek-transport.
 //!
 //! # Example
 //!
@@ -12,10 +12,10 @@
 //! analyzer.analyze_file("capture.pcapng")?;
 //! ```
 
-mod printer;
 mod usb_urb;
 
-pub use printer::{OutputFormat, PacketFilter, Printer};
+// Re-export from monsgeek_transport for convenience
+pub use monsgeek_transport::{OutputFormat, PacketFilter, Printer, PrinterConfig};
 pub use usb_urb::{parse_usb_packet, Direction, TransferType, UsbPacket};
 
 use std::fs::File;
@@ -65,6 +65,10 @@ impl PacketStats {
 }
 
 /// PCAP analyzer for MonsGeek USB HID traffic
+///
+/// Uses the unified Printer from monsgeek-transport to format output.
+/// The Printer is created in standalone mode (no inner transport) and
+/// packets are fed directly via `on_command`, `on_response`, `on_event`.
 pub struct PcapAnalyzer {
     printer: Printer,
     verbose: bool,
@@ -73,8 +77,11 @@ pub struct PcapAnalyzer {
 impl PcapAnalyzer {
     /// Create a new analyzer with specified output format and filter
     pub fn new(format: OutputFormat, filter: PacketFilter) -> Self {
+        let config = PrinterConfig::default()
+            .with_format(format)
+            .with_filter(filter);
         Self {
-            printer: Printer::new(format, filter),
+            printer: Printer::standalone(config),
             verbose: false,
         }
     }
@@ -87,19 +94,27 @@ impl PcapAnalyzer {
 
     /// Enable debug field output for events
     pub fn with_debug(mut self, debug: bool) -> Self {
-        self.printer = self.printer.with_debug(debug);
+        let config = PrinterConfig::default()
+            .with_debug(debug)
+            .with_hex(self.printer.show_all_hid()) // preserve existing hex setting
+            .with_all_hid(self.printer.show_all_hid());
+        self.printer = Printer::standalone(config);
         self
     }
 
     /// Enable raw hex dump output
     pub fn with_hex(mut self, hex: bool) -> Self {
-        self.printer = self.printer.with_hex(hex);
+        let config = PrinterConfig::default()
+            .with_hex(hex)
+            .with_all_hid(self.printer.show_all_hid());
+        self.printer = Printer::standalone(config);
         self
     }
 
     /// Enable showing all HID reports (keyboard, consumer, NKRO)
     pub fn with_all_hid(mut self, all: bool) -> Self {
-        self.printer = self.printer.with_all_hid(all);
+        let config = PrinterConfig::default().with_all_hid(all);
+        self.printer = Printer::standalone(config);
         self
     }
 
@@ -237,7 +252,7 @@ impl PcapAnalyzer {
                     } else {
                         None
                     };
-                    self.printer.print_usb_control(
+                    self.printer.on_usb_control(
                         timestamp,
                         setup.request_name(),
                         descriptor_info,
@@ -274,7 +289,7 @@ impl PcapAnalyzer {
         true
     }
 
-    /// Decode HID data and print using the appropriate format
+    /// Decode HID data and print using the unified Printer
     fn decode_and_print_with_stats(
         &self,
         timestamp: f64,
@@ -295,35 +310,39 @@ impl PcapAnalyzer {
                 // HID Feature/Output report via control endpoint
                 stats.vendor_commands += 1;
                 let is_response = setup.is_get_report() && urb.direction == Direction::In;
-                self.printer
-                    .print_command(timestamp, first_byte, data, is_response, urb.endpoint);
+                if is_response {
+                    self.printer
+                        .on_response(data, Some(timestamp), Some(urb.endpoint));
+                } else {
+                    // Command: first byte is cmd, rest is data
+                    self.printer.on_command(
+                        first_byte,
+                        &data[1..],
+                        Some(timestamp),
+                        Some(urb.endpoint),
+                    );
+                }
             }
             UsbPacket::Interrupt { .. } => {
                 // Standard keyboard HID reports (report ID 0x00)
                 if first_byte == 0x00 && data.len() <= 8 {
                     stats.keyboard_reports += 1;
-                    if self.printer.show_all_hid() {
-                        self.printer
-                            .print_hid_input(timestamp, 0x00, data, urb.endpoint);
-                    }
+                    self.printer
+                        .on_hid_input(timestamp, 0x00, data, urb.endpoint);
                     return;
                 }
                 // Consumer control reports (report ID 0x03)
                 if first_byte == 0x03 && data.len() <= 4 {
                     stats.keyboard_reports += 1;
-                    if self.printer.show_all_hid() {
-                        self.printer
-                            .print_hid_input(timestamp, 0x03, data, urb.endpoint);
-                    }
+                    self.printer
+                        .on_hid_input(timestamp, 0x03, data, urb.endpoint);
                     return;
                 }
                 // NKRO reports (report ID 0x01)
                 if first_byte == 0x01 {
                     stats.keyboard_reports += 1;
-                    if self.printer.show_all_hid() {
-                        self.printer
-                            .print_hid_input(timestamp, 0x01, data, urb.endpoint);
-                    }
+                    self.printer
+                        .on_hid_input(timestamp, 0x01, data, urb.endpoint);
                     return;
                 }
 
@@ -331,31 +350,44 @@ impl PcapAnalyzer {
                 if first_byte == report_id::USB_VENDOR_EVENT || first_byte == report_id::MOUSE {
                     stats.vendor_events += 1;
                     let event = parse_usb_event(data);
-                    self.printer.print_event(timestamp, &event, Some(data));
+                    self.printer.on_event(&event, Some(timestamp), Some(data));
                 } else {
                     // Other interrupt data - commands/responses or unknown
                     stats.vendor_commands += 1;
                     let is_response = first_byte & 0x80 != 0;
-                    self.printer.print_command(
-                        timestamp,
-                        first_byte,
-                        data,
-                        is_response,
-                        urb.endpoint,
-                    );
+                    if is_response {
+                        self.printer
+                            .on_response(data, Some(timestamp), Some(urb.endpoint));
+                    } else {
+                        self.printer.on_command(
+                            first_byte,
+                            &data[1..],
+                            Some(timestamp),
+                            Some(urb.endpoint),
+                        );
+                    }
                 }
             }
             UsbPacket::Bulk { .. } => {
                 // Bulk transfers - determine by direction
                 stats.vendor_commands += 1;
                 let is_response = urb.direction == Direction::In;
-                self.printer
-                    .print_command(timestamp, first_byte, data, is_response, urb.endpoint);
+                if is_response {
+                    self.printer
+                        .on_response(data, Some(timestamp), Some(urb.endpoint));
+                } else {
+                    self.printer.on_command(
+                        first_byte,
+                        &data[1..],
+                        Some(timestamp),
+                        Some(urb.endpoint),
+                    );
+                }
             }
             UsbPacket::Other { .. } => {
                 // Unknown transfer type - dump it
                 stats.other += 1;
-                self.printer.print_unknown(timestamp, data);
+                self.printer.on_unknown(timestamp, data);
             }
         }
     }
@@ -376,11 +408,18 @@ pub fn run_pcap_analysis(
         None => PacketFilter::All,
     };
 
-    let analyzer = PcapAnalyzer::new(format, filter)
-        .with_verbose(verbose)
+    // Build config with all options
+    let config = PrinterConfig::default()
+        .with_format(format)
+        .with_filter(filter)
         .with_debug(debug)
         .with_hex(hex)
         .with_all_hid(all_hid);
+
+    let analyzer = PcapAnalyzer {
+        printer: Printer::standalone(config),
+        verbose,
+    };
     analyzer.analyze_file(path)
 }
 

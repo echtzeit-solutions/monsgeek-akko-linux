@@ -30,6 +30,7 @@ pub mod webrtc;
 
 pub use command::{
     // Packet parsing
+    decode_magnetism_data,
     try_parse_command,
     try_parse_response,
     // Battery
@@ -40,6 +41,8 @@ pub use command::{
     HidResponse,
     LedMode,
     LedParamsResponse,
+    // Magnetism data decoding
+    MagnetismData,
     ParseError,
     // Packet dispatchers for pcap analysis
     ParsedCommand,
@@ -71,7 +74,9 @@ pub use device_registry::{
     is_bluetooth_pid, is_dongle_pid, BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID,
 };
 pub use error::TransportError;
-pub use printer::{OutputFormat, PacketFilter, PrinterConfig, PrinterTransport};
+pub use printer::{
+    DecodedPacket, OutputFormat, PacketFilter, Printer, PrinterConfig, PrinterTransport,
+};
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TimestampedEvent, TransportDeviceInfo,
     TransportType, VendorEvent,

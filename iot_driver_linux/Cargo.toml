@@ -67,8 +67,7 @@ ctrlc = "3.4"
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
 
-# Colored output
-colored = "2"
+# Note: crossterm is used for colored output (see TUI section)
 
 # BPF loading (for battery integration)
 aya = { version = "0.13", optional = true }
