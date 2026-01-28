@@ -12,6 +12,7 @@ pub mod command;
 pub mod device_registry;
 pub mod error;
 pub mod event_parser;
+pub mod printer;
 pub mod protocol;
 pub mod types;
 
@@ -28,6 +29,9 @@ pub mod bluetooth;
 pub mod webrtc;
 
 pub use command::{
+    // Packet parsing
+    try_parse_command,
+    try_parse_response,
     // Battery
     BatteryRefresh,
     BatteryResponse,
@@ -37,6 +41,9 @@ pub use command::{
     LedMode,
     LedParamsResponse,
     ParseError,
+    // Packet dispatchers for pcap analysis
+    ParsedCommand,
+    ParsedResponse,
     PollingRate,
     PollingRateResponse,
     ProfileResponse,
@@ -64,6 +71,7 @@ pub use device_registry::{
     is_bluetooth_pid, is_dongle_pid, BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID,
 };
 pub use error::TransportError;
+pub use printer::{OutputFormat, PacketFilter, PrinterConfig, PrinterTransport};
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType, VendorEvent,
 };
