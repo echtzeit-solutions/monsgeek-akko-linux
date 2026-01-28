@@ -2014,6 +2014,21 @@ impl App {
             VendorEvent::UnknownKbFunc { category, action } => {
                 self.status_msg = format!("KB func: cat={} action={}", category, action);
             }
+            VendorEvent::MouseReport {
+                buttons,
+                x,
+                y,
+                wheel,
+            } => {
+                // Mouse reports from keyboard's built-in mouse function
+                tracing::debug!(
+                    "Mouse: buttons={:#04x} x={} y={} wheel={}",
+                    buttons,
+                    x,
+                    y,
+                    wheel
+                );
+            }
             VendorEvent::Unknown(data) => {
                 tracing::debug!("Unknown notification: {:02X?}", data);
             }

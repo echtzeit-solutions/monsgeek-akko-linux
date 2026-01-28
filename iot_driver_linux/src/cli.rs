@@ -8,6 +8,26 @@ use std::path::PathBuf;
 #[command(author, version, about = "MonsGeek M1 V5 HE Linux Driver")]
 #[command(propagate_version = true)]
 pub struct Cli {
+    /// Enable transport monitoring (prints all commands/responses)
+    #[arg(long, global = true)]
+    pub monitor: bool,
+
+    /// Use pcap file instead of real device (passive replay)
+    #[arg(long, global = true, value_name = "FILE")]
+    pub file: Option<PathBuf>,
+
+    /// Include standard HID reports (keyboard, consumer, NKRO)
+    #[arg(long, global = true)]
+    pub all: bool,
+
+    /// Show raw hex dump alongside decoded output
+    #[arg(long, global = true)]
+    pub hex: bool,
+
+    /// Filter output (all, events, commands, cmd=0xNN)
+    #[arg(long, global = true)]
+    pub filter: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -426,42 +446,6 @@ pub enum Commands {
 
     /// Run interactive terminal UI
     Tui,
-
-    /// Monitor for settings changes via Fn key combinations
-    ///
-    /// Queries all settings, waits for settings ack, then queries again
-    /// to show what changed. Useful for reverse engineering Fn key actions.
-    #[command(visible_alias = "watch")]
-    Monitor,
-
-    /// Analyze pcapng USB capture file
-    ///
-    /// Reads pcapng captures of USB HID traffic and decodes MonsGeek vendor
-    /// protocol packets using the existing transport parsers.
-    Pcap {
-        /// Path to pcapng file
-        file: PathBuf,
-
-        /// Output format (text or json)
-        #[arg(long, value_enum, default_value = "text")]
-        format: PcapOutputFormat,
-
-        /// Filter packets (all, events, commands, cmd=0xNN, 0xNN)
-        #[arg(long)]
-        filter: Option<String>,
-
-        /// Show detailed packet statistics
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Show Debug-derived fields for events (full struct dump)
-        #[arg(short, long)]
-        debug: bool,
-
-        /// Show raw hex dump alongside decoded output
-        #[arg(short = 'x', long)]
-        hex: bool,
-    },
 
     /// Run joystick mapper (maps magnetic keys to virtual joystick axes)
     #[command(visible_alias = "joy")]

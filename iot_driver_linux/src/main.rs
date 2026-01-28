@@ -1,5 +1,6 @@
 use clap::Parser;
 use hidapi::HidApi;
+use std::str::FromStr;
 use tonic::transport::Server;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -20,27 +21,51 @@ use iot_driver::hal;
 // New transport abstraction layer
 use monsgeek_keyboard::{SleepTimeSettings, SyncKeyboard};
 use monsgeek_transport::protocol::cmd as transport_cmd;
-use monsgeek_transport::{list_devices_sync, ChecksumType, SyncTransport};
+use monsgeek_transport::{
+    list_devices_sync, ChecksumType, PacketFilter, PrinterConfig, PrinterTransport, SyncTransport,
+};
 
 /// Open a device via the new transport layer, preferring Bluetooth when present.
-fn open_preferred_transport() -> Result<SyncTransport, Box<dyn std::error::Error>> {
-    let devices = list_devices_sync()?;
-    if devices.is_empty() {
-        return Err("No supported device found".into());
-    }
+/// If `printer_config` is Some, wraps the transport with PrinterTransport for monitoring.
+fn open_preferred_transport(
+    printer_config: Option<PrinterConfig>,
+) -> Result<SyncTransport, Box<dyn std::error::Error>> {
+    use monsgeek_transport::{DeviceDiscovery, HidDiscovery, Transport};
+    use std::sync::Arc;
 
-    // Prefer Bluetooth for vendor protocol testing (then dongle, then wired)
-    let preferred = devices
-        .iter()
-        .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
-        .or_else(|| {
-            devices
-                .iter()
-                .find(|d| d.info.transport_type == monsgeek_transport::TransportType::HidDongle)
-        })
-        .unwrap_or(&devices[0]);
+    // Use futures block_on for sync context
+    let transport: Arc<dyn Transport> = futures::executor::block_on(async {
+        let discovery = HidDiscovery::new();
+        let devices = discovery.list_devices().await?;
 
-    Ok(monsgeek_transport::open_device_sync(preferred)?)
+        if devices.is_empty() {
+            return Err(monsgeek_transport::TransportError::DeviceNotFound(
+                "No supported device found".into(),
+            ));
+        }
+
+        // Prefer Bluetooth for vendor protocol testing (then dongle, then wired)
+        let preferred = devices
+            .iter()
+            .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
+            .or_else(|| {
+                devices
+                    .iter()
+                    .find(|d| d.info.transport_type == monsgeek_transport::TransportType::HidDongle)
+            })
+            .unwrap_or(&devices[0]);
+
+        discovery.open_device(preferred).await
+    })?;
+
+    // Optionally wrap with PrinterTransport for monitoring
+    let transport = if let Some(config) = printer_config {
+        PrinterTransport::wrap(transport, config)
+    } else {
+        transport
+    };
+
+    Ok(SyncTransport::new(transport))
 }
 
 /// Format and print a command response from the transport layer
@@ -108,8 +133,11 @@ fn format_command_response(cmd: u8, resp: &[u8]) {
 }
 
 /// Send a raw command via transport layer and print response
-fn cli_raw_command(cmd: u8) -> Result<(), Box<dyn std::error::Error>> {
-    let transport = open_preferred_transport()?;
+fn cli_raw_command(
+    cmd: u8,
+    printer_config: Option<PrinterConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transport = open_preferred_transport(printer_config)?;
     let info = transport.device_info();
     println!(
         "Device: VID={:04X} PID={:04X} type={:?}",
@@ -139,11 +167,11 @@ fn cli_list(hidapi: &HidApi) {
 }
 
 /// Run multiple commands and show all info (via transport layer)
-fn cli_all() -> Result<(), Box<dyn std::error::Error>> {
+fn cli_all(printer_config: Option<PrinterConfig>) -> Result<(), Box<dyn std::error::Error>> {
     println!("MonsGeek M1 V5 HE - Device Information");
     println!("======================================\n");
 
-    let transport = open_preferred_transport()?;
+    let transport = open_preferred_transport(printer_config)?;
     let info = transport.device_info();
     println!(
         "Device: VID={:04X} PID={:04X} type={:?}\n",
@@ -514,6 +542,38 @@ fn print_hex_dump(data: &[u8; 65]) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    // Handle --file flag for pcap replay mode (no device needed)
+    if let Some(pcap_path) = &cli.file {
+        use iot_driver::pcap_analyzer::{self, OutputFormat, PacketFilter as PcapFilter};
+
+        let filter = match cli.filter.as_deref() {
+            Some(f) => PcapFilter::from_str(f)?,
+            None => PcapFilter::All,
+        };
+
+        let analyzer = pcap_analyzer::PcapAnalyzer::new(OutputFormat::Text, filter)
+            .with_hex(cli.hex)
+            .with_all_hid(cli.all);
+        analyzer.analyze_file(pcap_path)?;
+        return Ok(());
+    }
+
+    // Create printer config if --monitor is set
+    let printer_config = if cli.monitor {
+        let filter = match cli.filter.as_deref() {
+            Some(f) => PacketFilter::from_str(f)?,
+            None => PacketFilter::All,
+        };
+        Some(
+            PrinterConfig::default()
+                .with_hex(cli.hex)
+                .with_all_hid(cli.all)
+                .with_filter(filter),
+        )
+    } else {
+        None
+    };
+
     // Handle commands
     match cli.command {
         // No command = show help (clap handles this automatically)
@@ -527,7 +587,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Query Commands ===
         Some(Commands::Info) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let info = transport.device_info();
             println!(
                 "Device: VID={:04X} PID={:04X} type={:?}",
@@ -547,13 +607,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Some(Commands::Profile) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let resp =
                 transport.query_command(transport_cmd::GET_PROFILE, &[], ChecksumType::Bit7)?;
             println!("Profile: {}", resp[1]);
         }
         Some(Commands::Led) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let resp =
                 transport.query_command(transport_cmd::GET_LEDPARAM, &[], ChecksumType::Bit7)?;
             let mode = resp[1];
@@ -569,7 +629,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Color:      #{r:02X}{g:02X}{b:02X}");
         }
         Some(Commands::Debounce) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let resp =
                 transport.query_command(transport_cmd::GET_DEBOUNCE, &[], ChecksumType::Bit7)?;
             println!("Debounce: {} ms", resp[1]);
@@ -585,13 +645,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => eprintln!("No device found: {e}"),
         },
         Some(Commands::Options) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let resp =
                 transport.query_command(transport_cmd::GET_KBOPTION, &[], ChecksumType::Bit7)?;
             println!("Options (raw): {:02X?}", &resp[..16.min(resp.len())]);
         }
         Some(Commands::Features) => {
-            let transport = open_preferred_transport()?;
+            let transport = open_preferred_transport(printer_config.clone())?;
             let resp = transport.query_command(
                 transport_cmd::GET_FEATURE_LIST,
                 &[],
@@ -631,7 +691,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => eprintln!("No device found: {e}"),
         },
         Some(Commands::All) => {
-            cli_all()?;
+            cli_all(printer_config.clone())?;
         }
 
         Some(Commands::Battery {
@@ -2238,7 +2298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Raw { cmd: cmd_str }) => {
             let cmd_byte = u8::from_str_radix(&cmd_str, 16)?;
-            cli_raw_command(cmd_byte)?;
+            cli_raw_command(cmd_byte, printer_config.clone())?;
         }
         Some(Commands::Serve) => {
             // Fall through to server mode below
@@ -2246,31 +2306,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Tui) => {
             iot_driver::tui::run().await?;
-        }
-        Some(Commands::Monitor) => {
-            watch_settings_changes().await?;
-        }
-        Some(Commands::Pcap {
-            file,
-            format,
-            filter,
-            verbose,
-            debug,
-            hex,
-        }) => {
-            use iot_driver::pcap_analyzer::{self, OutputFormat};
-            let output_format = match format {
-                cli::PcapOutputFormat::Text => OutputFormat::Text,
-                cli::PcapOutputFormat::Json => OutputFormat::Json,
-            };
-            pcap_analyzer::run_pcap_analysis(
-                &file,
-                output_format,
-                filter.as_deref(),
-                verbose,
-                debug,
-                hex,
-            )?;
         }
         Some(Commands::Joystick { config, headless }) => {
             // Launch the joystick mapper
@@ -2297,371 +2332,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => {
                     eprintln!("Failed to run joystick mapper: {}", e);
                 }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Snapshot of all queryable keyboard settings
-#[derive(Debug, Clone)]
-struct SettingsSnapshot {
-    profile: Option<u8>,
-    debounce: Option<u8>,
-    polling_rate: Option<u16>,
-    led_mode: Option<u8>,
-    led_brightness: Option<u8>,
-    led_speed: Option<u8>,
-    led_color: Option<(u8, u8, u8)>,
-    fn_layer: Option<u8>,
-    wasd_swap: Option<bool>,
-    anti_mistouch: Option<bool>,
-    sleep_idle_bt: Option<u16>,
-    sleep_idle_24g: Option<u16>,
-    sleep_deep_bt: Option<u16>,
-    sleep_deep_24g: Option<u16>,
-}
-
-impl SettingsSnapshot {
-    fn new() -> Self {
-        Self {
-            profile: None,
-            debounce: None,
-            polling_rate: None,
-            led_mode: None,
-            led_brightness: None,
-            led_speed: None,
-            led_color: None,
-            fn_layer: None,
-            wasd_swap: None,
-            anti_mistouch: None,
-            sleep_idle_bt: None,
-            sleep_idle_24g: None,
-            sleep_deep_bt: None,
-            sleep_deep_24g: None,
-        }
-    }
-
-    fn diff(&self, other: &Self) -> Vec<String> {
-        let mut changes = Vec::new();
-
-        if self.profile != other.profile {
-            changes.push(format!(
-                "Profile: {:?} -> {:?}",
-                self.profile, other.profile
-            ));
-        }
-        if self.debounce != other.debounce {
-            changes.push(format!(
-                "Debounce: {:?}ms -> {:?}ms",
-                self.debounce, other.debounce
-            ));
-        }
-        if self.polling_rate != other.polling_rate {
-            changes.push(format!(
-                "Polling Rate: {:?}Hz -> {:?}Hz",
-                self.polling_rate, other.polling_rate
-            ));
-        }
-        if self.led_mode != other.led_mode {
-            changes.push(format!(
-                "LED Mode: {:?} -> {:?}",
-                self.led_mode, other.led_mode
-            ));
-        }
-        if self.led_brightness != other.led_brightness {
-            changes.push(format!(
-                "LED Brightness: {:?} -> {:?}",
-                self.led_brightness, other.led_brightness
-            ));
-        }
-        if self.led_speed != other.led_speed {
-            changes.push(format!(
-                "LED Speed: {:?} -> {:?}",
-                self.led_speed, other.led_speed
-            ));
-        }
-        if self.led_color != other.led_color {
-            changes.push(format!(
-                "LED Color: {:?} -> {:?}",
-                self.led_color, other.led_color
-            ));
-        }
-        if self.fn_layer != other.fn_layer {
-            changes.push(format!(
-                "Fn Layer: {:?} -> {:?}",
-                self.fn_layer, other.fn_layer
-            ));
-        }
-        if self.wasd_swap != other.wasd_swap {
-            changes.push(format!(
-                "WASD Swap: {:?} -> {:?}",
-                self.wasd_swap, other.wasd_swap
-            ));
-        }
-        if self.anti_mistouch != other.anti_mistouch {
-            changes.push(format!(
-                "Anti-Mistouch: {:?} -> {:?}",
-                self.anti_mistouch, other.anti_mistouch
-            ));
-        }
-        if self.sleep_idle_bt != other.sleep_idle_bt {
-            changes.push(format!(
-                "Sleep Idle BT: {:?}s -> {:?}s",
-                self.sleep_idle_bt, other.sleep_idle_bt
-            ));
-        }
-        if self.sleep_idle_24g != other.sleep_idle_24g {
-            changes.push(format!(
-                "Sleep Idle 2.4G: {:?}s -> {:?}s",
-                self.sleep_idle_24g, other.sleep_idle_24g
-            ));
-        }
-        if self.sleep_deep_bt != other.sleep_deep_bt {
-            changes.push(format!(
-                "Sleep Deep BT: {:?}s -> {:?}s",
-                self.sleep_deep_bt, other.sleep_deep_bt
-            ));
-        }
-        if self.sleep_deep_24g != other.sleep_deep_24g {
-            changes.push(format!(
-                "Sleep Deep 2.4G: {:?}s -> {:?}s",
-                self.sleep_deep_24g, other.sleep_deep_24g
-            ));
-        }
-
-        changes
-    }
-}
-
-async fn query_all_settings(keyboard: &monsgeek_keyboard::KeyboardInterface) -> SettingsSnapshot {
-    let mut snap = SettingsSnapshot::new();
-
-    // Query each setting, ignoring errors
-    if let Ok(p) = keyboard.get_profile().await {
-        snap.profile = Some(p);
-    }
-    if let Ok(d) = keyboard.get_debounce().await {
-        snap.debounce = Some(d);
-    }
-    if let Ok(r) = keyboard.get_polling_rate().await {
-        snap.polling_rate = Some(r as u16);
-    }
-    if let Ok(led) = keyboard.get_led_params().await {
-        snap.led_mode = Some(led.mode as u8);
-        snap.led_brightness = Some(led.brightness);
-        snap.led_speed = Some(led.speed);
-        snap.led_color = Some((led.color.r, led.color.g, led.color.b));
-    }
-    if let Ok(opts) = keyboard.get_kb_options().await {
-        snap.fn_layer = Some(opts.fn_layer);
-        snap.wasd_swap = Some(opts.wasd_swap);
-        snap.anti_mistouch = Some(opts.anti_mistouch);
-    }
-    if let Ok(sleep) = keyboard.get_sleep_time().await {
-        snap.sleep_idle_bt = Some(sleep.idle_bt);
-        snap.sleep_idle_24g = Some(sleep.idle_24g);
-        snap.sleep_deep_bt = Some(sleep.deep_bt);
-        snap.sleep_deep_24g = Some(sleep.deep_24g);
-    }
-
-    snap
-}
-
-async fn watch_settings_changes() -> Result<(), Box<dyn std::error::Error>> {
-    use monsgeek_keyboard::KeyboardInterface;
-    use monsgeek_transport::{DeviceDiscovery, HidDiscovery, VendorEvent};
-
-    println!("=== Settings Change Watcher ===");
-    println!("Press Fn key combinations on the keyboard to see what changes.\n");
-
-    // Open keyboard
-    let discovery = HidDiscovery::new();
-    let devices = discovery.list_devices().await?;
-    if devices.is_empty() {
-        return Err("No supported device found".into());
-    }
-
-    let transport = discovery.open_device(&devices[0]).await?;
-    let info = transport.device_info().clone();
-    println!(
-        "Connected to: {} (VID:{:04x} PID:{:04x})",
-        info.product_name.as_deref().unwrap_or("Unknown"),
-        info.vid,
-        info.pid
-    );
-
-    let keyboard = KeyboardInterface::new(transport, 98, true);
-
-    // Subscribe to events
-    let mut event_rx = keyboard
-        .subscribe_events()
-        .ok_or("No event channel available")?;
-
-    // Query initial settings
-    println!("\nQuerying initial settings...");
-    let mut current = query_all_settings(&keyboard).await;
-    println!("Initial snapshot captured.\n");
-    println!("Waiting for settings changes (Ctrl+C to exit)...\n");
-
-    loop {
-        // Wait for an event
-        match event_rx.recv().await {
-            Ok(event) => {
-                match &event {
-                    VendorEvent::SettingsAck { started: true } => {
-                        println!("[Event] Settings change started...");
-                    }
-                    VendorEvent::SettingsAck { started: false } => {
-                        println!("[Event] Settings change complete, querying...");
-
-                        // Small delay to let keyboard settle
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-                        // Query new settings
-                        let new_snap = query_all_settings(&keyboard).await;
-
-                        // Show diff
-                        let changes = current.diff(&new_snap);
-                        if changes.is_empty() {
-                            println!("  No queryable settings changed (may be a toggle state)");
-                        } else {
-                            println!("  Changes detected:");
-                            for change in &changes {
-                                println!("    - {}", change);
-                            }
-                        }
-                        println!();
-
-                        current = new_snap;
-                    }
-                    VendorEvent::ProfileChange { profile } => {
-                        println!(
-                            "[Event] Profile changed to {} (via Fn+F9..F12)",
-                            profile + 1
-                        );
-                        // Re-query since profile change affects many settings
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        let new_snap = query_all_settings(&keyboard).await;
-                        let changes = current.diff(&new_snap);
-                        if !changes.is_empty() {
-                            println!("  Settings now:");
-                            for change in &changes {
-                                println!("    - {}", change);
-                            }
-                        }
-                        println!();
-                        current = new_snap;
-                    }
-                    VendorEvent::BrightnessLevel { level } => {
-                        println!("[Event] Brightness: {}/4", level);
-                    }
-                    VendorEvent::LedEffectMode { effect_id } => {
-                        println!("[Event] LED Effect: {}", effect_id);
-                    }
-                    VendorEvent::LedEffectSpeed { speed } => {
-                        println!("[Event] LED Speed: {}/4", speed);
-                    }
-                    VendorEvent::LedColor { color } => {
-                        println!("[Event] LED Color index: {}", color);
-                    }
-                    VendorEvent::WasdSwapToggle { swapped } => {
-                        println!(
-                            "[Event] WASD/Arrows: {}",
-                            if *swapped { "SWAPPED" } else { "normal" }
-                        );
-                        // Query to confirm
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        let new_snap = query_all_settings(&keyboard).await;
-                        let changes = current.diff(&new_snap);
-                        if !changes.is_empty() {
-                            for change in &changes {
-                                println!("    - {}", change);
-                            }
-                        }
-                        println!();
-                        current = new_snap;
-                    }
-                    VendorEvent::WinLockToggle { locked } => {
-                        println!(
-                            "[Event] Win key: {}",
-                            if *locked { "LOCKED" } else { "unlocked" }
-                        );
-                    }
-                    VendorEvent::BacklightToggle => {
-                        println!("[Event] Backlight toggled");
-                    }
-                    VendorEvent::DialModeToggle => {
-                        println!("[Event] Dial mode toggled");
-                    }
-                    VendorEvent::FnLayerToggle { layer } => {
-                        println!("[Event] Fn layer: {} (via Fn+Alt)", layer);
-                    }
-                    VendorEvent::Wake => {
-                        println!("[Event] Keyboard wake");
-                    }
-                    VendorEvent::MagnetismStart | VendorEvent::MagnetismStop => {
-                        // Ignore magnetism events
-                    }
-                    VendorEvent::KeyDepth { .. } => {
-                        // Ignore key depth events
-                    }
-                    VendorEvent::BatteryStatus {
-                        level,
-                        charging,
-                        online,
-                    } => {
-                        println!(
-                            "[Event] Battery: {}% {} {}",
-                            level,
-                            if *charging { "(charging)" } else { "" },
-                            if *online { "online" } else { "offline" }
-                        );
-                    }
-                    VendorEvent::UnknownKbFunc { category, action } => {
-                        println!(
-                            "[Event] Unknown KB func: cat={} action={}",
-                            category, action
-                        );
-                        // Query to see what changed
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        let new_snap = query_all_settings(&keyboard).await;
-                        let changes = current.diff(&new_snap);
-                        if !changes.is_empty() {
-                            println!("  Changes detected:");
-                            for change in &changes {
-                                println!("    - {}", change);
-                            }
-                        } else {
-                            println!("  No queryable settings changed");
-                        }
-                        println!();
-                        current = new_snap;
-                    }
-                    VendorEvent::Unknown(data) => {
-                        println!("[Event] Unknown: {:02X?}", &data[..data.len().min(16)]);
-                        // Query to see what changed
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        let new_snap = query_all_settings(&keyboard).await;
-                        let changes = current.diff(&new_snap);
-                        if !changes.is_empty() {
-                            println!("  Changes detected:");
-                            for change in &changes {
-                                println!("    - {}", change);
-                            }
-                        }
-                        println!();
-                        current = new_snap;
-                    }
-                }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                println!("[Warning] Missed {} events", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                println!("Event channel closed");
-                break;
             }
         }
     }
