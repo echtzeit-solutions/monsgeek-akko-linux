@@ -810,6 +810,451 @@ pub trait TransportExt: Transport {
 impl<T: Transport + ?Sized> TransportExt for T {}
 
 // =============================================================================
+// Packet Dispatcher for PCAP Analysis
+// =============================================================================
+
+/// Parsed response - uses existing response types as single source of truth
+///
+/// This enum provides typed parsing of responses for tools like pcap analyzer.
+/// Unknown responses are flagged for protocol discovery.
+#[derive(Debug)]
+pub enum ParsedResponse {
+    Rev {
+        data: Vec<u8>,
+    },
+    LedParams(LedParamsResponse),
+    SledParams {
+        data: Vec<u8>,
+    },
+    Profile(ProfileResponse),
+    PollingRate(PollingRateResponse),
+    Debounce(DebounceResponse),
+    SleepTime(SleepTimeResponse),
+    Battery(BatteryResponse),
+    UsbVersion {
+        device_id: u32,
+        version: u16,
+    },
+    KbOptions {
+        data: Vec<u8>,
+    },
+    FeatureList {
+        data: Vec<u8>,
+    },
+    KeyMatrix {
+        data: Vec<u8>,
+    },
+    Macro {
+        data: Vec<u8>,
+    },
+    UserPic {
+        data: Vec<u8>,
+    },
+    FnLayer {
+        data: Vec<u8>,
+    },
+    MagnetismMode {
+        data: Vec<u8>,
+    },
+    Calibration {
+        data: Vec<u8>,
+    },
+    MultiMagnetism {
+        subcmd: u8,
+        subcmd_name: &'static str,
+        profile: u8,
+        data: Vec<u8>,
+    },
+    /// Empty/stale buffer - all zeros or starts with 0x00 with no meaningful data
+    Empty,
+    /// Response we don't have a parser for yet - key for protocol discovery
+    Unknown {
+        cmd: u8,
+        data: Vec<u8>,
+    },
+}
+
+/// Parsed command - reuses response types where format matches
+#[derive(Debug)]
+pub enum ParsedCommand {
+    // GET commands (queries)
+    GetRev,
+    GetLedParams,
+    GetSledParams,
+    GetProfile,
+    GetPollingRate,
+    GetDebounce,
+    GetSleepTime,
+    GetUsbVersion,
+    GetKbOptions,
+    GetFeatureList,
+    GetKeyMatrix,
+    GetMacro,
+    GetUserPic,
+    GetFn,
+    GetMagnetismMode,
+    GetCalibration {
+        data: Vec<u8>,
+    },
+    /// GET_MULTI_MAGNETISM query
+    /// Format: [0xE5, subcmd, 0x01, profile, 0, 0, 0, checksum]
+    GetMultiMagnetism {
+        subcmd: u8,
+        subcmd_name: &'static str,
+        profile: u8,
+    },
+    // SET commands
+    SetReset,
+    SetLedParams(LedParamsResponse), // Same format as response
+    SetSledParams {
+        data: Vec<u8>,
+    }, // Side LED params
+    SetProfile(ProfileResponse),
+    SetPollingRate(PollingRateResponse),
+    SetDebounce(DebounceResponse),
+    SetSleepTime(SleepTimeResponse),
+    SetMagnetismReport {
+        enabled: bool,
+    },
+    SetKbOption {
+        data: Vec<u8>,
+    },
+    SetKeyMatrix {
+        data: Vec<u8>,
+    },
+    SetMacro {
+        data: Vec<u8>,
+    },
+    SetUserPic {
+        data: Vec<u8>,
+    },
+    SetAudioViz {
+        data: Vec<u8>,
+    },
+    SetScreenColor {
+        r: u8,
+        g: u8,
+        b: u8,
+    },
+    SetUserGif {
+        data: Vec<u8>,
+    },
+    SetFn {
+        data: Vec<u8>,
+    },
+    /// SET_MAGNETISM_CAL (0x1C) - enable/disable minimum position calibration mode
+    /// Format: [0x1C, enabled, 0, 0, 0, 0, 0, checksum]
+    SetMagnetismCal {
+        enabled: bool,
+    },
+    /// SET_MAGNETISM_MAX_CAL (0x1E) - enable/disable maximum travel calibration mode
+    /// Format: [0x1E, enabled, 0, 0, 0, 0, 0, checksum]
+    SetMagnetismMaxCal {
+        enabled: bool,
+    },
+    SetKeyMagnetismMode {
+        data: Vec<u8>,
+    },
+    SetMultiMagnetism {
+        subcmd: u8,
+        subcmd_name: &'static str,
+        profile: u8,
+        data: Vec<u8>,
+    },
+    // Dongle commands
+    BatteryRefresh,
+    DongleFlush,
+    /// Command we don't have a parser for yet
+    Unknown {
+        cmd: u8,
+        data: Vec<u8>,
+    },
+}
+
+/// Try to parse response based on command byte - dispatches to existing parsers
+///
+/// This is the single source of truth for response parsing. Unknown responses
+/// are flagged with the Unknown variant for investigation.
+pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
+    if data.is_empty() {
+        return ParsedResponse::Empty;
+    }
+
+    let cmd = data[0];
+
+    // Detect empty/stale buffer: starts with 0x00 and all remaining bytes are zero
+    // These are typically stale responses or padding from the device
+    if cmd == 0x00 && data.iter().all(|&b| b == 0) {
+        return ParsedResponse::Empty;
+    }
+
+    match cmd {
+        cmd::GET_REV => ParsedResponse::Rev {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_SLEDPARAM => ParsedResponse::SledParams {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_MACRO => ParsedResponse::Macro {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_USERPIC => ParsedResponse::UserPic {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_LEDPARAM => LedParamsResponse::parse(data)
+            .map(ParsedResponse::LedParams)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::GET_PROFILE => ProfileResponse::parse(data)
+            .map(ParsedResponse::Profile)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::GET_REPORT => PollingRateResponse::parse(data)
+            .map(ParsedResponse::PollingRate)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::GET_DEBOUNCE => DebounceResponse::parse(data)
+            .map(ParsedResponse::Debounce)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::GET_SLEEPTIME => SleepTimeResponse::parse(data)
+            .map(ParsedResponse::SleepTime)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::GET_USB_VERSION => {
+            if data.len() >= 9 {
+                ParsedResponse::UsbVersion {
+                    device_id: u32::from_le_bytes([data[1], data[2], data[3], data[4]]),
+                    version: u16::from_le_bytes([data[7], data[8]]),
+                }
+            } else {
+                ParsedResponse::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
+        cmd::GET_KBOPTION => ParsedResponse::KbOptions {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_FEATURE_LIST => ParsedResponse::FeatureList {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_KEYMATRIX => ParsedResponse::KeyMatrix {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_FN => ParsedResponse::FnLayer {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_KEY_MAGNETISM_MODE => ParsedResponse::MagnetismMode {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_CALIBRATION => ParsedResponse::Calibration {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_MULTI_MAGNETISM => {
+            let subcmd = data.get(1).copied().unwrap_or(0);
+            ParsedResponse::MultiMagnetism {
+                subcmd,
+                subcmd_name: protocol::magnetism::name(subcmd),
+                profile: data.get(3).copied().unwrap_or(0),
+                data: data.get(4..).unwrap_or(&[]).to_vec(),
+            }
+        }
+        // Battery response uses 0x01 as first byte, not standard command echo
+        // So we can't easily dispatch it here. Add more parsers as implemented.
+        _ => ParsedResponse::Unknown {
+            cmd,
+            data: data.to_vec(),
+        },
+    }
+}
+
+/// Try to parse command based on command byte
+///
+/// Commands often have the same format as responses, so we reuse response parsers.
+pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
+    if data.is_empty() {
+        return ParsedCommand::Unknown {
+            cmd: 0,
+            data: vec![],
+        };
+    }
+    let cmd = data[0];
+    match cmd {
+        // LED params: SET uses same format as GET response
+        cmd::SET_LEDPARAM => parse_led_params_command(data)
+            .map(ParsedCommand::SetLedParams)
+            .unwrap_or_else(|| ParsedCommand::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
+        cmd::SET_PROFILE => {
+            if data.len() >= 2 {
+                ParsedCommand::SetProfile(ProfileResponse { profile: data[1] })
+            } else {
+                ParsedCommand::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
+        cmd::SET_REPORT => {
+            if data.len() >= 2 {
+                PollingRate::from_protocol(data[1])
+                    .map(|rate| ParsedCommand::SetPollingRate(PollingRateResponse { rate }))
+                    .unwrap_or_else(|| ParsedCommand::Unknown {
+                        cmd,
+                        data: data.to_vec(),
+                    })
+            } else {
+                ParsedCommand::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
+        cmd::SET_DEBOUNCE => {
+            if data.len() >= 2 {
+                ParsedCommand::SetDebounce(DebounceResponse { ms: data[1] })
+            } else {
+                ParsedCommand::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
+        cmd::SET_MAGNETISM_REPORT => {
+            if data.len() >= 2 {
+                ParsedCommand::SetMagnetismReport {
+                    enabled: data[1] != 0,
+                }
+            } else {
+                ParsedCommand::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
+        cmd::SET_RESET => ParsedCommand::SetReset,
+        cmd::SET_KBOPTION => ParsedCommand::SetKbOption {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_KEYMATRIX => ParsedCommand::SetKeyMatrix {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_MACRO => ParsedCommand::SetMacro {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_USERPIC => ParsedCommand::SetUserPic {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_AUDIO_VIZ => ParsedCommand::SetAudioViz {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_SCREEN_COLOR => ParsedCommand::SetScreenColor {
+            r: data.get(1).copied().unwrap_or(0),
+            g: data.get(2).copied().unwrap_or(0),
+            b: data.get(3).copied().unwrap_or(0),
+        },
+        cmd::SET_USERGIF => ParsedCommand::SetUserGif {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_FN => ParsedCommand::SetFn {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_SLEDPARAM => ParsedCommand::SetSledParams {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_MAGNETISM_CAL => ParsedCommand::SetMagnetismCal {
+            enabled: data.get(1).copied().unwrap_or(0) != 0,
+        },
+        cmd::SET_MAGNETISM_MAX_CAL => ParsedCommand::SetMagnetismMaxCal {
+            enabled: data.get(1).copied().unwrap_or(0) != 0,
+        },
+        cmd::SET_KEY_MAGNETISM_MODE => ParsedCommand::SetKeyMagnetismMode {
+            data: data[1..].to_vec(),
+        },
+        cmd::SET_MULTI_MAGNETISM => {
+            let subcmd = data.get(1).copied().unwrap_or(0);
+            ParsedCommand::SetMultiMagnetism {
+                subcmd,
+                subcmd_name: protocol::magnetism::name(subcmd),
+                profile: data.get(3).copied().unwrap_or(0),
+                data: data.get(4..).unwrap_or(&[]).to_vec(),
+            }
+        }
+
+        // GET commands (queries - typically just command byte)
+        cmd::GET_REV => ParsedCommand::GetRev,
+        cmd::GET_LEDPARAM => ParsedCommand::GetLedParams,
+        cmd::GET_SLEDPARAM => ParsedCommand::GetSledParams,
+        cmd::GET_PROFILE => ParsedCommand::GetProfile,
+        cmd::GET_REPORT => ParsedCommand::GetPollingRate,
+        cmd::GET_DEBOUNCE => ParsedCommand::GetDebounce,
+        cmd::GET_SLEEPTIME => ParsedCommand::GetSleepTime,
+        cmd::GET_USB_VERSION => ParsedCommand::GetUsbVersion,
+        cmd::GET_KBOPTION => ParsedCommand::GetKbOptions,
+        cmd::GET_FEATURE_LIST => ParsedCommand::GetFeatureList,
+        cmd::GET_KEYMATRIX => ParsedCommand::GetKeyMatrix,
+        cmd::GET_MACRO => ParsedCommand::GetMacro,
+        cmd::GET_USERPIC => ParsedCommand::GetUserPic,
+        cmd::GET_FN => ParsedCommand::GetFn,
+        cmd::GET_KEY_MAGNETISM_MODE => ParsedCommand::GetMagnetismMode,
+        cmd::GET_CALIBRATION => ParsedCommand::GetCalibration {
+            data: data[1..].to_vec(),
+        },
+        cmd::GET_MULTI_MAGNETISM => {
+            let subcmd = data.get(1).copied().unwrap_or(0);
+            ParsedCommand::GetMultiMagnetism {
+                subcmd,
+                subcmd_name: protocol::magnetism::name(subcmd),
+                profile: data.get(3).copied().unwrap_or(0),
+            }
+        }
+
+        // Dongle commands
+        cmd::BATTERY_REFRESH => ParsedCommand::BatteryRefresh,
+        cmd::DONGLE_FLUSH_NOP => ParsedCommand::DongleFlush,
+
+        _ => ParsedCommand::Unknown {
+            cmd,
+            data: data.to_vec(),
+        },
+    }
+}
+
+/// Parse LED params from command data
+/// Format: [cmd, mode, speed_inv, brightness, option, r, g, b]
+fn parse_led_params_command(data: &[u8]) -> Option<LedParamsResponse> {
+    if data.len() < 8 {
+        return None;
+    }
+    let mode = LedMode::from_u8(data[1]).unwrap_or(LedMode::Off);
+    let speed_raw = data[2];
+    let option = data[4];
+
+    Some(LedParamsResponse {
+        mode,
+        speed: 4u8.saturating_sub(speed_raw.min(4)), // Invert back
+        brightness: data[3],
+        color: Rgb::new(data[5], data[6], data[7]),
+        dazzle: (option & 0x0F) == 7, // DAZZLE_ON = 7
+        option_raw: option,
+    })
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -931,5 +1376,82 @@ mod tests {
         assert_eq!(buf[1], cmd::SET_PROFILE); // Command
         assert_eq!(buf[2], 2); // Profile
                                // Checksum at buf[8] for Bit7
+    }
+
+    #[test]
+    fn test_try_parse_command_led_params() {
+        // SET_LEDPARAM: [cmd=0x07, mode=1(Static), speed_inv=1, brightness=4, option=8, r=255, g=128, b=64]
+        let data = [0x07, 0x01, 0x01, 0x04, 0x08, 0xff, 0x80, 0x40];
+        let parsed = try_parse_command(&data);
+        match parsed {
+            ParsedCommand::SetLedParams(led) => {
+                assert_eq!(led.mode, LedMode::Constant);
+                assert_eq!(led.speed, 3); // 4 - 1 = 3 (inverted back)
+                assert_eq!(led.brightness, 4);
+                assert_eq!(led.color.r, 255);
+                assert_eq!(led.color.g, 128);
+                assert_eq!(led.color.b, 64);
+            }
+            _ => panic!("Expected SetLedParams, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_try_parse_command_profile() {
+        let data = [0x04, 0x02]; // SET_PROFILE, profile=2
+        let parsed = try_parse_command(&data);
+        match parsed {
+            ParsedCommand::SetProfile(p) => {
+                assert_eq!(p.profile, 2);
+            }
+            _ => panic!("Expected SetProfile, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_try_parse_command_polling_rate() {
+        let data = [0x03, 0x03]; // SET_REPORT, rate=3 (1000Hz)
+        let parsed = try_parse_command(&data);
+        match parsed {
+            ParsedCommand::SetPollingRate(r) => {
+                assert_eq!(r.rate.to_hz(), 1000);
+            }
+            _ => panic!("Expected SetPollingRate, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_try_parse_command_screen_color() {
+        let data = [0x0e, 0x67, 0x67, 0x67]; // SET_SCREEN_COLOR, RGB
+        let parsed = try_parse_command(&data);
+        match parsed {
+            ParsedCommand::SetScreenColor { r, g, b } => {
+                assert_eq!(r, 0x67);
+                assert_eq!(g, 0x67);
+                assert_eq!(b, 0x67);
+            }
+            _ => panic!("Expected SetScreenColor, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_try_parse_command_get_commands() {
+        // GET commands should parse to simple variants
+        assert!(matches!(
+            try_parse_command(&[0x87]),
+            ParsedCommand::GetLedParams
+        ));
+        assert!(matches!(
+            try_parse_command(&[0x8f]),
+            ParsedCommand::GetUsbVersion
+        ));
+        assert!(matches!(
+            try_parse_command(&[0xf7]),
+            ParsedCommand::BatteryRefresh
+        ));
+        assert!(matches!(
+            try_parse_command(&[0xfc]),
+            ParsedCommand::DongleFlush
+        ));
     }
 }

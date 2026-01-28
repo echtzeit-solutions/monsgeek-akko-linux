@@ -43,6 +43,7 @@ pub mod cmd {
     pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
     pub const GET_MULTI_MAGNETISM: u8 = 0xE5;
     pub const GET_FEATURE_LIST: u8 = 0xE6;
+    pub const GET_CALIBRATION: u8 = 0xFE;
 
     // Dongle-specific commands
     /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
@@ -52,24 +53,103 @@ pub mod cmd {
 
     // Response status
     pub const STATUS_SUCCESS: u8 = 0xAA;
+
+    /// Get human-readable name for command byte
+    pub fn name(cmd: u8) -> &'static str {
+        match cmd {
+            SET_RESET => "SET_RESET",
+            SET_REPORT => "SET_REPORT",
+            SET_PROFILE => "SET_PROFILE",
+            SET_DEBOUNCE => "SET_DEBOUNCE",
+            SET_LEDPARAM => "SET_LEDPARAM",
+            SET_SLEDPARAM => "SET_SLEDPARAM",
+            SET_KBOPTION => "SET_KBOPTION",
+            SET_KEYMATRIX => "SET_KEYMATRIX",
+            SET_MACRO => "SET_MACRO",
+            SET_USERPIC => "SET_USERPIC",
+            SET_AUDIO_VIZ => "SET_AUDIO_VIZ",
+            SET_SCREEN_COLOR => "SET_SCREEN_COLOR",
+            SET_USERGIF => "SET_USERGIF",
+            SET_FN => "SET_FN",
+            SET_SLEEPTIME => "SET_SLEEPTIME",
+            SET_MAGNETISM_REPORT => "SET_MAGNETISM_REPORT",
+            SET_MAGNETISM_CAL => "SET_MAGNETISM_CAL",
+            SET_MAGNETISM_MAX_CAL => "SET_MAGNETISM_MAX_CAL",
+            SET_KEY_MAGNETISM_MODE => "SET_KEY_MAGNETISM_MODE",
+            SET_MULTI_MAGNETISM => "SET_MULTI_MAGNETISM",
+            GET_REV => "GET_REV",
+            GET_REPORT => "GET_REPORT",
+            GET_PROFILE => "GET_PROFILE",
+            GET_DEBOUNCE => "GET_DEBOUNCE",
+            GET_LEDPARAM => "GET_LEDPARAM",
+            GET_SLEDPARAM => "GET_SLEDPARAM",
+            GET_KBOPTION => "GET_KBOPTION",
+            GET_USERPIC => "GET_USERPIC",
+            GET_KEYMATRIX => "GET_KEYMATRIX",
+            GET_MACRO => "GET_MACRO",
+            GET_USB_VERSION => "GET_USB_VERSION",
+            GET_FN => "GET_FN",
+            GET_SLEEPTIME => "GET_SLEEPTIME",
+            GET_KEY_MAGNETISM_MODE => "GET_KEY_MAGNETISM_MODE",
+            GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
+            GET_FEATURE_LIST => "GET_FEATURE_LIST",
+            GET_CALIBRATION => "GET_CALIBRATION",
+            BATTERY_REFRESH => "BATTERY_REFRESH",
+            DONGLE_FLUSH_NOP => "DONGLE_FLUSH_NOP",
+            STATUS_SUCCESS => "STATUS_SUCCESS",
+            _ => "UNKNOWN",
+        }
+    }
 }
 
 /// Magnetism (Hall Effect trigger) sub-commands for GET/SET_MULTI_MAGNETISM
 pub mod magnetism {
     /// Press travel (actuation point)
-    pub const PRESS_TRAVEL: u8 = 0;
+    pub const PRESS_TRAVEL: u8 = 0x00;
     /// Lift travel (release point)
-    pub const LIFT_TRAVEL: u8 = 1;
+    pub const LIFT_TRAVEL: u8 = 0x01;
     /// Rapid Trigger press sensitivity
-    pub const RT_PRESS: u8 = 2;
+    pub const RT_PRESS: u8 = 0x02;
     /// Rapid Trigger lift sensitivity
-    pub const RT_LIFT: u8 = 3;
+    pub const RT_LIFT: u8 = 0x03;
+    /// DKS (Dynamic Keystroke) travel
+    pub const DKS_TRAVEL: u8 = 0x04;
+    /// Mod-Tap activation time
+    pub const MODTAP_TIME: u8 = 0x05;
     /// Bottom deadzone
-    pub const BOTTOM_DEADZONE: u8 = 5;
-    /// Top deadzone
-    pub const TOP_DEADZONE: u8 = 6;
+    pub const BOTTOM_DEADZONE: u8 = 0x06;
     /// Key mode (Normal, RT, DKS, etc.)
-    pub const KEY_MODE: u8 = 7;
+    pub const KEY_MODE: u8 = 0x07;
+    /// Snap Tap anti-SOCD enable
+    pub const SNAPTAP_ENABLE: u8 = 0x09;
+    /// DKS trigger modes/actions
+    pub const DKS_MODES: u8 = 0x0A;
+    /// Top deadzone (firmware >= 1024)
+    pub const TOP_DEADZONE: u8 = 0xFB;
+    /// Switch type (if replaceable)
+    pub const SWITCH_TYPE: u8 = 0xFC;
+    /// Raw sensor calibration values
+    pub const CALIBRATION: u8 = 0xFE;
+
+    /// Get human-readable name for magnetism sub-command
+    pub fn name(subcmd: u8) -> &'static str {
+        match subcmd {
+            PRESS_TRAVEL => "PRESS_TRAVEL",
+            LIFT_TRAVEL => "LIFT_TRAVEL",
+            RT_PRESS => "RT_PRESS",
+            RT_LIFT => "RT_LIFT",
+            DKS_TRAVEL => "DKS_TRAVEL",
+            MODTAP_TIME => "MODTAP_TIME",
+            BOTTOM_DEADZONE => "BOTTOM_DEADZONE",
+            KEY_MODE => "KEY_MODE",
+            SNAPTAP_ENABLE => "SNAPTAP_ENABLE",
+            DKS_MODES => "DKS_MODES",
+            TOP_DEADZONE => "TOP_DEADZONE",
+            SWITCH_TYPE => "SWITCH_TYPE",
+            CALIBRATION => "CALIBRATION",
+            _ => "UNKNOWN",
+        }
+    }
 }
 
 /// HID report sizes
