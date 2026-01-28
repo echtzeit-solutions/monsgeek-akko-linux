@@ -813,6 +813,91 @@ impl<T: Transport + ?Sized> TransportExt for T {}
 // Packet Dispatcher for PCAP Analysis
 // =============================================================================
 
+use crate::protocol::magnetism as mag_const;
+
+/// Decoded magnetism data based on subcmd type
+#[derive(Debug, Clone)]
+pub enum MagnetismData {
+    /// 2-byte values: PRESS_TRAVEL, LIFT_TRAVEL, RT_PRESS, RT_LIFT,
+    /// BOTTOM_DEADZONE, TOP_DEADZONE, CALIBRATION, SWITCH_TYPE
+    TwoByteValues(Vec<u16>),
+
+    /// 1-byte values: KEY_MODE, SNAPTAP_ENABLE, MODTAP_TIME
+    OneByteValues(Vec<u8>),
+
+    /// 4-byte DKS travel data (2 × u16 per key)
+    DksTravel(Vec<[u16; 2]>),
+
+    /// DKS modes (complex structure, keep as bytes)
+    DksModes(Vec<u8>),
+}
+
+impl MagnetismData {
+    /// Format calibration progress as "X/32 keys calibrated"
+    pub fn calibration_progress(&self) -> Option<(usize, usize)> {
+        if let MagnetismData::TwoByteValues(values) = self {
+            let finished = values.iter().filter(|&&v| v >= 300).count();
+            Some((finished, values.len()))
+        } else {
+            None
+        }
+    }
+}
+
+/// Decode magnetism response data based on subcmd type
+pub fn decode_magnetism_data(subcmd: u8, data: &[u8]) -> MagnetismData {
+    match subcmd {
+        // 2-byte per key: travel values, deadzone, calibration
+        mag_const::PRESS_TRAVEL
+        | mag_const::LIFT_TRAVEL
+        | mag_const::RT_PRESS
+        | mag_const::RT_LIFT
+        | mag_const::BOTTOM_DEADZONE
+        | mag_const::TOP_DEADZONE
+        | mag_const::SWITCH_TYPE
+        | mag_const::CALIBRATION => {
+            let values: Vec<u16> = data
+                .chunks(2)
+                .filter_map(|c| c.try_into().ok())
+                .map(u16::from_le_bytes)
+                .collect();
+            MagnetismData::TwoByteValues(values)
+        }
+        // 1-byte per key: modes, flags
+        mag_const::KEY_MODE | mag_const::SNAPTAP_ENABLE | mag_const::MODTAP_TIME => {
+            MagnetismData::OneByteValues(data.to_vec())
+        }
+        // 4-byte per key: DKS travel (2 × u16)
+        mag_const::DKS_TRAVEL => {
+            let values: Vec<[u16; 2]> = data
+                .chunks(4)
+                .filter_map(|c| {
+                    if c.len() >= 4 {
+                        Some([
+                            u16::from_le_bytes([c[0], c[1]]),
+                            u16::from_le_bytes([c[2], c[3]]),
+                        ])
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            MagnetismData::DksTravel(values)
+        }
+        // DKS modes (complex, keep as bytes)
+        mag_const::DKS_MODES => MagnetismData::DksModes(data.to_vec()),
+        // Unknown subcmd, default to 2-byte
+        _ => {
+            let values: Vec<u16> = data
+                .chunks(2)
+                .filter_map(|c| c.try_into().ok())
+                .map(u16::from_le_bytes)
+                .collect();
+            MagnetismData::TwoByteValues(values)
+        }
+    }
+}
+
 /// Parsed response - uses existing response types as single source of truth
 ///
 /// This enum provides typed parsing of responses for tools like pcap analyzer.
@@ -862,8 +947,15 @@ pub enum ParsedResponse {
     MultiMagnetism {
         subcmd: u8,
         subcmd_name: &'static str,
-        profile: u8,
+        page: u8,
         data: Vec<u8>,
+    },
+    /// Decoded magnetism response with parsed data
+    MultiMagnetismDecoded {
+        subcmd: u8,
+        subcmd_name: &'static str,
+        page: u8,
+        data: MagnetismData,
     },
     /// Empty/stale buffer - all zeros or starts with 0x00 with no meaningful data
     Empty,
@@ -897,11 +989,11 @@ pub enum ParsedCommand {
         data: Vec<u8>,
     },
     /// GET_MULTI_MAGNETISM query
-    /// Format: [0xE5, subcmd, 0x01, profile, 0, 0, 0, checksum]
+    /// Format: [0xE5, subcmd, 0x01, page, 0, 0, 0, checksum]
     GetMultiMagnetism {
         subcmd: u8,
         subcmd_name: &'static str,
-        profile: u8,
+        page: u8,
     },
     // SET commands
     SetReset,
@@ -958,7 +1050,7 @@ pub enum ParsedCommand {
     SetMultiMagnetism {
         subcmd: u8,
         subcmd_name: &'static str,
-        profile: u8,
+        page: u8,
         data: Vec<u8>,
     },
     // Dongle commands
@@ -1064,11 +1156,13 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
         },
         cmd::GET_MULTI_MAGNETISM => {
             let subcmd = data.get(1).copied().unwrap_or(0);
-            ParsedResponse::MultiMagnetism {
+            let page = data.get(3).copied().unwrap_or(0);
+            let raw_data = data.get(4..).unwrap_or(&[]);
+            ParsedResponse::MultiMagnetismDecoded {
                 subcmd,
                 subcmd_name: protocol::magnetism::name(subcmd),
-                profile: data.get(3).copied().unwrap_or(0),
-                data: data.get(4..).unwrap_or(&[]).to_vec(),
+                page,
+                data: decode_magnetism_data(subcmd, raw_data),
             }
         }
         // Battery response uses 0x01 as first byte, not standard command echo
@@ -1190,7 +1284,7 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
             ParsedCommand::SetMultiMagnetism {
                 subcmd,
                 subcmd_name: protocol::magnetism::name(subcmd),
-                profile: data.get(3).copied().unwrap_or(0),
+                page: data.get(3).copied().unwrap_or(0),
                 data: data.get(4..).unwrap_or(&[]).to_vec(),
             }
         }
@@ -1219,7 +1313,7 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
             ParsedCommand::GetMultiMagnetism {
                 subcmd,
                 subcmd_name: protocol::magnetism::name(subcmd),
-                profile: data.get(3).copied().unwrap_or(0),
+                page: data.get(3).copied().unwrap_or(0),
             }
         }
 
