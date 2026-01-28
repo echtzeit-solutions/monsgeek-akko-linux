@@ -312,6 +312,59 @@ def query(fd, cmd):
     return None
 ```
 
+### 3.5 Response Echo Behavior
+
+Most commands echo their command byte at position 0 of the response, allowing the host to correlate responses with requests. However, some commands return raw data without this echo.
+
+#### Commands WITH Command Echo (Standard)
+
+All GET commands in the 0x80-0xE6 range echo their command byte:
+
+| Command | Echo | Response Format |
+|---------|------|-----------------|
+| GET_REV (0x80) | ✓ | `[0x80, data...]` |
+| GET_PROFILE (0x84) | ✓ | `[0x84, profile, ...]` |
+| GET_DEBOUNCE (0x86) | ✓ | `[0x86, debounce_ms, ...]` |
+| GET_LEDPARAM (0x87) | ✓ | `[0x87, mode, speed, ...]` |
+| GET_USB_VERSION (0x8F) | ✓ | `[0x8F, device_id[4], ?, ?, version[2]]` |
+| etc. | ✓ | First byte matches command |
+
+#### Commands WITHOUT Command Echo (Raw Responses)
+
+| Command | Response Format | Notes |
+|---------|-----------------|-------|
+| GET_MULTI_MAGNETISM (0xE5) | `[data_byte_0, data_byte_1, ...]` | 64 bytes raw, no echo |
+| Battery (Report 0x05) | `[0x01, level, ...]` | Marker byte 0x01, not command echo |
+
+**GET_MULTI_MAGNETISM Details:**
+
+The response contains raw per-key data starting at byte 0:
+- **2-byte values** (subcmds 0x00-0x03, 0x06, 0xFB, 0xFC, 0xFE): 32 × u16 LE per page
+- **1-byte values** (subcmds 0x05, 0x07, 0x09): 64 × u8 per page
+- **4-byte values** (subcmd 0x04 DKS): 16 × [u16, u16] per page
+
+Since there's no command echo, the host must track:
+1. Which subcmd was sent
+2. Which page was requested
+3. Expected response size based on subcmd type
+
+**Battery Response (Dongle Only):**
+
+Battery uses feature report 0x05, not a standard query. The response marker is 0x01:
+```
+[0x01, level(0-100), 0x00, idle(0/1), online(0/1), 0x01, 0x01, ...]
+```
+
+This is NOT a command echo—0x01 is a fixed marker byte for battery data.
+
+#### Implementation Note
+
+When implementing a protocol parser/monitor, track the last command sent to properly decode raw responses. For GET_MULTI_MAGNETISM, store:
+- `last_subcmd`: The magnetism sub-command (0x00-0xFE)
+- `last_page`: The page number (0-N)
+
+Clear this context after receiving a response to avoid stale matches.
+
 ---
 
 ## 4. Command Reference
