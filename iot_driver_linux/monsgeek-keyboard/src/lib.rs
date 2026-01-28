@@ -22,8 +22,8 @@ pub use settings::{
 };
 pub use sync::{list_keyboards, SyncKeyboard};
 
-// Re-export VendorEvent for use by consumers (TUI notification handling)
-pub use monsgeek_transport::VendorEvent;
+// Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
+pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 
 use std::sync::Arc;
 
@@ -1304,14 +1304,15 @@ impl KeyboardInterface {
         Ok(())
     }
 
-    /// Subscribe to vendor events via broadcast channel
+    /// Subscribe to timestamped vendor events via broadcast channel
     ///
     /// Returns a receiver for asynchronous vendor event notifications.
     /// Events are pushed from a dedicated reader thread with near-zero latency
-    /// when data arrives.
+    /// when data arrives. Each event includes a timestamp (seconds since transport
+    /// was opened) for accurate timing in visualizations.
     ///
     /// Returns None if event subscriptions are not supported (no input endpoint).
-    pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<VendorEvent>> {
+    pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<TimestampedEvent>> {
         self.transport.subscribe_events()
     }
 }

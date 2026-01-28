@@ -16,8 +16,8 @@
 
 use crate::protocol::cmd;
 use crate::{
-    try_parse_command, try_parse_response, ChecksumType, ParsedCommand, ParsedResponse, Transport,
-    TransportDeviceInfo, TransportError, VendorEvent,
+    try_parse_command, try_parse_response, ChecksumType, ParsedCommand, ParsedResponse,
+    TimestampedEvent, Transport, TransportDeviceInfo, TransportError, VendorEvent,
 };
 use async_trait::async_trait;
 use colored::Colorize;
@@ -293,7 +293,7 @@ impl Transport for PrinterTransport {
         self.inner.get_battery_status().await
     }
 
-    fn subscribe_events(&self) -> Option<broadcast::Receiver<VendorEvent>> {
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
         // TODO: Could wrap the receiver to also print events
         self.inner.subscribe_events()
     }

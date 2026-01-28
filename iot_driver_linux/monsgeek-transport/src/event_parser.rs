@@ -6,13 +6,13 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hidapi::HidDevice;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::types::VendorEvent;
+use crate::types::{TimestampedEvent, VendorEvent};
 
 /// Notification type constants for vendor events
 ///
@@ -219,12 +219,12 @@ impl EventReaderConfig {
 
 /// Generic event reader loop for all transport backends
 ///
-/// Reads from a HID input device and broadcasts parsed events to subscribers.
+/// Reads from a HID input device and broadcasts timestamped events to subscribers.
 /// The loop runs until the shutdown flag is set.
 ///
 /// # Arguments
 /// * `input_device` - HID device to read from
-/// * `tx` - Broadcast sender for events
+/// * `tx` - Broadcast sender for timestamped events
 /// * `shutdown` - Atomic flag to signal shutdown
 /// * `parser` - Function to parse raw bytes into VendorEvent
 /// * `config` - Configuration options
@@ -241,7 +241,7 @@ impl EventReaderConfig {
 /// ```
 pub fn run_event_reader_loop<F>(
     input_device: HidDevice,
-    tx: broadcast::Sender<VendorEvent>,
+    tx: broadcast::Sender<TimestampedEvent>,
     shutdown: Arc<AtomicBool>,
     parser: F,
     config: EventReaderConfig,
@@ -250,21 +250,26 @@ pub fn run_event_reader_loop<F>(
 {
     debug!("{} event reader thread started", config.name);
     let mut buf = [0u8; 64];
+    let start_time = Instant::now();
 
     while !shutdown.load(Ordering::Relaxed) {
         // Read with short timeout - wakes immediately on data
         // Timeout only affects how often we check shutdown flag when idle
         match input_device.read_timeout(&mut buf, config.read_timeout_ms) {
             Ok(len) if len > 0 => {
+                // Capture timestamp immediately after read
+                let timestamp = start_time.elapsed().as_secs_f64();
                 debug!(
-                    "{} event reader got {} bytes: {:02X?}",
+                    "{} event reader got {} bytes at {:.3}s: {:02X?}",
                     config.name,
                     len,
+                    timestamp,
                     &buf[..len.min(16)]
                 );
                 let event = parser(&buf[..len]);
+                let timestamped = TimestampedEvent::new(timestamp, event);
                 // Send to all subscribers (ignores if no receivers)
-                let _ = tx.send(event);
+                let _ = tx.send(timestamped);
             }
             Ok(_) => {
                 // Timeout, no data - loop continues to check shutdown

@@ -12,7 +12,7 @@ use crossterm::{
 use futures::StreamExt;
 use ratatui::{prelude::*, widgets::*};
 use std::cell::Cell as StdCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, stdout};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,7 +33,7 @@ use crate::{cmd, devices, key_mode, magnetism, DeviceInfo, TriggerSettings};
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
-    SleepTimeSettings, VendorEvent,
+    SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
 use monsgeek_transport::HidDiscovery;
 
@@ -76,13 +76,12 @@ struct App {
     macro_edit_text: String,
     // Key depth visualization
     depth_view_mode: DepthViewMode,
-    depth_history: Vec<VecDeque<f32>>, // Per-key history for time series
-    active_keys: HashSet<usize>,       // Keys with recent activity
-    selected_keys: HashSet<usize>,     // Keys selected for time series view
-    depth_cursor: usize,               // Cursor for key selection
-    depth_sample_idx: usize,           // Global sample counter for time axis
-    max_observed_depth: f32,           // Max depth observed during session (for bar scaling)
-    depth_last_update: Vec<Instant>,   // Last update time per key (for stale detection)
+    depth_history: Vec<VecDeque<(f64, f32)>>, // Per-key history (timestamp, depth_mm)
+    active_keys: HashSet<usize>,              // Keys with recent activity
+    selected_keys: HashSet<usize>,            // Keys selected for time series view
+    depth_cursor: usize,                      // Cursor for key selection
+    max_observed_depth: f32,                  // Max depth observed during session (for bar scaling)
+    depth_last_update: Vec<Instant>,          // Last update time per key (for stale detection)
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
     battery_source: Option<BatterySource>,
@@ -92,8 +91,8 @@ struct App {
     show_help: bool,
     // Keyboard interface (async, wrapped in Arc for spawning tasks)
     keyboard: Option<Arc<KeyboardInterface>>,
-    // Event receiver for low-latency EP2 notifications
-    event_rx: Option<broadcast::Receiver<VendorEvent>>,
+    // Event receiver for low-latency EP2 notifications (with timestamps)
+    event_rx: Option<broadcast::Receiver<TimestampedEvent>>,
     loading: LoadingStates,
     throbber_state: ThrobberState,
     // Async result channel (sender for spawned tasks)
@@ -840,7 +839,6 @@ impl App {
             active_keys: HashSet::new(),
             selected_keys: HashSet::new(),
             depth_cursor: 0,
-            depth_sample_idx: 0,
             max_observed_depth: 0.1, // Will grow as keys are pressed
             depth_last_update: Vec::new(),
             // Battery status
@@ -1848,34 +1846,11 @@ impl App {
             }
             self.active_keys.remove(&key_idx);
         }
-
-        // Push current depths to history for all selected keys (time-series lockstep)
-        // All selected keys advance together so X-axis (time) is consistent
-        self.depth_sample_idx += 1;
-        for &key_idx in &self.selected_keys.clone() {
-            if key_idx < self.depth_history.len() {
-                let history = &mut self.depth_history[key_idx];
-                if history.len() >= DEPTH_HISTORY_LEN {
-                    history.pop_front();
-                }
-                // Push current depth (0.0 if not active)
-                history.push_back(self.key_depths[key_idx]);
-            }
-        }
-        // Also update history for active but not selected keys (for when they get selected)
-        for &key_idx in &self.active_keys.clone() {
-            if !self.selected_keys.contains(&key_idx) && key_idx < self.depth_history.len() {
-                let history = &mut self.depth_history[key_idx];
-                if history.len() >= DEPTH_HISTORY_LEN {
-                    history.pop_front();
-                }
-                history.push_back(self.key_depths[key_idx]);
-            }
-        }
+        // Note: depth_history is now updated in handle_depth_event with real timestamps
     }
 
     /// Handle a vendor notification and update app state
-    fn handle_vendor_notification(&mut self, event: VendorEvent) {
+    fn handle_vendor_notification(&mut self, timestamp: f64, event: VendorEvent) {
         match event {
             VendorEvent::Wake => {
                 self.status_msg = "Keyboard wake".to_string();
@@ -1956,48 +1931,7 @@ impl App {
                 key_index,
                 depth_raw,
             } => {
-                let precision = self.precision.factor() as f32;
-                let depth_mm = depth_raw as f32 / precision;
-                let key_index = key_index as usize;
-
-                if key_index < self.key_depths.len() {
-                    self.key_depths[key_index] = depth_mm;
-
-                    // Feed depth to modal if open and matching filter
-                    if let Some(ref mut modal) = self.trigger_edit_modal {
-                        let should_sample = match modal.depth_filter {
-                            Some(filter_key) => filter_key == key_index,
-                            None => true, // No filter = sample all keys (use max)
-                        };
-                        if should_sample {
-                            modal.push_depth(depth_mm);
-                        }
-                    }
-
-                    // Update timestamp for this key
-                    if key_index < self.depth_last_update.len() {
-                        self.depth_last_update[key_index] = Instant::now();
-                    }
-
-                    // Track max observed depth for bar chart scaling
-                    if depth_mm > self.max_observed_depth {
-                        self.max_observed_depth = depth_mm;
-                    }
-
-                    // Mark key as active when pressed, remove when fully released
-                    if depth_mm > 0.1 {
-                        self.active_keys.insert(key_index);
-                    } else if depth_mm < 0.05 {
-                        // Only remove when depth is very close to rest position
-                        // This handles the "key released" report from keyboard
-                        self.active_keys.remove(&key_index);
-                        // Clear time series history for this key
-                        if key_index < self.depth_history.len() {
-                            self.depth_history[key_index].clear();
-                        }
-                    }
-                    // Note: depths between 0.05-0.1 keep current state (hysteresis)
-                }
+                self.handle_depth_event(key_index, depth_raw, timestamp);
             }
             VendorEvent::BatteryStatus {
                 level,
@@ -2032,6 +1966,61 @@ impl App {
             VendorEvent::Unknown(data) => {
                 tracing::debug!("Unknown notification: {:02X?}", data);
             }
+        }
+    }
+
+    /// Handle a depth event from the keyboard (coalesced from event loop)
+    fn handle_depth_event(&mut self, key_index: u8, depth_raw: u16, timestamp: f64) {
+        let precision = self.precision.factor() as f32;
+        let depth_mm = depth_raw as f32 / precision;
+        let key_index = key_index as usize;
+
+        if key_index < self.key_depths.len() {
+            // Update current depth (for bar chart)
+            self.key_depths[key_index] = depth_mm;
+
+            // Feed depth to modal if open and matching filter
+            if let Some(ref mut modal) = self.trigger_edit_modal {
+                let should_sample = match modal.depth_filter {
+                    Some(filter_key) => filter_key == key_index,
+                    None => true, // No filter = sample all keys (use max)
+                };
+                if should_sample {
+                    modal.push_depth(depth_mm);
+                }
+            }
+
+            // Update timestamp for this key (for stale detection)
+            if key_index < self.depth_last_update.len() {
+                self.depth_last_update[key_index] = Instant::now();
+            }
+
+            // Track max observed depth for bar chart scaling
+            if depth_mm > self.max_observed_depth {
+                self.max_observed_depth = depth_mm;
+            }
+
+            // Mark key as active when pressed, remove when fully released
+            if depth_mm > 0.1 {
+                self.active_keys.insert(key_index);
+                // Push to timestamped history (for time series)
+                if key_index < self.depth_history.len() {
+                    let history = &mut self.depth_history[key_index];
+                    if history.len() >= DEPTH_HISTORY_LEN {
+                        history.pop_front();
+                    }
+                    history.push_back((timestamp, depth_mm));
+                }
+            } else if depth_mm < 0.05 {
+                // Only remove when depth is very close to rest position
+                // This handles the "key released" report from keyboard
+                self.active_keys.remove(&key_index);
+                // Clear time series history for this key
+                if key_index < self.depth_history.len() {
+                    self.depth_history[key_index].clear();
+                }
+            }
+            // Note: depths between 0.05-0.1 keep current state (hysteresis)
         }
     }
 
@@ -2857,24 +2846,74 @@ pub async fn run() -> io::Result<()> {
 
             // Handle keyboard EP2 events - low-latency channel from dedicated reader thread
             // This wakes immediately when events arrive (not tick-based)
+            // Event coalescing: drain all pending events before redraw, keeping only latest depth per key
             result = async {
                 match &mut app.event_rx {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
+                // Collect depth events for coalescing (key_index -> (timestamp, depth_raw))
+                let mut pending_depths: HashMap<u8, (f64, u16)> = HashMap::new();
+                // Collect non-depth events to process after draining
+                let mut other_events: Vec<(f64, VendorEvent)> = Vec::new();
+                let mut channel_closed = false;
+
                 match result {
-                    Ok(event) => {
-                        app.handle_vendor_notification(event);
+                    Ok(ts) => {
+                        if let VendorEvent::KeyDepth { key_index, depth_raw } = ts.event {
+                            pending_depths.insert(key_index, (ts.timestamp, depth_raw));
+                        } else {
+                            other_events.push((ts.timestamp, ts.event));
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::debug!("Event receiver lagged by {} events", n);
-                        // Continue - will get next event on next iteration
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::debug!("Event channel closed");
-                        app.event_rx = None;
+                        channel_closed = true;
                     }
+                }
+
+                // Drain remaining events without blocking (coalesce depth events by key)
+                if !channel_closed {
+                    if let Some(ref mut rx) = app.event_rx {
+                        loop {
+                            match rx.try_recv() {
+                                Ok(ts) => {
+                                    if let VendorEvent::KeyDepth { key_index, depth_raw } = ts.event {
+                                        // Keep only latest depth per key
+                                        pending_depths.insert(key_index, (ts.timestamp, depth_raw));
+                                    } else {
+                                        other_events.push((ts.timestamp, ts.event));
+                                    }
+                                }
+                                Err(broadcast::error::TryRecvError::Empty) => break,
+                                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                    tracing::debug!("Event receiver lagged by {} events (drain)", n);
+                                }
+                                Err(broadcast::error::TryRecvError::Closed) => {
+                                    channel_closed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if channel_closed {
+                    app.event_rx = None;
+                }
+
+                // Process non-depth events first (order preserved)
+                for (timestamp, event) in other_events {
+                    app.handle_vendor_notification(timestamp, event);
+                }
+
+                // Process coalesced depth events (one per key)
+                for (key_index, (timestamp, depth_raw)) in pending_depths {
+                    app.handle_depth_event(key_index, depth_raw, timestamp);
                 }
             }
 
@@ -4056,27 +4095,45 @@ fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
         Color::LightYellow,
     ];
 
+    // Calculate time bounds from all histories (timestamps are in seconds since start)
+    let time_window = 5.0; // Show 5 seconds of history
+    let mut time_min = f64::MAX;
+    let mut time_max = f64::MIN;
+    for &key_idx in &active_keys {
+        if let Some(history) = app.depth_history.get(key_idx) {
+            for &(t, _) in history.iter() {
+                if t < time_min {
+                    time_min = t;
+                }
+                if t > time_max {
+                    time_max = t;
+                }
+            }
+        }
+    }
+
+    // If no valid timestamps, show empty
+    if time_min == f64::MAX || time_max == f64::MIN {
+        time_min = 0.0;
+        time_max = time_window;
+    }
+
+    // Show a rolling window of the last N seconds
+    let x_max = time_max;
+    let x_min = (time_max - time_window).max(time_min);
+
     // Build datasets for Chart widget
     let mut datasets: Vec<Dataset> = Vec::new();
     let mut all_data: Vec<Vec<(f64, f64)>> = Vec::new();
 
-    // Find the maximum history length to align x-axis
-    let max_len = active_keys
-        .iter()
-        .filter_map(|&k| app.depth_history.get(k))
-        .map(|h| h.len())
-        .max()
-        .unwrap_or(0);
-
     for (color_idx, &key_idx) in active_keys.iter().enumerate() {
         if key_idx < app.depth_history.len() {
             let history = &app.depth_history[key_idx];
-            // Use actual sample indices for scrolling effect
-            let start_idx = max_len.saturating_sub(history.len());
+            // Use actual timestamps as X-axis, filter to visible window
             let data: Vec<(f64, f64)> = history
                 .iter()
-                .enumerate()
-                .map(|(i, &depth)| ((start_idx + i) as f64, depth as f64))
+                .filter(|(t, _)| *t >= x_min)
+                .map(|&(t, depth)| (t, depth as f64))
                 .collect();
             all_data.push(data);
 
@@ -4120,10 +4177,6 @@ fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
         .collect::<Vec<_>>()
         .join(" ");
 
-    // X-axis scrolls: show last DEPTH_HISTORY_LEN samples
-    let x_max = max_len.max(DEPTH_HISTORY_LEN) as f64;
-    let x_min = x_max - DEPTH_HISTORY_LEN as f64;
-
     let chart = Chart::new(datasets)
         .block(
             Block::default()
@@ -4132,8 +4185,14 @@ fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
         )
         .x_axis(
             Axis::default()
+                .title("Time (s)")
                 .style(Style::default().fg(Color::Gray))
-                .bounds([x_min.max(0.0), x_max]),
+                .bounds([x_min, x_max])
+                .labels(vec![
+                    Span::raw(format!("{:.1}", x_min)),
+                    Span::raw(format!("{:.1}", (x_min + x_max) / 2.0)),
+                    Span::raw(format!("{:.1}", x_max)),
+                ]),
         )
         .y_axis(
             Axis::default()

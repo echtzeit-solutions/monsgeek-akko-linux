@@ -17,7 +17,8 @@ use tracing::{debug, error, info, warn};
 
 use iot_driver::hal::HidInterface;
 use monsgeek_transport::{
-    ChecksumType, DeviceDiscovery, HidDiscovery, Transport, TransportType, VendorEvent,
+    ChecksumType, DeviceDiscovery, HidDiscovery, TimestampedEvent, Transport, TransportType,
+    VendorEvent,
 };
 
 #[allow(non_camel_case_types)] // Proto types use camelCase to match original iot_driver.exe
@@ -191,7 +192,8 @@ impl DriverService {
             // Using subscribe_events() gives us a receiver that persists across the loop,
             // so we don't miss events between iterations (unlike read_event() which
             // creates a new receiver each call)
-            let mut receivers: HashMap<String, broadcast::Receiver<VendorEvent>> = HashMap::new();
+            let mut receivers: HashMap<String, broadcast::Receiver<TimestampedEvent>> =
+                HashMap::new();
 
             loop {
                 {
@@ -224,9 +226,9 @@ impl DriverService {
                 for (path, rx) in receivers.iter_mut() {
                     match tokio::time::timeout(std::time::Duration::from_millis(1), rx.recv()).await
                     {
-                        Ok(Ok(event)) => {
-                            debug!("Vendor event from {}: {:?}", path, event);
-                            let msg = vendor_event_to_bytes(&event);
+                        Ok(Ok(timestamped)) => {
+                            debug!("Vendor event from {}: {:?}", path, timestamped.event);
+                            let msg = vendor_event_to_bytes(&timestamped.event);
                             let _ = vendor_tx.send(VenderMsg { msg });
                             got_event = true;
                         }

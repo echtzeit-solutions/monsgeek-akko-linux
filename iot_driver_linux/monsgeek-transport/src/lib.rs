@@ -73,7 +73,8 @@ pub use device_registry::{
 pub use error::TransportError;
 pub use printer::{OutputFormat, PacketFilter, PrinterConfig, PrinterTransport};
 pub use types::{
-    ChecksumType, DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType, VendorEvent,
+    ChecksumType, DiscoveredDevice, DiscoveryEvent, TimestampedEvent, TransportDeviceInfo,
+    TransportType, VendorEvent,
 };
 
 pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice};
@@ -185,9 +186,10 @@ pub trait Transport: Send + Sync {
     ///
     /// Returns a receiver for asynchronous vendor event notifications.
     /// Events are pushed from a dedicated reader thread with ~5ms latency.
+    /// Each event includes a timestamp (seconds since transport opened).
     /// Returns None if the transport doesn't support event subscriptions
     /// (e.g., no input endpoint available).
-    fn subscribe_events(&self) -> Option<broadcast::Receiver<VendorEvent>> {
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
         None // Default: not supported
     }
 }

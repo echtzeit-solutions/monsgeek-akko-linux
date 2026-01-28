@@ -12,7 +12,7 @@ use tracing::debug;
 use crate::error::TransportError;
 use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
 use crate::protocol::{self, timing, REPORT_SIZE};
-use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
+use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
 
 /// Broadcast channel capacity for vendor events
@@ -29,8 +29,8 @@ pub struct HidWiredTransport {
     info: TransportDeviceInfo,
     /// Delay after commands (ms)
     command_delay_ms: u64,
-    /// Broadcast sender for vendor events (if input device available)
-    event_tx: Option<broadcast::Sender<VendorEvent>>,
+    /// Broadcast sender for timestamped vendor events (if input device available)
+    event_tx: Option<broadcast::Sender<TimestampedEvent>>,
     /// Shutdown flag for event reader thread
     shutdown: Arc<AtomicBool>,
 }
@@ -219,12 +219,12 @@ impl Transport for HidWiredTransport {
             let mut rx = tx.subscribe();
             let timeout = Duration::from_millis(timeout_ms as u64);
             match tokio::time::timeout(timeout, rx.recv()).await {
-                Ok(Ok(event)) => Ok(Some(event)),
+                Ok(Ok(timestamped)) => Ok(Some(timestamped.event)),
                 Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                     debug!("Event receiver lagged by {} events", n);
                     // Try again immediately after lag
                     match rx.recv().await {
-                        Ok(event) => Ok(Some(event)),
+                        Ok(timestamped) => Ok(Some(timestamped.event)),
                         Err(_) => Ok(None),
                     }
                 }
@@ -236,7 +236,7 @@ impl Transport for HidWiredTransport {
         }
     }
 
-    fn subscribe_events(&self) -> Option<broadcast::Receiver<VendorEvent>> {
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
         self.event_tx.as_ref().map(|tx| tx.subscribe())
     }
 

@@ -51,6 +51,34 @@ pub enum ChecksumType {
     None,
 }
 
+/// Timestamped vendor event wrapper
+///
+/// Provides a consistent timestamp format for events from any source:
+/// - Runtime HID events: seconds since transport opened
+/// - PCAP replay: seconds since start of capture
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimestampedEvent {
+    /// Timestamp in seconds (relative to start)
+    pub timestamp: f64,
+    /// The actual event
+    pub event: VendorEvent,
+}
+
+impl TimestampedEvent {
+    /// Create a new timestamped event
+    pub fn new(timestamp: f64, event: VendorEvent) -> Self {
+        Self { timestamp, event }
+    }
+
+    /// Create an event with timestamp 0.0 (for when timing doesn't matter)
+    pub fn now(event: VendorEvent) -> Self {
+        Self {
+            timestamp: 0.0,
+            event,
+        }
+    }
+}
+
 /// Vendor events from input reports (EP2 notifications)
 #[derive(Debug, Clone, PartialEq)]
 pub enum VendorEvent {
