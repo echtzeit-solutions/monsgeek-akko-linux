@@ -226,59 +226,28 @@ systemctl status akko-bpf-battery.service
 
 ## Usage
 
-### CLI Commands
+### CLI Overview
 
+For the complete command reference, see [docs/CLI.md](docs/CLI.md).
+
+**Global debugging flags** (work with any command):
+- `--monitor` - Trace all HID commands/responses
+- `--file <pcap>` - Replay pcap capture file
+- `--hex` - Show raw hex dumps
+- `--filter <f>` - Filter packets (`all`, `events`, `commands`, `cmd=0xNN`)
+
+**Common commands:**
 ```bash
-# Device information
-iot_driver info              # Device ID and firmware version
-iot_driver all               # All device settings
-iot_driver features          # Supported features and precision
-
-# LED control
-iot_driver led               # Current LED settings
-iot_driver mode wave         # Set LED mode by name
-iot_driver mode 4            # Set LED mode by number
-iot_driver modes             # List all LED modes
-iot_driver set-led 1 4 2 255 0 128  # mode brightness speed R G B
-
-# Per-key settings
+iot_driver info              # Device ID and firmware
+iot_driver led               # LED settings
+iot_driver set-led wave 4 3  # Set LED mode
 iot_driver triggers          # Show trigger settings
-iot_driver set-actuation 2.0 # Set actuation point (mm)
-iot_driver set-rt on 0.3     # Enable Rapid Trigger with sensitivity
-iot_driver set-rt off        # Disable Rapid Trigger
-
-# Polling rate
-iot_driver rate              # Get current polling rate
-iot_driver set-rate 8000     # Set to 8kHz (8000, 4000, 2000, 1000, 500, 250, 125)
-
-# Key remapping
-iot_driver remap A B         # Remap A key to output B
-iot_driver swap A S          # Swap two keys
-iot_driver reset-key A       # Reset key to default
-
-# Macros
-iot_driver set-macro F1 "Hello World"  # Set text macro
-iot_driver macro F1                     # Show macro
-iot_driver clear-macro F1               # Clear macro
-
-# Animations
-iot_driver gif image.gif     # Upload GIF to keyboard memory
-iot_driver gif-stream a.gif  # Stream GIF in real-time
-iot_driver rainbow           # Real-time rainbow animation
-iot_driver wave              # Wave animation demo
-
-# Audio reactive
-iot_driver audio             # Run audio reactive mode
-iot_driver audio-test        # List audio devices
-iot_driver audio-levels      # Show audio levels
-
-# Screen sync
-iot_driver screen            # Sync keyboard to screen colors
-
-# Key depth monitoring
-iot_driver depth             # Real-time key depth display
-iot_driver depth --raw       # Raw depth values
+iot_driver set-rt on 0.3     # Enable Rapid Trigger
+iot_driver tui               # Interactive TUI
+iot_driver serve             # Start gRPC server
 ```
+
+See [docs/CLI.md](docs/CLI.md) for all 60+ commands including remapping, macros, animations, audio reactive, and firmware tools.
 
 ### Interactive TUI
 
