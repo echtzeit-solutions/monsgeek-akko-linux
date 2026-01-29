@@ -105,6 +105,10 @@ impl Transport for BluetoothTransport {
         ))
     }
 
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+        Err(TransportError::Timeout)
+    }
+
     async fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),

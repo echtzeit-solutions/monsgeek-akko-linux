@@ -163,6 +163,15 @@ pub trait Transport: Send + Sync {
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError>;
 
+    /// Read a feature report (GET_REPORT) without sending any command
+    ///
+    /// Used by the gRPC server where sendMsg sends the command and readMsg
+    /// only needs to read the response.
+    ///
+    /// # Returns
+    /// Response data (64 bytes, excluding report ID)
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError>;
+
     /// Read vendor events (key depth, battery status, etc.)
     ///
     /// # Arguments

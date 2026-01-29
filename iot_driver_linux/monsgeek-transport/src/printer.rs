@@ -883,6 +883,14 @@ impl Transport for Printer {
         Ok(result)
     }
 
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+        self.inner
+            .as_ref()
+            .ok_or(TransportError::Disconnected)?
+            .read_feature_report()
+            .await
+    }
+
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         let event = self
             .inner

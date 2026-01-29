@@ -663,7 +663,12 @@ impl DriverService {
         Err(Status::not_found("Device not found"))
     }
 
-    /// Send a command (stores for later read_msg to complete the query)
+    /// Store pending command for later read_msg to execute
+    ///
+    /// On Linux, bare GET_FEATURE (read-only) hangs, so we can't split send/read.
+    /// Instead, sendMsg only stores the command and readMsg does an atomic
+    /// send+read via query_command/query_raw. This avoids both the double-send
+    /// bug (old code sent here AND in read_response) and the hanging bare read.
     async fn send_command(
         &self,
         device_path: &str,
@@ -691,7 +696,6 @@ impl DriverService {
 
         debug!("Storing pending command 0x{:02x} for {}", cmd, device_path);
 
-        // Store pending command for read_msg
         connected.pending = Some(PendingCommand {
             cmd,
             data: payload,
@@ -700,18 +704,14 @@ impl DriverService {
                 && cmd != monsgeek_transport::protocol::cmd::GET_KEYMATRIX,
         });
 
-        // Actually send the command (fire-and-forget style)
-        // The transport layer handles dongle flush patterns internally
-        connected
-            .transport
-            .send_command(cmd, &connected.pending.as_ref().unwrap().data, checksum)
-            .await
-            .map_err(|e| Status::internal(format!("Send error: {}", e)))?;
-
         Ok(())
     }
 
-    /// Read response to previously sent command
+    /// Execute pending command: atomic send+read via query_command/query_raw
+    ///
+    /// Linux HID requires SET_FEATURE immediately followed by GET_FEATURE;
+    /// a bare GET_FEATURE blocks indefinitely. query_command/query_raw handle
+    /// this correctly with retry logic.
     async fn read_response(&self, device_path: &str) -> Result<Vec<u8>, Status> {
         // Ensure device is open
         self.open_device(device_path).await?;
@@ -721,14 +721,12 @@ impl DriverService {
             .get_mut(device_path)
             .ok_or_else(|| Status::not_found("Device not connected"))?;
 
-        // Get pending command
         let pending = connected.pending.take().ok_or_else(|| {
             Status::failed_precondition("No pending command - call send_msg first")
         })?;
 
         debug!("Executing query for pending command 0x{:02x}", pending.cmd);
 
-        // Use query_raw for commands that don't echo the command byte in response
         let response = if pending.expects_echo {
             connected
                 .transport

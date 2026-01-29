@@ -210,6 +210,19 @@ impl Transport for HidWiredTransport {
         Err(TransportError::Timeout)
     }
 
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+        match self.read_response() {
+            Ok(resp) => {
+                debug!("Read feature report: {:02X?}", &resp[..9]);
+                Ok(resp[1..].to_vec())
+            }
+            Err(e) => {
+                debug!("Read feature report failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         // If we have an event channel, receive from it with timeout
         if let Some(ref tx) = self.event_tx {

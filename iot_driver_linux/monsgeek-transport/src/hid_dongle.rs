@@ -486,6 +486,15 @@ impl Transport for HidDongleTransport {
             .map_err(|_| TransportError::Disconnected)?
     }
 
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+        let device = self.state.device.lock();
+        let mut buf = vec![0u8; REPORT_SIZE];
+        buf[0] = 0;
+        device.get_feature_report(&mut buf)?;
+        debug!("Dongle read feature report: {:02X?}", &buf[..9]);
+        Ok(buf[1..].to_vec())
+    }
+
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         // If we have an event channel, receive from it with timeout
         if let Some(ref tx) = self.event_tx {

@@ -343,6 +343,31 @@ impl Transport for HidBluetoothTransport {
         Err(TransportError::Timeout)
     }
 
+    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+        let device = self.vendor_device.lock();
+        let mut buf = vec![0u8; ble::REPORT_SIZE];
+
+        match device.read_timeout(&mut buf, 500) {
+            Ok(n) if n >= 3 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::CMDRESP_MARKER => {
+                debug!("BLE read feature report: {:02X?}", &buf[..n.min(16)]);
+                // Strip report id + BLE marker, return [cmd..] like other transports
+                Ok(buf[2..n.min(ble::REPORT_SIZE)].to_vec())
+            }
+            Ok(n) if n > 0 => {
+                debug!("BLE read feature report (raw): {:02X?}", &buf[..n.min(16)]);
+                Ok(buf[..n].to_vec())
+            }
+            Ok(_) => {
+                debug!("BLE read feature report: empty response");
+                Err(TransportError::Timeout)
+            }
+            Err(e) => {
+                debug!("BLE read feature report failed: {}", e);
+                Err(TransportError::from(e))
+            }
+        }
+    }
+
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         if let Some(ref tx) = self.event_tx {
             let mut rx = tx.subscribe();
