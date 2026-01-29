@@ -696,7 +696,8 @@ impl DriverService {
             cmd,
             data: payload,
             checksum,
-            expects_echo: cmd != monsgeek_transport::protocol::cmd::GET_MULTI_MAGNETISM,
+            expects_echo: cmd != monsgeek_transport::protocol::cmd::GET_MULTI_MAGNETISM
+                && cmd != monsgeek_transport::protocol::cmd::GET_KEYMATRIX,
         });
 
         // Actually send the command (fire-and-forget style)
