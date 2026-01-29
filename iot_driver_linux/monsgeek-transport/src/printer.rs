@@ -374,123 +374,93 @@ impl Printer {
 
         let cmd = data[0];
 
-        // Check if this is a 0x00 response that might be magnetism data
-        // GET_MULTI_MAGNETISM responses don't echo the command byte
-        if cmd == 0x00 {
-            let ctx = self.context.lock().clone();
-            if let (Some(subcmd), Some(page)) = (ctx.last_magnetism_subcmd, ctx.last_magnetism_page)
+        // Check if we have pending magnetism context
+        // GET_MULTI_MAGNETISM responses don't echo the command byte - they're raw data
+        // So we must check context FIRST, regardless of what byte the response starts with
+        let ctx = self.context.lock().clone();
+        if let (Some(subcmd), Some(page)) = (ctx.last_magnetism_subcmd, ctx.last_magnetism_page) {
+            // Clear context after use to prevent stale matches
             {
-                // Clear context after use to prevent stale matches
-                {
-                    let mut ctx = self.context.lock();
-                    ctx.last_magnetism_subcmd = None;
-                    ctx.last_magnetism_page = None;
-                }
+                let mut ctx = self.context.lock();
+                ctx.last_magnetism_subcmd = None;
+                ctx.last_magnetism_page = None;
+            }
 
-                // Show magnetism filter if applicable
-                if !self.should_show_command(cmd::GET_MULTI_MAGNETISM) {
-                    return;
-                }
-
-                // Decode as magnetism data
-                let decoded_data = decode_magnetism_data(subcmd, data);
-                let subcmd_name = crate::protocol::magnetism::name(subcmd);
-
-                // Format based on subcmd type
-                let display = match (&decoded_data, subcmd) {
-                    (MagnetismData::TwoByteValues(values), mag_const::CALIBRATION) => {
-                        // Keys per page is 18, calculate base index
-                        let base_idx = page as usize * 18;
-                        let finished_keys: Vec<String> = values
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, &v)| v >= 300)
-                            .map(|(i, _)| {
-                                let key_idx = (base_idx + i) as u8;
-                                format!(
-                                    "{}({})",
-                                    crate::protocol::matrix::key_name(key_idx),
-                                    key_idx
-                                )
-                            })
-                            .collect();
-                        format!(
-                            "{} {{ page: {}, finished: {}/{}, keys: [{}] }}",
-                            subcmd_name,
-                            page,
-                            finished_keys.len(),
-                            values.len(),
-                            finished_keys.join(", ")
-                        )
-                    }
-                    _ => {
-                        format!(
-                            "{} {{ page: {}, data: {:?} }}",
-                            subcmd_name, page, decoded_data
-                        )
-                    }
-                };
-
-                match self.config.format {
-                    OutputFormat::Text => {
-                        let ts_prefix = format_timestamp(timestamp);
-                        let ep_prefix = format_endpoint(endpoint);
-                        eprintln!(
-                            "{}{} {} {}",
-                            ts_prefix,
-                            ep_prefix,
-                            "RSP".green().bold(),
-                            display
-                        );
-
-                        if self.config.show_hex {
-                            eprintln!("         {}   {:02x?}", "HEX".dim(), data);
-                        }
-                    }
-                    OutputFormat::Json => {
-                        let decoded = DecodedPacket::Command {
-                            timestamp: timestamp.unwrap_or(0.0),
-                            cmd: cmd::GET_MULTI_MAGNETISM,
-                            cmd_name: "GET_MULTI_MAGNETISM".to_string(),
-                            direction: "RSP".to_string(),
-                            data: display,
-                        };
-                        eprintln!("{}", serde_json::to_string(&decoded).unwrap());
-                    }
-                }
-                return;
-            } else {
-                // Unknown 0x00 response - no pending magnetism query
-                // This could be an actual 0x00 response or stale data
-                if self.should_show_command(0x00) {
-                    match self.config.format {
-                        OutputFormat::Text => {
-                            let ts_prefix = format_timestamp(timestamp);
-                            let ep_prefix = format_endpoint(endpoint);
-                            eprintln!(
-                                "{}{} {} 0x00 {} (no pending context)",
-                                ts_prefix,
-                                ep_prefix,
-                                "RSP".yellow().bold(),
-                                format_sparse_hex(data)
-                            );
-                            if self.config.show_hex {
-                                eprintln!("         {}   {:02x?}", "HEX".dim(), data);
-                            }
-                        }
-                        OutputFormat::Json => {
-                            let decoded = DecodedPacket::Unknown {
-                                timestamp: timestamp.unwrap_or(0.0),
-                                data: format!("0x00 (no context): {:02x?}", data),
-                            };
-                            eprintln!("{}", serde_json::to_string(&decoded).unwrap());
-                        }
-                    }
-                }
+            // Show magnetism filter if applicable
+            if !self.should_show_command(cmd::GET_MULTI_MAGNETISM) {
                 return;
             }
+
+            // Decode as magnetism data
+            let decoded_data = decode_magnetism_data(subcmd, data);
+            let subcmd_name = crate::protocol::magnetism::name(subcmd);
+
+            // Format based on subcmd type
+            let display = match (&decoded_data, subcmd) {
+                (MagnetismData::TwoByteValues(values), mag_const::CALIBRATION) => {
+                    // 32 u16 values per page, so base index = page * 32
+                    let base_idx = page as usize * 32;
+                    let finished_keys: Vec<String> = values
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, &v)| v >= 300)
+                        .map(|(i, _)| {
+                            let key_idx = (base_idx + i) as u8;
+                            format!(
+                                "{}({})",
+                                crate::protocol::matrix::key_name(key_idx),
+                                key_idx
+                            )
+                        })
+                        .collect();
+                    format!(
+                        "{} {{ page: {}, finished: {}/{}, keys: [{}] }}",
+                        subcmd_name,
+                        page,
+                        finished_keys.len(),
+                        values.len(),
+                        finished_keys.join(", ")
+                    )
+                }
+                _ => {
+                    format!(
+                        "{} {{ page: {}, data: {:?} }}",
+                        subcmd_name, page, decoded_data
+                    )
+                }
+            };
+
+            match self.config.format {
+                OutputFormat::Text => {
+                    let ts_prefix = format_timestamp(timestamp);
+                    let ep_prefix = format_endpoint(endpoint);
+                    eprintln!(
+                        "{}{} {} {}",
+                        ts_prefix,
+                        ep_prefix,
+                        "RSP".green().bold(),
+                        display
+                    );
+
+                    if self.config.show_hex {
+                        eprintln!("         {}   {:02x?}", "HEX".dim(), data);
+                    }
+                }
+                OutputFormat::Json => {
+                    let decoded = DecodedPacket::Command {
+                        timestamp: timestamp.unwrap_or(0.0),
+                        cmd: cmd::GET_MULTI_MAGNETISM,
+                        cmd_name: "GET_MULTI_MAGNETISM".to_string(),
+                        direction: "RSP".to_string(),
+                        data: display,
+                    };
+                    eprintln!("{}", serde_json::to_string(&decoded).unwrap());
+                }
+            }
+            return;
         }
 
+        // No magnetism context - fall through to normal parsing
         if !self.should_show_command(cmd) {
             return;
         }
