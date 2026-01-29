@@ -338,6 +338,61 @@ fn default_type() -> String {
     "keyboard".to_string()
 }
 
+/// Device matrix entry from device_matrices.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonDeviceMatrix {
+    pub name: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub key_layout_name: Option<String>,
+    pub key_count: u16,
+    pub match_method: String,
+    pub matrix: Vec<u8>,
+    pub key_names: Vec<Option<String>>,
+}
+
+impl JsonDeviceMatrix {
+    /// Get key name for a matrix position
+    pub fn key_name(&self, index: usize) -> Option<&str> {
+        self.key_names
+            .get(index)
+            .and_then(|n| n.as_deref())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Get matrix position for a key name (case-insensitive)
+    pub fn key_index(&self, name: &str) -> Option<usize> {
+        let target = name.to_lowercase();
+        self.key_names.iter().position(|n| {
+            n.as_deref()
+                .map(|s| s.to_lowercase() == target)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Get HID code at position
+    pub fn hid_code(&self, index: usize) -> Option<u8> {
+        self.matrix.get(index).copied().filter(|&c| c != 0)
+    }
+}
+
+/// Wrapper for device_matrices.json file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonDeviceMatricesFile {
+    pub version: u32,
+    #[serde(default)]
+    pub generated_at: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub stats: Option<serde_json::Value>,
+    #[serde(default)]
+    pub hid_to_key: Option<HashMap<String, Option<String>>>,
+    pub devices: HashMap<String, JsonDeviceMatrix>,
+}
+
 /// Device database loaded from JSON
 #[derive(Debug)]
 pub struct DeviceDatabase {
@@ -349,6 +404,8 @@ pub struct DeviceDatabase {
     devices_by_company: HashMap<String, Vec<i32>>,
     /// Version of the loaded database
     version: u32,
+    /// Device matrices (loaded from device_matrices.json)
+    matrices: HashMap<i32, JsonDeviceMatrix>,
 }
 
 /// Default paths to search for devices.json
@@ -359,6 +416,14 @@ const DEFAULT_DEVICE_DB_PATHS: &[&str] = &[
     "../data/devices.json", // When running from iot_driver_linux/
 ];
 
+/// Default paths to search for device_matrices.json
+const DEFAULT_MATRIX_DB_PATHS: &[&str] = &[
+    "/usr/local/share/akko/device_matrices.json",
+    "/usr/share/akko/device_matrices.json",
+    "data/device_matrices.json",
+    "../data/device_matrices.json",
+];
+
 impl DeviceDatabase {
     /// Create empty database
     pub fn new() -> Self {
@@ -367,23 +432,26 @@ impl DeviceDatabase {
             devices_by_vid_pid: HashMap::new(),
             devices_by_company: HashMap::new(),
             version: 0,
+            matrices: HashMap::new(),
         }
     }
 
     /// Load from default paths (tries each in order)
     pub fn load_default() -> Result<Self, String> {
+        let mut db = None;
         for path in DEFAULT_DEVICE_DB_PATHS {
             let p = Path::new(path);
             if p.exists() {
                 match Self::load_from_file(p) {
-                    Ok(db) => {
+                    Ok(loaded) => {
                         info!(
                             "Loaded device database from {} ({} devices, version {})",
                             path,
-                            db.len(),
-                            db.version
+                            loaded.len(),
+                            loaded.version
                         );
-                        return Ok(db);
+                        db = Some(loaded);
+                        break;
                     }
                     Err(e) => {
                         warn!("Failed to load device database from {}: {}", path, e);
@@ -391,10 +459,55 @@ impl DeviceDatabase {
                 }
             }
         }
-        Err(format!(
-            "Device database not found in any of: {:?}",
-            DEFAULT_DEVICE_DB_PATHS
-        ))
+
+        let mut db = db.ok_or_else(|| {
+            format!(
+                "Device database not found in any of: {:?}",
+                DEFAULT_DEVICE_DB_PATHS
+            )
+        })?;
+
+        // Also try to load matrices
+        for path in DEFAULT_MATRIX_DB_PATHS {
+            let p = Path::new(path);
+            if p.exists() {
+                match db.load_matrices_from_file(p) {
+                    Ok(count) => {
+                        info!("Loaded {} device matrices from {}", count, path);
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("Failed to load device matrices from {}: {}", path, e);
+                    }
+                }
+            }
+        }
+
+        Ok(db)
+    }
+
+    /// Load device matrices from a JSON file
+    pub fn load_matrices_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, String> {
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| format!("Failed to read matrices file: {e}"))?;
+        self.load_matrices_from_json(&content)
+    }
+
+    /// Load device matrices from JSON string
+    pub fn load_matrices_from_json(&mut self, json: &str) -> Result<usize, String> {
+        let file: JsonDeviceMatricesFile = serde_json::from_str(json)
+            .map_err(|e| format!("Failed to parse matrices JSON: {e}"))?;
+
+        let mut count = 0;
+        for (id_str, matrix) in file.devices {
+            if let Ok(id) = id_str.parse::<i32>() {
+                self.matrices.insert(id, matrix);
+                count += 1;
+            } else {
+                warn!("Invalid device ID in matrices: {}", id_str);
+            }
+        }
+        Ok(count)
     }
 
     /// Load devices from JSON file
@@ -531,6 +644,37 @@ impl DeviceDatabase {
     /// Get database version
     pub fn version(&self) -> u32 {
         self.version
+    }
+
+    /// Get device matrix by device ID
+    pub fn get_matrix(&self, device_id: i32) -> Option<&JsonDeviceMatrix> {
+        self.matrices.get(&device_id)
+    }
+
+    /// Get key name for a device's matrix position
+    pub fn device_key_name(&self, device_id: i32, position: usize) -> Option<&str> {
+        self.matrices
+            .get(&device_id)
+            .and_then(|m| m.key_name(position))
+    }
+
+    /// Get matrix position for a key name on a device
+    pub fn device_key_index(&self, device_id: i32, name: &str) -> Option<usize> {
+        self.matrices
+            .get(&device_id)
+            .and_then(|m| m.key_index(name))
+    }
+
+    /// Get HID code for a device's matrix position
+    pub fn device_hid_code(&self, device_id: i32, position: usize) -> Option<u8> {
+        self.matrices
+            .get(&device_id)
+            .and_then(|m| m.hid_code(position))
+    }
+
+    /// Get number of loaded matrices
+    pub fn matrices_len(&self) -> usize {
+        self.matrices.len()
     }
 }
 
@@ -780,5 +924,51 @@ mod tests {
         assert_eq!(a, 9, "A should be at index 9");
         assert_eq!(s, 15, "S should be at index 15");
         assert_eq!(d, 21, "D should be at index 21");
+    }
+
+    #[test]
+    #[ignore] // Run manually with: cargo test test_device_matrices -- --ignored --nocapture
+    fn test_device_matrices() {
+        let mut db = DeviceDatabase::load_from_file("../data/devices.json")
+            .or_else(|_| DeviceDatabase::load_from_file("data/devices.json"))
+            .expect("Could not load devices.json");
+
+        // Load matrices
+        let count = db
+            .load_matrices_from_file("../data/device_matrices.json")
+            .or_else(|_| db.load_matrices_from_file("data/device_matrices.json"))
+            .expect("Could not load device_matrices.json");
+
+        println!("Loaded {} device matrices", count);
+        assert!(count > 300, "Expected 300+ matrices, got {}", count);
+
+        // Test M1 V5 TMR (device 2247)
+        let matrix = db.get_matrix(2247).expect("M1 V5 TMR matrix not found");
+        assert_eq!(matrix.display_name, "M1 V5 TMR");
+        assert_eq!(matrix.key_count, 85);
+
+        // Test key lookup - position 28 should be C
+        assert_eq!(matrix.hid_code(28), Some(6), "Position 28 should be HID 6");
+        assert_eq!(
+            matrix.key_name(28),
+            Some("C"),
+            "Position 28 should be C key"
+        );
+
+        // Test helper methods on database
+        assert_eq!(db.device_key_name(2247, 28), Some("C"));
+        assert_eq!(db.device_key_name(2247, 0), Some("Esc"));
+        assert_eq!(db.device_hid_code(2247, 28), Some(6));
+
+        // Test key index lookup
+        assert_eq!(matrix.key_index("C"), Some(28));
+        assert_eq!(matrix.key_index("Esc"), Some(0));
+        assert_eq!(db.device_key_index(2247, "C"), Some(28));
+
+        println!(
+            "M1 V5 TMR: position 28 = HID {} = {}",
+            matrix.matrix[28],
+            matrix.key_name(28).unwrap_or("?")
+        );
     }
 }

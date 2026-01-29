@@ -237,6 +237,9 @@ install-data:
 	@if [ -f data/key_codes.json ]; then \
 		$(INSTALL) -m 644 data/key_codes.json $(DATA_DIR)/key_codes.json; \
 	fi
+	@if [ -f data/led_matrices.json ]; then \
+		$(INSTALL) -m 644 data/led_matrices.json $(DATA_DIR)/led_matrices.json; \
+	fi
 	@echo "Device data installed to $(DATA_DIR)"
 
 ## Uninstall device data files
@@ -244,6 +247,7 @@ uninstall-data:
 	rm -f $(DATA_DIR)/devices.json
 	rm -f $(DATA_DIR)/key_layouts.json
 	rm -f $(DATA_DIR)/key_codes.json
+	rm -f $(DATA_DIR)/led_matrices.json
 	-rmdir $(DATA_DIR) 2>/dev/null || true
 	@echo "Device data uninstalled."
 
