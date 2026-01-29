@@ -253,7 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::utility::raw(&cmd_str, printer_config)?;
         }
         Some(Commands::Serve) => {
-            run_server().await?;
+            run_server(printer_config).await?;
         }
         Some(Commands::Tui) => {
             commands::utility::tui().await?;
@@ -266,7 +266,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_server(
+    printer_config: Option<monsgeek_transport::PrinterConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -277,9 +279,13 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:3814".parse()?;
 
     info!("Starting IOT Driver Linux on {}", addr);
+    if printer_config.is_some() {
+        info!("Monitor mode enabled - printing all commands/responses");
+    }
     println!("addr :: {addr}");
 
-    let service = DriverService::new().map_err(|e| format!("Failed to initialize HID API: {e}"))?;
+    let service = DriverService::with_printer_config(printer_config)
+        .map_err(|e| format!("Failed to initialize HID API: {e}"))?;
 
     // Start hot-plug monitoring for device connect/disconnect
     service.start_hotplug_monitor();

@@ -17,8 +17,8 @@ use tracing::{debug, error, info, warn};
 
 use iot_driver::hal::HidInterface;
 use monsgeek_transport::{
-    ChecksumType, DeviceDiscovery, HidDiscovery, TimestampedEvent, Transport, TransportType,
-    VendorEvent,
+    ChecksumType, DeviceDiscovery, HidDiscovery, PrinterConfig, TimestampedEvent, Transport,
+    TransportType, VendorEvent,
 };
 
 #[allow(non_camel_case_types)] // Proto types use camelCase to match original iot_driver.exe
@@ -157,12 +157,20 @@ pub struct DriverService {
 }
 
 impl DriverService {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn with_printer_config(
+        printer_config: Option<PrinterConfig>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (device_tx, _) = broadcast::channel(DEVICE_CHANNEL_SIZE);
         let (vendor_tx, _) = broadcast::channel(VENDOR_CHANNEL_SIZE);
 
+        // Create discovery with printer config - wrapping happens automatically in open_device()
+        let discovery = match printer_config {
+            Some(config) => HidDiscovery::with_printer_config(config),
+            None => HidDiscovery::new(),
+        };
+
         Ok(Self {
-            discovery: Arc::new(HidDiscovery::new()),
+            discovery: Arc::new(discovery),
             devices: Arc::new(AsyncMutex::new(HashMap::new())),
             device_tx,
             vendor_tx,
@@ -413,6 +421,7 @@ impl DriverService {
                         oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
                     });
 
+                    // Transport is already wrapped by HidDiscovery if monitoring enabled
                     devs.insert(
                         path,
                         ConnectedTransport {
@@ -543,7 +552,7 @@ impl DriverService {
                         (100, true)
                     };
 
-                    // Store transport for later use
+                    // Transport is already wrapped by HidDiscovery if monitoring enabled
                     {
                         let mut devices = self.devices.lock().await;
                         devices.insert(

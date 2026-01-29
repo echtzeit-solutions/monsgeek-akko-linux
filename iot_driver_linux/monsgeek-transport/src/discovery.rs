@@ -17,6 +17,7 @@ use crate::error::TransportError;
 use crate::hid_bluetooth::HidBluetoothTransport;
 use crate::hid_dongle::HidDongleTransport;
 use crate::hid_wired::HidWiredTransport;
+use crate::printer::{Printer, PrinterConfig};
 use crate::protocol::device;
 use crate::types::{DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType};
 use crate::Transport;
@@ -43,6 +44,8 @@ pub struct HidDiscovery {
     known_devices: Vec<(u16, u16)>,
     /// Hot-plug event sender
     event_tx: broadcast::Sender<DiscoveryEvent>,
+    /// Optional printer config for monitoring mode - wraps transports automatically
+    printer_config: Option<PrinterConfig>,
 }
 
 impl Default for HidDiscovery {
@@ -70,6 +73,22 @@ impl HidDiscovery {
                 (device::VENDOR_ID, device::PID_M1_V5_BLUETOOTH),
             ],
             event_tx,
+            printer_config: None,
+        }
+    }
+
+    /// Create with printer config for monitoring mode
+    /// All transports opened via open_device() will be wrapped with Printer
+    pub fn with_printer_config(config: PrinterConfig) -> Self {
+        let (event_tx, _) = broadcast::channel(16);
+        Self {
+            known_devices: vec![
+                (device::VENDOR_ID, device::PID_M1_V5_WIRED),
+                (device::VENDOR_ID, device::PID_M1_V5_DONGLE),
+                (device::VENDOR_ID, device::PID_M1_V5_BLUETOOTH),
+            ],
+            event_tx,
+            printer_config: Some(config),
         }
     }
 
@@ -293,6 +312,12 @@ impl DeviceDiscovery for HidDiscovery {
             "Opened {:?} transport for {:04X}:{:04X}",
             device.info.transport_type, device.info.vid, device.info.pid
         );
+
+        // Wrap with printer if monitoring is enabled
+        let transport = match &self.printer_config {
+            Some(config) => Printer::wrap(transport, config.clone()),
+            None => transport,
+        };
 
         Ok(transport)
     }

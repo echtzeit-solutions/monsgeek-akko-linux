@@ -25,7 +25,7 @@ pub mod utility;
 
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::settings::FirmwareVersion;
-use monsgeek_transport::{PacketFilter, PrinterConfig, PrinterTransport, SyncTransport};
+use monsgeek_transport::{PacketFilter, PrinterConfig, SyncTransport};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ use std::sync::Arc;
 pub type CommandResult = Result<(), Box<dyn std::error::Error>>;
 
 /// Open a device via the new transport layer, preferring Bluetooth when present.
-/// If `printer_config` is Some, wraps the transport with PrinterTransport for monitoring.
+/// If `printer_config` is Some, the transport is automatically wrapped with Printer for monitoring.
 pub fn open_preferred_transport(
     printer_config: Option<PrinterConfig>,
 ) -> Result<SyncTransport, Box<dyn std::error::Error>> {
@@ -41,7 +41,11 @@ pub fn open_preferred_transport(
 
     // Use futures block_on for sync context
     let transport: Arc<dyn monsgeek_transport::Transport> = futures::executor::block_on(async {
-        let discovery = HidDiscovery::new();
+        // Create discovery with printer config - wrapping happens automatically in open_device()
+        let discovery = match printer_config {
+            Some(config) => HidDiscovery::with_printer_config(config),
+            None => HidDiscovery::new(),
+        };
         let devices = discovery.list_devices().await?;
 
         if devices.is_empty() {
@@ -63,13 +67,6 @@ pub fn open_preferred_transport(
 
         discovery.open_device(preferred).await
     })?;
-
-    // Optionally wrap with PrinterTransport for monitoring
-    let transport = if let Some(config) = printer_config {
-        PrinterTransport::wrap(transport, config)
-    } else {
-        transport
-    };
 
     Ok(SyncTransport::new(transport))
 }
