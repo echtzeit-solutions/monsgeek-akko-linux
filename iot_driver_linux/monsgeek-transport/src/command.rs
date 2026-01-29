@@ -957,6 +957,23 @@ pub enum ParsedResponse {
         page: u8,
         data: MagnetismData,
     },
+    /// Auto-OS detection enabled status
+    AutoOsEnabled {
+        enabled: bool,
+    },
+    /// LED on/off (power save) status
+    LedOnOff {
+        enabled: bool,
+    },
+    /// OLED firmware version
+    OledVersion {
+        oled_version: u16,
+        flash_version: u16,
+    },
+    /// Matrix LED firmware version
+    MledVersion {
+        version: u16,
+    },
     /// Empty/stale buffer - all zeros or starts with 0x00 with no meaningful data
     Empty,
     /// Response we don't have a parser for yet - key for protocol discovery
@@ -985,6 +1002,10 @@ pub enum ParsedCommand {
     GetUserPic,
     GetFn,
     GetMagnetismMode,
+    GetAutoOsEnabled,
+    GetLedOnOff,
+    GetOledVersion,
+    GetMledVersion,
     GetCalibration {
         data: Vec<u8>,
     },
@@ -1151,6 +1172,33 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
         cmd::GET_KEY_MAGNETISM_MODE => ParsedResponse::MagnetismMode {
             data: data[1..].to_vec(),
         },
+        cmd::GET_AUTOOS_EN => ParsedResponse::AutoOsEnabled {
+            enabled: data.get(1).copied().unwrap_or(0) == 1,
+        },
+        cmd::GET_LEDONOFF => ParsedResponse::LedOnOff {
+            enabled: data.get(1).copied().unwrap_or(0) == 1,
+        },
+        cmd::GET_OLED_VERSION => {
+            let oled = u16::from_le_bytes([
+                data.get(1).copied().unwrap_or(0),
+                data.get(2).copied().unwrap_or(0),
+            ]);
+            let flash = u16::from_le_bytes([
+                data.get(3).copied().unwrap_or(0),
+                data.get(4).copied().unwrap_or(0),
+            ]);
+            ParsedResponse::OledVersion {
+                oled_version: oled,
+                flash_version: flash,
+            }
+        }
+        cmd::GET_MLED_VERSION => {
+            let ver = u16::from_le_bytes([
+                data.get(1).copied().unwrap_or(0),
+                data.get(2).copied().unwrap_or(0),
+            ]);
+            ParsedResponse::MledVersion { version: ver }
+        }
         cmd::GET_CALIBRATION => ParsedResponse::Calibration {
             data: data[1..].to_vec(),
         },
@@ -1305,6 +1353,10 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
         cmd::GET_USERPIC => ParsedCommand::GetUserPic,
         cmd::GET_FN => ParsedCommand::GetFn,
         cmd::GET_KEY_MAGNETISM_MODE => ParsedCommand::GetMagnetismMode,
+        cmd::GET_AUTOOS_EN => ParsedCommand::GetAutoOsEnabled,
+        cmd::GET_LEDONOFF => ParsedCommand::GetLedOnOff,
+        cmd::GET_OLED_VERSION => ParsedCommand::GetOledVersion,
+        cmd::GET_MLED_VERSION => ParsedCommand::GetMledVersion,
         cmd::GET_CALIBRATION => ParsedCommand::GetCalibration {
             data: data[1..].to_vec(),
         },

@@ -20,6 +20,7 @@ pub mod cmd {
     pub const SET_USERGIF: u8 = 0x12;
     pub const SET_FN: u8 = 0x10;
     pub const SET_SLEEPTIME: u8 = 0x11;
+    pub const SET_AUTOOS_EN: u8 = 0x17;
     pub const SET_MAGNETISM_REPORT: u8 = 0x1B;
     pub const SET_MAGNETISM_CAL: u8 = 0x1C;
     pub const SET_MAGNETISM_MAX_CAL: u8 = 0x1E;
@@ -30,6 +31,7 @@ pub mod cmd {
     pub const GET_REV: u8 = 0x80;
     pub const GET_REPORT: u8 = 0x83;
     pub const GET_PROFILE: u8 = 0x84;
+    pub const GET_LEDONOFF: u8 = 0x85;
     pub const GET_DEBOUNCE: u8 = 0x86;
     pub const GET_LEDPARAM: u8 = 0x87;
     pub const GET_SLEDPARAM: u8 = 0x88;
@@ -40,7 +42,10 @@ pub mod cmd {
     pub const GET_USB_VERSION: u8 = 0x8F;
     pub const GET_FN: u8 = 0x90;
     pub const GET_SLEEPTIME: u8 = 0x91;
+    pub const GET_AUTOOS_EN: u8 = 0x97;
     pub const GET_KEY_MAGNETISM_MODE: u8 = 0x9D;
+    pub const GET_OLED_VERSION: u8 = 0xAD;
+    pub const GET_MLED_VERSION: u8 = 0xAE;
     pub const GET_MULTI_MAGNETISM: u8 = 0xE5;
     pub const GET_FEATURE_LIST: u8 = 0xE6;
     pub const GET_CALIBRATION: u8 = 0xFE;
@@ -72,6 +77,7 @@ pub mod cmd {
             SET_USERGIF => "SET_USERGIF",
             SET_FN => "SET_FN",
             SET_SLEEPTIME => "SET_SLEEPTIME",
+            SET_AUTOOS_EN => "SET_AUTOOS_EN",
             SET_MAGNETISM_REPORT => "SET_MAGNETISM_REPORT",
             SET_MAGNETISM_CAL => "SET_MAGNETISM_CAL",
             SET_MAGNETISM_MAX_CAL => "SET_MAGNETISM_MAX_CAL",
@@ -80,6 +86,7 @@ pub mod cmd {
             GET_REV => "GET_REV",
             GET_REPORT => "GET_REPORT",
             GET_PROFILE => "GET_PROFILE",
+            GET_LEDONOFF => "GET_LEDONOFF",
             GET_DEBOUNCE => "GET_DEBOUNCE",
             GET_LEDPARAM => "GET_LEDPARAM",
             GET_SLEDPARAM => "GET_SLEDPARAM",
@@ -90,7 +97,10 @@ pub mod cmd {
             GET_USB_VERSION => "GET_USB_VERSION",
             GET_FN => "GET_FN",
             GET_SLEEPTIME => "GET_SLEEPTIME",
+            GET_AUTOOS_EN => "GET_AUTOOS_EN",
             GET_KEY_MAGNETISM_MODE => "GET_KEY_MAGNETISM_MODE",
+            GET_OLED_VERSION => "GET_OLED_VERSION",
+            GET_MLED_VERSION => "GET_MLED_VERSION",
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
             GET_CALIBRATION => "GET_CALIBRATION",
@@ -152,28 +162,31 @@ pub mod magnetism {
     }
 }
 
-/// Key matrix position to name mapping (M1 V5 layout)
+/// Key matrix position to name mapping (M1 V5 / SG9000 layout)
+///
+/// Derived from ledMatrix in device database - maps firmware matrix position to HID codes.
+/// The matrix is column-major with 6 rows per column.
 pub mod matrix {
     /// Key names indexed by matrix position (column-major order)
+    /// Derived from Common82_SG9000 ledMatrix which maps position -> HID usage code
     const KEY_NAMES: &[&str] = &[
-        // Col 0 (0-5): Esc column
-        "Esc", "`", "Tab", "Caps", "LShf", "LCtl", // Col 1 (6-11): 1/Q/A/Z column
-        "F1", "1", "Q", "A", "Z", "Win", // Col 2 (12-17): 2/W/S/X column
-        "F2", "2", "W", "S", "X", "LAlt", // Col 3 (18-23): 3/E/D/C column
-        "F3", "3", "E", "D", "C", "Spc", // Col 4 (24-29): 4/R/F/V column
-        "F4", "4", "R", "F", "V", "Spc", // Col 5 (30-35): 5/T/G/B column
-        "F5", "5", "T", "G", "B", "Spc", // Col 6 (36-41): 6/Y/H/N column
-        "F6", "6", "Y", "H", "N", "Spc", // Col 7 (42-47): 7/U/J/M column
-        "F7", "7", "U", "J", "M", "Spc", // Col 8 (48-53): 8/I/K/, column
-        "F8", "8", "I", "K", ",", "RAlt", // Col 9 (54-59): 9/O/L/. column
-        "F9", "9", "O", "L", ".", "Fn", // Col 10 (60-65): 0/P/;// column
-        "F10", "0", "P", ";", "/", "RCtl", // Col 11 (66-71): -/[/'/RShf column
-        "F11", "-", "[", "'", "RShf", "Left", // Col 12 (72-77): =/]/Enter/Up column
-        "F12", "=", "]", "Ent", "Up", "Down",
-        // Col 13 (78-83): Bksp/\/PgDn/End/Right column
-        "Del", "Bksp", "\\", "PgUp", "PgDn", "Right",
-        // Col 14 (84-89): Extra keys (if any)
-        "Knob", "Ins", "Home", "End", "?", "?",
+        // Col 0 (0-5)
+        "Esc", "`", "Tab", "Caps", "LShf", "LCtl",
+        // Col 1 (6-11) - has empty slots for layout variation
+        "?", "1", "Q", "A", "IntlBs", "?", // Col 2 (12-17)
+        "F1", "2", "W", "S", "Z", "Win", // Col 3 (18-23)
+        "F2", "3", "E", "D", "X", "LAlt", // Col 4 (24-29)
+        "F3", "4", "R", "F", "C", "?", // Col 5 (30-35)
+        "F4", "5", "T", "G", "V", "Spc", // Col 6 (36-41)
+        "F5", "6", "Y", "H", "B", "?", // Col 7 (42-47)
+        "F6", "7", "U", "J", "N", "?", // Col 8 (48-53)
+        "F7", "8", "I", "K", "M", "RAlt", // Col 9 (54-59)
+        "F8", "9", "O", "L", ",", "?", // Col 10 (60-65)
+        "F9", "0", "P", ";", ".", "RCtl", // Col 11 (66-71)
+        "F10", "-", "[", "'", "/", "?", // Col 12 (72-77)
+        "F11", "=", "]", "IntlRo", "RShf", "Left", // Col 13 (78-83)
+        "F12", "Bksp", "\\", "Ent", "Up", "Down", // Col 14 (84-89)
+        "Del", "Home", "PgUp", "PgDn", "End", "Right",
     ];
 
     /// Get key name from matrix position

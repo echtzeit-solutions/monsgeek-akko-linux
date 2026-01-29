@@ -414,13 +414,6 @@ Clear this context after receiving a response to avoid stale matches.
 | 0x30 | SET_OLEDBOOTLOADER | Enter OLED bootloader mode |
 | 0x31 | SET_OLEDBOOTSTART | Start OLED firmware transfer |
 
-#### Protocol Commands
-
-| Hex | Name | Description |
-|-----|------|-------------|
-| 0xF7 | BATTERY_REFRESH | Wake dongle, query battery |
-| 0xFC | FLUSH | Flush response buffer (no-op) |
-
 ### 4.2 GET Commands (Device → Host)
 
 #### Core Configuration
@@ -458,6 +451,15 @@ Clear this context after receiving a response to avoid stale matches.
 | 0xAD | GET_OLED_VERSION | OLED firmware version (u16 LE) |
 | 0xAE | GET_MLED_VERSION | Matrix LED controller version (u16 LE) |
 | 0xD0 | GET_SKU | Factory SKU |
+
+#### Protocol Commands
+
+| Hex | Name | Description |
+|-----|------|-------------|
+| 0xF7 | BATTERY_REFRESH | Wake dongle, query battery |
+| 0xFC | FLUSH | Flush response buffer (no-op) |
+| 0xFD | CAL_INIT? | Calibration app init/sync - only seen in calibration capture, sent first, echoes back zeros |
+| 0xFE | GET_CALIBRATION | Raw sensor calibration values |
 
 ### 4.3 Magnetism Sub-Commands (0x65 / 0xE5)
 
