@@ -197,12 +197,9 @@ impl Transport for HidWiredTransport {
 
             match self.read_response() {
                 Ok(resp) => {
-                    // Accept any non-zero response (no command echo check)
-                    if resp.iter().skip(1).any(|&b| b != 0) {
-                        debug!("Got raw response: {:02X?}", &resp[..16]);
-                        return Ok(resp[1..].to_vec());
-                    }
-                    debug!("Empty response on attempt {}", attempt);
+                    // Accept any response (no command echo check, allow all-zeros for calibration data)
+                    debug!("Got raw response: {:02X?}", &resp[..16.min(resp.len())]);
+                    return Ok(resp[1..].to_vec());
                 }
                 Err(e) => {
                     debug!("Read attempt {} failed: {}", attempt, e);

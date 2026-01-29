@@ -40,6 +40,8 @@ struct PendingCommand {
     cmd: u8,
     data: Vec<u8>,
     checksum: ChecksumType,
+    /// Whether response echoes command byte (false for GET_MULTI_MAGNETISM which returns [subcmd, page, data...])
+    expects_echo: bool,
 }
 
 /// Connected device with transport
@@ -694,6 +696,7 @@ impl DriverService {
             cmd,
             data: payload,
             checksum,
+            expects_echo: cmd != monsgeek_transport::protocol::cmd::GET_MULTI_MAGNETISM,
         });
 
         // Actually send the command (fire-and-forget style)
@@ -724,13 +727,19 @@ impl DriverService {
 
         debug!("Executing query for pending command 0x{:02x}", pending.cmd);
 
-        // Use query_command which handles all transport-specific logic
-        // (dongle flush, retries, etc.)
-        let response = connected
-            .transport
-            .query_command(pending.cmd, &pending.data, pending.checksum)
-            .await
-            .map_err(|e| Status::internal(format!("Query error: {}", e)))?;
+        // Use query_raw for commands that don't echo the command byte in response
+        let response = if pending.expects_echo {
+            connected
+                .transport
+                .query_command(pending.cmd, &pending.data, pending.checksum)
+                .await
+        } else {
+            connected
+                .transport
+                .query_raw(pending.cmd, &pending.data, pending.checksum)
+                .await
+        }
+        .map_err(|e| Status::internal(format!("Query error: {}", e)))?;
 
         debug!(
             "Response for 0x{:02x}: {:02x?}",

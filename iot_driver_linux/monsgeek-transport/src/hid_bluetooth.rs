@@ -327,10 +327,9 @@ impl Transport for HidBluetoothTransport {
                         );
                         return Ok(resp[2..].to_vec()); // strip report id + 0x55
                     }
-                    if resp.iter().any(|&b| b != 0) {
-                        debug!("BLE got raw response: {:02X?}", &resp[..16.min(resp.len())]);
-                        return Ok(resp);
-                    }
+                    // Accept any response (allow all-zeros for calibration data)
+                    debug!("BLE got raw response: {:02X?}", &resp[..16.min(resp.len())]);
+                    return Ok(resp);
                 }
                 Ok(_) => {
                     debug!("BLE empty response on attempt {}", attempt);

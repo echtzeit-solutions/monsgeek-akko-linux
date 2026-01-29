@@ -315,11 +315,8 @@ fn execute_query(
             let resp_cmd = resp[1];
 
             if raw_mode {
-                // Raw mode: accept any non-zero, non-flush response
-                if resp_cmd != 0
-                    && resp_cmd != cmd::DONGLE_FLUSH_NOP
-                    && resp.iter().skip(1).any(|&b| b != 0)
-                {
+                // Raw mode: accept any non-flush response (allow all-zeros for calibration data)
+                if resp_cmd != cmd::DONGLE_FLUSH_NOP {
                     let latency = start.elapsed();
                     state
                         .latency_tracker
