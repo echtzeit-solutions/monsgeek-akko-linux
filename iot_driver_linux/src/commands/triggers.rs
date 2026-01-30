@@ -1,6 +1,7 @@
 //! Trigger-related command handlers.
 
 use super::CommandResult;
+use iot_driver::profile::M1_V5_HE_KEY_NAMES;
 use iot_driver::protocol::magnetism;
 use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, SyncKeyboard};
 use std::collections::HashSet;
@@ -111,11 +112,37 @@ pub fn calibrate() -> CommandResult {
             }
         }
 
+        // Build list of missing key names
+        let missing: Vec<&str> = (0..key_count)
+            .filter(|i| !finished.contains(i))
+            .map(|i| {
+                M1_V5_HE_KEY_NAMES
+                    .get(i)
+                    .copied()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("?")
+            })
+            .collect();
+
+        // Clear line and print progress + missing keys (elided if many)
         print!(
-            "\r        Progress: {}/{} keys calibrated",
+            "\x1b[2K\r        Progress: {}/{} keys calibrated",
             finished.len(),
             key_count
         );
+        if !missing.is_empty() {
+            let max_show = 10;
+            if missing.len() <= max_show {
+                print!("  Missing: {}", missing.join(", "));
+            } else {
+                let shown: Vec<&str> = missing.iter().copied().take(max_show).collect();
+                print!(
+                    "  Missing: {}, ... (+{})",
+                    shown.join(", "),
+                    missing.len() - max_show
+                );
+            }
+        }
         let _ = std::io::stdout().flush();
 
         if finished.len() >= key_count {

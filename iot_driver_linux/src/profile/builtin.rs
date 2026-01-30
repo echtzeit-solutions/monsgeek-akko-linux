@@ -225,7 +225,7 @@ pub const M1_V5_HE_LED_MATRIX: [u8; 126] = [
 /// Key names for M1 V5 HE matrix positions
 /// Derived from LED matrix HID codes using standard HID usage table
 /// Each name corresponds to the same index in M1_V5_HE_LED_MATRIX
-const M1_V5_HE_KEY_NAMES: &[&str] = &[
+pub const M1_V5_HE_KEY_NAMES: &[&str] = &[
     // Col 0 (0-5): Esc column
     "Esc",    // 0: HID 41
     "`",      // 1: HID 53
