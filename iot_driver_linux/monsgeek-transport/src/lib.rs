@@ -69,6 +69,11 @@ pub use command::{
     SetProfile,
     SetSleepTime,
     SleepTimeResponse,
+    // LED constants
+    BRIGHTNESS_MAX,
+    DAZZLE_OFF,
+    DAZZLE_ON,
+    SPEED_MAX,
 };
 pub use device_registry::{
     is_bluetooth_pid, is_dongle_pid, BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID,

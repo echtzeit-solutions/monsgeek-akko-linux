@@ -181,11 +181,14 @@ impl Rgb {
     pub const BLUE: Self = Self::new(0, 0, 255);
 }
 
-/// LED dazzle (rainbow cycle) option
-const DAZZLE_ON: u8 = 7;
-const DAZZLE_OFF: u8 = 8;
-const SPEED_MAX: u8 = 4;
-const BRIGHTNESS_MAX: u8 = 4;
+/// LED dazzle (rainbow cycle) on - rainbow cycling (value 7 in protocol)
+pub const DAZZLE_ON: u8 = 7;
+/// LED dazzle (rainbow cycle) off - unicolor (value 8 in protocol)
+pub const DAZZLE_OFF: u8 = 8;
+/// Maximum speed value (5 levels: 0-4)
+pub const SPEED_MAX: u8 = 4;
+/// Maximum brightness value (4 levels: 0-4)
+pub const BRIGHTNESS_MAX: u8 = 4;
 
 /// SET_LEDPARAM command (0x07)
 #[derive(Debug, Clone)]
