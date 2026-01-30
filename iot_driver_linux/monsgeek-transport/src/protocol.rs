@@ -211,10 +211,6 @@ pub mod timing {
     pub const SHORT_DELAY_MS: u64 = 50;
     /// Minimum delay for streaming (ms)
     pub const MIN_DELAY_MS: u64 = 5;
-    /// Delay after sending command to dongle (ms) - legacy, use dongle_timing for new code
-    pub const DONGLE_POST_SEND_DELAY_MS: u64 = 150;
-    /// Delay after dongle flush before reading (ms) - legacy, use dongle_timing for new code
-    pub const DONGLE_POST_FLUSH_DELAY_MS: u64 = 100;
     /// Delay after starting animation upload (ms)
     pub const ANIMATION_START_DELAY_MS: u64 = 500;
 }
