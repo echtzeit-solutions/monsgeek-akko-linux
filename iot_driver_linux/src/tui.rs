@@ -1205,11 +1205,12 @@ impl App {
         };
     }
 
-    async fn set_led_mode(&mut self, mode: u8) {
+    /// Send current main LED params to keyboard
+    async fn send_main_led(&self) {
         if let Some(ref keyboard) = self.keyboard {
             let _ = keyboard
                 .set_led(
-                    mode,
+                    self.info.led_mode,
                     self.info.led_brightness,
                     speed_to_wire(self.info.led_speed),
                     self.info.led_r,
@@ -1219,45 +1220,24 @@ impl App {
                 )
                 .await;
         }
+    }
+
+    async fn set_led_mode(&mut self, mode: u8) {
         self.info.led_mode = mode;
+        self.send_main_led().await;
         self.status_msg = format!("LED mode: {}", cmd::led_mode_name(mode));
     }
 
     async fn set_brightness(&mut self, brightness: u8) {
-        let brightness = brightness.min(4);
-        if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_led(
-                    self.info.led_mode,
-                    brightness,
-                    speed_to_wire(self.info.led_speed),
-                    self.info.led_r,
-                    self.info.led_g,
-                    self.info.led_b,
-                    self.info.led_dazzle,
-                )
-                .await;
-        }
-        self.info.led_brightness = brightness;
-        self.status_msg = format!("Brightness: {brightness}/4");
+        self.info.led_brightness = brightness.min(4);
+        self.send_main_led().await;
+        self.status_msg = format!("Brightness: {}/4", self.info.led_brightness);
     }
 
     async fn set_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
-        if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_led(
-                    self.info.led_mode,
-                    self.info.led_brightness,
-                    speed,
-                    self.info.led_r,
-                    self.info.led_g,
-                    self.info.led_b,
-                    self.info.led_dazzle,
-                )
-                .await;
-        }
         self.info.led_speed = speed_from_wire(speed);
+        self.send_main_led().await;
         self.status_msg = format!("Speed: {speed}/4");
     }
 
@@ -1275,42 +1255,20 @@ impl App {
     }
 
     async fn set_color(&mut self, r: u8, g: u8, b: u8) {
-        if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_led(
-                    self.info.led_mode,
-                    self.info.led_brightness,
-                    speed_to_wire(self.info.led_speed),
-                    r,
-                    g,
-                    b,
-                    self.info.led_dazzle,
-                )
-                .await;
-        }
         self.info.led_r = r;
         self.info.led_g = g;
         self.info.led_b = b;
+        self.send_main_led().await;
         self.status_msg = format!("Color: #{r:02X}{g:02X}{b:02X}");
     }
 
     async fn toggle_dazzle(&mut self) {
-        let new_dazzle = !self.info.led_dazzle;
-        if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_led(
-                    self.info.led_mode,
-                    self.info.led_brightness,
-                    speed_to_wire(self.info.led_speed),
-                    self.info.led_r,
-                    self.info.led_g,
-                    self.info.led_b,
-                    new_dazzle,
-                )
-                .await;
-        }
-        self.info.led_dazzle = new_dazzle;
-        self.status_msg = format!("Dazzle: {}", if new_dazzle { "ON" } else { "OFF" });
+        self.info.led_dazzle = !self.info.led_dazzle;
+        self.send_main_led().await;
+        self.status_msg = format!(
+            "Dazzle: {}",
+            if self.info.led_dazzle { "ON" } else { "OFF" }
+        );
     }
 
     /// Start hex color input mode
@@ -1348,84 +1306,61 @@ impl App {
     }
 
     // Side LED methods
-    async fn set_side_mode(&mut self, mode: u8) {
-        if let Some(ref keyboard) = self.keyboard {
-            let params = LedParams {
-                mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
-                brightness: self.info.side_brightness,
-                speed: speed_to_wire(self.info.side_speed),
-                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
-                direction: if self.info.side_dazzle { 7 } else { 8 },
-            };
-            let _ = keyboard.set_side_led_params(&params).await;
+
+    /// Build current side LED params from state
+    fn current_side_led_params(&self) -> LedParams {
+        LedParams {
+            mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
+            brightness: self.info.side_brightness,
+            speed: speed_to_wire(self.info.side_speed),
+            color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
+            direction: if self.info.side_dazzle { 7 } else { 8 },
         }
+    }
+
+    /// Send current side LED params to keyboard
+    async fn send_side_led(&self) {
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard
+                .set_side_led_params(&self.current_side_led_params())
+                .await;
+        }
+    }
+
+    async fn set_side_mode(&mut self, mode: u8) {
         self.info.side_mode = mode;
+        self.send_side_led().await;
         self.status_msg = format!("Side LED mode: {}", cmd::led_mode_name(mode));
     }
 
     async fn set_side_brightness(&mut self, brightness: u8) {
-        let brightness = brightness.min(4);
-        if let Some(ref keyboard) = self.keyboard {
-            let params = LedParams {
-                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
-                brightness,
-                speed: speed_to_wire(self.info.side_speed),
-                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
-                direction: if self.info.side_dazzle { 7 } else { 8 },
-            };
-            let _ = keyboard.set_side_led_params(&params).await;
-        }
-        self.info.side_brightness = brightness;
-        self.status_msg = format!("Side brightness: {brightness}/4");
+        self.info.side_brightness = brightness.min(4);
+        self.send_side_led().await;
+        self.status_msg = format!("Side brightness: {}/4", self.info.side_brightness);
     }
 
     async fn set_side_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
-        if let Some(ref keyboard) = self.keyboard {
-            let params = LedParams {
-                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
-                brightness: self.info.side_brightness,
-                speed,
-                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
-                direction: if self.info.side_dazzle { 7 } else { 8 },
-            };
-            let _ = keyboard.set_side_led_params(&params).await;
-        }
         self.info.side_speed = speed_from_wire(speed);
+        self.send_side_led().await;
         self.status_msg = format!("Side speed: {speed}/4");
     }
 
     async fn set_side_color(&mut self, r: u8, g: u8, b: u8) {
-        if let Some(ref keyboard) = self.keyboard {
-            let params = LedParams {
-                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
-                brightness: self.info.side_brightness,
-                speed: speed_to_wire(self.info.side_speed),
-                color: RgbColor::new(r, g, b),
-                direction: if self.info.side_dazzle { 7 } else { 8 },
-            };
-            let _ = keyboard.set_side_led_params(&params).await;
-        }
         self.info.side_r = r;
         self.info.side_g = g;
         self.info.side_b = b;
+        self.send_side_led().await;
         self.status_msg = format!("Side color: #{r:02X}{g:02X}{b:02X}");
     }
 
     async fn toggle_side_dazzle(&mut self) {
-        let new_dazzle = !self.info.side_dazzle;
-        if let Some(ref keyboard) = self.keyboard {
-            let params = LedParams {
-                mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
-                brightness: self.info.side_brightness,
-                speed: speed_to_wire(self.info.side_speed),
-                color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
-                direction: if new_dazzle { 7 } else { 8 },
-            };
-            let _ = keyboard.set_side_led_params(&params).await;
-        }
-        self.info.side_dazzle = new_dazzle;
-        self.status_msg = format!("Side dazzle: {}", if new_dazzle { "ON" } else { "OFF" });
+        self.info.side_dazzle = !self.info.side_dazzle;
+        self.send_side_led().await;
+        self.status_msg = format!(
+            "Side dazzle: {}",
+            if self.info.side_dazzle { "ON" } else { "OFF" }
+        );
     }
 
     async fn set_all_key_modes(&mut self, mode: u8) {
