@@ -50,8 +50,13 @@ pub struct FlowControlTransport {
 }
 
 enum FlowState {
-    /// Wired / BLE: simple send → delay → read → check echo
-    Simple { command_delay_ms: u64 },
+    /// Wired / BLE: simple send → delay → read → check echo.
+    /// The `query_lock` serializes command-response cycles — without it,
+    /// concurrent tasks interleave their sends/reads and get echo mismatches.
+    Simple {
+        command_delay_ms: u64,
+        query_lock: tokio::sync::Mutex<()>,
+    },
     /// Dongle: serialized worker, adaptive timing, response cache
     Dongle {
         request_tx: mpsc::Sender<CommandRequest>,
@@ -190,9 +195,11 @@ impl FlowControlTransport {
             }
             TransportType::Bluetooth => FlowState::Simple {
                 command_delay_ms: 150,
+                query_lock: tokio::sync::Mutex::new(()),
             },
             _ => FlowState::Simple {
                 command_delay_ms: timing::DEFAULT_DELAY_MS,
+                query_lock: tokio::sync::Mutex::new(()),
             },
         };
 
@@ -216,7 +223,11 @@ impl FlowControlTransport {
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
         match &self.flow {
-            FlowState::Simple { command_delay_ms } => {
+            FlowState::Simple {
+                command_delay_ms,
+                query_lock,
+            } => {
+                let _guard = query_lock.lock().await;
                 self.simple_query(cmd_byte, data, checksum, *command_delay_ms, false)
                     .await
             }
@@ -235,7 +246,11 @@ impl FlowControlTransport {
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
         match &self.flow {
-            FlowState::Simple { command_delay_ms } => {
+            FlowState::Simple {
+                command_delay_ms,
+                query_lock,
+            } => {
+                let _guard = query_lock.lock().await;
                 self.simple_query(cmd_byte, data, checksum, *command_delay_ms, true)
                     .await
             }
@@ -254,7 +269,11 @@ impl FlowControlTransport {
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
         match &self.flow {
-            FlowState::Simple { command_delay_ms } => {
+            FlowState::Simple {
+                command_delay_ms,
+                query_lock,
+            } => {
+                let _guard = query_lock.lock().await;
                 self.inner.send_report(cmd_byte, data, checksum).await?;
                 if *command_delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(*command_delay_ms)).await;
@@ -278,7 +297,8 @@ impl FlowControlTransport {
         delay_ms: u64,
     ) -> Result<(), TransportError> {
         match &self.flow {
-            FlowState::Simple { .. } => {
+            FlowState::Simple { query_lock, .. } => {
+                let _guard = query_lock.lock().await;
                 self.inner.send_report(cmd_byte, data, checksum).await?;
                 if delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
@@ -318,7 +338,7 @@ impl FlowControlTransport {
             }
 
             if delay_ms > 0 {
-                std::thread::sleep(Duration::from_millis(delay_ms));
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
 
             match self.inner.read_report().await {
