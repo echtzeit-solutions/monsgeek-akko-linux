@@ -623,9 +623,7 @@ pub mod polling_rate {
 /// Report format: [report_id(0x05), cmd(0x1B), depth_lo, depth_hi, key_index, 0, 0, 0, ...]
 pub mod depth_report {
     use super::cmd;
-
-    /// Report ID for magnetism reports on Linux
-    pub const REPORT_ID: u8 = 0x05;
+    use monsgeek_transport::event_parser::report_id::USB_VENDOR_EVENT as REPORT_ID;
 
     /// Parsed depth report
     #[derive(Debug, Clone, Copy)]
@@ -1076,8 +1074,7 @@ pub mod audio_viz {
 /// These are notifications sent by the keyboard, not responses to commands
 /// All events use Report ID 0x05: [0x05, event_type, value1, value2, ...]
 pub mod events {
-    /// Report ID for vendor events on Linux
-    pub const REPORT_ID: u8 = 0x05;
+    use monsgeek_transport::event_parser::report_id::USB_VENDOR_EVENT as REPORT_ID;
 
     // Event types (byte 1 after report ID)
 

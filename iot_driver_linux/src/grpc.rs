@@ -76,7 +76,7 @@ fn parse_device_path(path: &str) -> Option<(u16, u16, u16, u16, i32)> {
 /// Emits raw USB HID format with report ID prefix expected by webapp
 fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
     // Prepend USB report ID (0x05) to match raw HID format expected by webapp
-    const REPORT_ID: u8 = 0x05;
+    use monsgeek_transport::event_parser::report_id::USB_VENDOR_EVENT as REPORT_ID;
 
     match event {
         VendorEvent::KeyDepth {
