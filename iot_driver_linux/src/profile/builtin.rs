@@ -3,7 +3,10 @@
 
 use super::traits::DeviceProfile;
 use super::types::TravelSettings;
-use crate::hal::constants::{PRODUCT_ID_DONGLE_LEGACY_1, PRODUCT_ID_M1_V5_WIRED, VENDOR_ID};
+use crate::hal::constants::{
+    KEY_COUNT_M1_V5, MATRIX_SIZE_M1_V5, PRODUCT_ID_DONGLE_LEGACY_1, PRODUCT_ID_M1_V5_WIRED,
+    VENDOR_ID,
+};
 
 /// MonsGeek M1 V5 HE (Wired) builtin profile
 pub struct M1V5HeProfile {
@@ -60,11 +63,11 @@ impl DeviceProfile for M1V5HeProfile {
     }
 
     fn key_count(&self) -> u8 {
-        98
+        KEY_COUNT_M1_V5
     }
 
     fn matrix_size(&self) -> usize {
-        126
+        MATRIX_SIZE_M1_V5
     }
 
     fn layer_count(&self) -> u8 {
@@ -106,7 +109,7 @@ impl DeviceProfile for M1V5HeProfile {
 /// M1 V5 HE LED matrix: position -> HID keycode
 /// 98 active keys + empty positions = 126 total matrix positions
 /// Column-major order: each column has 6 rows (top to bottom)
-pub const M1_V5_HE_LED_MATRIX: [u8; 126] = [
+pub const M1_V5_HE_LED_MATRIX: [u8; MATRIX_SIZE_M1_V5] = [
     // Col 0: Esc row down to Ctrl
     41,  // 0: Esc
     53,  // 1: `
@@ -440,11 +443,11 @@ mod tests {
 
         assert_eq!(profile.vid(), VENDOR_ID);
         assert_eq!(profile.pid(), PRODUCT_ID_M1_V5_WIRED);
-        assert_eq!(profile.key_count(), 98);
+        assert_eq!(profile.key_count(), KEY_COUNT_M1_V5);
         assert!(profile.has_magnetism());
 
         // Verify LED matrix
-        assert_eq!(profile.led_matrix().len(), 126);
+        assert_eq!(profile.led_matrix().len(), MATRIX_SIZE_M1_V5);
         assert_eq!(profile.led_matrix()[0], 41); // Esc
 
         // Verify key names match matrix positions
@@ -460,8 +463,8 @@ mod tests {
 
     #[test]
     fn test_key_names_count() {
-        assert_eq!(M1_V5_HE_KEY_NAMES.len(), 126);
-        assert_eq!(M1_V5_HE_LED_MATRIX.len(), 126);
+        assert_eq!(M1_V5_HE_KEY_NAMES.len(), MATRIX_SIZE_M1_V5);
+        assert_eq!(M1_V5_HE_LED_MATRIX.len(), MATRIX_SIZE_M1_V5);
     }
 
     #[test]

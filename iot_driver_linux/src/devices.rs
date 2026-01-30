@@ -26,7 +26,7 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
         pid: hal::PRODUCT_ID_M1_V5_WIRED,
         name: "m1v5he_wired",
         display_name: "MonsGeek M1 V5 HE",
-        key_count: 98,
+        key_count: hal::KEY_COUNT_M1_V5,
         has_magnetism: true,
         has_sidelight: false,
     },
@@ -36,7 +36,7 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
         pid: hal::PRODUCT_ID_M1_V5_WIRELESS,
         name: "m1v5he_wireless",
         display_name: "MonsGeek M1 V5 HE (Wireless)",
-        key_count: 98,
+        key_count: hal::KEY_COUNT_M1_V5,
         has_magnetism: true,
         has_sidelight: false,
     },
@@ -46,7 +46,7 @@ pub const SUPPORTED_DEVICES: &[DeviceDefinition] = &[
         pid: hal::PRODUCT_ID_M1_V5_BLUETOOTH,
         name: "m1v5he_bluetooth",
         display_name: "MonsGeek M1 V5 HE (Bluetooth)",
-        key_count: 98,
+        key_count: hal::KEY_COUNT_M1_V5,
         has_magnetism: true,
         has_sidelight: false,
     },
@@ -176,7 +176,7 @@ pub struct DeviceInfo {
 
 /// M1 V5 HE LED matrix: position -> HID keycode
 /// 98 active keys + empty positions = 126 total matrix positions
-pub const M1_V5_HE_LED_MATRIX: [u8; 126] = [
+pub const M1_V5_HE_LED_MATRIX: [u8; hal::MATRIX_SIZE_M1_V5] = [
     // Col 0: Esc row down to Ctrl
     41,  // 0: Esc
     53,  // 1: `
@@ -410,8 +410,10 @@ pub fn get_active_led_positions() -> Vec<(usize, u8)> {
 
 /// Build a full 126-position RGB array from a sparse key->color map
 /// Keys not in the map will be set to black (0,0,0)
-pub fn build_led_array_from_keys(key_colors: &[(u8, (u8, u8, u8))]) -> [(u8, u8, u8); 126] {
-    let mut result = [(0u8, 0u8, 0u8); 126];
+pub fn build_led_array_from_keys(
+    key_colors: &[(u8, (u8, u8, u8))],
+) -> [(u8, u8, u8); hal::MATRIX_SIZE_M1_V5] {
+    let mut result = [(0u8, 0u8, 0u8); hal::MATRIX_SIZE_M1_V5];
     for &(hid_code, color) in key_colors {
         if let Some(pos) = hid_to_led_position(hid_code) {
             result[pos] = color;
@@ -430,7 +432,7 @@ mod tests {
         assert!(dev.is_some());
         let dev = dev.unwrap();
         assert_eq!(dev.display_name, "MonsGeek M1 V5 HE");
-        assert_eq!(dev.key_count, 98);
+        assert_eq!(dev.key_count, hal::KEY_COUNT_M1_V5);
         assert!(dev.has_magnetism);
     }
 

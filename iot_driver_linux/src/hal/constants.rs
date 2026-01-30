@@ -50,3 +50,9 @@ pub const INTERFACE_FEATURE: i32 = 2;
 
 /// Interface number for INPUT interface
 pub const INTERFACE_INPUT: i32 = 1;
+
+/// Number of physical keys on M1 V5 HE
+pub const KEY_COUNT_M1_V5: u8 = 98;
+
+/// Total matrix positions for M1 V5 HE (98 active keys + empty positions)
+pub const MATRIX_SIZE_M1_V5: usize = 126;

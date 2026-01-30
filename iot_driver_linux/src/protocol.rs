@@ -450,8 +450,10 @@ pub mod timing {
 
 /// Per-key RGB animation constants
 pub mod rgb {
-    /// Total RGB data size (126 keys * 3 bytes)
-    pub const TOTAL_RGB_SIZE: usize = 378;
+    use crate::hal::constants::MATRIX_SIZE_M1_V5;
+
+    /// Total RGB data size (MATRIX_SIZE * 3 bytes)
+    pub const TOTAL_RGB_SIZE: usize = MATRIX_SIZE_M1_V5 * 3;
     /// Number of pages per frame
     pub const NUM_PAGES: usize = 7;
     /// RGB data per full page
@@ -459,7 +461,7 @@ pub mod rgb {
     /// RGB data in last page
     pub const LAST_PAGE_SIZE: usize = 42;
     /// LED matrix positions (keys)
-    pub const MATRIX_SIZE: usize = 126;
+    pub const MATRIX_SIZE: usize = MATRIX_SIZE_M1_V5;
     /// Magic value for per-key color commands
     pub const MAGIC_VALUE: u8 = 255;
 }

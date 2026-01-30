@@ -3,6 +3,7 @@
 
 use super::traits::DeviceProfile;
 use super::types::{DeviceFeatures, FnSysLayer, RangeConfig, TravelSettings};
+use crate::hal::constants::MATRIX_SIZE_M1_V5;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -36,7 +37,7 @@ fn default_company() -> String {
 }
 
 fn default_matrix_size() -> usize {
-    126
+    MATRIX_SIZE_M1_V5
 }
 
 fn default_layer_count() -> u8 {

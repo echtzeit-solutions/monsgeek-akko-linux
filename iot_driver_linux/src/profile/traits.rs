@@ -2,6 +2,7 @@
 // Provides abstraction for device-specific data
 
 use super::types::TravelSettings;
+use crate::hal::constants::MATRIX_SIZE_M1_V5;
 
 /// Device profile trait - provides all device-specific data
 ///
@@ -37,7 +38,7 @@ pub trait DeviceProfile: Send + Sync {
 
     /// Total matrix positions (typically 126)
     fn matrix_size(&self) -> usize {
-        126
+        MATRIX_SIZE_M1_V5
     }
 
     /// Number of key layers

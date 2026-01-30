@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 // Use shared library
 use crate::firmware_api::FirmwareCheckResult;
+use crate::hal::constants::{KEY_COUNT_M1_V5, MATRIX_SIZE_M1_V5};
 use crate::hid::BatteryInfo;
 use crate::power_supply::{
     find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
@@ -894,7 +895,7 @@ impl App {
                     if info.key_count > 0 {
                         info.key_count
                     } else {
-                        98
+                        KEY_COUNT_M1_V5
                     },
                     info.has_magnetism,
                     info.has_sidelight,
@@ -906,7 +907,7 @@ impl App {
                     .product_name
                     .clone()
                     .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"));
-                (98, true, false, name) // Default: assume 98 keys, magnetism, no sidelight
+                (KEY_COUNT_M1_V5, true, false, name) // Default: assume M1 V5, magnetism, no sidelight
             };
 
         let flow_transport = Arc::new(FlowControlTransport::new(transport));
@@ -2255,7 +2256,7 @@ impl App {
         let row = self.trigger_selected_key % 6;
         if row < 5 {
             let new_pos = col * 6 + (row + 1);
-            if new_pos < 126 && self.is_valid_key_position(new_pos) {
+            if new_pos < MATRIX_SIZE_M1_V5 && self.is_valid_key_position(new_pos) {
                 self.trigger_selected_key = new_pos;
             }
         }
@@ -2280,7 +2281,7 @@ impl App {
         if col < 20 {
             // 21 columns total
             let new_pos = (col + 1) * 6 + row;
-            if new_pos < 126 && self.is_valid_key_position(new_pos) {
+            if new_pos < MATRIX_SIZE_M1_V5 && self.is_valid_key_position(new_pos) {
                 self.trigger_selected_key = new_pos;
             }
         }
@@ -2288,7 +2289,7 @@ impl App {
 
     /// Check if a matrix position has an active key
     fn is_valid_key_position(&self, pos: usize) -> bool {
-        if pos >= 126 {
+        if pos >= MATRIX_SIZE_M1_V5 {
             return false;
         }
         let name = get_key_label(pos);
@@ -4506,7 +4507,7 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
     let key_height = 2u16; // Height of each key cell
 
     // Draw each key in the matrix (column-major order: 21 cols × 6 rows)
-    for pos in 0..126 {
+    for pos in 0..MATRIX_SIZE_M1_V5 {
         let col = pos / 6;
         let row = pos % 6;
 
