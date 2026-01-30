@@ -35,22 +35,9 @@ pub use driver::*;
 const DEVICE_CHANNEL_SIZE: usize = 16;
 const VENDOR_CHANNEL_SIZE: usize = 256;
 
-/// Pending command for split send/read API
-///
-/// The webapp handles its own flow control (retries, polling). We just
-/// do raw send_report → send_flush → read_report.
-#[derive(Clone)]
-struct PendingCommand {
-    cmd: u8,
-    data: Vec<u8>,
-    checksum: ChecksumType,
-}
-
 /// Connected device with transport
 struct ConnectedTransport {
     transport: Arc<dyn Transport>,
-    /// Pending command waiting for read_msg
-    pending: Option<PendingCommand>,
     /// Cached device ID from initial scan (avoids re-querying the transport)
     device_id: i32,
     is_dongle: bool,
@@ -488,7 +475,6 @@ impl DriverService {
                         path,
                         ConnectedTransport {
                             transport,
-                            pending: None,
                             device_id,
                             is_dongle: dev.info.is_dongle,
                             vid: dev.info.vid,
@@ -666,7 +652,6 @@ impl DriverService {
                                 path.clone(),
                                 ConnectedTransport {
                                     transport,
-                                    pending: None,
                                     device_id: id,
                                     is_dongle: dev.info.is_dongle,
                                     vid: dev.info.vid,
@@ -761,7 +746,6 @@ impl DriverService {
                     device_path.to_string(),
                     ConnectedTransport {
                         transport,
-                        pending: None,
                         device_id: 0,
                         is_dongle: dev.info.is_dongle,
                         vid: dev.info.vid,
@@ -777,12 +761,12 @@ impl DriverService {
         Err(Status::not_found("Device not found"))
     }
 
-    /// Store pending command for later read_msg to execute
+    /// Send command immediately to the device
     ///
-    /// On Linux, bare GET_FEATURE (read-only) hangs, so we can't split send/read.
-    /// Instead, sendMsg only stores the command and readMsg does an atomic
-    /// send+read via query_command/query_raw. This avoids both the double-send
-    /// bug (old code sent here AND in read_response) and the hanging bare read.
+    /// The webapp handles its own flow control (retries, echo matching,
+    /// polling cadence). We send immediately so fire-and-forget commands
+    /// (where the webapp never calls readMsg) still reach the device.
+    /// send_flush is a no-op on wired/BLE but pushes the dongle buffer.
     async fn send_command(
         &self,
         device_path: &str,
@@ -792,9 +776,9 @@ impl DriverService {
         // Ensure device is open
         self.open_device(device_path).await?;
 
-        let mut devices = self.devices.lock().await;
+        let devices = self.devices.lock().await;
         let connected = devices
-            .get_mut(device_path)
+            .get(device_path)
             .ok_or_else(|| Status::not_found("Device not connected"))?;
 
         if data.is_empty() {
@@ -802,49 +786,13 @@ impl DriverService {
         }
 
         let cmd = data[0];
-        let payload = if data.len() > 1 {
-            data[1..].to_vec()
-        } else {
-            Vec::new()
-        };
+        let payload = if data.len() > 1 { &data[1..] } else { &[] };
 
-        debug!("Storing pending command 0x{:02x} for {}", cmd, device_path);
-
-        connected.pending = Some(PendingCommand {
-            cmd,
-            data: payload,
-            checksum,
-        });
-
-        Ok(())
-    }
-
-    /// Execute pending command: raw send_report → send_flush → read_report
-    ///
-    /// The webapp handles its own flow control (retries, echo matching,
-    /// polling cadence). We just do a single atomic send+read cycle.
-    /// send_flush is a no-op on wired/BLE but pushes the dongle response buffer.
-    async fn read_response(&self, device_path: &str) -> Result<Vec<u8>, Status> {
-        // Ensure device is open
-        self.open_device(device_path).await?;
-
-        let mut devices = self.devices.lock().await;
-        let connected = devices
-            .get_mut(device_path)
-            .ok_or_else(|| Status::not_found("Device not connected"))?;
-
-        let pending = connected.pending.take().ok_or_else(|| {
-            Status::failed_precondition("No pending command - call send_msg first")
-        })?;
-
-        debug!(
-            "Executing raw send+read for pending command 0x{:02x}",
-            pending.cmd
-        );
+        debug!("Sending command 0x{:02x} to {}", cmd, device_path);
 
         connected
             .transport
-            .send_report(pending.cmd, &pending.data, pending.checksum)
+            .send_report(cmd, payload, checksum)
             .await
             .map_err(|e| Status::internal(format!("Send error: {}", e)))?;
 
@@ -854,8 +802,21 @@ impl DriverService {
             .await
             .map_err(|e| Status::internal(format!("Flush error: {}", e)))?;
 
-        // Brief delay to give keyboard time to process
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        Ok(())
+    }
+
+    /// Read response from device
+    ///
+    /// The webapp calls this after sendMsg to retrieve the keyboard's response.
+    /// The command was already sent in send_command, so we just read.
+    async fn read_response(&self, device_path: &str) -> Result<Vec<u8>, Status> {
+        // Ensure device is open
+        self.open_device(device_path).await?;
+
+        let devices = self.devices.lock().await;
+        let connected = devices
+            .get(device_path)
+            .ok_or_else(|| Status::not_found("Device not connected"))?;
 
         let response = connected
             .transport
@@ -864,8 +825,7 @@ impl DriverService {
             .map_err(|e| Status::internal(format!("Read error: {}", e)))?;
 
         debug!(
-            "Response for 0x{:02x}: {:02x?}",
-            pending.cmd,
+            "Read response: {:02x?}",
             &response[..response.len().min(16)]
         );
 
