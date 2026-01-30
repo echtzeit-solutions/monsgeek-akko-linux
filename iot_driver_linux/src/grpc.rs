@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
@@ -50,6 +51,11 @@ struct ConnectedTransport {
     transport: Arc<dyn Transport>,
     /// Pending command waiting for read_msg
     pending: Option<PendingCommand>,
+    /// Cached device ID from initial scan (avoids re-querying the transport)
+    device_id: i32,
+    is_dongle: bool,
+    vid: u16,
+    pid: u16,
 }
 
 /// Convert proto CheckSumType to transport ChecksumType
@@ -149,13 +155,44 @@ fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
     }
 }
 
+/// Drop guard that decrements vendor subscriber count
+struct VendorSubscriberGuard(Arc<AtomicUsize>);
+
+impl Drop for VendorSubscriberGuard {
+    fn drop(&mut self) {
+        let prev = self.0.fetch_sub(1, Ordering::Release);
+        info!("Vendor stream closed, {} subscriber(s) remaining", prev - 1);
+    }
+}
+
+// Stream wrapper that holds a drop guard alongside the inner stream
+pin_project_lite::pin_project! {
+    struct GuardedStream<S> {
+        #[pin]
+        inner: S,
+        _guard: VendorSubscriberGuard,
+    }
+}
+
+impl<S: Stream> Stream for GuardedStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.project().inner.poll_next(cx)
+    }
+}
+
 /// Driver service implementation using transport abstraction layer
 pub struct DriverService {
     discovery: Arc<HidDiscovery>,
     devices: Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
-    device_tx: broadcast::Sender<DjDev>,
+    device_tx: broadcast::Sender<DeviceList>,
     vendor_tx: broadcast::Sender<VenderMsg>,
     vendor_polling: Arc<AsyncMutex<bool>>,
+    vendor_subscribers: Arc<AtomicUsize>,
     hotplug_running: Arc<std::sync::Mutex<bool>>,
 }
 
@@ -178,6 +215,7 @@ impl DriverService {
             device_tx,
             vendor_tx,
             vendor_polling: Arc::new(AsyncMutex::new(false)),
+            vendor_subscribers: Arc::new(AtomicUsize::new(0)),
             hotplug_running: Arc::new(std::sync::Mutex::new(false)),
         })
     }
@@ -187,6 +225,7 @@ impl DriverService {
         let devices = Arc::clone(&self.devices);
         let vendor_tx = self.vendor_tx.clone();
         let vendor_polling = Arc::clone(&self.vendor_polling);
+        let vendor_subscribers = Arc::clone(&self.vendor_subscribers);
 
         tokio::spawn(async move {
             {
@@ -207,6 +246,16 @@ impl DriverService {
                 HashMap::new();
 
             loop {
+                // Stop polling when no subscribers remain
+                if vendor_subscribers.load(Ordering::Relaxed) == 0 {
+                    let mut polling = vendor_polling.lock().await;
+                    // Double-check under lock to avoid race with new subscriber
+                    if vendor_subscribers.load(Ordering::Acquire) == 0 {
+                        *polling = false;
+                        break;
+                    }
+                }
+
                 {
                     let polling = vendor_polling.lock().await;
                     if !*polling {
@@ -234,6 +283,7 @@ impl DriverService {
 
                 // Poll all receivers with short timeout
                 let mut got_event = false;
+                let mut closed = Vec::new();
                 for (path, rx) in receivers.iter_mut() {
                     match tokio::time::timeout(std::time::Duration::from_millis(1), rx.recv()).await
                     {
@@ -247,10 +297,14 @@ impl DriverService {
                             debug!("Event receiver for {} lagged by {} events", path, n);
                         }
                         Ok(Err(broadcast::error::RecvError::Closed)) => {
-                            debug!("Event channel closed for {}", path);
+                            debug!("Event channel closed for {}, removing receiver", path);
+                            closed.push(path.clone());
                         }
                         Err(_) => {} // Timeout, no event
                     }
+                }
+                for path in closed {
+                    receivers.remove(&path);
                 }
 
                 if !got_event {
@@ -356,8 +410,10 @@ impl DriverService {
                         }
                         EventType::Remove => {
                             info!("Device removed: {:?}", devnode);
-                            // Clean up disconnected devices
-                            rt.block_on(Self::cleanup_disconnected_static(&discovery, &devices));
+                            // Clean up disconnected devices and broadcast removal
+                            rt.block_on(Self::cleanup_disconnected_static(
+                                &discovery, &devices, &device_tx,
+                            ));
                         }
                         _ => {}
                     }
@@ -372,7 +428,7 @@ impl DriverService {
     async fn rescan_devices_static(
         discovery: &Arc<HidDiscovery>,
         devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
-        device_tx: &broadcast::Sender<DjDev>,
+        device_tx: &broadcast::Sender<DeviceList>,
     ) {
         let discovered = match discovery.list_devices().await {
             Ok(d) => d,
@@ -420,8 +476,11 @@ impl DriverService {
                     };
 
                     // Broadcast new device
-                    let _ = device_tx.send(DjDev {
-                        oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
+                    let _ = device_tx.send(DeviceList {
+                        dev_list: vec![DjDev {
+                            oneof_dev: Some(dj_dev::OneofDev::Dev(dev_info)),
+                        }],
+                        r#type: DeviceListChangeType::Add as i32,
                     });
 
                     // Transport is already wrapped by HidDiscovery if monitoring enabled
@@ -430,6 +489,10 @@ impl DriverService {
                         ConnectedTransport {
                             transport,
                             pending: None,
+                            device_id,
+                            is_dongle: dev.info.is_dongle,
+                            vid: dev.info.vid,
+                            pid: dev.info.pid,
                         },
                     );
                 }
@@ -444,6 +507,7 @@ impl DriverService {
     async fn cleanup_disconnected_static(
         discovery: &Arc<HidDiscovery>,
         devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
+        device_tx: &broadcast::Sender<DeviceList>,
     ) {
         let discovered = match discovery.list_devices().await {
             Ok(d) => d,
@@ -467,7 +531,25 @@ impl DriverService {
 
         for path in to_remove {
             info!("Hot-plug: removing disconnected device {}", path);
-            devs.remove(&path);
+            if let Some(removed) = devs.remove(&path) {
+                // Broadcast removal with cached device info so webapp can identify it
+                let removed_dev = DjDev {
+                    oneof_dev: Some(dj_dev::OneofDev::Dev(Device {
+                        dev_type: DeviceType::YzwKeyboard as i32,
+                        is24: removed.is_dongle,
+                        path: path.clone(),
+                        id: removed.device_id,
+                        battery: 0,
+                        is_online: false,
+                        vid: removed.vid as u32,
+                        pid: removed.pid as u32,
+                    })),
+                };
+                let _ = device_tx.send(DeviceList {
+                    dev_list: vec![removed_dev],
+                    r#type: DeviceListChangeType::Remove as i32,
+                });
+            }
         }
     }
 
@@ -543,43 +625,62 @@ impl DriverService {
                 dev.info.vid, dev.info.pid, dev.info.transport_type
             );
 
-            // Open device to query ID and battery
-            let (device_id, battery, is_online) = match self.discovery.open_device(&dev).await {
-                Ok(transport) => {
-                    debug!(
-                        "Opened device (type={:?}), querying device ID...",
-                        dev.info.transport_type
-                    );
+            // Skip devices already open — reuse existing transport
+            let already_open = {
+                let devices = self.devices.lock().await;
+                devices.contains_key(&path)
+            };
 
-                    let id = Self::query_device_id_static(&transport).await.unwrap_or(0);
-
-                    // Query battery status for dongles
-                    let (batt, online) = if dev.info.is_dongle {
-                        match transport.get_battery_status().await {
-                            Ok((level, online, _idle)) => (level as u32, online),
-                            Err(_) => (100, true),
-                        }
-                    } else {
-                        (100, true)
-                    };
-
-                    // Transport is already wrapped by HidDiscovery if monitoring enabled
-                    {
-                        let mut devices = self.devices.lock().await;
-                        devices.insert(
-                            path.clone(),
-                            ConnectedTransport {
-                                transport,
-                                pending: None,
-                            },
+            let (device_id, battery, is_online) = if already_open {
+                debug!("Device {} already open, using cached info", path);
+                let devices = self.devices.lock().await;
+                let connected = devices.get(&path).unwrap();
+                // Use cached device_id — never re-query a live transport
+                // (would interleave with TUI/webapp commands)
+                (connected.device_id, 100, true)
+            } else {
+                // Open new device
+                match self.discovery.open_device(&dev).await {
+                    Ok(transport) => {
+                        debug!(
+                            "Opened device (type={:?}), querying device ID...",
+                            dev.info.transport_type
                         );
-                    }
 
-                    (id, batt, online)
-                }
-                Err(e) => {
-                    warn!("Could not open device to query ID: {}", e);
-                    (0, 100, true)
+                        let id = Self::query_device_id_static(&transport).await.unwrap_or(0);
+
+                        // Query battery status for dongles
+                        let (batt, online) = if dev.info.is_dongle {
+                            match transport.get_battery_status().await {
+                                Ok((level, online, _idle)) => (level as u32, online),
+                                Err(_) => (100, true),
+                            }
+                        } else {
+                            (100, true)
+                        };
+
+                        // Transport is already wrapped by HidDiscovery if monitoring enabled
+                        {
+                            let mut devices = self.devices.lock().await;
+                            devices.insert(
+                                path.clone(),
+                                ConnectedTransport {
+                                    transport,
+                                    pending: None,
+                                    device_id: id,
+                                    is_dongle: dev.info.is_dongle,
+                                    vid: dev.info.vid,
+                                    pid: dev.info.pid,
+                                },
+                            );
+                        }
+
+                        (id, batt, online)
+                    }
+                    Err(e) => {
+                        warn!("Could not open device to query ID: {}", e);
+                        (0, 100, true)
+                    }
                 }
             };
 
@@ -661,6 +762,10 @@ impl DriverService {
                     ConnectedTransport {
                         transport,
                         pending: None,
+                        device_id: 0,
+                        is_dongle: dev.info.is_dongle,
+                        vid: dev.info.vid,
+                        pid: dev.info.pid,
                     },
                 );
 
@@ -799,10 +904,7 @@ impl DriverGrpc for DriverService {
 
         let broadcast_stream = BroadcastStream::new(rx).filter_map(|result| async move {
             match result {
-                Ok(dev) => Some(Ok(DeviceList {
-                    dev_list: vec![dev],
-                    r#type: DeviceListChangeType::Add as i32,
-                })),
+                Ok(device_list) => Some(Ok(device_list)),
                 Err(_) => None,
             }
         });
@@ -995,9 +1097,13 @@ impl DriverGrpc for DriverService {
     ) -> Result<Response<Self::watchVenderStream>, Status> {
         info!("watch_vender called - starting vendor event stream");
 
+        self.vendor_subscribers.fetch_add(1, Ordering::Release);
         self.start_vendor_polling();
 
         let rx = self.vendor_tx.subscribe();
+        let subscribers = Arc::clone(&self.vendor_subscribers);
+        let guard = VendorSubscriberGuard(subscribers);
+
         let stream = BroadcastStream::new(rx).filter_map(|result| async move {
             match result {
                 Ok(event) => Some(Ok(event)),
@@ -1005,7 +1111,13 @@ impl DriverGrpc for DriverService {
             }
         });
 
-        Ok(Response::new(Box::pin(stream)))
+        // Wrap stream so the guard is dropped when the stream is dropped
+        let guarded_stream = GuardedStream {
+            inner: stream,
+            _guard: guard,
+        };
+
+        Ok(Response::new(Box::pin(guarded_stream)))
     }
 
     async fn get_weather(

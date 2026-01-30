@@ -1727,6 +1727,7 @@ dependencies = [
  "monsgeek-keyboard",
  "monsgeek-transport",
  "pcap-parser",
+ "pin-project-lite",
  "pipewire",
  "prost",
  "ratatui",
