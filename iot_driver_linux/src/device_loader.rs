@@ -816,21 +816,40 @@ mod tests {
     #[test]
     #[ignore] // Run manually with: cargo test test_m1v5_matrix -- --ignored --nocapture
     fn test_m1v5_matrix() {
-        let db = DeviceDatabase::load_from_file("../data/devices.json")
+        let mut db = DeviceDatabase::load_from_file("../data/devices.json")
             .or_else(|_| DeviceDatabase::load_from_file("data/devices.json"))
             .expect("Could not load devices.json");
 
-        // Find M1 V5 HE with matrix
+        // Load matrices (resolved from class hierarchy, not inline in devices.json)
+        db.load_matrices_from_file("../data/device_matrices.json")
+            .or_else(|_| db.load_matrices_from_file("data/device_matrices.json"))
+            .expect("Could not load device_matrices.json");
+
+        // Find M1 V5 HE device (id 2819)
         let m1v5 = db
             .find_by_vid_pid(0x3151, 0x5030)
             .into_iter()
-            .find(|d| d.led_matrix.is_some())
-            .expect("M1 V5 with LED matrix not found");
+            .find(|d| d.display_name == "M1 V5 HE")
+            .expect("M1 V5 HE not found in devices.json");
 
-        println!("Testing device: {} ({})", m1v5.display_name, m1v5.name);
+        println!("Testing device: {} (id={})", m1v5.display_name, m1v5.id);
+
+        // Look up matrix from device_matrices.json
+        let matrix = db
+            .get_matrix(m1v5.id)
+            .expect("M1 V5 HE matrix not found in device_matrices.json");
+
+        println!(
+            "Matrix: {} keys, {} positions",
+            matrix.key_count,
+            matrix.matrix.len()
+        );
 
         // Verify WASD indices match expected
-        let (w, a, s, d) = m1v5.wasd_indices().expect("WASD keys not found in matrix");
+        let w = matrix.key_index("W").expect("W not found");
+        let a = matrix.key_index("A").expect("A not found");
+        let s = matrix.key_index("S").expect("S not found");
+        let d = matrix.key_index("D").expect("D not found");
         println!("WASD indices: W={}, A={}, S={}, D={}", w, a, s, d);
 
         assert_eq!(w, 14, "W should be at index 14");
