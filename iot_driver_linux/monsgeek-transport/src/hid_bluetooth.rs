@@ -53,11 +53,11 @@ use async_trait::async_trait;
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::error::TransportError;
 use crate::event_parser::{parse_ble_event, run_event_reader_loop, EventReaderConfig};
-use crate::protocol::{self, ble, timing};
+use crate::protocol::{self, ble};
 use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
 
@@ -75,13 +75,13 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 /// Unlike USB HID which uses feature reports, Bluetooth HID uses output/input
 /// reports with a specific Report ID (6) for vendor commands. The write()
 /// method sends output reports and read() receives input reports.
+/// Raw I/O only — flow control (retries, echo matching) lives in
+/// `FlowControlTransport`.
 pub struct HidBluetoothTransport {
     /// Vendor device for commands (usage 0x0202, page 0xFF55)
     vendor_device: Mutex<HidDevice>,
     /// Device information
     info: TransportDeviceInfo,
-    /// Delay after commands (ms)
-    command_delay_ms: u64,
     /// Broadcast sender for timestamped vendor events
     event_tx: Option<broadcast::Sender<TimestampedEvent>>,
     /// Shutdown flag for event reader thread
@@ -129,244 +129,53 @@ impl HidBluetoothTransport {
         Self {
             vendor_device: Mutex::new(vendor_device),
             info,
-            command_delay_ms: ble::DEFAULT_DELAY_MS,
             event_tx,
             shutdown,
         }
-    }
-
-    /// Set delay after commands (default 150ms for BLE)
-    pub fn set_command_delay(&mut self, ms: u64) {
-        self.command_delay_ms = ms;
-    }
-
-    /// Send output report and wait
-    fn send_and_wait(&self, buf: &[u8]) -> Result<(), TransportError> {
-        let device = self.vendor_device.lock();
-        device.write(buf)?;
-        std::thread::sleep(Duration::from_millis(self.command_delay_ms));
-        Ok(())
-    }
-
-    /// Read vendor response (0x55 framed) for a specific command.
-    ///
-    /// We may receive other notifications (0x66 events) while waiting; those are ignored here.
-    fn read_response(&self, expected_cmd: u8, timeout_ms: u32) -> Result<Vec<u8>, TransportError> {
-        let device = self.vendor_device.lock();
-        let mut buf = vec![0u8; ble::REPORT_SIZE];
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms as u64);
-
-        while std::time::Instant::now() < deadline {
-            match device.read_timeout(&mut buf, 50) {
-                Ok(0) => continue, // Timeout, try again
-                Ok(n) => {
-                    debug!("BLE read {} bytes: {:02X?}", n, &buf[..n.min(16)]);
-
-                    // We expect: [0x06][0x55][cmd]...
-                    if n >= 3
-                        && buf[0] == ble::VENDOR_REPORT_ID
-                        && buf[1] == ble::CMDRESP_MARKER
-                        && buf[2] == expected_cmd
-                    {
-                        // Prefer non-empty data, but also accept a normal USB-style status OK (0xAA)
-                        // at position 3 (since buf[2]=cmd).
-                        let window_end = n.min(ble::REPORT_SIZE);
-                        let has_data = buf[3..window_end].iter().any(|&b| b != 0);
-                        let has_ok = buf.get(3).copied() == Some(0xAA);
-                        if has_data || has_ok {
-                            return Ok(buf[..window_end].to_vec());
-                        }
-                        debug!("Got 0x55-framed empty response, waiting...");
-                        continue;
-                    }
-
-                    // Ignore 0x66-framed events while waiting for response
-                    if n >= 2 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::EVENT_MARKER {
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    warn!("BLE read error: {}", e);
-                    return Err(TransportError::from(e));
-                }
-            }
-        }
-
-        Err(TransportError::Timeout)
     }
 }
 
 #[async_trait]
 impl Transport for HidBluetoothTransport {
-    async fn send_command(
+    async fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
-    ) -> Result<(), TransportError> {
-        let buf = protocol::build_ble_command(cmd, data, checksum);
-        debug!("BLE sending command 0x{:02X}: {:02X?}", cmd, &buf[..10]);
-
-        for attempt in 0..timing::SEND_RETRIES {
-            match self.send_and_wait(&buf) {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    debug!("BLE send attempt {} failed: {}", attempt, e);
-                    if attempt == timing::SEND_RETRIES - 1 {
-                        return Err(e);
-                    }
-                    std::thread::sleep(Duration::from_millis(timing::SHORT_DELAY_MS));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_command_with_delay(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-        delay_ms: u64,
     ) -> Result<(), TransportError> {
         let buf = protocol::build_ble_command(cmd, data, checksum);
         let device = self.vendor_device.lock();
         device.write(&buf)?;
-        if delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(delay_ms));
-        }
         Ok(())
     }
 
-    async fn query_command(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        let buf = protocol::build_ble_command(cmd, data, checksum);
-        debug!("BLE querying command 0x{:02X}: {:02X?}", cmd, &buf[..10]);
-
-        for attempt in 0..timing::QUERY_RETRIES {
-            {
-                let device = self.vendor_device.lock();
-                if device.write(&buf).is_err() {
-                    continue;
-                }
-            }
-
-            // Wait a bit for keyboard to process
-            std::thread::sleep(Duration::from_millis(50));
-
-            match self.read_response(cmd, 500) {
-                Ok(resp) => {
-                    debug!(
-                        "BLE got response for 0x{:02X}: {:02X?}",
-                        cmd,
-                        &resp[..10.min(resp.len())]
-                    );
-                    // Return USB-style payload (strip report id + BLE marker)
-                    // [0]=report id, [1]=0x55, [2]=cmd -> return [cmd..] like other transports
-                    if resp.len() >= 3
-                        && resp[0] == ble::VENDOR_REPORT_ID
-                        && resp[1] == ble::CMDRESP_MARKER
-                    {
-                        return Ok(resp[2..].to_vec());
-                    }
-                    return Ok(resp);
-                }
-                Err(e) => {
-                    debug!("BLE read attempt {} failed: {}", attempt, e);
-                }
-            }
-        }
-
-        warn!(
-            "BLE query 0x{:02X} timed out - BLE may not support this query",
-            cmd
-        );
-        Err(TransportError::Timeout)
-    }
-
-    async fn query_raw(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        let buf = protocol::build_ble_command(cmd, data, checksum);
-        debug!(
-            "BLE querying raw command 0x{:02X}: {:02X?}",
-            cmd,
-            &buf[..10]
-        );
-
-        for attempt in 0..timing::QUERY_RETRIES {
-            {
-                let device = self.vendor_device.lock();
-                if device.write(&buf).is_err() {
-                    continue;
-                }
-            }
-
-            std::thread::sleep(Duration::from_millis(50));
-
-            let device = self.vendor_device.lock();
-            let mut resp = vec![0u8; ble::REPORT_SIZE];
-
-            match device.read_timeout(&mut resp, 500) {
-                Ok(n) if n > 0 => {
-                    // Prefer 0x55-framed responses; otherwise accept any non-zero blob
-                    if resp.len() >= 2
-                        && resp[0] == ble::VENDOR_REPORT_ID
-                        && resp[1] == ble::CMDRESP_MARKER
-                    {
-                        debug!(
-                            "BLE got raw 0x55 response: {:02X?}",
-                            &resp[..16.min(resp.len())]
-                        );
-                        return Ok(resp[2..].to_vec()); // strip report id + 0x55
-                    }
-                    // Accept any response (allow all-zeros for calibration data)
-                    debug!("BLE got raw response: {:02X?}", &resp[..16.min(resp.len())]);
-                    return Ok(resp);
-                }
-                Ok(_) => {
-                    debug!("BLE empty response on attempt {}", attempt);
-                }
-                Err(e) => {
-                    debug!("BLE read attempt {} failed: {}", attempt, e);
-                }
-            }
-        }
-
-        Err(TransportError::Timeout)
-    }
-
-    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let device = self.vendor_device.lock();
         let mut buf = vec![0u8; ble::REPORT_SIZE];
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
 
-        match device.read_timeout(&mut buf, 500) {
-            Ok(n) if n >= 3 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::CMDRESP_MARKER => {
-                debug!("BLE read feature report: {:02X?}", &buf[..n.min(16)]);
-                // Strip report id + BLE marker, return [cmd..] like other transports
-                Ok(buf[2..n.min(ble::REPORT_SIZE)].to_vec())
-            }
-            Ok(n) if n > 0 => {
-                debug!("BLE read feature report (raw): {:02X?}", &buf[..n.min(16)]);
-                Ok(buf[..n].to_vec())
-            }
-            Ok(_) => {
-                debug!("BLE read feature report: empty response");
-                Err(TransportError::Timeout)
-            }
-            Err(e) => {
-                debug!("BLE read feature report failed: {}", e);
-                Err(TransportError::from(e))
+        while std::time::Instant::now() < deadline {
+            match device.read_timeout(&mut buf, 50) {
+                Ok(0) => continue,
+                Ok(n) => {
+                    // Return 0x55-framed responses stripped to [cmd..] format
+                    if n >= 3 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::CMDRESP_MARKER {
+                        return Ok(buf[2..n.min(ble::REPORT_SIZE)].to_vec());
+                    }
+                    // Skip 0x66-framed events
+                    if n >= 2 && buf[0] == ble::VENDOR_REPORT_ID && buf[1] == ble::EVENT_MARKER {
+                        continue;
+                    }
+                    // Return anything else
+                    return Ok(buf[..n].to_vec());
+                }
+                Err(e) => return Err(TransportError::from(e)),
             }
         }
+        Err(TransportError::Timeout)
     }
+
+    // send_flush: uses default no-op
 
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         if let Some(ref tx) = self.event_tx {

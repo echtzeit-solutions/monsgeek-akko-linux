@@ -149,7 +149,7 @@ pub enum WebRtcState {
 
 #[async_trait]
 impl Transport for WebRtcTransport {
-    async fn send_command(
+    async fn send_report(
         &self,
         _cmd: u8,
         _data: &[u8],
@@ -160,19 +160,10 @@ impl Transport for WebRtcTransport {
         ))
     }
 
-    async fn query_command(
-        &self,
-        _cmd: u8,
-        _data: &[u8],
-        _checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
+    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
-    }
-
-    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
-        Err(TransportError::Timeout)
     }
 
     async fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
@@ -191,6 +182,12 @@ impl Transport for WebRtcTransport {
 
     async fn close(&self) -> Result<(), TransportError> {
         Ok(())
+    }
+
+    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+        Err(TransportError::WebRtcError(
+            "WebRTC transport not yet implemented".into(),
+        ))
     }
 }
 

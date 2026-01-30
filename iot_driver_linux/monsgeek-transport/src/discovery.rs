@@ -14,6 +14,7 @@ fn is_bluetooth_bus(device_info: &hidapi::DeviceInfo) -> bool {
 
 use crate::device_registry;
 use crate::error::TransportError;
+use crate::flow_control::FlowControlTransport;
 use crate::hid_bluetooth::HidBluetoothTransport;
 use crate::hid_dongle::HidDongleTransport;
 use crate::hid_wired::HidWiredTransport;
@@ -363,7 +364,9 @@ impl HidDiscovery {
 
         for device in devices {
             let probe_result = match self.open_device(&device).await {
-                Ok(transport) => {
+                Ok(raw_transport) => {
+                    // Wrap with FlowControlTransport for probing
+                    let transport = FlowControlTransport::new(raw_transport);
                     // Try to query device ID with short timeout
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(800),

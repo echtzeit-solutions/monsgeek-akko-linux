@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use crate::error::TransportError;
+use crate::flow_control::FlowControlTransport;
 use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
 use crate::{DeviceDiscovery, HidDiscovery, Transport};
 
@@ -24,18 +25,18 @@ fn block_on<F: std::future::Future>(f: F) -> F::Output {
 ///
 /// This provides blocking versions of all Transport methods.
 pub struct SyncTransport {
-    transport: Arc<dyn Transport>,
+    transport: Arc<FlowControlTransport>,
 }
 
 impl SyncTransport {
-    /// Wrap an existing async transport for synchronous use
-    pub fn new(transport: Arc<dyn Transport>) -> Self {
+    /// Wrap an existing flow-controlled transport for synchronous use
+    pub fn new(transport: Arc<FlowControlTransport>) -> Self {
         Self { transport }
     }
 
     /// Open any supported device (auto-detecting wired vs dongle)
     pub fn open_any() -> Result<Self, TransportError> {
-        let transport = block_on(async {
+        let raw_transport = block_on(async {
             let discovery = HidDiscovery::new();
             let devices = discovery.list_devices().await?;
 
@@ -49,6 +50,7 @@ impl SyncTransport {
             discovery.open_device(&devices[0]).await
         })?;
 
+        let transport = Arc::new(FlowControlTransport::new(raw_transport));
         Ok(Self { transport })
     }
 
@@ -92,8 +94,8 @@ impl SyncTransport {
         block_on(self.transport.close())
     }
 
-    /// Get the underlying async transport
-    pub fn inner(&self) -> &Arc<dyn Transport> {
+    /// Get the underlying flow-controlled transport
+    pub fn inner(&self) -> &Arc<FlowControlTransport> {
         &self.transport
     }
 }
@@ -108,11 +110,12 @@ pub fn list_devices_sync() -> Result<Vec<crate::DiscoveredDevice>, TransportErro
 
 /// Open a specific device synchronously
 pub fn open_device_sync(device: &crate::DiscoveredDevice) -> Result<SyncTransport, TransportError> {
-    let transport = block_on(async {
+    let raw_transport = block_on(async {
         let discovery = HidDiscovery::new();
         discovery.open_device(device).await
     })?;
 
+    let transport = Arc::new(FlowControlTransport::new(raw_transport));
     Ok(SyncTransport { transport })
 }
 

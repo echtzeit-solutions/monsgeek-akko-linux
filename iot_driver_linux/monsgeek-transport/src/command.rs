@@ -766,48 +766,9 @@ pub type QueryVersion = QueryCommand<{ cmd::GET_USB_VERSION }>;
 // Transport Extension for Typed Commands
 // =============================================================================
 
-use crate::{Transport, TransportError};
-use async_trait::async_trait;
-
-/// Extension trait for sending typed commands via Transport
-#[async_trait]
-pub trait TransportExt: Transport {
-    /// Send a typed command (fire-and-forget)
-    async fn send<C: HidCommand + Send + Sync>(&self, cmd: &C) -> Result<(), TransportError> {
-        self.send_command(C::CMD, &cmd.to_data(), C::CHECKSUM).await
-    }
-
-    /// Query and parse a typed response (validates command echo)
-    async fn query<C, R>(&self, cmd: &C) -> Result<R, TransportError>
-    where
-        C: HidCommand + Send + Sync,
-        R: HidResponse,
-    {
-        let resp = self
-            .query_command(C::CMD, &cmd.to_data(), C::CHECKSUM)
-            .await?;
-        R::parse(&resp).map_err(|e| match e {
-            ParseError::CommandMismatch { expected, got } => TransportError::InvalidResponse {
-                expected,
-                actual: got,
-            },
-            _ => TransportError::Internal(e.to_string()),
-        })
-    }
-
-    /// Query without command echo validation (for special responses like battery)
-    async fn query_no_echo<C, R>(&self, cmd: &C) -> Result<R, TransportError>
-    where
-        C: HidCommand + Send + Sync,
-        R: HidResponse,
-    {
-        let resp = self.query_raw(C::CMD, &cmd.to_data(), C::CHECKSUM).await?;
-        R::parse(&resp).map_err(|e| TransportError::Internal(e.to_string()))
-    }
-}
-
-// Blanket implementation for all Transport implementations
-impl<T: Transport + ?Sized> TransportExt for T {}
+// Note: TransportExt (send/query/query_no_echo) is now implemented as
+// inherent methods on FlowControlTransport in flow_control.rs.
+// These methods require flow control, so they don't belong on the raw Transport trait.
 
 // =============================================================================
 // Packet Dispatcher for PCAP Analysis

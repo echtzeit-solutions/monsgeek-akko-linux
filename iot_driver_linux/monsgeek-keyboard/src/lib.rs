@@ -28,7 +28,7 @@ pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 use std::sync::Arc;
 
 use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
-use monsgeek_transport::{ChecksumType, Transport, TransportExt};
+use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
     DebounceResponse, LedParamsResponse as TransportLedParamsResponse,
@@ -42,7 +42,7 @@ use monsgeek_transport::command::{
 /// Provides convenient methods for keyboard features like LED control,
 /// key mapping, trigger settings, etc.
 pub struct KeyboardInterface {
-    transport: Arc<dyn Transport>,
+    transport: Arc<FlowControlTransport>,
     key_count: u8,
     has_magnetism: bool,
 }
@@ -51,10 +51,10 @@ impl KeyboardInterface {
     /// Create a new keyboard interface
     ///
     /// # Arguments
-    /// * `transport` - Transport layer (HID wired, dongle, etc.)
+    /// * `transport` - Flow-controlled transport layer
     /// * `key_count` - Number of keys on the keyboard
     /// * `has_magnetism` - Whether the keyboard has Hall Effect switches
-    pub fn new(transport: Arc<dyn Transport>, key_count: u8, has_magnetism: bool) -> Self {
+    pub fn new(transport: Arc<FlowControlTransport>, key_count: u8, has_magnetism: bool) -> Self {
         Self {
             transport,
             key_count,
@@ -63,7 +63,7 @@ impl KeyboardInterface {
     }
 
     /// Get the underlying transport
-    pub fn transport(&self) -> &Arc<dyn Transport> {
+    pub fn transport(&self) -> &Arc<FlowControlTransport> {
         &self.transport
     }
 

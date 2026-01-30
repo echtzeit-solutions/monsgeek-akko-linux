@@ -35,7 +35,7 @@ use monsgeek_keyboard::{
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
     SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
-use monsgeek_transport::HidDiscovery;
+use monsgeek_transport::{FlowControlTransport, HidDiscovery};
 
 /// Battery data source
 #[derive(Debug, Clone)]
@@ -909,7 +909,12 @@ impl App {
                 (98, true, false, name) // Default: assume 98 keys, magnetism, no sidelight
             };
 
-        let keyboard = Arc::new(KeyboardInterface::new(transport, key_count, has_magnetism));
+        let flow_transport = Arc::new(FlowControlTransport::new(transport));
+        let keyboard = Arc::new(KeyboardInterface::new(
+            flow_transport,
+            key_count,
+            has_magnetism,
+        ));
         let is_wireless = keyboard.is_wireless();
 
         // Subscribe to low-latency event notifications

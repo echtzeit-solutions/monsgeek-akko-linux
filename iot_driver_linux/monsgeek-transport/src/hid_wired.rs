@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::error::TransportError;
 use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
-use crate::protocol::{self, timing, REPORT_SIZE};
+use crate::protocol::{self, REPORT_SIZE};
 use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
 
@@ -22,13 +22,14 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 ///
 /// This transport provides direct communication with keyboards connected
 /// via USB cable. It uses standard HID feature reports for commands.
+///
+/// Raw I/O only — flow control (retries, echo matching) lives in
+/// `FlowControlTransport`.
 pub struct HidWiredTransport {
     /// Feature interface for commands
     feature_device: Mutex<HidDevice>,
     /// Device information
     info: TransportDeviceInfo,
-    /// Delay after commands (ms)
-    command_delay_ms: u64,
     /// Broadcast sender for timestamped vendor events (if input device available)
     event_tx: Option<broadcast::Sender<TimestampedEvent>>,
     /// Shutdown flag for event reader thread
@@ -76,23 +77,9 @@ impl HidWiredTransport {
         Self {
             feature_device: Mutex::new(feature_device),
             info,
-            command_delay_ms: timing::DEFAULT_DELAY_MS,
             event_tx,
             shutdown,
         }
-    }
-
-    /// Set delay after commands (default 100ms)
-    pub fn set_command_delay(&mut self, ms: u64) {
-        self.command_delay_ms = ms;
-    }
-
-    /// Send feature report and wait
-    fn send_and_wait(&self, buf: &[u8]) -> Result<(), TransportError> {
-        let device = self.feature_device.lock().unwrap();
-        device.send_feature_report(buf)?;
-        std::thread::sleep(Duration::from_millis(self.command_delay_ms));
-        Ok(())
     }
 
     /// Read feature report
@@ -107,121 +94,24 @@ impl HidWiredTransport {
 
 #[async_trait]
 impl Transport for HidWiredTransport {
-    async fn send_command(
+    async fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
-    ) -> Result<(), TransportError> {
-        let buf = protocol::build_command(cmd, data, checksum);
-        debug!("Sending command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
-
-        for attempt in 0..timing::SEND_RETRIES {
-            match self.send_and_wait(&buf) {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    debug!("Send attempt {} failed: {}", attempt, e);
-                    if attempt == timing::SEND_RETRIES - 1 {
-                        return Err(e);
-                    }
-                    std::thread::sleep(Duration::from_millis(timing::SHORT_DELAY_MS));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_command_with_delay(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-        delay_ms: u64,
     ) -> Result<(), TransportError> {
         let buf = protocol::build_command(cmd, data, checksum);
         let device = self.feature_device.lock().unwrap();
         device.send_feature_report(&buf)?;
-        if delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(delay_ms));
-        }
         Ok(())
     }
 
-    async fn query_command(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        let buf = protocol::build_command(cmd, data, checksum);
-        debug!("Querying command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
-
-        for attempt in 0..timing::QUERY_RETRIES {
-            if self.send_and_wait(&buf).is_err() {
-                continue;
-            }
-
-            match self.read_response() {
-                Ok(resp) => {
-                    if resp[1] == cmd {
-                        debug!("Got response for 0x{:02X}: {:02X?}", cmd, &resp[..9]);
-                        return Ok(resp[1..].to_vec());
-                    }
-                    debug!(
-                        "Response mismatch: expected 0x{:02X}, got 0x{:02X}",
-                        cmd, resp[1]
-                    );
-                }
-                Err(e) => {
-                    debug!("Read attempt {} failed: {}", attempt, e);
-                }
-            }
-        }
-
-        Err(TransportError::Timeout)
+    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+        let resp = self.read_response()?;
+        Ok(resp[1..].to_vec())
     }
 
-    async fn query_raw(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        let buf = protocol::build_command(cmd, data, checksum);
-        debug!("Querying raw command 0x{:02X}: {:02X?}", cmd, &buf[..9]);
-
-        for attempt in 0..timing::QUERY_RETRIES {
-            if self.send_and_wait(&buf).is_err() {
-                continue;
-            }
-
-            match self.read_response() {
-                Ok(resp) => {
-                    // Accept any response (no command echo check, allow all-zeros for calibration data)
-                    debug!("Got raw response: {:02X?}", &resp[..16.min(resp.len())]);
-                    return Ok(resp[1..].to_vec());
-                }
-                Err(e) => {
-                    debug!("Read attempt {} failed: {}", attempt, e);
-                }
-            }
-        }
-
-        Err(TransportError::Timeout)
-    }
-
-    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
-        match self.read_response() {
-            Ok(resp) => {
-                debug!("Read feature report: {:02X?}", &resp[..9]);
-                Ok(resp[1..].to_vec())
-            }
-            Err(e) => {
-                debug!("Read feature report failed: {}", e);
-                Err(e)
-            }
-        }
-    }
+    // send_flush: uses default no-op
 
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         // If we have an event channel, receive from it with timeout

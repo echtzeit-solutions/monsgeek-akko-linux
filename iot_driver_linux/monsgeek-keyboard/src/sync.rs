@@ -15,7 +15,7 @@ use crate::settings::{
 use crate::KeyboardInterface;
 
 use monsgeek_transport::{
-    list_devices_sync, open_device_sync, DiscoveredDevice, Transport, VendorEvent,
+    list_devices_sync, open_device_sync, DiscoveredDevice, FlowControlTransport, VendorEvent,
 };
 
 /// Block on a future using futures crate (works in any context)
@@ -76,9 +76,9 @@ impl SyncKeyboard {
         Self { inner: keyboard }
     }
 
-    /// Create from a transport
+    /// Create from a flow-controlled transport
     pub fn from_transport(
-        transport: Arc<dyn Transport>,
+        transport: Arc<FlowControlTransport>,
         key_count: u8,
         has_magnetism: bool,
     ) -> Self {

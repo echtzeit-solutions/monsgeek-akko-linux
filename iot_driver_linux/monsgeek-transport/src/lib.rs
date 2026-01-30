@@ -12,6 +12,7 @@ pub mod command;
 pub mod device_registry;
 pub mod error;
 pub mod event_parser;
+pub mod flow_control;
 pub mod printer;
 pub mod protocol;
 pub mod types;
@@ -68,7 +69,6 @@ pub use command::{
     SetProfile,
     SetSleepTime,
     SleepTimeResponse,
-    TransportExt,
 };
 pub use device_registry::{
     is_bluetooth_pid, is_dongle_pid, BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID,
@@ -83,6 +83,7 @@ pub use types::{
 };
 
 pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice};
+pub use flow_control::FlowControlTransport;
 pub use hid_bluetooth::HidBluetoothTransport;
 pub use hid_dongle::HidDongleTransport;
 pub use hid_wired::HidWiredTransport;
@@ -92,93 +93,36 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-/// The core transport trait - all backends implement this
+/// The core transport trait — raw I/O only.
 ///
-/// This trait provides a unified interface for sending commands to keyboards
-/// and receiving responses/events, regardless of the underlying transport.
+/// Backends implement this for the bare send/read of HID reports.
+/// Flow control (retries, echo matching, dongle polling) lives in
+/// `FlowControlTransport`.
 #[async_trait]
 pub trait Transport: Send + Sync {
-    /// Send a command without expecting a specific response
-    ///
-    /// # Arguments
-    /// * `cmd` - Command byte (e.g., `protocol::cmd::SET_LEDPARAM`)
-    /// * `data` - Command data (without command byte)
-    /// * `checksum` - Checksum type to apply
-    async fn send_command(
+    // ---- Raw I/O (used by FlowControlTransport and gRPC) ----
+
+    /// Frame cmd/data/checksum into a HID report and send it.
+    /// No delay, no retry.
+    async fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<(), TransportError>;
 
-    /// Send a command with custom delay (for streaming/fast updates)
-    ///
-    /// # Arguments
-    /// * `cmd` - Command byte
-    /// * `data` - Command data
-    /// * `checksum` - Checksum type
-    /// * `delay_ms` - Delay after send in milliseconds
-    async fn send_command_with_delay(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-        delay_ms: u64,
-    ) -> Result<(), TransportError>;
+    /// Read one HID report.  Returns 64 bytes (report ID stripped).
+    /// WARNING: On Linux wired, bare GET_FEATURE without prior SET_FEATURE hangs.
+    async fn read_report(&self) -> Result<Vec<u8>, TransportError>;
 
-    /// Send a command and wait for its response
-    ///
-    /// This handles transport-specific response correlation (e.g., dongle caching).
-    ///
-    /// # Arguments
-    /// * `cmd` - Command byte
-    /// * `data` - Command data
-    /// * `checksum` - Checksum type
-    ///
-    /// # Returns
-    /// Response data (64 bytes, excluding report ID)
-    async fn query_command(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError>;
+    /// Push dongle response buffer (sends 0xFC).  No-op on wired/BLE.
+    async fn send_flush(&self) -> Result<(), TransportError> {
+        Ok(()) // default: no-op
+    }
 
-    /// Send a command and wait for any non-empty response (no command echo check)
-    ///
-    /// Used for commands like magnetism queries where the response doesn't echo
-    /// the command byte.
-    ///
-    /// # Arguments
-    /// * `cmd` - Command byte
-    /// * `data` - Command data
-    /// * `checksum` - Checksum type
-    ///
-    /// # Returns
-    /// Raw response data (64 bytes, excluding report ID)
-    async fn query_raw(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError>;
-
-    /// Read a feature report (GET_REPORT) without sending any command
-    ///
-    /// Used by the gRPC server where sendMsg sends the command and readMsg
-    /// only needs to read the response.
-    ///
-    /// # Returns
-    /// Response data (64 bytes, excluding report ID)
-    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError>;
+    // ---- Housekeeping ----
 
     /// Read vendor events (key depth, battery status, etc.)
-    ///
-    /// # Arguments
-    /// * `timeout_ms` - Timeout in milliseconds (0 for non-blocking)
-    ///
-    /// # Returns
-    /// `None` on timeout, `Some(event)` if data received
     async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError>;
 
     /// Get device information
@@ -190,21 +134,12 @@ pub trait Transport: Send + Sync {
     /// Close the transport gracefully
     async fn close(&self) -> Result<(), TransportError>;
 
-    /// Get battery status (dongle-specific: sends F7 refresh, reads report 0x05)
-    ///
-    /// Returns (level, online, idle) tuple.
-    /// For wired connections, returns (100, true, false) as there's no battery.
+    /// Get battery status
     async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError>;
 
     /// Subscribe to vendor events via broadcast channel
-    ///
-    /// Returns a receiver for asynchronous vendor event notifications.
-    /// Events are pushed from a dedicated reader thread with ~5ms latency.
-    /// Each event includes a timestamp (seconds since transport opened).
-    /// Returns None if the transport doesn't support event subscriptions
-    /// (e.g., no input endpoint available).
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
-        None // Default: not supported
+        None
     }
 }
 

@@ -820,7 +820,7 @@ fn decode_utf16le(data: &[u8]) -> Option<String> {
 
 #[async_trait]
 impl Transport for Printer {
-    async fn send_command(
+    async fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
@@ -830,64 +830,26 @@ impl Transport for Printer {
         self.inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
-            .send_command(cmd, data, checksum)
+            .send_report(cmd, data, checksum)
             .await
     }
 
-    async fn send_command_with_delay(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-        delay_ms: u64,
-    ) -> Result<(), TransportError> {
-        self.on_command(cmd, data, None, None);
-        self.inner
-            .as_ref()
-            .ok_or(TransportError::Disconnected)?
-            .send_command_with_delay(cmd, data, checksum, delay_ms)
-            .await
-    }
-
-    async fn query_command(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        self.on_command(cmd, data, None, None);
+    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let result = self
             .inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
-            .query_command(cmd, data, checksum)
+            .read_report()
             .await?;
         self.on_response(&result, None, None);
         Ok(result)
     }
 
-    async fn query_raw(
-        &self,
-        cmd: u8,
-        data: &[u8],
-        checksum: ChecksumType,
-    ) -> Result<Vec<u8>, TransportError> {
-        self.on_command(cmd, data, None, None);
-        let result = self
-            .inner
-            .as_ref()
-            .ok_or(TransportError::Disconnected)?
-            .query_raw(cmd, data, checksum)
-            .await?;
-        self.on_response(&result, None, None);
-        Ok(result)
-    }
-
-    async fn read_feature_report(&self) -> Result<Vec<u8>, TransportError> {
+    async fn send_flush(&self) -> Result<(), TransportError> {
         self.inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
-            .read_feature_report()
+            .send_flush()
             .await
     }
 

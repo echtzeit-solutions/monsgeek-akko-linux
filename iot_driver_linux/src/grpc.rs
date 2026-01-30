@@ -35,13 +35,14 @@ const DEVICE_CHANNEL_SIZE: usize = 16;
 const VENDOR_CHANNEL_SIZE: usize = 256;
 
 /// Pending command for split send/read API
+///
+/// The webapp handles its own flow control (retries, polling). We just
+/// do raw send_report → send_flush → read_report.
 #[derive(Clone)]
 struct PendingCommand {
     cmd: u8,
     data: Vec<u8>,
     checksum: ChecksumType,
-    /// Whether response echoes command byte (false for GET_MULTI_MAGNETISM which returns [subcmd, page, data...])
-    expects_echo: bool,
 }
 
 /// Connected device with transport
@@ -487,14 +488,22 @@ impl DriverService {
         )
     }
 
-    /// Query device ID using GET_USB_VERSION command
+    /// Query device ID using GET_USB_VERSION command (raw send+read)
     async fn query_device_id_static(transport: &Arc<dyn Transport>) -> Option<i32> {
         use monsgeek_transport::protocol::cmd;
 
-        match transport
-            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
+        if let Err(e) = transport
+            .send_report(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
             .await
         {
+            warn!("Failed to send device ID query: {}", e);
+            return None;
+        }
+
+        let _ = transport.send_flush().await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        match transport.read_report().await {
             Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
                 let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]) as i32;
                 info!("Device ID: {}", device_id);
@@ -508,7 +517,7 @@ impl DriverService {
                 None
             }
             Err(e) => {
-                warn!("Failed to query device ID: {}", e);
+                warn!("Failed to read device ID response: {}", e);
                 None
             }
         }
@@ -700,18 +709,16 @@ impl DriverService {
             cmd,
             data: payload,
             checksum,
-            expects_echo: cmd != monsgeek_transport::protocol::cmd::GET_MULTI_MAGNETISM
-                && cmd != monsgeek_transport::protocol::cmd::GET_KEYMATRIX,
         });
 
         Ok(())
     }
 
-    /// Execute pending command: atomic send+read via query_command/query_raw
+    /// Execute pending command: raw send_report → send_flush → read_report
     ///
-    /// Linux HID requires SET_FEATURE immediately followed by GET_FEATURE;
-    /// a bare GET_FEATURE blocks indefinitely. query_command/query_raw handle
-    /// this correctly with retry logic.
+    /// The webapp handles its own flow control (retries, echo matching,
+    /// polling cadence). We just do a single atomic send+read cycle.
+    /// send_flush is a no-op on wired/BLE but pushes the dongle response buffer.
     async fn read_response(&self, device_path: &str) -> Result<Vec<u8>, Status> {
         // Ensure device is open
         self.open_device(device_path).await?;
@@ -725,20 +732,31 @@ impl DriverService {
             Status::failed_precondition("No pending command - call send_msg first")
         })?;
 
-        debug!("Executing query for pending command 0x{:02x}", pending.cmd);
+        debug!(
+            "Executing raw send+read for pending command 0x{:02x}",
+            pending.cmd
+        );
 
-        let response = if pending.expects_echo {
-            connected
-                .transport
-                .query_command(pending.cmd, &pending.data, pending.checksum)
-                .await
-        } else {
-            connected
-                .transport
-                .query_raw(pending.cmd, &pending.data, pending.checksum)
-                .await
-        }
-        .map_err(|e| Status::internal(format!("Query error: {}", e)))?;
+        connected
+            .transport
+            .send_report(pending.cmd, &pending.data, pending.checksum)
+            .await
+            .map_err(|e| Status::internal(format!("Send error: {}", e)))?;
+
+        connected
+            .transport
+            .send_flush()
+            .await
+            .map_err(|e| Status::internal(format!("Flush error: {}", e)))?;
+
+        // Brief delay to give keyboard time to process
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        let response = connected
+            .transport
+            .read_report()
+            .await
+            .map_err(|e| Status::internal(format!("Read error: {}", e)))?;
 
         debug!(
             "Response for 0x{:02x}: {:02x?}",

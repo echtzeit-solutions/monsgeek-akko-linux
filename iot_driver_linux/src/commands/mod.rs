@@ -25,7 +25,7 @@ pub mod utility;
 
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::settings::FirmwareVersion;
-use monsgeek_transport::{PacketFilter, PrinterConfig, SyncTransport};
+use monsgeek_transport::{FlowControlTransport, PacketFilter, PrinterConfig, SyncTransport};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -68,7 +68,8 @@ pub fn open_preferred_transport(
         discovery.open_device(preferred).await
     })?;
 
-    Ok(SyncTransport::new(transport))
+    let flow = Arc::new(FlowControlTransport::new(transport));
+    Ok(SyncTransport::new(flow))
 }
 
 /// Format and print a command response from the transport layer
