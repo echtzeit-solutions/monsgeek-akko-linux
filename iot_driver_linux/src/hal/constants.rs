@@ -50,12 +50,3 @@ pub const INTERFACE_FEATURE: i32 = 2;
 
 /// Interface number for INPUT interface
 pub const INTERFACE_INPUT: i32 = 1;
-
-/// Backward-compatible alias for USAGE_FEATURE
-pub const USAGE: u16 = USAGE_FEATURE;
-
-/// Backward-compatible alias for PRODUCT_ID_M1_V5_WIRED
-pub const PRODUCT_ID: u16 = PRODUCT_ID_M1_V5_WIRED;
-
-/// Backward-compatible alias for INTERFACE_FEATURE
-pub const INTERFACE: i32 = INTERFACE_FEATURE;
