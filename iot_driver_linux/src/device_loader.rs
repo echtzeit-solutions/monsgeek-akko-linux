@@ -125,99 +125,12 @@ impl JsonDeviceDefinition {
     }
 }
 
-/// Convert HID keycode to key name
+/// Convert HID keycode to key name (delegates to protocol::hid::key_name)
 fn hid_code_to_name(hid: u8) -> Option<&'static str> {
-    Some(match hid {
-        4 => "A",
-        5 => "B",
-        6 => "C",
-        7 => "D",
-        8 => "E",
-        9 => "F",
-        10 => "G",
-        11 => "H",
-        12 => "I",
-        13 => "J",
-        14 => "K",
-        15 => "L",
-        16 => "M",
-        17 => "N",
-        18 => "O",
-        19 => "P",
-        20 => "Q",
-        21 => "R",
-        22 => "S",
-        23 => "T",
-        24 => "U",
-        25 => "V",
-        26 => "W",
-        27 => "X",
-        28 => "Y",
-        29 => "Z",
-        30 => "1",
-        31 => "2",
-        32 => "3",
-        33 => "4",
-        34 => "5",
-        35 => "6",
-        36 => "7",
-        37 => "8",
-        38 => "9",
-        39 => "0",
-        40 => "Enter",
-        41 => "Esc",
-        42 => "Backspace",
-        43 => "Tab",
-        44 => "Space",
-        45 => "-",
-        46 => "=",
-        47 => "[",
-        48 => "]",
-        49 => "\\",
-        50 => "#",
-        51 => ";",
-        52 => "'",
-        53 => "`",
-        54 => ",",
-        55 => ".",
-        56 => "/",
-        57 => "CapsLock",
-        58 => "F1",
-        59 => "F2",
-        60 => "F3",
-        61 => "F4",
-        62 => "F5",
-        63 => "F6",
-        64 => "F7",
-        65 => "F8",
-        66 => "F9",
-        67 => "F10",
-        68 => "F11",
-        69 => "F12",
-        70 => "PrintScreen",
-        71 => "ScrollLock",
-        72 => "Pause",
-        73 => "Insert",
-        74 => "Home",
-        75 => "PageUp",
-        76 => "Delete",
-        77 => "End",
-        78 => "PageDown",
-        79 => "Right",
-        80 => "Left",
-        81 => "Down",
-        82 => "Up",
-        100 => "\\|",
-        224 => "LCtrl",
-        225 => "LShift",
-        226 => "LAlt",
-        227 => "LWin",
-        228 => "RCtrl",
-        229 => "RShift",
-        230 => "RAlt",
-        231 => "RWin",
-        _ => return None,
-    })
+    match crate::protocol::hid::key_name(hid) {
+        "?" | "None" => None,
+        name => Some(name),
+    }
 }
 
 /// Convert key name to HID keycode (case-insensitive)
@@ -857,15 +770,15 @@ mod tests {
         let db = DeviceDatabase::load_from_json(json).unwrap();
         let dev = db.find_by_id(1).unwrap();
 
-        // Test key name lookup
-        assert_eq!(dev.key_name(0), Some("Esc"));
+        // Test key name lookup (canonical HID names from protocol::hid::key_name)
+        assert_eq!(dev.key_name(0), Some("Escape"));
         assert_eq!(dev.key_name(9), Some("A"));
         assert_eq!(dev.key_name(15), Some("W"));
         assert_eq!(dev.key_name(16), Some("S"));
         assert_eq!(dev.key_name(100), None); // Out of bounds
 
-        // Test key index lookup
-        assert_eq!(dev.key_index("Esc"), Some(0));
+        // Test key index lookup (supports aliases)
+        assert_eq!(dev.key_index("Escape"), Some(0));
         assert_eq!(dev.key_index("A"), Some(9));
         assert_eq!(dev.key_index("W"), Some(15));
         assert_eq!(dev.key_index("S"), Some(16));
@@ -957,12 +870,12 @@ mod tests {
 
         // Test helper methods on database
         assert_eq!(db.device_key_name(2247, 28), Some("C"));
-        assert_eq!(db.device_key_name(2247, 0), Some("Esc"));
+        assert_eq!(db.device_key_name(2247, 0), Some("Escape"));
         assert_eq!(db.device_hid_code(2247, 28), Some(6));
 
         // Test key index lookup
         assert_eq!(matrix.key_index("C"), Some(28));
-        assert_eq!(matrix.key_index("Esc"), Some(0));
+        assert_eq!(matrix.key_index("Escape"), Some(0));
         assert_eq!(db.device_key_index(2247, "C"), Some(28));
 
         println!(
