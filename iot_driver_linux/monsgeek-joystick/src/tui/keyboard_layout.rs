@@ -9,8 +9,11 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-/// Key names for M1 V5 HE matrix positions (column-major, 21x6)
+/// Key names for M1 V5 HE matrix positions (column-major, 21x6).
 /// Each column has 6 rows (positions 0-5, 6-11, etc.)
+///
+/// These are abbreviated for TUI display width (e.g. "LSh" instead of "LShift").
+/// The authoritative full key names are in `iot_driver::profile::builtin::M1_V5_HE_KEY_NAMES`.
 const KEY_NAMES: &[&str] = &[
     // Col 0 (0-5): Esc column
     "Esc", "`", "Tab", "Caps", "LSh", "LCt", // Col 1 (6-11): F1/1/Q/A column

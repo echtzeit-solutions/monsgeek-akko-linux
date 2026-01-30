@@ -14,10 +14,17 @@ use tracing::{debug, warn};
 
 use crate::types::{TimestampedEvent, VendorEvent};
 
-/// Notification type constants for vendor events
+/// Notification type constants for vendor events.
 ///
 /// These correspond to the first byte of the notification payload
 /// (after skipping any report ID).
+///
+/// **Note:** Notification bytes are a separate namespace from command bytes.
+/// The same numeric value can mean different things depending on the USB
+/// endpoint: command bytes (on the feature endpoint) are defined in
+/// `protocol::cmd`, while notification bytes (on the input endpoint) are
+/// defined here. For example, `0x05` is `SET_LEDONOFF` as a command but
+/// `LED_EFFECT_SPEED` as a notification.
 pub mod notif {
     /// Wake notification (all zeros)
     pub const WAKE: u8 = 0x00;
