@@ -1,10 +1,10 @@
 //! Query (read-only) command handlers.
 
-use super::{format_command_response, open_preferred_transport, CommandResult};
+use super::{format_command_response, open_preferred_transport, with_keyboard, CommandResult};
 use hidapi::HidApi;
 use iot_driver::hal;
 use iot_driver::protocol::{self, cmd};
-use monsgeek_keyboard::{SleepTimeSettings, SyncKeyboard};
+use monsgeek_keyboard::SleepTimeSettings;
 use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{ChecksumType, PrinterConfig};
 use std::time::Duration;
@@ -69,17 +69,16 @@ pub fn debounce(printer_config: Option<PrinterConfig>) -> CommandResult {
 pub fn rate() -> CommandResult {
     use iot_driver::protocol::polling_rate;
 
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => match keyboard.get_polling_rate() {
+    with_keyboard(|keyboard| {
+        match keyboard.get_polling_rate() {
             Ok(rate) => {
                 let hz = rate as u16;
                 println!("Polling rate: {hz} ({})", polling_rate::name(hz));
             }
             Err(e) => eprintln!("Failed to get polling rate: {e}"),
-        },
-        Err(e) => eprintln!("No device found: {e}"),
-    }
-    Ok(())
+        }
+        Ok(())
+    })
 }
 
 /// Get keyboard options
@@ -100,8 +99,8 @@ pub fn features(printer_config: Option<PrinterConfig>) -> CommandResult {
 
 /// Get sleep time settings
 pub fn sleep() -> CommandResult {
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => match keyboard.get_sleep_time() {
+    with_keyboard(|keyboard| {
+        match keyboard.get_sleep_time() {
             Ok(settings) => {
                 println!("Sleep Time Settings:");
                 println!("  Bluetooth:");
@@ -128,10 +127,9 @@ pub fn sleep() -> CommandResult {
                 );
             }
             Err(e) => eprintln!("Failed to get sleep settings: {e}"),
-        },
-        Err(e) => eprintln!("No device found: {e}"),
-    }
-    Ok(())
+        }
+        Ok(())
+    })
 }
 
 /// Show all device information

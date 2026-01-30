@@ -1,6 +1,6 @@
 //! Animation command handlers.
 
-use super::{setup_interrupt_handler, CommandResult};
+use super::{setup_interrupt_handler, with_keyboard, CommandResult};
 use iot_driver::gif::{generate_test_animation, load_gif, print_animation_info, MappingMode};
 use iot_driver::protocol::cmd::LedMode;
 use monsgeek_keyboard::SyncKeyboard;
@@ -107,23 +107,19 @@ pub fn mode(mode: &str, layer: u8) -> CommandResult {
         }
     };
 
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => {
-            println!(
-                "Setting LED mode to {} ({}) with layer {}...",
-                led_mode.name(),
-                led_mode.as_u8(),
-                layer
-            );
-            match keyboard.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer)
-            {
-                Ok(_) => println!("Done."),
-                Err(e) => eprintln!("Failed to set LED mode: {e}"),
-            }
+    with_keyboard(|keyboard| {
+        println!(
+            "Setting LED mode to {} ({}) with layer {}...",
+            led_mode.name(),
+            led_mode.as_u8(),
+            layer
+        );
+        match keyboard.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer) {
+            Ok(_) => println!("Done."),
+            Err(e) => eprintln!("Failed to set LED mode: {e}"),
         }
-        Err(e) => eprintln!("Failed to open device: {e}"),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// List all available LED modes

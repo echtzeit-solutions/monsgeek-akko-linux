@@ -1,6 +1,6 @@
 //! Debug command handlers.
 
-use super::{setup_interrupt_handler, CommandResult};
+use super::{setup_interrupt_handler, with_keyboard, CommandResult};
 use iot_driver::protocol::cmd;
 use monsgeek_keyboard::SyncKeyboard;
 use monsgeek_transport::protocol::cmd as transport_cmd;
@@ -84,52 +84,48 @@ pub fn test_transport() -> CommandResult {
 
     // Test keyboard interface (includes trigger settings)
     println!("\n--- Testing Keyboard Interface ---");
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => {
-            println!(
-                "  Opened keyboard: {} keys, magnetism={}",
-                keyboard.key_count(),
-                keyboard.has_magnetism()
-            );
+    with_keyboard(|keyboard| {
+        println!(
+            "  Opened keyboard: {} keys, magnetism={}",
+            keyboard.key_count(),
+            keyboard.has_magnetism()
+        );
 
-            // Test trigger settings
-            println!("\nQuerying trigger settings...");
-            match keyboard.get_all_triggers() {
-                Ok(triggers) => {
-                    println!("  Got {} key modes", triggers.key_modes.len());
-                    println!(
-                        "  Got {} bytes of press_travel",
-                        triggers.press_travel.len()
-                    );
+        // Test trigger settings
+        println!("\nQuerying trigger settings...");
+        match keyboard.get_all_triggers() {
+            Ok(triggers) => {
+                println!("  Got {} key modes", triggers.key_modes.len());
+                println!(
+                    "  Got {} bytes of press_travel",
+                    triggers.press_travel.len()
+                );
 
-                    // Show first few bytes of each array
-                    println!(
-                        "\n  First 10 key_modes:  {:?}",
-                        &triggers.key_modes[..10.min(triggers.key_modes.len())]
-                    );
-                    println!(
-                        "  First 10 press_travel: {:?}",
-                        &triggers.press_travel[..10.min(triggers.press_travel.len())]
-                    );
+                // Show first few bytes of each array
+                println!(
+                    "\n  First 10 key_modes:  {:?}",
+                    &triggers.key_modes[..10.min(triggers.key_modes.len())]
+                );
+                println!(
+                    "  First 10 press_travel: {:?}",
+                    &triggers.press_travel[..10.min(triggers.press_travel.len())]
+                );
 
-                    // Decode first key's 16-bit travel
-                    if triggers.press_travel.len() >= 2 {
-                        let first_travel = u16::from_le_bytes([
-                            triggers.press_travel[0],
-                            triggers.press_travel[1],
-                        ]);
-                        println!(
-                            "  First key travel (u16): {} ({:.2}mm at 0.01mm precision)",
-                            first_travel,
-                            first_travel as f32 / 100.0
-                        );
-                    }
+                // Decode first key's 16-bit travel
+                if triggers.press_travel.len() >= 2 {
+                    let first_travel =
+                        u16::from_le_bytes([triggers.press_travel[0], triggers.press_travel[1]]);
+                    println!(
+                        "  First key travel (u16): {} ({:.2}mm at 0.01mm precision)",
+                        first_travel,
+                        first_travel as f32 / 100.0
+                    );
                 }
-                Err(e) => println!("  Error: {e}"),
             }
+            Err(e) => println!("  Error: {e}"),
         }
-        Err(e) => println!("  Error opening keyboard: {e}"),
-    }
+        Ok(())
+    })?;
 
     println!("\nTransport layer test PASSED!");
     Ok(())

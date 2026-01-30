@@ -32,6 +32,21 @@ use std::sync::Arc;
 /// Result type for command handlers
 pub type CommandResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Open a keyboard and run a closure with it.
+/// Prints an error and returns Ok(()) if no device is found.
+pub fn with_keyboard<F>(f: F) -> CommandResult
+where
+    F: FnOnce(&monsgeek_keyboard::SyncKeyboard) -> CommandResult,
+{
+    match monsgeek_keyboard::SyncKeyboard::open_any() {
+        Ok(keyboard) => f(&keyboard),
+        Err(e) => {
+            eprintln!("No device found: {e}");
+            Ok(())
+        }
+    }
+}
+
 /// Open a device via the new transport layer, preferring Bluetooth when present.
 /// If `printer_config` is Some, the transport is automatically wrapped with Printer for monitoring.
 pub fn open_preferred_transport(
