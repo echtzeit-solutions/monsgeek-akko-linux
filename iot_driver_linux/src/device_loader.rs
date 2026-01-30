@@ -870,12 +870,12 @@ mod tests {
 
         // Test helper methods on database
         assert_eq!(db.device_key_name(2247, 28), Some("C"));
-        assert_eq!(db.device_key_name(2247, 0), Some("Escape"));
+        assert_eq!(db.device_key_name(2247, 0), Some("Esc"));
         assert_eq!(db.device_hid_code(2247, 28), Some(6));
 
-        // Test key index lookup
+        // Test key index lookup (uses key_names from JSON, not HID canonical names)
         assert_eq!(matrix.key_index("C"), Some(28));
-        assert_eq!(matrix.key_index("Escape"), Some(0));
+        assert_eq!(matrix.key_index("Esc"), Some(0));
         assert_eq!(db.device_key_index(2247, "C"), Some(28));
 
         println!(
