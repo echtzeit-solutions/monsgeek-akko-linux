@@ -1,6 +1,8 @@
 //! LED and RGB lighting types and utilities
 
-pub use monsgeek_transport::{BRIGHTNESS_MAX, DAZZLE_OFF, DAZZLE_ON, SPEED_MAX};
+pub use monsgeek_transport::{
+    speed_from_wire, speed_to_wire, BRIGHTNESS_MAX, DAZZLE_OFF, DAZZLE_ON, SPEED_MAX,
+};
 
 /// RGB color value
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

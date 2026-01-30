@@ -33,6 +33,7 @@ use crate::{cmd, devices, key_mode, magnetism, DeviceInfo, TriggerSettings};
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
+    led::{speed_from_wire, speed_to_wire},
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
     SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
@@ -1210,7 +1211,7 @@ impl App {
                 .set_led(
                     mode,
                     self.info.led_brightness,
-                    4 - self.info.led_speed.min(4),
+                    speed_to_wire(self.info.led_speed),
                     self.info.led_r,
                     self.info.led_g,
                     self.info.led_b,
@@ -1229,7 +1230,7 @@ impl App {
                 .set_led(
                     self.info.led_mode,
                     brightness,
-                    4 - self.info.led_speed.min(4),
+                    speed_to_wire(self.info.led_speed),
                     self.info.led_r,
                     self.info.led_g,
                     self.info.led_b,
@@ -1256,7 +1257,7 @@ impl App {
                 )
                 .await;
         }
-        self.info.led_speed = 4 - speed;
+        self.info.led_speed = speed_from_wire(speed);
         self.status_msg = format!("Speed: {speed}/4");
     }
 
@@ -1279,7 +1280,7 @@ impl App {
                 .set_led(
                     self.info.led_mode,
                     self.info.led_brightness,
-                    4 - self.info.led_speed.min(4),
+                    speed_to_wire(self.info.led_speed),
                     r,
                     g,
                     b,
@@ -1300,7 +1301,7 @@ impl App {
                 .set_led(
                     self.info.led_mode,
                     self.info.led_brightness,
-                    4 - self.info.led_speed.min(4),
+                    speed_to_wire(self.info.led_speed),
                     self.info.led_r,
                     self.info.led_g,
                     self.info.led_b,
@@ -1352,7 +1353,7 @@ impl App {
             let params = LedParams {
                 mode: LedMode::from_u8(mode).unwrap_or(LedMode::Off),
                 brightness: self.info.side_brightness,
-                speed: 4 - self.info.side_speed.min(4),
+                speed: speed_to_wire(self.info.side_speed),
                 color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
                 direction: if self.info.side_dazzle { 7 } else { 8 },
             };
@@ -1368,7 +1369,7 @@ impl App {
             let params = LedParams {
                 mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
                 brightness,
-                speed: 4 - self.info.side_speed.min(4),
+                speed: speed_to_wire(self.info.side_speed),
                 color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
                 direction: if self.info.side_dazzle { 7 } else { 8 },
             };
@@ -1390,7 +1391,7 @@ impl App {
             };
             let _ = keyboard.set_side_led_params(&params).await;
         }
-        self.info.side_speed = 4 - speed;
+        self.info.side_speed = speed_from_wire(speed);
         self.status_msg = format!("Side speed: {speed}/4");
     }
 
@@ -1399,7 +1400,7 @@ impl App {
             let params = LedParams {
                 mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
                 brightness: self.info.side_brightness,
-                speed: 4 - self.info.side_speed.min(4),
+                speed: speed_to_wire(self.info.side_speed),
                 color: RgbColor::new(r, g, b),
                 direction: if self.info.side_dazzle { 7 } else { 8 },
             };
@@ -1417,7 +1418,7 @@ impl App {
             let params = LedParams {
                 mode: LedMode::from_u8(self.info.side_mode).unwrap_or(LedMode::Off),
                 brightness: self.info.side_brightness,
-                speed: 4 - self.info.side_speed.min(4),
+                speed: speed_to_wire(self.info.side_speed),
                 color: RgbColor::new(self.info.side_r, self.info.side_g, self.info.side_b),
                 direction: if new_dazzle { 7 } else { 8 },
             };
@@ -1874,8 +1875,7 @@ impl App {
                 );
             }
             VendorEvent::LedEffectSpeed { speed } => {
-                // Speed is stored inverted (0=fast, 4=slow in protocol)
-                self.info.led_speed = 4 - speed.min(4);
+                self.info.led_speed = speed_from_wire(speed);
                 self.status_msg = format!("LED speed: {}/4", speed);
             }
             VendorEvent::BrightnessLevel { level } => {
@@ -2557,7 +2557,7 @@ pub async fn run() -> io::Result<()> {
                                     0 => app.set_led_mode(app.info.led_mode.saturating_sub(1)).await,
                                     1 => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)).await,
                                     2 => {
-                                        let current = 4 - app.info.led_speed.min(4);
+                                        let current = speed_to_wire(app.info.led_speed);
                                         app.set_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
                                     }
                                     3 => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
@@ -2568,7 +2568,7 @@ pub async fn run() -> io::Result<()> {
                                     9 if app.has_sidelight => app.set_side_mode(app.info.side_mode.saturating_sub(1)).await,
                                     10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)).await,
                                     11 if app.has_sidelight => {
-                                        let current = 4 - app.info.side_speed.min(4);
+                                        let current = speed_to_wire(app.info.side_speed);
                                         app.set_side_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
                                     }
                                     12 if app.has_sidelight => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
@@ -2609,7 +2609,7 @@ pub async fn run() -> io::Result<()> {
                                     0 => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)).await,
                                     1 => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)).await,
                                     2 => {
-                                        let current = 4 - app.info.led_speed.min(4);
+                                        let current = speed_to_wire(app.info.led_speed);
                                         app.set_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
                                     }
                                     3 => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
@@ -2620,7 +2620,7 @@ pub async fn run() -> io::Result<()> {
                                     9 if app.has_sidelight => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)).await,
                                     10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)).await,
                                     11 if app.has_sidelight => {
-                                        let current = 4 - app.info.side_speed.min(4);
+                                        let current = speed_to_wire(app.info.side_speed);
                                         app.set_side_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
                                     }
                                     12 if app.has_sidelight => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
@@ -3666,7 +3666,7 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
             Span::raw("Speed:          "),
             value_span(
                 loading.led_params,
-                format!("{}/4", 4 - info.led_speed.min(4)),
+                format!("{}/4", speed_to_wire(info.led_speed)),
                 Color::Magenta,
             ),
         ]),
@@ -3693,7 +3693,7 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
     let info = &app.info;
-    let speed = 4 - info.led_speed.min(4);
+    let speed = speed_to_wire(info.led_speed);
 
     // Helper to create RGB bar visualization
     let rgb_bar = |val: u8| -> String {
@@ -3825,8 +3825,8 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(
                 format!(
                     "< {}/4 >  {}",
-                    4 - info.side_speed.min(4),
-                    "█".repeat((4 - info.side_speed.min(4)) as usize)
+                    speed_to_wire(info.side_speed),
+                    "█".repeat((speed_to_wire(info.side_speed)) as usize)
                 ),
                 Style::default().fg(Color::Cyan),
             ),

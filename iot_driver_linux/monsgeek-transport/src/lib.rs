@@ -32,6 +32,9 @@ pub mod webrtc;
 pub use command::{
     // Packet parsing
     decode_magnetism_data,
+    // Speed conversion helpers
+    speed_from_wire,
+    speed_to_wire,
     try_parse_command,
     try_parse_response,
     // Battery

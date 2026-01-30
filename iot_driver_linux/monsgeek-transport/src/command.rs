@@ -190,6 +190,18 @@ pub const SPEED_MAX: u8 = 4;
 /// Maximum brightness value (4 levels: 0-4)
 pub const BRIGHTNESS_MAX: u8 = 4;
 
+/// Convert user-facing speed (0=slow, 4=fast) to wire format (4=slow, 0=fast)
+#[inline]
+pub fn speed_to_wire(speed: u8) -> u8 {
+    SPEED_MAX - speed.min(SPEED_MAX)
+}
+
+/// Convert wire format speed (4=slow, 0=fast) to user-facing (0=slow, 4=fast)
+#[inline]
+pub fn speed_from_wire(wire: u8) -> u8 {
+    SPEED_MAX - wire.min(SPEED_MAX)
+}
+
 /// SET_LEDPARAM command (0x07)
 #[derive(Debug, Clone)]
 pub struct SetLedParams {
