@@ -103,11 +103,11 @@ impl SyncKeyboard {
         let transport = open_device_sync(device)?;
         let info = transport.device_info();
 
-        // Look up device info - default to 98 keys with magnetism for M1 V5 HE
+        // Look up device info - default to M1 V5 HE key count with magnetism
         let (key_count, has_magnetism) = match (info.vid, info.pid) {
-            (0x3151, 0x5030) => (98, true), // M1 V5 HE wired
-            (0x3151, 0x5038) => (98, true), // M1 V5 HE dongle
-            _ => (98, true),                // Default
+            (0x3151, 0x5030) => (crate::KEY_COUNT_M1_V5, true), // M1 V5 HE wired
+            (0x3151, 0x5038) => (crate::KEY_COUNT_M1_V5, true), // M1 V5 HE dongle
+            _ => (crate::KEY_COUNT_M1_V5, true),                // Default
         };
 
         Ok(Self {

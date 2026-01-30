@@ -111,7 +111,11 @@ async fn run_headless(config: JoystickConfig, _config_path: PathBuf) -> Result<(
     );
 
     // Get precision
-    let keyboard = KeyboardInterface::new(transport.inner().clone(), 98, true);
+    let keyboard = KeyboardInterface::new(
+        transport.inner().clone(),
+        monsgeek_keyboard::KEY_COUNT_M1_V5,
+        true,
+    );
     let precision = keyboard.get_precision().await?;
     let precision_factor = precision.factor();
     info!(
@@ -395,7 +399,11 @@ async fn keyboard_task(tx: mpsc::UnboundedSender<KeyboardMessage>) {
             }
         };
 
-        let keyboard = KeyboardInterface::new(transport.inner().clone(), 98, true);
+        let keyboard = KeyboardInterface::new(
+            transport.inner().clone(),
+            monsgeek_keyboard::KEY_COUNT_M1_V5,
+            true,
+        );
 
         // Get precision
         let precision_factor = match keyboard.get_precision().await {

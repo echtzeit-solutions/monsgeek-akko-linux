@@ -22,6 +22,12 @@ pub use settings::{
 };
 pub use sync::{list_keyboards, SyncKeyboard};
 
+/// Number of physical keys on M1 V5 HE
+pub const KEY_COUNT_M1_V5: u8 = 98;
+
+/// Total matrix positions for M1 V5 HE (98 active keys + empty positions)
+pub const MATRIX_SIZE_M1_V5: usize = 126;
+
 // Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
 pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 
@@ -372,10 +378,10 @@ impl KeyboardInterface {
         color: RgbColor,
         layer: u8,
     ) -> Result<(), KeyboardError> {
-        // Build the color data: 126 keys * 3 bytes (RGB) = 378 bytes
+        // Build the color data: MATRIX_SIZE * 3 bytes (RGB) = 378 bytes
         // Sent in chunks with SET_USERPIC command
-        let mut colors = vec![0u8; 126 * 3];
-        for i in 0..126 {
+        let mut colors = vec![0u8; MATRIX_SIZE_M1_V5 * 3];
+        for i in 0..MATRIX_SIZE_M1_V5 {
             colors[i * 3] = color.r;
             colors[i * 3 + 1] = color.g;
             colors[i * 3 + 2] = color.b;
@@ -790,11 +796,10 @@ impl KeyboardInterface {
         layer: u8,
     ) -> Result<(), KeyboardError> {
         const CHUNK_SIZE: usize = 18; // 18 keys per chunk (54 bytes RGB)
-        const NUM_KEYS: usize = 126;
 
-        // Pad colors to full 126 keys
-        let mut full_colors = vec![(0u8, 0u8, 0u8); NUM_KEYS];
-        let len = colors.len().min(NUM_KEYS);
+        // Pad colors to full matrix size
+        let mut full_colors = vec![(0u8, 0u8, 0u8); MATRIX_SIZE_M1_V5];
+        let len = colors.len().min(MATRIX_SIZE_M1_V5);
         full_colors[..len].copy_from_slice(&colors[..len]);
 
         for _ in 0..repeat.max(1) {
