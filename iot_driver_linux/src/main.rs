@@ -163,6 +163,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Swap { key1, key2, layer }) => {
             commands::keymap::swap(&key1, &key2, layer)?;
         }
+        Some(Commands::RemapList { layer }) => {
+            commands::keymap::remap_list(layer)?;
+        }
         Some(Commands::Keymatrix { layer }) => {
             commands::keymap::keymatrix(layer)?;
         }
@@ -171,8 +174,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Macro { key }) => {
             commands::macros::get_macro(&key)?;
         }
-        Some(Commands::SetMacro { key, text }) => {
-            commands::macros::set_macro(&key, &text)?;
+        Some(Commands::SetMacro {
+            key,
+            text,
+            delay,
+            repeat,
+            seq,
+        }) => {
+            commands::macros::set_macro(&key, &text, delay, repeat, seq)?;
         }
         Some(Commands::ClearMacro { key }) => {
             commands::macros::clear_macro(&key)?;

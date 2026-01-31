@@ -1,6 +1,7 @@
 //! Macro command handlers.
 
 use super::{with_keyboard, CommandResult};
+use iot_driver::macro_seq::MacroSeq;
 use iot_driver::protocol::hid;
 use monsgeek_keyboard::parse_macro_events;
 use monsgeek_transport::protocol::matrix;
@@ -33,10 +34,18 @@ pub fn get_macro(key: &str) -> CommandResult {
                         );
                     }
 
+                    // Reconstruct as sequence syntax
+                    let event_tuples: Vec<(u8, bool, u16)> = events
+                        .iter()
+                        .map(|e| (e.keycode, e.is_down, e.delay_ms))
+                        .collect();
+                    let seq = MacroSeq::from_events(&event_tuples, 10, repeat_count);
+                    println!("\nSequence: {seq}");
+
                     // Try to reconstruct text preview
                     let preview = text_preview_from_events(&events);
                     if !preview.is_empty() {
-                        println!("\nText preview: \"{preview}\"");
+                        println!("Text preview: \"{preview}\"");
                     }
                 }
 
@@ -54,19 +63,45 @@ pub fn get_macro(key: &str) -> CommandResult {
     })
 }
 
-/// Set a text macro for a key
-pub fn set_macro(key: &str, text: &str) -> CommandResult {
+/// Set a text macro or key sequence for a macro slot
+pub fn set_macro(key: &str, text: &str, delay: u16, repeat: u16, seq: bool) -> CommandResult {
     let macro_index: u8 = key.parse().unwrap_or(0);
 
     with_keyboard(|keyboard| {
-        println!("Setting macro {macro_index} to type: \"{text}\"");
+        if seq {
+            // Parse as sequence syntax
+            let mut macro_seq: MacroSeq = text.parse().map_err(|e| {
+                eprintln!("Failed to parse sequence: {e}");
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{e}"))
+            })?;
+            macro_seq.default_delay = delay;
+            macro_seq.repeat = repeat;
 
-        match keyboard.set_text_macro(macro_index, text, 10, 1) {
-            Ok(()) => {
-                println!("Macro {macro_index} set successfully!");
-                println!("Assign this macro to a key with: assign-macro <key> {macro_index}");
+            let events = macro_seq.to_events();
+            println!("Setting macro {macro_index} to sequence: {macro_seq}");
+            println!(
+                "  ({} events, delay={delay}ms, repeat={repeat}x)",
+                events.len()
+            );
+
+            match keyboard.set_macro(macro_index, &events, repeat) {
+                Ok(()) => {
+                    println!("Macro {macro_index} set successfully!");
+                    println!("Assign this macro to a key with: assign-macro <key> {macro_index}");
+                }
+                Err(e) => eprintln!("Failed to set macro: {e}"),
             }
-            Err(e) => eprintln!("Failed to set macro: {e}"),
+        } else {
+            // Text macro (existing behavior)
+            println!("Setting macro {macro_index} to type: \"{text}\"");
+
+            match keyboard.set_text_macro(macro_index, text, delay, repeat) {
+                Ok(()) => {
+                    println!("Macro {macro_index} set successfully!");
+                    println!("Assign this macro to a key with: assign-macro <key> {macro_index}");
+                }
+                Err(e) => eprintln!("Failed to set macro: {e}"),
+            }
         }
         Ok(())
     })

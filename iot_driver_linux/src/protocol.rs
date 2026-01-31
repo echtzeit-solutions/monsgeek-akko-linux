@@ -836,6 +836,59 @@ pub mod hid {
             _ => None,
         }
     }
+
+    /// Look up HID keycode from a key name (case-insensitive).
+    ///
+    /// Accepts both canonical names from `key_name()` (e.g. "Escape", "LCtrl")
+    /// and common aliases (e.g. "Esc", "LShf", "Del", "Win").
+    pub fn key_code_from_name(name: &str) -> Option<u8> {
+        let name_lower = name.to_ascii_lowercase();
+
+        // F13-F24: key_name() returns "F13-F24" for the whole range,
+        // so we need individual matching here.
+        if let Some(rest) = name_lower.strip_prefix('f') {
+            if let Ok(n) = rest.parse::<u8>() {
+                if (13..=24).contains(&n) {
+                    return Some(0x68 + (n - 13));
+                }
+            }
+        }
+
+        // Try exact match against key_name() for all valid HID codes.
+        for code in (0x00..=0x00).chain(0x04..=0x67).chain(0xE0..=0xE7u8) {
+            let kn = key_name(code);
+            if kn != "?" && kn.to_ascii_lowercase() == name_lower {
+                return Some(code);
+            }
+        }
+
+        // Common aliases (matrix key names, abbreviations, etc.)
+        match name_lower.as_str() {
+            "esc" => Some(0x29),
+            "return" | "ret" => Some(0x28),
+            "del" => Some(0x4C),
+            "ins" => Some(0x49),
+            "bksp" | "bs" => Some(0x2A),
+            "caps" => Some(0x39),
+            "lshf" => Some(0xE1),
+            "rshf" => Some(0xE5),
+            "lctl" => Some(0xE0),
+            "rctl" => Some(0xE4),
+            "win" | "lwin" | "super" | "lsuper" | "cmd" | "lcmd" => Some(0xE3),
+            "rwin" | "rsuper" | "rcmd" => Some(0xE7),
+            "printscreen" | "prtsc" => Some(0x46),
+            "scrlk" => Some(0x47),
+            "numlk" => Some(0x53),
+            "menu" | "application" => Some(0x65),
+            "spc" => Some(0x2C),
+            "pgup" => Some(0x4B),
+            "pgdn" | "pgdown" => Some(0x4E),
+            "nonusbs" | "intlbs" => Some(0x64),
+            "ent" => Some(0x28),
+            "intlro" => Some(0x87),
+            _ => None,
+        }
+    }
 }
 
 /// Firmware update protocol constants (DRY-RUN ONLY - no actual flashing)

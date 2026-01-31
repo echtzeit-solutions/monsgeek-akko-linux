@@ -282,6 +282,14 @@ pub enum Commands {
         layer: u8,
     },
 
+    /// List all key remappings (non-default bindings)
+    #[command(visible_alias = "remap-list")]
+    RemapList {
+        /// Layer: 0=base, 1=fn, omit=both
+        #[arg(short, long)]
+        layer: Option<u8>,
+    },
+
     /// Show key matrix mappings
     #[command(visible_alias = "km")]
     Keymatrix {
@@ -303,8 +311,17 @@ pub enum Commands {
     SetMacro {
         /// Key position or name
         key: String,
-        /// Text to type when key is pressed
+        /// Text to type, or sequence string when --seq is used
         text: String,
+        /// Default delay between events in ms
+        #[arg(short, long, default_value = "10")]
+        delay: u16,
+        /// How many times to repeat the macro
+        #[arg(short, long, default_value = "1")]
+        repeat: u16,
+        /// Parse text as a comma-separated key sequence (e.g. "Ctrl+A,Ctrl+C")
+        #[arg(short, long)]
+        seq: bool,
     },
 
     /// Clear macro from a key
