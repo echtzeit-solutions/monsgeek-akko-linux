@@ -1172,13 +1172,14 @@ impl KeyboardInterface {
         for page in 0..4u8 {
             let data = [macro_index, page];
 
+            // GET_MACRO response doesn't echo the command byte — use raw query
             match self
                 .transport
-                .query_command(cmd::GET_MACRO, &data, ChecksumType::Bit7)
+                .query_raw(cmd::GET_MACRO, &data, ChecksumType::Bit7)
                 .await
             {
                 Ok(resp) => {
-                    // Skip command echo if present
+                    // Skip command echo if present (some transports may add it)
                     let start = if !resp.is_empty() && resp[0] == cmd::GET_MACRO {
                         1
                     } else {
@@ -1199,6 +1200,9 @@ impl KeyboardInterface {
 
         if all_data.is_empty() {
             Err(KeyboardError::UnexpectedResponse("No macro data".into()))
+        } else if all_data.iter().all(|&b| b == 0xFF) {
+            // Uninitialized slot — treat as empty
+            Ok(vec![0, 0]) // repeat_count=0, no events
         } else {
             Ok(all_data)
         }

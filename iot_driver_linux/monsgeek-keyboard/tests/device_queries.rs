@@ -207,3 +207,272 @@ async fn grpc_raw_transport_query() {
         device_id, device_id
     );
 }
+
+/// Probe macro support: raw GET_MACRO (0x8B) at the transport level.
+///
+/// Sends GET_MACRO for page 0 of slot 0 and prints whatever comes back.
+/// This diagnoses whether the device responds at all.
+#[tokio::test]
+#[ignore] // requires hardware
+async fn macro_raw_probe() {
+    let (raw, _kb) = open_keyboard().await;
+
+    const GET_MACRO: u8 = 0x8B;
+
+    // First: verify device is alive with a known-good command
+    eprintln!("--- Verifying device connectivity with GET_USB_VERSION ---");
+    raw.send_report(0x8F, &[], ChecksumType::Bit7)
+        .await
+        .expect("send GET_USB_VERSION failed");
+    raw.send_flush().await.ok();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    match raw.read_report().await {
+        Ok(resp) => {
+            eprintln!(
+                "  GET_USB_VERSION response: [{:02x?}] (len={})",
+                &resp[..resp.len().min(16)],
+                resp.len()
+            );
+            assert_eq!(resp[0], 0x8F, "should echo 0x8F");
+        }
+        Err(e) => panic!("Device not responding to GET_USB_VERSION: {e}"),
+    }
+
+    // Now probe GET_MACRO
+    eprintln!("\n--- Probing GET_MACRO (0x8B) for slot 0, page 0 ---");
+    let data = [0u8, 0u8]; // macro_index=0, page=0
+    raw.send_report(GET_MACRO, &data, ChecksumType::Bit7)
+        .await
+        .expect("send GET_MACRO failed");
+    raw.send_flush().await.ok();
+
+    // Try reading with increasing timeouts
+    for delay in [10, 50, 200, 500] {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+        match raw.read_report().await {
+            Ok(resp) => {
+                eprintln!("  GET_MACRO response after {delay}ms:");
+                eprintln!("    len={}, first_byte=0x{:02x}", resp.len(), resp[0]);
+                for (i, chunk) in resp.chunks(16).enumerate() {
+                    eprint!("    {:04x}: ", i * 16);
+                    for b in chunk {
+                        eprint!("{b:02x} ");
+                    }
+                    eprintln!();
+                }
+                return; // success
+            }
+            Err(e) => {
+                eprintln!("  No response after {delay}ms: {e}");
+            }
+        }
+    }
+
+    panic!("GET_MACRO: no response from device after all retries");
+}
+
+/// Read an existing macro (slot 0) and verify the high-level API parses it.
+///
+/// Slot 0 should have data from a previous set (either webapp or CLI).
+#[tokio::test]
+#[ignore] // requires hardware
+async fn macro_read_existing() {
+    let (_raw, kb) = open_keyboard().await;
+
+    eprintln!("--- Reading existing macro from slot 0 ---");
+    for slot in 0..8u8 {
+        eprint!("Slot {slot}: ");
+        match kb.get_macro(slot).await {
+            Ok(data) => {
+                // Check if data is all 0xFF (uninitialized)
+                if data.iter().all(|&b| b == 0xFF) {
+                    eprintln!("uninitialized (all 0xFF)");
+                    continue;
+                }
+                let (repeat_count, events) = monsgeek_keyboard::parse_macro_events(&data);
+                eprintln!(
+                    "{} events, repeat={}, raw_len={}",
+                    events.len(),
+                    repeat_count,
+                    data.len()
+                );
+                if !events.is_empty() {
+                    for (i, evt) in events.iter().enumerate() {
+                        let dir = if evt.is_down { "↓" } else { "↑" };
+                        eprintln!(
+                            "    {i}: {dir} keycode=0x{:02x} delay={}ms",
+                            evt.keycode, evt.delay_ms
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+            }
+        }
+    }
+}
+
+/// Test SET_MACRO round-trip at the raw transport level.
+///
+/// Sends SET_MACRO for slot 7, waits, then reads it back with GET_MACRO.
+#[tokio::test]
+#[ignore] // requires hardware
+async fn macro_set_and_readback() {
+    let (raw, _kb) = open_keyboard().await;
+
+    eprintln!("--- SET_MACRO raw test for slot 7 ---");
+
+    // Build a minimal macro: repeat=1, one keystroke 'a' down+up
+    let mut macro_data = Vec::new();
+    macro_data.push(0x01); // repeat count low
+    macro_data.push(0x00); // repeat count high
+    macro_data.push(0x04); // 'a' keycode
+    macro_data.push(0x8A); // down + 10ms delay
+    macro_data.push(0x04); // 'a' keycode
+    macro_data.push(0x0A); // up + 10ms delay
+                           // Pad to 56 bytes
+    while macro_data.len() < 56 {
+        macro_data.push(0);
+    }
+
+    // Page 0, is_last=1
+    let mut cmd_data = vec![7u8, 0, 56, 1, 0, 0, 0];
+    cmd_data.extend_from_slice(&macro_data);
+
+    eprintln!("  Sending SET_MACRO (0x0B) for slot 7, page 0...");
+    eprintln!(
+        "  cmd_data[..16]: {:02x?}",
+        &cmd_data[..cmd_data.len().min(16)]
+    );
+    raw.send_report(0x0B, &cmd_data, ChecksumType::Bit7)
+        .await
+        .expect("send SET_MACRO failed");
+    raw.send_flush().await.ok();
+
+    // Wait for device to process
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Try to read any response/ack
+    eprintln!("  Checking for SET_MACRO ack...");
+    match tokio::time::timeout(Duration::from_millis(500), raw.read_report()).await {
+        Ok(Ok(resp)) => {
+            eprintln!(
+                "  SET_MACRO response: first_byte=0x{:02x} len={}",
+                resp[0],
+                resp.len()
+            );
+            eprint!("    ");
+            for b in resp.iter().take(16) {
+                eprint!("{b:02x} ");
+            }
+            eprintln!();
+        }
+        Ok(Err(e)) => eprintln!("  Read error: {e}"),
+        Err(_) => eprintln!("  No ack (timeout) — fire-and-forget is normal"),
+    }
+
+    // Now read it back with GET_MACRO
+    eprintln!("\n  Reading back slot 7 with GET_MACRO (0x8B)...");
+    let query_data = [7u8, 0u8]; // slot 7, page 0
+    raw.send_report(0x8B, &query_data, ChecksumType::Bit7)
+        .await
+        .expect("send GET_MACRO failed");
+    raw.send_flush().await.ok();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    match raw.read_report().await {
+        Ok(resp) => {
+            eprintln!(
+                "  GET_MACRO slot 7 response: first_byte=0x{:02x} len={}",
+                resp[0],
+                resp.len()
+            );
+            for (i, chunk) in resp.chunks(16).enumerate() {
+                eprint!("    {:04x}: ", i * 16);
+                for b in chunk {
+                    eprint!("{b:02x} ");
+                }
+                eprintln!();
+            }
+
+            if resp.iter().all(|&b| b == 0xFF) {
+                eprintln!("  RESULT: Still all 0xFF — SET_MACRO did not persist");
+            } else if resp[0] == 0x01 && resp[1] == 0x00 {
+                eprintln!("  RESULT: Data looks correct (repeat=1)");
+            } else {
+                eprintln!("  RESULT: Data present but unexpected format");
+            }
+        }
+        Err(e) => {
+            eprintln!("  GET_MACRO read failed: {e}");
+        }
+    }
+
+    // Also try writing to slot 0 (which we know has data) and see if overwrite works
+    eprintln!("\n--- SET_MACRO overwrite test for slot 0 ---");
+    // Read slot 0 first
+    raw.send_report(0x8B, &[0u8, 0u8], ChecksumType::Bit7)
+        .await
+        .expect("send GET_MACRO failed");
+    raw.send_flush().await.ok();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    match raw.read_report().await {
+        Ok(resp) => {
+            eprint!("  Slot 0 before write: ");
+            for b in resp.iter().take(16) {
+                eprint!("{b:02x} ");
+            }
+            eprintln!();
+        }
+        Err(e) => eprintln!("  Read error: {e}"),
+    }
+
+    // Write to slot 0
+    let mut macro_data_0 = Vec::new();
+    macro_data_0.push(0x01); // repeat count low
+    macro_data_0.push(0x00); // repeat count high
+    macro_data_0.push(0x17); // 't' keycode
+    macro_data_0.push(0x8A); // down + 10ms delay
+    macro_data_0.push(0x17); // 't' keycode
+    macro_data_0.push(0x0A); // up + 10ms delay
+    while macro_data_0.len() < 56 {
+        macro_data_0.push(0);
+    }
+
+    let mut cmd_data_0 = vec![0u8, 0, 56, 1, 0, 0, 0];
+    cmd_data_0.extend_from_slice(&macro_data_0);
+
+    eprintln!("  Sending SET_MACRO for slot 0...");
+    raw.send_report(0x0B, &cmd_data_0, ChecksumType::Bit7)
+        .await
+        .expect("send SET_MACRO failed");
+    raw.send_flush().await.ok();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain any ack
+    let _ = tokio::time::timeout(Duration::from_millis(200), raw.read_report()).await;
+
+    // Read back slot 0
+    raw.send_report(0x8B, &[0u8, 0u8], ChecksumType::Bit7)
+        .await
+        .expect("send GET_MACRO failed");
+    raw.send_flush().await.ok();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    match raw.read_report().await {
+        Ok(resp) => {
+            eprint!("  Slot 0 after write:  ");
+            for b in resp.iter().take(16) {
+                eprint!("{b:02x} ");
+            }
+            eprintln!();
+
+            if resp[0] == 0x01 && resp[1] == 0x00 && resp[2] == 0x17 {
+                eprintln!("  RESULT: Overwrite succeeded!");
+            } else {
+                eprintln!("  RESULT: Overwrite may not have worked");
+            }
+        }
+        Err(e) => eprintln!("  Read error: {e}"),
+    }
+}
