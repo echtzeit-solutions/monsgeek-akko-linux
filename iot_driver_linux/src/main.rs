@@ -177,6 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::ClearMacro { key }) => {
             commands::macros::clear_macro(&key)?;
         }
+        Some(Commands::AssignMacro { key, macro_index }) => {
+            commands::macros::assign_macro(&key, &macro_index)?;
+        }
 
         // === Animation Commands ===
         Some(Commands::Gif {

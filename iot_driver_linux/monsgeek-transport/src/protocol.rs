@@ -193,6 +193,17 @@ pub mod matrix {
     pub fn key_name(index: u8) -> &'static str {
         KEY_NAMES.get(index as usize).copied().unwrap_or("?")
     }
+
+    /// Look up matrix index from key name (case-insensitive)
+    ///
+    /// Returns None if no matching key name is found.
+    pub fn key_index_from_name(name: &str) -> Option<u8> {
+        let name_lower = name.to_ascii_lowercase();
+        KEY_NAMES
+            .iter()
+            .position(|&n| n.to_ascii_lowercase() == name_lower && n != "?")
+            .map(|i| i as u8)
+    }
 }
 
 /// HID report sizes

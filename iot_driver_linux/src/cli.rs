@@ -313,6 +313,14 @@ pub enum Commands {
         key: String,
     },
 
+    /// Assign a macro to a key on the Fn layer
+    AssignMacro {
+        /// Key name (e.g. F3, Esc) or matrix index
+        key: String,
+        /// Macro slot number (0-7)
+        macro_index: String,
+    },
+
     // === Animation Commands ===
     /// Upload GIF animation to keyboard memory
     Gif {
