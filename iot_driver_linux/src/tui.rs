@@ -135,7 +135,7 @@ struct MacroSlot {
 struct MacroEvent {
     keycode: u8,
     is_down: bool,
-    delay_ms: u8,
+    delay_ms: u16,
 }
 
 /// Keyboard options state
@@ -1580,13 +1580,42 @@ impl App {
         }
     }
 
-    /// Load macros (tab 5) - placeholder, macros not yet implemented
+    /// Load macros (tab 5) from device
+    /// Spawns a background task to avoid blocking the UI
     fn load_macros(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
+
         self.loading.macros = LoadState::Loading;
-        // Macros not yet implemented in keyboard interface
-        self.macros = vec![MacroSlot::default(); 8];
-        self.loading.macros = LoadState::Loaded;
-        self.status_msg = format!("Loaded {} macro slots", self.macros.len());
+        let tx = self.result_tx.clone();
+        tokio::spawn(async move {
+            let mut slots = Vec::new();
+            for i in 0..8u8 {
+                let slot = match keyboard.get_macro(i).await {
+                    Ok(data) => {
+                        let (repeat_count, events) = monsgeek_keyboard::parse_macro_events(&data);
+                        let tui_events: Vec<MacroEvent> = events
+                            .iter()
+                            .map(|e| MacroEvent {
+                                keycode: e.keycode,
+                                is_down: e.is_down,
+                                delay_ms: e.delay_ms,
+                            })
+                            .collect();
+                        let text_preview = text_preview_from_events(&events);
+                        MacroSlot {
+                            events: tui_events,
+                            repeat_count,
+                            text_preview,
+                        }
+                    }
+                    Err(_) => MacroSlot::default(),
+                };
+                slots.push(slot);
+            }
+            let _ = tx.send(AsyncResult::Macros(Ok(slots)));
+        });
     }
 
     /// Process async result from background tasks
@@ -1726,6 +1755,10 @@ impl App {
             }
             AsyncResult::SetComplete(field, Ok(())) => {
                 self.status_msg = format!("{field} updated");
+                // Reload macros after macro operations
+                if field.starts_with("Macro") && self.loading.macros != LoadState::Loading {
+                    self.load_macros();
+                }
             }
             AsyncResult::SetComplete(field, Err(e)) => {
                 self.status_msg = format!("Failed to set {field}: {e}");
@@ -1746,14 +1779,39 @@ impl App {
         BRAILLE_SIX.symbols[idx]
     }
 
-    fn set_macro_text(&mut self, _index: usize, _text: &str, _delay_ms: u8, _repeat: u16) {
-        // Macros not yet implemented in keyboard interface
-        self.status_msg = "Macro setting not yet implemented".to_string();
+    fn set_macro_text(&mut self, index: usize, text: &str, delay_ms: u16, repeat: u16) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let text = text.to_string();
+        let tx = self.result_tx.clone();
+        self.status_msg = format!("Setting macro {index}...");
+        tokio::spawn(async move {
+            let result = keyboard
+                .set_text_macro(index as u8, &text, delay_ms, repeat)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::SetComplete("Macro".to_string(), result));
+        });
     }
 
-    fn clear_macro(&mut self, _index: usize) {
-        // Macros not yet implemented in keyboard interface
-        self.status_msg = "Macro clearing not yet implemented".to_string();
+    fn clear_macro(&mut self, index: usize) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let tx = self.result_tx.clone();
+        self.status_msg = format!("Clearing macro {index}...");
+        tokio::spawn(async move {
+            let result = keyboard
+                .set_macro(index as u8, &[], 1)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::SetComplete("Macro clear".to_string(), result));
+        });
     }
 
     fn read_input_reports(&mut self) {
@@ -4993,4 +5051,70 @@ fn render_macros(f: &mut Frame, app: &mut App, area: Rect) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Keys"));
     f.render_widget(help, right_chunks[1]);
+}
+
+/// Try to reconstruct typed text from macro events
+fn text_preview_from_events(events: &[monsgeek_keyboard::MacroEvent]) -> String {
+    let mut result = String::new();
+    let mut shift_held = false;
+
+    for evt in events {
+        // Track shift state
+        if evt.keycode == 0xE1 || evt.keycode == 0xE5 {
+            shift_held = evt.is_down;
+            continue;
+        }
+
+        // Only process key-down events
+        if !evt.is_down {
+            continue;
+        }
+
+        if let Some(c) = hid_keycode_to_char(evt.keycode, shift_held) {
+            result.push(c);
+        }
+    }
+
+    if result.is_empty() && !events.is_empty() {
+        format!("{} events", events.len())
+    } else {
+        result
+    }
+}
+
+/// Convert HID keycode to character (inverse of char_to_hid)
+fn hid_keycode_to_char(keycode: u8, shift: bool) -> Option<char> {
+    match keycode {
+        0x04..=0x1D => {
+            let base = (keycode - 0x04 + b'a') as char;
+            Some(if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            })
+        }
+        0x1E..=0x26 => {
+            if shift {
+                Some(b"!@#$%^&*("[(keycode - 0x1E) as usize] as char)
+            } else {
+                Some((b'1' + keycode - 0x1E) as char)
+            }
+        }
+        0x27 => Some(if shift { ')' } else { '0' }),
+        0x28 => Some('\n'),
+        0x2B => Some('\t'),
+        0x2C => Some(' '),
+        0x2D => Some(if shift { '_' } else { '-' }),
+        0x2E => Some(if shift { '+' } else { '=' }),
+        0x2F => Some(if shift { '{' } else { '[' }),
+        0x30 => Some(if shift { '}' } else { ']' }),
+        0x31 => Some(if shift { '|' } else { '\\' }),
+        0x33 => Some(if shift { ':' } else { ';' }),
+        0x34 => Some(if shift { '"' } else { '\'' }),
+        0x35 => Some(if shift { '~' } else { '`' }),
+        0x36 => Some(if shift { '<' } else { ',' }),
+        0x37 => Some(if shift { '>' } else { '.' }),
+        0x38 => Some(if shift { '?' } else { '/' }),
+        _ => None,
+    }
 }
