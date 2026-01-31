@@ -313,12 +313,15 @@ pub enum Commands {
         key: String,
     },
 
-    /// Assign a macro to a key on the Fn layer
+    /// Assign a macro to a key (base layer by default, --fn for Fn layer)
     AssignMacro {
         /// Key name (e.g. F3, Esc) or matrix index
         key: String,
         /// Macro slot number (0-7)
         macro_index: String,
+        /// Assign to Fn+key instead of the base layer
+        #[arg(long, alias = "fn-layer")]
+        r#fn: bool,
     },
 
     // === Animation Commands ===

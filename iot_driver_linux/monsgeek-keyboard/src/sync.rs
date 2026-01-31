@@ -375,6 +375,20 @@ impl SyncKeyboard {
         )
     }
 
+    /// Assign a macro to Fn+key via SET_FN
+    pub fn assign_macro_to_fn_key(
+        &self,
+        profile: u8,
+        key_index: u8,
+        macro_index: u8,
+        macro_type: u8,
+    ) -> Result<(), KeyboardError> {
+        block_on(
+            self.inner
+                .assign_macro_to_fn_key(profile, key_index, macro_index, macro_type),
+        )
+    }
+
     /// Remove macro assignment from a key
     pub fn unassign_macro_from_key(&self, profile: u8, key_index: u8) -> Result<(), KeyboardError> {
         block_on(self.inner.unassign_macro_from_key(profile, key_index))

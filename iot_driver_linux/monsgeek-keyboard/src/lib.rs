@@ -1385,6 +1385,40 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    /// Assign a macro to Fn+key via SET_FN (0x10) with config_type=9.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile number (0-based)
+    /// * `key_index` - Matrix position of the key
+    /// * `macro_index` - Macro slot number (0-based)
+    /// * `macro_type` - Macro repeat mode (0=repeat count, 1=toggle, 2=hold to repeat)
+    pub async fn assign_macro_to_fn_key(
+        &self,
+        profile: u8,
+        key_index: u8,
+        macro_index: u8,
+        macro_type: u8,
+    ) -> Result<(), KeyboardError> {
+        let data = [
+            profile,
+            0,
+            key_index,
+            0,
+            0,
+            0,
+            0,
+            9, // config_type = macro
+            macro_type,
+            macro_index,
+            0,
+        ];
+
+        self.transport
+            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
+            .await?;
+        Ok(())
+    }
+
     // === Device Info ===
 
     /// Get device VID
