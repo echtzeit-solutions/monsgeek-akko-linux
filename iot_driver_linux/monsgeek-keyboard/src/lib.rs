@@ -1318,6 +1318,61 @@ impl KeyboardInterface {
         self.set_macro(macro_index, &events, repeat).await
     }
 
+    /// Assign a macro to a key on the Fn layer
+    ///
+    /// Uses SET_FN (0x10) with config_type=9 to bind a macro slot to a key.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile number (0-based)
+    /// * `key_index` - Matrix position of the key
+    /// * `macro_index` - Macro slot number (0-based)
+    /// * `macro_type` - Macro repeat mode (0=play once, 1=hold to repeat, 2=toggle)
+    pub async fn assign_macro_to_key(
+        &self,
+        profile: u8,
+        key_index: u8,
+        macro_index: u8,
+        macro_type: u8,
+    ) -> Result<(), KeyboardError> {
+        let data = [
+            profile,
+            0,
+            key_index,
+            0,
+            0,
+            0,
+            0,
+            9, // config_type = macro assignment
+            macro_type,
+            macro_index,
+            0,
+        ];
+
+        self.transport
+            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
+            .await?;
+        Ok(())
+    }
+
+    /// Remove macro assignment from a key, restoring default Fn-layer behavior
+    ///
+    /// # Arguments
+    /// * `profile` - Profile number (0-based)
+    /// * `key_index` - Matrix position of the key
+    pub async fn unassign_macro_from_key(
+        &self,
+        profile: u8,
+        key_index: u8,
+    ) -> Result<(), KeyboardError> {
+        // config_type=0 with all zeros clears the Fn-layer assignment
+        let data = [profile, 0, key_index, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        self.transport
+            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
+            .await?;
+        Ok(())
+    }
+
     // === Device Info ===
 
     /// Get device VID
