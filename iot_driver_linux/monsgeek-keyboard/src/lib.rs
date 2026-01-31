@@ -22,6 +22,9 @@ pub use settings::{
 };
 pub use sync::{list_keyboards, SyncKeyboard};
 
+// Macro parsing
+// (MacroEvent struct and parse_macro_events fn are defined after KeyboardInterface impl)
+
 /// Number of physical keys on M1 V5 HE
 pub const KEY_COUNT_M1_V5: u8 = 98;
 
@@ -1205,12 +1208,16 @@ impl KeyboardInterface {
     ///
     /// # Arguments
     /// * `macro_index` - Macro slot number (0-based)
-    /// * `events` - List of (keycode, is_down, delay_ms) tuples
+    /// * `events` - List of (keycode, is_down, delay_ms) tuples with u16 delay
     /// * `repeat_count` - How many times to repeat the macro
+    ///
+    /// Events use variable-length encoding:
+    /// - Short delay (0-127ms): 2 bytes `[keycode, direction_bit | delay]`
+    /// - Long delay (128+ms): 4 bytes `[keycode, direction_bit, delay_lo, delay_hi]`
     pub async fn set_macro(
         &self,
         macro_index: u8,
-        events: &[(u8, bool, u8)],
+        events: &[(u8, bool, u16)],
         repeat_count: u16,
     ) -> Result<(), KeyboardError> {
         // Build macro data
@@ -1220,15 +1227,24 @@ impl KeyboardInterface {
         macro_data.push((repeat_count & 0xFF) as u8);
         macro_data.push((repeat_count >> 8) as u8);
 
-        // Add events (2 bytes each)
+        // Add events with variable-length encoding
         for &(keycode, is_down, delay) in events {
             macro_data.push(keycode);
-            let flags = if is_down {
-                0x80 | (delay.min(127)) // bit 7 set = down, bits 0-6 = delay
+            if delay <= 127 {
+                // Short format: 2 bytes [keycode, direction_bit | delay]
+                let flags = if is_down {
+                    0x80 | (delay as u8)
+                } else {
+                    delay as u8
+                };
+                macro_data.push(flags);
             } else {
-                delay.min(127) // bit 7 clear = up
-            };
-            macro_data.push(flags);
+                // Long format: 4 bytes [keycode, direction_bit, delay_lo, delay_hi]
+                let flags = if is_down { 0x80 } else { 0x00 };
+                macro_data.push(flags);
+                macro_data.push((delay & 0xFF) as u8);
+                macro_data.push((delay >> 8) as u8);
+            }
         }
 
         // Pad to at least fill first page
@@ -1271,13 +1287,13 @@ impl KeyboardInterface {
     /// # Arguments
     /// * `macro_index` - Macro slot number (0-based)
     /// * `text` - Text to type
-    /// * `delay_ms` - Delay between keystrokes (0-127ms)
+    /// * `delay_ms` - Delay between keystrokes in ms
     /// * `repeat` - How many times to repeat
     pub async fn set_text_macro(
         &self,
         macro_index: u8,
         text: &str,
-        delay_ms: u8,
+        delay_ms: u16,
         repeat: u16,
     ) -> Result<(), KeyboardError> {
         use crate::hid_codes::char_to_hid;
@@ -1288,9 +1304,9 @@ impl KeyboardInterface {
         for ch in text.chars() {
             if let Some((keycode, needs_shift)) = char_to_hid(ch) {
                 if needs_shift {
-                    events.push((LSHIFT, true, 0)); // Shift down
+                    events.push((LSHIFT, true, 0u16)); // Shift down
                     events.push((keycode, true, delay_ms)); // Key down
-                    events.push((keycode, false, 0)); // Key up
+                    events.push((keycode, false, 0u16)); // Key up
                     events.push((LSHIFT, false, delay_ms)); // Shift up
                 } else {
                     events.push((keycode, true, delay_ms)); // Key down
@@ -1347,4 +1363,64 @@ impl KeyboardInterface {
     pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<TimestampedEvent>> {
         self.transport.subscribe_events()
     }
+}
+
+/// A single parsed macro event
+#[derive(Debug, Clone)]
+pub struct MacroEvent {
+    pub keycode: u8,
+    pub is_down: bool,
+    pub delay_ms: u16,
+}
+
+/// Parse raw macro data into repeat count and structured events.
+///
+/// Input `data` should be the full macro data (starting with 2-byte LE repeat count).
+/// Events use variable-length encoding:
+/// - Short delay (0-127ms): 2 bytes `[keycode, direction_bit | delay]`
+/// - Long delay (128+ms): 4 bytes `[keycode, direction_bit, delay_lo, delay_hi]`
+///
+/// Returns `(repeat_count, events)`. Stops on `[0, 0]` end marker or end of data.
+pub fn parse_macro_events(data: &[u8]) -> (u16, Vec<MacroEvent>) {
+    if data.len() < 2 {
+        return (0, Vec::new());
+    }
+
+    let repeat_count = u16::from_le_bytes([data[0], data[1]]);
+    let mut events = Vec::new();
+    let mut pos = 2;
+
+    while pos + 1 < data.len() {
+        let keycode = data[pos];
+        let flags = data[pos + 1];
+
+        // End marker: [0, 0]
+        if keycode == 0 && flags == 0 {
+            break;
+        }
+
+        let is_down = (flags & 0x80) != 0;
+        let delay_low_bits = flags & 0x7F;
+
+        if delay_low_bits == 0 && pos + 3 < data.len() {
+            // Long format: direction-only byte followed by 16-bit LE delay
+            let delay_ms = u16::from_le_bytes([data[pos + 2], data[pos + 3]]);
+            events.push(MacroEvent {
+                keycode,
+                is_down,
+                delay_ms,
+            });
+            pos += 4;
+        } else {
+            // Short format: delay encoded in low 7 bits
+            events.push(MacroEvent {
+                keycode,
+                is_down,
+                delay_ms: delay_low_bits as u16,
+            });
+            pos += 2;
+        }
+    }
+
+    (repeat_count, events)
 }

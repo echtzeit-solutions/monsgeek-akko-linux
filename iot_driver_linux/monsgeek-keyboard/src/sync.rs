@@ -341,7 +341,7 @@ impl SyncKeyboard {
     pub fn set_macro(
         &self,
         macro_index: u8,
-        events: &[(u8, bool, u8)],
+        events: &[(u8, bool, u16)],
         repeat_count: u16,
     ) -> Result<(), KeyboardError> {
         block_on(self.inner.set_macro(macro_index, events, repeat_count))
@@ -352,7 +352,7 @@ impl SyncKeyboard {
         &self,
         macro_index: u8,
         text: &str,
-        delay_ms: u8,
+        delay_ms: u16,
         repeat: u16,
     ) -> Result<(), KeyboardError> {
         block_on(
