@@ -1232,10 +1232,14 @@ impl KeyboardInterface {
         macro_data.push((repeat_count >> 8) as u8);
 
         // Add events with variable-length encoding
+        // Short format (1-127ms): 2 bytes [keycode, direction_bit | delay]
+        // Long format (0ms or 128+ms): 4 bytes [keycode, direction_bit, delay_lo, delay_hi]
+        // Note: 0ms uses long format to avoid ambiguity with the parser
+        // (the parser treats low-7-bits==0 as long format indicator)
         for &(keycode, is_down, delay) in events {
             macro_data.push(keycode);
-            if delay <= 127 {
-                // Short format: 2 bytes [keycode, direction_bit | delay]
+            if (1..=127).contains(&delay) {
+                // Short format
                 let flags = if is_down {
                     0x80 | (delay as u8)
                 } else {
@@ -1243,7 +1247,7 @@ impl KeyboardInterface {
                 };
                 macro_data.push(flags);
             } else {
-                // Long format: 4 bytes [keycode, direction_bit, delay_lo, delay_hi]
+                // Long format (0ms or 128+ms)
                 let flags = if is_down { 0x80 } else { 0x00 };
                 macro_data.push(flags);
                 macro_data.push((delay & 0xFF) as u8);
@@ -1322,15 +1326,16 @@ impl KeyboardInterface {
         self.set_macro(macro_index, &events, repeat).await
     }
 
-    /// Assign a macro to a key on the Fn layer
+    /// Assign a macro to a key via SET_KEYMATRIX (0x0A) with config_type=9.
     ///
-    /// Uses SET_FN (0x10) with config_type=9 to bind a macro slot to a key.
+    /// This matches the webapp's protocol: command 0x0A with the 4-byte macro
+    /// config `[9, macro_type, macro_index, 0]` at bytes 8-11.
     ///
     /// # Arguments
     /// * `profile` - Profile number (0-based)
     /// * `key_index` - Matrix position of the key
     /// * `macro_index` - Macro slot number (0-based)
-    /// * `macro_type` - Macro repeat mode (0=play once, 1=hold to repeat, 2=toggle)
+    /// * `macro_type` - Macro repeat mode (0=repeat count, 1=toggle, 2=hold to repeat)
     pub async fn assign_macro_to_key(
         &self,
         profile: u8,
@@ -1338,27 +1343,27 @@ impl KeyboardInterface {
         macro_index: u8,
         macro_type: u8,
     ) -> Result<(), KeyboardError> {
+        // Webapp layout: [profile, key_index, 0, 0, save_to_device=1, 0, (checksum), 9, macro_type, macro_index, 0]
         let data = [
             profile,
-            0,
             key_index,
             0,
             0,
+            1, // save_to_device
             0,
-            0,
-            9, // config_type = macro assignment
+            9, // config_type = macro assignment (after checksum at byte 7)
             macro_type,
             macro_index,
             0,
         ];
 
         self.transport
-            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
+            .send_command(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
             .await?;
         Ok(())
     }
 
-    /// Remove macro assignment from a key, restoring default Fn-layer behavior
+    /// Remove macro assignment from a key, restoring default behavior.
     ///
     /// # Arguments
     /// * `profile` - Profile number (0-based)
@@ -1368,11 +1373,14 @@ impl KeyboardInterface {
         profile: u8,
         key_index: u8,
     ) -> Result<(), KeyboardError> {
-        // config_type=0 with all zeros clears the Fn-layer assignment
-        let data = [profile, 0, key_index, 0, 0, 0, 0, 0, 0, 0, 0];
+        let data = [
+            profile, key_index, 0, 0, 1, // save_to_device
+            0, 0, // config_type=0 clears the assignment
+            0, 0, 0,
+        ];
 
         self.transport
-            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
+            .send_command(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
             .await?;
         Ok(())
     }

@@ -361,7 +361,7 @@ impl SyncKeyboard {
         )
     }
 
-    /// Assign a macro to a key on the Fn layer
+    /// Assign a macro to a key via SET_KEYMATRIX with config_type=9
     pub fn assign_macro_to_key(
         &self,
         profile: u8,
