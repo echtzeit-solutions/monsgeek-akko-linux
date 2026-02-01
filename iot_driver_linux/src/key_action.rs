@@ -16,6 +16,7 @@
 //! Macro(0)     → Macro(index=0, repeat)
 //! Macro(2,hold)→ Macro(index=2, hold-to-repeat)
 //! Gamepad(1)   → Gamepad(1)
+//! Fn           → Fn (layer modifier)
 //! Disabled     → Disabled
 //! ```
 
@@ -43,7 +44,15 @@ mod config_type {
     pub const KEY: u8 = 0;
     pub const MOUSE: u8 = 1;
     pub const MACRO: u8 = 9;
+    pub const CONSUMER: u8 = 3;
+    pub const SPECIAL_FN: u8 = 10;
+    pub const LED_CONTROL: u8 = 13;
     pub const GAMEPAD: u8 = 21;
+}
+
+/// Sub-function IDs for config_type SPECIAL_FN (10).
+mod special_fn {
+    pub const FN_KEY: u8 = 1;
 }
 
 /// What action a key performs when pressed.
@@ -70,8 +79,14 @@ pub enum KeyAction {
     ///
     /// `kind`: 0=repeat by count, 1=toggle, 2=hold to repeat.
     Macro { index: u8, kind: u8 },
+    /// Consumer/media key — USB HID Consumer Page usage ID (config_type=3).
+    Consumer(u16),
     /// Gamepad button (config_type=21).
     Gamepad(u8),
+    /// Fn layer modifier key (config_type=10, sub=1).
+    Fn,
+    /// LED brightness/effect control (config_type=13).
+    LedControl { data: [u8; 3] },
     /// Unknown/unsupported config type (preserved as raw bytes).
     Unknown { config_type: u8, data: [u8; 3] },
 }
@@ -84,33 +99,54 @@ impl KeyAction {
             KeyAction::Key(code) => [0, 0, code, 0],
             KeyAction::Combo { mods, key } => [0, mods, key, 0],
             KeyAction::Mouse(btn) => [config_type::MOUSE, 0, btn, 0],
+            KeyAction::Consumer(code) => [config_type::CONSUMER, 0, code as u8, (code >> 8) as u8],
             KeyAction::Macro { index, kind } => [config_type::MACRO, kind, index, 0],
             KeyAction::Gamepad(btn) => [config_type::GAMEPAD, 0, btn, 0],
+            KeyAction::Fn => [config_type::SPECIAL_FN, special_fn::FN_KEY, 0, 0],
+            KeyAction::LedControl { data } => [config_type::LED_CONTROL, data[0], data[1], data[2]],
             KeyAction::Unknown { config_type, data } => [config_type, data[0], data[1], data[2]],
         }
     }
 
     /// Decode from the 4-byte config format returned by GET_KEYMATRIX.
+    ///
+    /// The firmware uses two key-code positions:
+    /// - Default/factory keys: `[0, 0, keycode, 0]` — code at byte 2.
+    /// - User remaps:          `[0, keycode, 0, 0]` — code at byte 1 (byte 2 = 0).
+    /// - Modifier combos:      `[0, mod_mask, keycode, 0]` — both bytes non-zero.
     pub fn from_config_bytes(bytes: [u8; 4]) -> Self {
         match bytes[0] {
             config_type::KEY => {
-                if bytes[2] == 0 && bytes[1] == 0 {
+                if bytes[1] == 0 && bytes[2] == 0 {
                     KeyAction::Disabled
-                } else if bytes[1] != 0 {
+                } else if bytes[1] != 0 && bytes[2] != 0 {
+                    // Both non-zero: modifier combo
                     KeyAction::Combo {
                         mods: bytes[1],
                         key: bytes[2],
                     }
-                } else {
+                } else if bytes[2] != 0 {
+                    // Default/factory format: keycode at byte 2
                     KeyAction::Key(bytes[2])
+                } else {
+                    // User remap format: keycode at byte 1
+                    KeyAction::Key(bytes[1])
                 }
             }
             config_type::MOUSE => KeyAction::Mouse(bytes[2]),
+            config_type::CONSUMER => {
+                let code = bytes[2] as u16 | (bytes[3] as u16) << 8;
+                KeyAction::Consumer(code)
+            }
             config_type::MACRO => KeyAction::Macro {
                 index: bytes[2],
                 kind: bytes[1],
             },
             config_type::GAMEPAD => KeyAction::Gamepad(bytes[2]),
+            config_type::SPECIAL_FN if bytes[1] == special_fn::FN_KEY => KeyAction::Fn,
+            config_type::LED_CONTROL => KeyAction::LedControl {
+                data: [bytes[1], bytes[2], bytes[3]],
+            },
             ct => KeyAction::Unknown {
                 config_type: ct,
                 data: [bytes[1], bytes[2], bytes[3]],
@@ -155,6 +191,30 @@ impl fmt::Display for KeyAction {
                 }
                 write!(f, "+{}", hid::key_name(*key))
             }
+            KeyAction::Consumer(code) => {
+                let name = match code {
+                    0x00B5 => "Next Track",
+                    0x00B6 => "Previous Track",
+                    0x00B7 => "Stop",
+                    0x00CD => "Play/Pause",
+                    0x00E2 => "Mute",
+                    0x00E9 => "Volume Up",
+                    0x00EA => "Volume Down",
+                    0x006F => "Brightness Up",
+                    0x0070 => "Brightness Down",
+                    0x018A => "Mail",
+                    0x0192 => "Calculator",
+                    0x0194 => "My Computer",
+                    0x0221 => "Search",
+                    0x0223 => "Browser Home",
+                    _ => "",
+                };
+                if name.is_empty() {
+                    write!(f, "Consumer(0x{code:04X})")
+                } else {
+                    write!(f, "{name}")
+                }
+            }
             KeyAction::Mouse(btn) => write!(f, "Mouse{btn}"),
             KeyAction::Macro { index, kind } => match kind {
                 0 => write!(f, "Macro({index})"),
@@ -163,6 +223,21 @@ impl fmt::Display for KeyAction {
                 k => write!(f, "Macro({index},type{k})"),
             },
             KeyAction::Gamepad(btn) => write!(f, "Gamepad({btn})"),
+            KeyAction::Fn => write!(f, "Fn"),
+            KeyAction::LedControl { data } => {
+                let name = match (data[0], data[1], data[2]) {
+                    (2, 1, 0) => "LED Brightness Up",
+                    (2, 2, 0) => "LED Brightness Down",
+                    (3, 1, 0) => "LED Speed Up",
+                    (3, 2, 0) => "LED Speed Down",
+                    _ => "",
+                };
+                if name.is_empty() {
+                    write!(f, "LedControl({},{},{})", data[0], data[1], data[2])
+                } else {
+                    write!(f, "{name}")
+                }
+            }
             KeyAction::Unknown {
                 config_type,
                 data: [b1, b2, b3],
@@ -226,6 +301,7 @@ impl FromStr for KeyAction {
         // Disabled / None
         match s.to_ascii_lowercase().as_str() {
             "disabled" | "none" | "off" => return Ok(KeyAction::Disabled),
+            "fn" => return Ok(KeyAction::Fn),
             _ => {}
         }
 
@@ -423,6 +499,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_fn() {
+        assert_eq!("Fn".parse::<KeyAction>().unwrap(), KeyAction::Fn);
+        assert_eq!("fn".parse::<KeyAction>().unwrap(), KeyAction::Fn);
+    }
+
+    #[test]
     fn parse_error_unknown_key() {
         assert!("Foobar".parse::<KeyAction>().is_err());
     }
@@ -493,6 +575,11 @@ mod tests {
     }
 
     #[test]
+    fn display_fn() {
+        assert_eq!(KeyAction::Fn.to_string(), "Fn");
+    }
+
+    #[test]
     fn display_unknown() {
         let u = KeyAction::Unknown {
             config_type: 22,
@@ -517,6 +604,19 @@ mod tests {
     }
 
     #[test]
+    fn wire_user_remap_format() {
+        // Firmware stores user remaps with keycode at byte 1 (byte 2 = 0)
+        assert_eq!(
+            KeyAction::from_config_bytes([0, 0x04, 0, 0]),
+            KeyAction::Key(0x04) // A
+        );
+        assert_eq!(
+            KeyAction::from_config_bytes([0, 0x29, 0, 0]),
+            KeyAction::Key(0x29) // Escape
+        );
+    }
+
+    #[test]
     fn wire_roundtrip_combo() {
         let a = KeyAction::Combo {
             mods: mods::LCTRL | mods::LSHIFT,
@@ -538,6 +638,28 @@ mod tests {
         let a = KeyAction::Macro { index: 3, kind: 1 };
         assert_eq!(a.to_config_bytes(), [9, 1, 3, 0]);
         assert_eq!(KeyAction::from_config_bytes(a.to_config_bytes()), a);
+    }
+
+    #[test]
+    fn wire_roundtrip_fn() {
+        let a = KeyAction::Fn;
+        assert_eq!(a.to_config_bytes(), [10, 1, 0, 0]);
+        assert_eq!(KeyAction::from_config_bytes(a.to_config_bytes()), a);
+    }
+
+    #[test]
+    fn wire_fn_other_subfunctions_stay_unknown() {
+        // config_type=10 with sub != 1 should remain Unknown
+        let bytes = [10, 14, 0, 0]; // volume<->brightness
+        let a = KeyAction::from_config_bytes(bytes);
+        assert!(matches!(
+            a,
+            KeyAction::Unknown {
+                config_type: 10,
+                ..
+            }
+        ));
+        assert_eq!(a.to_config_bytes(), bytes);
     }
 
     #[test]
@@ -569,6 +691,7 @@ mod tests {
             "Macro(0)",
             "Macro(1,toggle)",
             "Gamepad(5)",
+            "Fn",
         ];
         for input in cases {
             let action: KeyAction = input.parse().unwrap();
@@ -576,5 +699,91 @@ mod tests {
             let reparsed: KeyAction = displayed.parse().unwrap();
             assert_eq!(action, reparsed, "roundtrip failed for {input:?}");
         }
+    }
+
+    // --- Consumer key tests ---
+
+    #[test]
+    fn parse_consumer() {
+        // [3, 0, 0xe9, 0] → Consumer(0x00E9) = Volume Up
+        assert_eq!(
+            KeyAction::from_config_bytes([3, 0, 0xE9, 0]),
+            KeyAction::Consumer(0x00E9)
+        );
+        // [3, 0, 146, 1] → Consumer(0x0192) = Calculator (146 + 1*256 = 402 = 0x192)
+        assert_eq!(
+            KeyAction::from_config_bytes([3, 0, 0x92, 0x01]),
+            KeyAction::Consumer(0x0192)
+        );
+    }
+
+    #[test]
+    fn display_consumer_known() {
+        assert_eq!(KeyAction::Consumer(0x00E9).to_string(), "Volume Up");
+        assert_eq!(KeyAction::Consumer(0x00CD).to_string(), "Play/Pause");
+        assert_eq!(KeyAction::Consumer(0x0192).to_string(), "Calculator");
+        assert_eq!(KeyAction::Consumer(0x00B5).to_string(), "Next Track");
+        assert_eq!(KeyAction::Consumer(0x00E2).to_string(), "Mute");
+    }
+
+    #[test]
+    fn display_consumer_unknown() {
+        assert_eq!(KeyAction::Consumer(0x1234).to_string(), "Consumer(0x1234)");
+    }
+
+    #[test]
+    fn wire_roundtrip_consumer() {
+        let a = KeyAction::Consumer(0x00E9);
+        assert_eq!(a.to_config_bytes(), [3, 0, 0xE9, 0]);
+        assert_eq!(KeyAction::from_config_bytes(a.to_config_bytes()), a);
+
+        let b = KeyAction::Consumer(0x0192);
+        assert_eq!(b.to_config_bytes(), [3, 0, 0x92, 0x01]);
+        assert_eq!(KeyAction::from_config_bytes(b.to_config_bytes()), b);
+    }
+
+    // --- LedControl tests ---
+
+    #[test]
+    fn parse_led_control() {
+        assert_eq!(
+            KeyAction::from_config_bytes([13, 2, 1, 0]),
+            KeyAction::LedControl { data: [2, 1, 0] }
+        );
+    }
+
+    #[test]
+    fn display_led_control_known() {
+        assert_eq!(
+            KeyAction::LedControl { data: [2, 1, 0] }.to_string(),
+            "LED Brightness Up"
+        );
+        assert_eq!(
+            KeyAction::LedControl { data: [2, 2, 0] }.to_string(),
+            "LED Brightness Down"
+        );
+        assert_eq!(
+            KeyAction::LedControl { data: [3, 1, 0] }.to_string(),
+            "LED Speed Up"
+        );
+        assert_eq!(
+            KeyAction::LedControl { data: [3, 2, 0] }.to_string(),
+            "LED Speed Down"
+        );
+    }
+
+    #[test]
+    fn display_led_control_unknown() {
+        assert_eq!(
+            KeyAction::LedControl { data: [5, 1, 0] }.to_string(),
+            "LedControl(5,1,0)"
+        );
+    }
+
+    #[test]
+    fn wire_roundtrip_led_control() {
+        let a = KeyAction::LedControl { data: [2, 1, 0] };
+        assert_eq!(a.to_config_bytes(), [13, 2, 1, 0]);
+        assert_eq!(KeyAction::from_config_bytes(a.to_config_bytes()), a);
     }
 }
