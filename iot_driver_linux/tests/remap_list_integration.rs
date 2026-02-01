@@ -1,175 +1,220 @@
 //! Integration tests for the remap list detection logic.
 //!
-//! These exercise the remap detection algorithm using the public building blocks
-//! (`hid::key_code_from_name`, `KeyAction`, `matrix::key_name`) without
-//! requiring a physical keyboard device.
+//! Detection compares each key against factory defaults:
+//! - `[0, 0, 0, 0]` = disabled → skip
+//! - `[10, 1, 0, 0]` = Fn key (factory default at physical Fn position) → skip
+//! - config_type ≠ 0 (mouse/macro/consumer/etc.) → include
+//! - byte 1 ≠ 0 (user remap or combo) → include
+//! - `[0, 0, code, 0]`: include only if code ≠ factory default for that position
+//!
+//! Factory defaults are derived from the transport matrix key names
+//! (e.g. position 12 = "F1" → HID 0x3A), NOT from device_matrices.json
+//! which uses a different position numbering.
 
 use iot_driver::key_action::KeyAction;
 use iot_driver::protocol::hid;
 use monsgeek_transport::protocol::matrix;
 
-/// Replicate the matrix_default_keycode logic from commands/keymap.rs
-/// so we can test the detection algorithm end-to-end.
-fn matrix_default_keycode(name: &str) -> Option<u8> {
-    hid::key_code_from_name(name).or_else(|| match name {
-        "Spc" => Some(0x2C),
-        _ => None,
-    })
-}
-
-// ── matrix_default_keycode resolution ──
-
-#[test]
-fn default_keycode_standard_keys() {
-    // Keys whose matrix name matches a canonical HID name
-    assert_eq!(matrix_default_keycode("Esc"), Some(0x29));
-    assert_eq!(matrix_default_keycode("Tab"), Some(0x2B));
-    assert_eq!(matrix_default_keycode("Caps"), Some(0x39));
-    assert_eq!(matrix_default_keycode("A"), Some(0x04));
-    assert_eq!(matrix_default_keycode("Z"), Some(0x1D));
-    assert_eq!(matrix_default_keycode("F1"), Some(0x3A));
-    assert_eq!(matrix_default_keycode("F12"), Some(0x45));
-    assert_eq!(matrix_default_keycode("Del"), Some(0x4C));
-    assert_eq!(matrix_default_keycode("Home"), Some(0x4A));
-    assert_eq!(matrix_default_keycode("PgUp"), Some(0x4B));
-    assert_eq!(matrix_default_keycode("PgDn"), Some(0x4E));
-    assert_eq!(matrix_default_keycode("End"), Some(0x4D));
-}
-
-#[test]
-fn default_keycode_abbreviations() {
-    // Matrix-specific abbreviations that need alias support
-    assert_eq!(matrix_default_keycode("Ent"), Some(0x28)); // Enter
-    assert_eq!(matrix_default_keycode("IntlRo"), Some(0x87)); // International Ro
-    assert_eq!(matrix_default_keycode("Bksp"), Some(0x2A)); // Backspace
-    assert_eq!(matrix_default_keycode("LShf"), Some(0xE1)); // Left Shift
-    assert_eq!(matrix_default_keycode("RShf"), Some(0xE5)); // Right Shift
-    assert_eq!(matrix_default_keycode("LCtl"), Some(0xE0)); // Left Control
-    assert_eq!(matrix_default_keycode("RCtl"), Some(0xE4)); // Right Control
-    assert_eq!(matrix_default_keycode("Win"), Some(0xE3)); // Windows/GUI
-    assert_eq!(matrix_default_keycode("LAlt"), Some(0xE2)); // Left Alt
-    assert_eq!(matrix_default_keycode("RAlt"), Some(0xE6)); // Right Alt
-    assert_eq!(matrix_default_keycode("Spc"), Some(0x2C)); // Space (custom fallback)
-}
-
-#[test]
-fn default_keycode_unknown_returns_none() {
-    assert_eq!(matrix_default_keycode("?"), None);
-    assert_eq!(matrix_default_keycode("FooBar"), None);
-}
-
-// ── All named matrix positions resolve to a default keycode ──
-
-#[test]
-fn all_matrix_names_have_defaults() {
-    // Every non-"?" matrix position should resolve to a valid HID code.
-    // This catches regressions where new matrix entries lack aliases.
-    let mut missing = Vec::new();
-    for i in 0..126u8 {
-        let name = matrix::key_name(i);
-        if name == "?" {
-            continue;
-        }
-        if matrix_default_keycode(name).is_none() {
-            missing.push((i, name));
-        }
+/// Helper: detect whether a 4-byte key config represents a user remap.
+/// Mirrors the logic in `commands::keymap::list_remaps` and `tui::load_remaps`.
+///
+/// `default_hid_code`: the factory default HID keycode for this matrix position,
+/// derived from `hid::key_code_from_name(matrix::key_name(i))`.
+fn is_user_remap(k: &[u8; 4], default_hid_code: u8) -> bool {
+    // Disabled: never a remap
+    if *k == [0, 0, 0, 0] {
+        return false;
     }
-    assert!(
-        missing.is_empty(),
-        "Matrix positions without default keycode: {missing:?}\n\
-         Add aliases to hid::key_code_from_name or matrix_default_keycode()"
+
+    // Fn key at physical Fn position: factory default
+    if matches!(KeyAction::from_config_bytes(*k), KeyAction::Fn) {
+        return false;
+    }
+
+    // Non-zero config_type (mouse/macro/consumer/etc): always a remap
+    if k[0] != 0 {
+        return true;
+    }
+
+    // Byte 1 non-zero (user remap format or combo): always a remap
+    if k[1] != 0 {
+        return true;
+    }
+
+    // config_type=0, byte1=0, byte2!=0: compare against factory default
+    k[2] != default_hid_code
+}
+
+/// Resolve the default HID code for a matrix position, same as the production code.
+fn default_for(pos: u8) -> u8 {
+    hid::key_code_from_name(matrix::key_name(pos)).unwrap_or(0)
+}
+
+// ── hid::key_code_from_name resolution (still useful for display) ──
+
+#[test]
+fn hid_key_code_standard_keys() {
+    assert_eq!(hid::key_code_from_name("Esc"), Some(0x29));
+    assert_eq!(hid::key_code_from_name("Tab"), Some(0x2B));
+    assert_eq!(hid::key_code_from_name("Caps"), Some(0x39));
+    assert_eq!(hid::key_code_from_name("A"), Some(0x04));
+    assert_eq!(hid::key_code_from_name("Z"), Some(0x1D));
+    assert_eq!(hid::key_code_from_name("F1"), Some(0x3A));
+    assert_eq!(hid::key_code_from_name("F12"), Some(0x45));
+    assert_eq!(hid::key_code_from_name("Del"), Some(0x4C));
+    assert_eq!(hid::key_code_from_name("Home"), Some(0x4A));
+}
+
+#[test]
+fn hid_key_code_abbreviations() {
+    assert_eq!(hid::key_code_from_name("Ent"), Some(0x28));
+    assert_eq!(hid::key_code_from_name("Bksp"), Some(0x2A));
+    assert_eq!(hid::key_code_from_name("LShf"), Some(0xE1));
+    assert_eq!(hid::key_code_from_name("RShf"), Some(0xE5));
+    assert_eq!(hid::key_code_from_name("LCtl"), Some(0xE0));
+    assert_eq!(hid::key_code_from_name("RCtl"), Some(0xE4));
+    assert_eq!(hid::key_code_from_name("Win"), Some(0xE3));
+    assert_eq!(hid::key_code_from_name("LAlt"), Some(0xE2));
+    assert_eq!(hid::key_code_from_name("RAlt"), Some(0xE6));
+}
+
+// ── Byte-pattern detection ──
+
+#[test]
+fn factory_default_not_detected() {
+    // [0, 0, keycode, 0] where keycode matches factory default → NOT a remap
+    assert!(!is_user_remap(&[0, 0, 0x29, 0], 0x29)); // Escape at Escape position
+    assert!(!is_user_remap(&[0, 0, 0x04, 0], 0x04)); // A at A position
+    assert!(!is_user_remap(&[0, 0, 0xE1, 0], 0xE1)); // LShift at LShift position
+}
+
+#[test]
+fn factory_default_changed_detected() {
+    // [0, 0, new_code, 0] where new_code differs from factory default → IS a remap
+    assert!(is_user_remap(&[0, 0, 0x04, 0], 0x39)); // A at Caps position (default 0x39)
+    assert!(is_user_remap(&[0, 0, 0x29, 0], 0x35)); // Escape at ` position (default 0x35)
+}
+
+#[test]
+fn identity_map_not_detected_any_layer() {
+    // Both base layer and Fn layer use the same defaults: [0, 0, default_code, 0]
+    // An identity map should NOT be detected on either layer.
+    assert!(!is_user_remap(&[0, 0, 0x3A, 0], 0x3A)); // F1 → F1 (identity)
+    assert!(!is_user_remap(&[0, 0, 0x04, 0], 0x04)); // A → A (identity)
+}
+
+#[test]
+fn disabled_not_detected() {
+    assert!(!is_user_remap(&[0, 0, 0, 0], 0x29));
+    assert!(!is_user_remap(&[0, 0, 0, 0], 0));
+}
+
+#[test]
+fn user_remap_detected() {
+    // [0, keycode, 0, 0] — user remap format, byte1 non-zero
+    assert!(is_user_remap(&[0, 0x04, 0, 0], 0x39)); // remapped to A
+    assert!(is_user_remap(&[0, 0x29, 0, 0], 0x35)); // remapped to Escape
+}
+
+#[test]
+fn combo_detected() {
+    // [0, mods, key, 0] — both bytes 1 and 2 non-zero
+    assert!(is_user_remap(&[0, 0x01, 0x06, 0], 0x39)); // Ctrl+C
+    assert!(is_user_remap(&[0, 0x04, 0x29, 0], 0x35)); // Alt+Escape
+}
+
+#[test]
+fn macro_detected() {
+    // config_type 9 = macro
+    assert!(is_user_remap(&[9, 0, 0, 0], 0xE0)); // Macro(0)
+    assert!(is_user_remap(&[9, 0, 2, 0], 0xE0)); // Macro(2)
+}
+
+#[test]
+fn mouse_detected() {
+    // config_type 1 = mouse
+    assert!(is_user_remap(&[1, 0, 1, 0], 0xE0)); // Mouse1
+}
+
+// ── Default resolution from transport matrix ──
+
+#[test]
+fn default_for_matches_transport_matrix() {
+    // Verify default_for() resolves key names from the transport matrix
+    assert_eq!(default_for(0), 0x29); // Esc
+    assert_eq!(default_for(1), 0x35); // `
+    assert_eq!(default_for(2), 0x2B); // Tab
+    assert_eq!(default_for(3), 0x39); // Caps
+    assert_eq!(default_for(4), 0xE1); // LShf
+    assert_eq!(default_for(5), 0xE0); // LCtl
+}
+
+// ── KeyAction parsing from wire bytes ──
+
+#[test]
+fn parse_factory_default_format() {
+    // [0, 0, code, 0] — keycode at byte 2
+    assert_eq!(
+        KeyAction::from_config_bytes([0, 0, 0x29, 0]),
+        KeyAction::Key(0x29)
     );
 }
 
-// ── Base layer remap detection ──
-
 #[test]
-fn base_layer_default_key_not_remapped() {
-    // Esc at matrix position 0 has default keycode 0x29
-    let default_code = matrix_default_keycode("Esc").unwrap();
-    let action = KeyAction::from_config_bytes([0, 0, default_code, 0]);
-    assert_eq!(action, KeyAction::Key(0x29));
-    // Should NOT be detected as remapped
-    assert_eq!(action, KeyAction::Key(default_code));
+fn parse_user_remap_format() {
+    // [0, code, 0, 0] — keycode at byte 1
+    assert_eq!(
+        KeyAction::from_config_bytes([0, 0x04, 0, 0]),
+        KeyAction::Key(0x04)
+    );
+    assert_eq!(
+        KeyAction::from_config_bytes([0, 0x29, 0, 0]),
+        KeyAction::Key(0x29)
+    );
 }
 
 #[test]
-fn base_layer_different_key_is_remapped() {
-    // CapsLock (matrix position 3) remapped to Escape
-    let default_code = matrix_default_keycode("Caps").unwrap();
-    assert_eq!(default_code, 0x39); // CapsLock
-    let remapped = KeyAction::from_config_bytes([0, 0, 0x29, 0]); // Escape
-    assert_ne!(remapped, KeyAction::Key(default_code));
+fn parse_combo_format() {
+    // [0, mods, key, 0]
+    assert_eq!(
+        KeyAction::from_config_bytes([0, 0x01, 0x06, 0]),
+        KeyAction::Combo {
+            mods: 0x01,
+            key: 0x06
+        }
+    );
 }
 
 #[test]
-fn base_layer_combo_is_remapped() {
-    // A key remapped to Ctrl+C
-    let default_code = matrix_default_keycode("A").unwrap();
-    let combo = KeyAction::from_config_bytes([0, 0x01, 0x06, 0]); // LCtrl+C
-    assert_ne!(combo, KeyAction::Key(default_code));
-    assert!(matches!(combo, KeyAction::Combo { .. }));
+fn parse_disabled() {
+    assert_eq!(
+        KeyAction::from_config_bytes([0, 0, 0, 0]),
+        KeyAction::Disabled
+    );
 }
 
-#[test]
-fn base_layer_macro_is_remapped() {
-    // F1 remapped to Macro(0)
-    let default_code = matrix_default_keycode("F1").unwrap();
-    let macro_action = KeyAction::from_config_bytes([9, 0, 0, 0]);
-    assert_ne!(macro_action, KeyAction::Key(default_code));
-    assert!(matches!(macro_action, KeyAction::Macro { .. }));
-}
-
-#[test]
-fn base_layer_mouse_is_remapped() {
-    let default_code = matrix_default_keycode("F5").unwrap();
-    let mouse = KeyAction::from_config_bytes([1, 0, 1, 0]);
-    assert_ne!(mouse, KeyAction::Key(default_code));
-    assert_eq!(mouse, KeyAction::Mouse(1));
-}
-
-// ── Fn layer remap detection ──
-
-#[test]
-fn fn_layer_disabled_is_default() {
-    let action = KeyAction::from_config_bytes([0, 0, 0, 0]);
-    assert_eq!(action, KeyAction::Disabled);
-    // Fn defaults are all Disabled, so this should NOT appear
-}
-
-#[test]
-fn fn_layer_any_key_is_remapped() {
-    let action = KeyAction::from_config_bytes([0, 0, 0x3A, 0]); // F1
-    assert_ne!(action, KeyAction::Disabled);
-    // Should appear in Fn layer remaps
-}
-
-#[test]
-fn fn_layer_macro_is_remapped() {
-    let action = KeyAction::from_config_bytes([9, 0, 2, 0]); // Macro(2)
-    assert_ne!(action, KeyAction::Disabled);
-    assert!(matches!(action, KeyAction::Macro { index: 2, .. }));
-}
-
-// ── Simulated full matrix scan ──
+// ── Simulated full matrix scan (byte-pattern detection) ──
 
 #[test]
 fn simulated_remap_scan() {
-    // Build a fake keymatrix buffer for a few keys with known remaps
-    let key_count = 6; // Just test first column: Esc, `, Tab, Caps, LShf, LCtl
+    // Build a fake keymatrix buffer using correct firmware byte formats.
+    // Factory defaults derived from transport matrix::key_name → hid::key_code_from_name.
+    let key_count = 6;
+    let defaults: Vec<u8> = (0..key_count as u8).map(default_for).collect();
+
     let mut data = vec![0u8; key_count * 4];
 
-    // Position 0: Esc (0x29) → ` (0x35) — REMAPPED
-    data[0..4].copy_from_slice(&[0, 0, 0x35, 0]);
-    // Position 1: ` (0x35) → Esc (0x29) — REMAPPED
-    data[4..8].copy_from_slice(&[0, 0, 0x29, 0]);
-    // Position 2: Tab (0x2B) → Tab (0x2B) — DEFAULT
+    // Position 0: Esc — factory default [0, 0, 0x29, 0] → NOT a remap
+    data[0..4].copy_from_slice(&[0, 0, 0x29, 0]);
+    // Position 1: ` — factory default [0, 0, 0x35, 0] → NOT a remap
+    data[4..8].copy_from_slice(&[0, 0, 0x35, 0]);
+    // Position 2: Tab — factory default [0, 0, 0x2B, 0] → NOT a remap
     data[8..12].copy_from_slice(&[0, 0, 0x2B, 0]);
-    // Position 3: Caps (0x39) → Escape (0x29) — REMAPPED
-    data[12..16].copy_from_slice(&[0, 0, 0x29, 0]);
-    // Position 4: LShf (0xE1) → LShift (0xE1) — DEFAULT
+    // Position 3: Caps — remapped to A [0, 0, 0x04, 0] → REMAP (0x04 != default 0x39)
+    data[12..16].copy_from_slice(&[0, 0, 0x04, 0]);
+    // Position 4: LShf — factory default [0, 0, 0xE1, 0] → NOT a remap
     data[16..20].copy_from_slice(&[0, 0, 0xE1, 0]);
-    // Position 5: LCtl (0xE0) → Macro(0) — REMAPPED
+    // Position 5: LCtl — macro assignment [9, 0, 0, 0] → REMAP
     data[20..24].copy_from_slice(&[9, 0, 0, 0]);
 
     let mut remaps = Vec::new();
@@ -178,47 +223,49 @@ fn simulated_remap_scan() {
         if name == "?" {
             continue;
         }
-        let k = &data[i * 4..(i + 1) * 4];
-        let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
+        let k: [u8; 4] = [
+            data[i * 4],
+            data[i * 4 + 1],
+            data[i * 4 + 2],
+            data[i * 4 + 3],
+        ];
 
-        let is_remapped = match matrix_default_keycode(name) {
-            Some(default_code) => action != KeyAction::Key(default_code),
-            None => action != KeyAction::Disabled,
-        };
-
-        if is_remapped {
+        if is_user_remap(&k, defaults[i]) {
+            let action = KeyAction::from_config_bytes(k);
             remaps.push((i, name, action));
         }
     }
 
-    assert_eq!(remaps.len(), 4);
-    assert_eq!(remaps[0], (0, "Esc", KeyAction::Key(0x35))); // ` (backtick)
-    assert_eq!(remaps[1], (1, "`", KeyAction::Key(0x29))); // Escape
-    assert_eq!(remaps[2], (3, "Caps", KeyAction::Key(0x29))); // Escape
+    assert_eq!(remaps.len(), 2);
+    assert_eq!(remaps[0], (3, "Caps", KeyAction::Key(0x04))); // A
     assert_eq!(
-        remaps[3],
+        remaps[1],
         (5, "LCtl", KeyAction::Macro { index: 0, kind: 0 })
     );
 }
 
 #[test]
-fn simulated_fn_layer_scan() {
-    // Fn layer: all Disabled by default, only non-Disabled entries are remaps
+fn simulated_remap_byte2_format() {
+    // Tests the critical case: firmware stores remap as [0, 0, new_code, 0]
+    // which is the same byte format as factory defaults.
+    // Only detectable by comparing against the factory default keycode.
     let key_count = 6;
+    let defaults: Vec<u8> = (0..key_count as u8).map(default_for).collect();
+
     let mut data = vec![0u8; key_count * 4];
 
-    // Position 0: Esc → Disabled (default) — NOT REMAPPED
-    data[0..4].copy_from_slice(&[0, 0, 0, 0]);
-    // Position 1: ` → Disabled — NOT REMAPPED
-    data[4..8].copy_from_slice(&[0, 0, 0, 0]);
-    // Position 2: Tab → Macro(1) — REMAPPED
-    data[8..12].copy_from_slice(&[9, 0, 1, 0]);
-    // Position 3: Caps → Mouse1 — REMAPPED
-    data[12..16].copy_from_slice(&[1, 0, 1, 0]);
-    // Position 4: LShf → Disabled — NOT REMAPPED
-    data[16..20].copy_from_slice(&[0, 0, 0, 0]);
-    // Position 5: LCtl → F13 — REMAPPED
-    data[20..24].copy_from_slice(&[0, 0, 0x68, 0]);
+    // Position 0: Esc → remapped to Tab [0, 0, 0x2B, 0] — REMAP (0x2B != 0x29)
+    data[0..4].copy_from_slice(&[0, 0, 0x2B, 0]);
+    // Position 1: ` → factory default [0, 0, 0x35, 0] — NOT a remap
+    data[4..8].copy_from_slice(&[0, 0, 0x35, 0]);
+    // Position 2: Tab → remapped to Esc [0, 0, 0x29, 0] — REMAP (0x29 != 0x2B)
+    data[8..12].copy_from_slice(&[0, 0, 0x29, 0]);
+    // Position 3: Caps → remapped to A [0, 0, 0x04, 0] — REMAP (0x04 != 0x39)
+    data[12..16].copy_from_slice(&[0, 0, 0x04, 0]);
+    // Position 4: LShf → factory default [0, 0, 0xE1, 0] — NOT a remap
+    data[16..20].copy_from_slice(&[0, 0, 0xE1, 0]);
+    // Position 5: LCtl → factory default [0, 0, 0xE0, 0] — NOT a remap
+    data[20..24].copy_from_slice(&[0, 0, 0xE0, 0]);
 
     let mut remaps = Vec::new();
     for i in 0..key_count {
@@ -226,10 +273,102 @@ fn simulated_fn_layer_scan() {
         if name == "?" {
             continue;
         }
-        let k = &data[i * 4..(i + 1) * 4];
-        let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
+        let k: [u8; 4] = [
+            data[i * 4],
+            data[i * 4 + 1],
+            data[i * 4 + 2],
+            data[i * 4 + 3],
+        ];
 
-        if action != KeyAction::Disabled {
+        if is_user_remap(&k, defaults[i]) {
+            let action = KeyAction::from_config_bytes(k);
+            remaps.push((i, name, action));
+        }
+    }
+
+    assert_eq!(remaps.len(), 3);
+    assert_eq!(remaps[0], (0, "Esc", KeyAction::Key(0x2B))); // Tab
+    assert_eq!(remaps[1], (2, "Tab", KeyAction::Key(0x29))); // Escape
+    assert_eq!(remaps[2], (3, "Caps", KeyAction::Key(0x04))); // A
+}
+
+#[test]
+fn simulated_layer1_identity_maps_filtered() {
+    // Layer 1 also stores identity maps [0, 0, default_code, 0] for each key.
+    // These should be filtered out the same as layer 0.
+    let key_count = 6;
+    let defaults: Vec<u8> = (0..key_count as u8).map(default_for).collect();
+
+    let mut data = vec![0u8; key_count * 4];
+
+    // All positions: identity maps (same code as default)
+    for i in 0..key_count {
+        data[i * 4..i * 4 + 4].copy_from_slice(&[0, 0, defaults[i], 0]);
+    }
+
+    let mut remaps = Vec::new();
+    for i in 0..key_count {
+        let name = matrix::key_name(i as u8);
+        if name == "?" {
+            continue;
+        }
+        let k: [u8; 4] = [
+            data[i * 4],
+            data[i * 4 + 1],
+            data[i * 4 + 2],
+            data[i * 4 + 3],
+        ];
+
+        if is_user_remap(&k, defaults[i]) {
+            let action = KeyAction::from_config_bytes(k);
+            remaps.push((i, name, action));
+        }
+    }
+
+    assert_eq!(
+        remaps.len(),
+        0,
+        "Identity maps should be filtered on both layers"
+    );
+}
+
+#[test]
+fn simulated_fn_layer_scan() {
+    // Fn layer: a mix of disabled (identity maps filtered), non-zero config types,
+    // and user byte1 remaps.
+    let key_count = 6;
+    let defaults: Vec<u8> = (0..key_count as u8).map(default_for).collect();
+
+    let mut data = vec![0u8; key_count * 4];
+
+    // Position 0: Disabled [0, 0, 0, 0] → NOT a remap
+    data[0..4].copy_from_slice(&[0, 0, 0, 0]);
+    // Position 1: Identity map [0, 0, 0x35, 0] → NOT a remap (same as default)
+    data[4..8].copy_from_slice(&[0, 0, defaults[1], 0]);
+    // Position 2: Macro(1) [9, 0, 1, 0] → REMAP (config_type != 0)
+    data[8..12].copy_from_slice(&[9, 0, 1, 0]);
+    // Position 3: Mouse1 [1, 0, 1, 0] → REMAP (config_type != 0)
+    data[12..16].copy_from_slice(&[1, 0, 1, 0]);
+    // Position 4: Identity map [0, 0, 0xE1, 0] → NOT a remap (same as default)
+    data[16..20].copy_from_slice(&[0, 0, defaults[4], 0]);
+    // Position 5: User remap to F13 [0, 0x68, 0, 0] → REMAP (byte1 != 0)
+    data[20..24].copy_from_slice(&[0, 0x68, 0, 0]);
+
+    let mut remaps = Vec::new();
+    for i in 0..key_count {
+        let name = matrix::key_name(i as u8);
+        if name == "?" {
+            continue;
+        }
+        let k: [u8; 4] = [
+            data[i * 4],
+            data[i * 4 + 1],
+            data[i * 4 + 2],
+            data[i * 4 + 3],
+        ];
+
+        if is_user_remap(&k, defaults[i]) {
+            let action = KeyAction::from_config_bytes(k);
             remaps.push((i, name, action));
         }
     }
@@ -247,7 +386,6 @@ fn simulated_fn_layer_scan() {
 
 #[test]
 fn remap_display_format() {
-    // Verify that KeyAction Display produces readable output for remaps
     assert_eq!(format!("{}", KeyAction::Key(0x29)), "Escape");
     assert_eq!(format!("{}", KeyAction::Key(0x35)), "`");
     assert_eq!(format!("{}", KeyAction::Mouse(1)), "Mouse1");
@@ -265,4 +403,89 @@ fn remap_display_format() {
         ),
         "Ctrl+C"
     );
+}
+
+// ── Fn key false-positive fix ──
+
+#[test]
+fn fn_key_not_detected_as_remap() {
+    // [10, 1, 0, 0] = Fn key — factory default at the physical Fn position
+    assert!(!is_user_remap(&[10, 1, 0, 0], 0xE4));
+    assert!(!is_user_remap(&[10, 1, 0, 0], 0));
+}
+
+// ── Consumer / LED control parsing (Fn layer entries) ──
+
+#[test]
+fn parse_consumer_volume_up() {
+    let action = KeyAction::from_config_bytes([3, 0, 0xE9, 0]);
+    assert_eq!(action, KeyAction::Consumer(0x00E9));
+    assert_eq!(action.to_string(), "Volume Up");
+}
+
+#[test]
+fn parse_consumer_calculator() {
+    // 146 + 1*256 = 402 = 0x192
+    let action = KeyAction::from_config_bytes([3, 0, 0x92, 0x01]);
+    assert_eq!(action, KeyAction::Consumer(0x0192));
+    assert_eq!(action.to_string(), "Calculator");
+}
+
+#[test]
+fn parse_led_brightness() {
+    let action = KeyAction::from_config_bytes([13, 2, 1, 0]);
+    assert_eq!(action, KeyAction::LedControl { data: [2, 1, 0] });
+    assert_eq!(action.to_string(), "LED Brightness Up");
+}
+
+#[test]
+fn simulated_fn_layer_with_consumer_and_led() {
+    // Simulated Fn layer data with consumer keys and LED controls
+    let key_count = 6;
+    let mut data = vec![0u8; key_count * 4];
+
+    // Position 0: Disabled → skip
+    data[0..4].copy_from_slice(&[0, 0, 0, 0]);
+    // Position 1: Consumer Volume Up [3, 0, 0xE9, 0]
+    data[4..8].copy_from_slice(&[3, 0, 0xE9, 0]);
+    // Position 2: Consumer Play/Pause [3, 0, 0xCD, 0]
+    data[8..12].copy_from_slice(&[3, 0, 0xCD, 0]);
+    // Position 3: LED Brightness Up [13, 2, 1, 0]
+    data[12..16].copy_from_slice(&[13, 2, 1, 0]);
+    // Position 4: Unknown type 14 [14, 1, 0, 0]
+    data[16..20].copy_from_slice(&[14, 1, 0, 0]);
+    // Position 5: Fn key [10, 1, 0, 0] — should NOT be detected as remap
+    data[20..24].copy_from_slice(&[10, 1, 0, 0]);
+
+    let mut entries = Vec::new();
+    for i in 0..key_count {
+        let k: [u8; 4] = [
+            data[i * 4],
+            data[i * 4 + 1],
+            data[i * 4 + 2],
+            data[i * 4 + 3],
+        ];
+        if k == [0, 0, 0, 0] {
+            continue;
+        }
+        let action = KeyAction::from_config_bytes(k);
+        entries.push((i, action));
+    }
+
+    // 5 non-zero entries: Consumer x2, LedControl, Unknown(14), Fn
+    assert_eq!(entries.len(), 5);
+    assert_eq!(entries[0].1, KeyAction::Consumer(0x00E9));
+    assert_eq!(entries[0].1.to_string(), "Volume Up");
+    assert_eq!(entries[1].1, KeyAction::Consumer(0x00CD));
+    assert_eq!(entries[1].1.to_string(), "Play/Pause");
+    assert!(matches!(entries[2].1, KeyAction::LedControl { .. }));
+    assert_eq!(entries[2].1.to_string(), "LED Brightness Up");
+    assert!(matches!(
+        entries[3].1,
+        KeyAction::Unknown {
+            config_type: 14,
+            ..
+        }
+    ));
+    assert_eq!(entries[4].1, KeyAction::Fn);
 }

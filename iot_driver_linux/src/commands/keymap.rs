@@ -99,7 +99,7 @@ pub fn swap(key1: &str, key2: &str, layer: u8) -> CommandResult {
     };
 
     with_keyboard(|keyboard| {
-        match keyboard.get_keymatrix(layer, 2) {
+        match keyboard.get_keymatrix(layer, 8) {
             Ok(data) => {
                 let code_a = if (key_a as usize) * 4 + 2 < data.len() {
                     data[(key_a as usize) * 4 + 2]
@@ -141,33 +141,33 @@ pub struct Remap {
     pub action: KeyAction,
 }
 
-/// Resolve the expected default HID keycode for a matrix position name.
+/// Read both layers from the keyboard and return only user-modified keys.
 ///
-/// Uses `hid::key_code_from_name` plus a small fallback table for
-/// matrix-specific abbreviations that don't match canonical HID names.
-pub fn matrix_default_keycode(name: &str) -> Option<u8> {
-    hid::key_code_from_name(name).or(match name {
-        "Spc" => Some(0x2C), // Space
-        _ => None,
-    })
-}
-
-/// Read both layers from the keyboard and return only non-default keys.
+/// Detection compares each key against factory defaults:
+/// - `[0, 0, 0, 0]` = disabled → skip
+/// - `[10, 1, 0, 0]` = Fn key (factory default at physical Fn position) → skip
+/// - config_type ≠ 0 (mouse/macro/consumer/etc.) → include
+/// - byte 1 ≠ 0 (user remap or combo) → include
+/// - `[0, 0, code, 0]`: include only if code ≠ factory default for that position
 ///
-/// Detection logic per matrix position `i`:
-/// - Skip positions named `"?"` (unused matrix slots).
-/// - **Base layer (0):** Compare current action against `KeyAction::Key(default_code)`.
-///   Include if different, or if the action is not a simple Key.
-/// - **Fn layer (1):** Include any entry that isn't `Disabled`
-///   (Fn defaults are all disabled for user-assignable keys).
+/// Factory defaults are derived from the transport matrix key names
+/// (e.g. position 12 = "F1" → HID 0x3A). Both layers use the same defaults
+/// since both store identity maps `[0, 0, default_code, 0]` in their base state.
 pub fn list_remaps(
     keyboard: &monsgeek_keyboard::SyncKeyboard,
 ) -> Result<Vec<Remap>, monsgeek_keyboard::KeyboardError> {
     let key_count = keyboard.key_count() as usize;
+
+    // Build factory default keycodes from the transport's matrix key names.
+    // Each position has a name (e.g. "F1", "A") that resolves to its default HID code.
+    let defaults: Vec<u8> = (0..key_count as u8)
+        .map(|i| hid::key_code_from_name(matrix::key_name(i)).unwrap_or(0))
+        .collect();
+
     let mut remaps = Vec::new();
 
     for layer in 0..2u8 {
-        let data = keyboard.get_keymatrix(layer, 3)?;
+        let data = keyboard.get_keymatrix(layer, 8)?;
 
         for i in 0..key_count {
             if i * 4 + 3 >= data.len() {
@@ -179,34 +179,48 @@ pub fn list_remaps(
             }
 
             let k = &data[i * 4..(i + 1) * 4];
+
+            // Disabled entries are never remaps
+            if k == [0, 0, 0, 0] {
+                continue;
+            }
+
             let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
 
-            let is_remapped = if layer == 0 {
-                // Base layer: compare against expected default
-                match matrix_default_keycode(name) {
-                    Some(default_code) => action != KeyAction::Key(default_code),
-                    None => action != KeyAction::Disabled,
-                }
-            } else {
-                // Fn layer: anything that isn't Disabled is a remap
-                action != KeyAction::Disabled
-            };
+            // Fn key at physical position is factory default
+            if matches!(action, KeyAction::Fn) {
+                continue;
+            }
 
-            if is_remapped {
+            // Non-key config types or user byte format (byte1 != 0) are always remaps
+            if k[0] != 0 || k[1] != 0 {
                 remaps.push(Remap {
                     index: i as u8,
                     position: name,
                     layer,
                     action,
                 });
+                continue;
             }
+
+            // config_type=0, byte1=0, byte2!=0: compare against factory default
+            if k[2] == defaults[i] {
+                continue; // matches factory default (identity map)
+            }
+
+            remaps.push(Remap {
+                index: i as u8,
+                position: name,
+                layer,
+                action,
+            });
         }
     }
 
     Ok(remaps)
 }
 
-/// CLI handler: list all key remappings.
+/// CLI handler: list key remappings.
 pub fn remap_list(layer_filter: Option<u8>) -> CommandResult {
     with_keyboard(|keyboard| {
         let remaps = match list_remaps(keyboard) {
@@ -229,25 +243,52 @@ pub fn remap_list(layer_filter: Option<u8>) -> CommandResult {
 
         println!("Key remappings:\n");
 
-        // Base layer
-        let base: Vec<&&Remap> = remaps.iter().filter(|r| r.layer == 0).collect();
-        if !base.is_empty() {
-            println!("Base layer:");
-            for r in &base {
+        for layer in 0..2u8 {
+            let layer_remaps: Vec<&&Remap> = remaps.iter().filter(|r| r.layer == layer).collect();
+            if layer_remaps.is_empty() {
+                continue;
+            }
+            println!("Layer {layer}:");
+            for r in &layer_remaps {
                 println!("  {:<12} ({:<3}) → {}", r.position, r.index, r.action);
             }
             println!();
         }
 
-        // Fn layer
-        let fnl: Vec<&&Remap> = remaps.iter().filter(|r| r.layer == 1).collect();
-        if !fnl.is_empty() {
-            println!("Fn layer:");
-            for r in &fnl {
-                println!("  {:<12} ({:<3}) → {}", r.position, r.index, r.action);
-            }
-        }
+        Ok(())
+    })
+}
 
+/// Show the Fn layer key bindings (media keys, LED controls, etc.)
+pub fn fn_layout(sys: &str) -> CommandResult {
+    with_keyboard(|keyboard| {
+        let sys_code: u8 = match sys {
+            "mac" => 1,
+            _ => 0,
+        };
+        let data = match keyboard.get_fn_keymatrix(0, sys_code, 8) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to read Fn layer: {e}");
+                return Ok(());
+            }
+        };
+
+        println!("Fn layer ({sys} mode):\n");
+        for i in 0..(data.len() / 4) {
+            let k: [u8; 4] = [
+                data[i * 4],
+                data[i * 4 + 1],
+                data[i * 4 + 2],
+                data[i * 4 + 3],
+            ];
+            if k == [0, 0, 0, 0] {
+                continue;
+            }
+            let name = matrix::key_name(i as u8);
+            let action = KeyAction::from_config_bytes(k);
+            println!("  {:<12} ({:<3}) -> {}", name, i, action);
+        }
         Ok(())
     })
 }
@@ -257,7 +298,7 @@ pub fn keymatrix(layer: u8) -> CommandResult {
     with_keyboard(|keyboard| {
         println!("Reading key matrix for layer {layer}...");
 
-        match keyboard.get_keymatrix(layer, 3) {
+        match keyboard.get_keymatrix(layer, 8) {
             Ok(data) => {
                 let key_count = keyboard.key_count() as usize;
                 println!("\nKey mappings (layer {layer}):");

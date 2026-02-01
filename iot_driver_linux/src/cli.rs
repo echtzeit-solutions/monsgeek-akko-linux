@@ -282,12 +282,20 @@ pub enum Commands {
         layer: u8,
     },
 
-    /// List all key remappings (non-default bindings)
-    #[command(visible_alias = "remap-list")]
+    /// List key remappings (non-default bindings)
+    #[command(visible_alias = "remaps")]
     RemapList {
         /// Layer: 0=base, 1=fn, omit=both
         #[arg(short, long)]
         layer: Option<u8>,
+    },
+
+    /// Show the Fn layer key bindings (media keys, LED controls, etc.)
+    #[command(visible_alias = "fnl")]
+    FnLayout {
+        /// OS mode: "win" or "mac"
+        #[arg(long, default_value = "win")]
+        sys: String,
     },
 
     /// Show key matrix mappings

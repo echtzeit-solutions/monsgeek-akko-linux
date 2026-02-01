@@ -166,6 +166,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::RemapList { layer }) => {
             commands::keymap::remap_list(layer)?;
         }
+        Some(Commands::FnLayout { sys }) => {
+            commands::keymap::fn_layout(&sys)?;
+        }
         Some(Commands::Keymatrix { layer }) => {
             commands::keymap::keymatrix(layer)?;
         }
