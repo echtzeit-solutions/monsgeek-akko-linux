@@ -26,10 +26,13 @@ use std::path::PathBuf;
 use crate::firmware_api::FirmwareCheckResult;
 use crate::hal::constants::{KEY_COUNT_M1_V5, MATRIX_SIZE_M1_V5};
 use crate::hid::BatteryInfo;
+use crate::key_action::KeyAction;
+use crate::macro_seq::MacroSeq;
 use crate::power_supply::{
     find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
 };
 use crate::{cmd, devices, key_mode, magnetism, DeviceInfo, TriggerSettings};
+use monsgeek_transport::protocol::matrix;
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
@@ -71,11 +74,14 @@ struct App {
     options: Option<KeyboardOptions>,
     // Sleep time settings (loaded separately, merged into options)
     sleep_settings: Option<SleepTimeSettings>,
-    // Macro editor state
+    // Remap tab state (tab 5)
+    remaps: Vec<RemapEntry>,
+    remap_selected: usize,
+    remap_layer_view: RemapLayerView,
+    remap_editing: Option<RemapEditor>,
+    // Macro data (loaded alongside remaps or on modal open)
     macros: Vec<MacroSlot>,
-    macro_selected: usize,
-    macro_editing: bool,
-    macro_edit_text: String,
+    macro_modal: Option<MacroModal>,
     // Key depth visualization
     depth_view_mode: DepthViewMode,
     depth_history: Vec<VecDeque<(f64, f32)>>, // Per-key history (timestamp, depth_mm)
@@ -128,6 +134,7 @@ struct MacroSlot {
     events: Vec<MacroEvent>,
     repeat_count: u16,
     text_preview: String,
+    sequence: Option<MacroSeq>,
 }
 
 /// Single macro event
@@ -136,6 +143,62 @@ struct MacroEvent {
     keycode: u8,
     is_down: bool,
     delay_ms: u16,
+}
+
+/// A non-default key assignment discovered by reading the key matrix.
+struct RemapEntry {
+    index: u8,
+    position: &'static str,
+    layer: u8,
+    action: KeyAction,
+}
+
+/// Layer filter for the Remaps tab.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum RemapLayerView {
+    #[default]
+    Both,
+    Base,
+    Fn,
+}
+
+impl RemapLayerView {
+    fn cycle(self) -> Self {
+        match self {
+            Self::Both => Self::Base,
+            Self::Base => Self::Fn,
+            Self::Fn => Self::Both,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Both => "All",
+            Self::Base => "L0",
+            Self::Fn => "L1",
+        }
+    }
+}
+
+/// Modal for editing a remap target action.
+struct RemapEditor {
+    input: String,
+    error: Option<String>,
+}
+
+/// Modal for viewing/editing macro slot contents.
+struct MacroModal {
+    selected: usize,
+    editing: bool,
+    edit_text: String,
+    edit_mode: MacroEditMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum MacroEditMode {
+    #[default]
+    Text,
+    Sequence,
 }
 
 /// Keyboard options state
@@ -564,7 +627,8 @@ struct LoadingStates {
     // Other tabs
     triggers: LoadState, // tab 3
     options: LoadState,  // tab 4
-    macros: LoadState,   // tab 5
+    remaps: LoadState,   // tab 5 (remap list)
+    macros: LoadState,   // macro slots (loaded from remap tab)
 }
 
 /// Async result from background keyboard operations
@@ -585,6 +649,7 @@ enum AsyncResult {
     // Other tab results
     Triggers(Result<TriggerSettings, String>),
     Options(Result<KbOptions, String>),
+    Remaps(Result<Vec<RemapEntry>, String>),
     Macros(Result<Vec<MacroSlot>, String>),
     // Battery status (from keyboard API)
     Battery(Result<BatteryInfo, String>),
@@ -607,7 +672,7 @@ enum KeyContext {
     Led,      // LED Settings tab (1)
     Depth,    // Key Depth tab (2)
     Triggers, // Trigger Settings tab (3)
-    Macros,   // Macros tab (5)
+    Remaps,   // Remaps tab (5)
 }
 
 /// A single keybinding definition
@@ -754,16 +819,26 @@ const TUI_KEYBINDS: &[Keybind] = &[
         description: "SnapTap mode (key/all)",
         context: KeyContext::Triggers,
     },
-    // Macros tab
+    // Remaps tab
     Keybind {
         keys: "e",
-        description: "Edit selected macro",
-        context: KeyContext::Macros,
+        description: "Edit remap target",
+        context: KeyContext::Remaps,
     },
     Keybind {
-        keys: "c",
-        description: "Clear selected macro",
-        context: KeyContext::Macros,
+        keys: "d",
+        description: "Reset key to default",
+        context: KeyContext::Remaps,
+    },
+    Keybind {
+        keys: "m",
+        description: "Open macro editor",
+        context: KeyContext::Remaps,
+    },
+    Keybind {
+        keys: "f",
+        description: "Toggle layer filter",
+        context: KeyContext::Remaps,
     },
 ];
 
@@ -831,10 +906,12 @@ impl App {
             precision: Precision::default(),
             options: None,
             sleep_settings: None,
+            remaps: Vec::new(),
+            remap_selected: 0,
+            remap_layer_view: RemapLayerView::default(),
+            remap_editing: None,
             macros: Vec::new(),
-            macro_selected: 0,
-            macro_editing: false,
-            macro_edit_text: String::new(),
+            macro_modal: None,
             // Key depth visualization
             depth_view_mode: DepthViewMode::default(),
             depth_history: Vec::new(),
@@ -1580,8 +1657,198 @@ impl App {
         }
     }
 
-    /// Load macros (tab 5) from device
-    /// Spawns a background task to avoid blocking the UI
+    /// Load remaps (tab 5) from device — reads key matrix for both layers
+    fn load_remaps(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
+
+        self.loading.remaps = LoadState::Loading;
+        let key_count = self.key_count as usize;
+        let tx = self.result_tx.clone();
+        tokio::spawn(async move {
+            // Build factory default keycodes from transport matrix key names.
+            let defaults: Vec<u8> = (0..key_count as u8)
+                .map(|i| crate::protocol::hid::key_code_from_name(matrix::key_name(i)).unwrap_or(0))
+                .collect();
+
+            let mut remaps = Vec::new();
+            for layer in 0..2u8 {
+                let data = match keyboard.get_keymatrix(layer, 8).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = tx.send(AsyncResult::Remaps(Err(e.to_string())));
+                        return;
+                    }
+                };
+
+                for i in 0..key_count {
+                    if i * 4 + 3 >= data.len() {
+                        break;
+                    }
+                    let name = matrix::key_name(i as u8);
+                    if name == "?" {
+                        continue;
+                    }
+
+                    let k = &data[i * 4..(i + 1) * 4];
+
+                    // Disabled entries are never remaps
+                    if k == [0, 0, 0, 0] {
+                        continue;
+                    }
+
+                    let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
+
+                    // Fn key at physical position is factory default
+                    if matches!(action, KeyAction::Fn) {
+                        continue;
+                    }
+
+                    // Non-key config types or user byte format (byte1 != 0)
+                    if k[0] != 0 || k[1] != 0 {
+                        remaps.push(RemapEntry {
+                            index: i as u8,
+                            position: name,
+                            layer,
+                            action,
+                        });
+                        continue;
+                    }
+
+                    // config_type=0, byte1=0, byte2!=0: compare against factory default
+                    if k[2] == defaults[i] {
+                        continue; // matches factory default (identity map)
+                    }
+
+                    remaps.push(RemapEntry {
+                        index: i as u8,
+                        position: name,
+                        layer,
+                        action,
+                    });
+                }
+            }
+            let _ = tx.send(AsyncResult::Remaps(Ok(remaps)));
+        });
+    }
+
+    /// Get remaps filtered by current layer view.
+    fn filtered_remaps(&self) -> Vec<usize> {
+        self.remaps
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| match self.remap_layer_view {
+                RemapLayerView::Both => true,
+                RemapLayerView::Base => r.layer == 0,
+                RemapLayerView::Fn => r.layer == 1,
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Apply a remap action to a key
+    fn apply_remap(&mut self, key_index: u8, layer: u8, action: &KeyAction) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let tx = self.result_tx.clone();
+        let action = *action;
+        let position = matrix::key_name(key_index);
+        self.status_msg = format!("Remapping {position}...");
+
+        tokio::spawn(async move {
+            let result = match action {
+                KeyAction::Key(code) => {
+                    keyboard
+                        .set_keymatrix(layer, key_index, code, true, 0)
+                        .await
+                }
+                KeyAction::Combo { mods: _, key: code } => {
+                    // For combos, encode the full config bytes via SET_KEYMATRIX raw
+                    // Currently only simple key remaps are supported at the wire level
+                    // TODO: support combo writes when protocol is understood
+                    keyboard
+                        .set_keymatrix(layer, key_index, code, true, 0)
+                        .await
+                }
+                KeyAction::Macro { index, kind } => {
+                    if layer == 0 {
+                        keyboard
+                            .assign_macro_to_key(layer, key_index, index, kind)
+                            .await
+                    } else {
+                        keyboard
+                            .assign_macro_to_fn_key(layer, key_index, index, kind)
+                            .await
+                    }
+                }
+                KeyAction::Disabled => keyboard.reset_key(layer, key_index).await,
+                _ => Err(monsgeek_keyboard::KeyboardError::InvalidParameter(
+                    "Unsupported action type for remap".to_string(),
+                )),
+            };
+            let _ = tx.send(AsyncResult::SetComplete(
+                "Remap".to_string(),
+                result.map_err(|e: monsgeek_keyboard::KeyboardError| e.to_string()),
+            ));
+        });
+    }
+
+    /// Reset a key to its default mapping
+    fn reset_remap(&mut self, key_index: u8, layer: u8) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let position = matrix::key_name(key_index);
+        let tx = self.result_tx.clone();
+        self.status_msg = format!("Resetting {position}...");
+
+        tokio::spawn(async move {
+            let result = keyboard
+                .reset_key(layer, key_index)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::SetComplete("Remap".to_string(), result));
+        });
+    }
+
+    /// Set macro sequence from parsed MacroSeq string
+    fn set_macro_sequence(&mut self, index: usize, seq_str: &str, delay: u16, repeat: u16) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+
+        let seq: MacroSeq = match seq_str.parse::<MacroSeq>() {
+            Ok(mut s) => {
+                s.default_delay = delay;
+                s.repeat = repeat;
+                s
+            }
+            Err(e) => {
+                self.status_msg = format!("Parse error: {e}");
+                return;
+            }
+        };
+
+        let events = seq.to_events();
+        let tx = self.result_tx.clone();
+        self.status_msg = format!("Setting macro {index}...");
+        tokio::spawn(async move {
+            let result = keyboard
+                .set_macro(index as u8, &events, repeat)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AsyncResult::SetComplete("Macro".to_string(), result));
+        });
+    }
+
+    /// Load macros from device
     fn load_macros(&mut self) {
         let Some(keyboard) = self.keyboard.clone() else {
             return;
@@ -1604,10 +1871,20 @@ impl App {
                             })
                             .collect();
                         let text_preview = text_preview_from_events(&events);
+                        let sequence = if !events.is_empty() {
+                            let event_tuples: Vec<(u8, bool, u16)> = events
+                                .iter()
+                                .map(|e| (e.keycode, e.is_down, e.delay_ms))
+                                .collect();
+                            Some(MacroSeq::from_events(&event_tuples, 10, repeat_count))
+                        } else {
+                            None
+                        };
                         MacroSlot {
                             events: tui_events,
                             repeat_count,
                             text_preview,
+                            sequence,
                         }
                     }
                     Err(_) => MacroSlot::default(),
@@ -1744,6 +2021,15 @@ impl App {
                 self.loading.options = LoadState::Error;
                 self.status_msg = "Failed to load options".to_string();
             }
+            AsyncResult::Remaps(Ok(remaps)) => {
+                self.remaps = remaps;
+                self.loading.remaps = LoadState::Loaded;
+                self.status_msg = format!("{} remapped keys found", self.remaps.len());
+            }
+            AsyncResult::Remaps(Err(e)) => {
+                self.loading.remaps = LoadState::Error;
+                self.status_msg = format!("Failed to load remaps: {e}");
+            }
             AsyncResult::Macros(Ok(macros)) => {
                 self.macros = macros;
                 self.loading.macros = LoadState::Loaded;
@@ -1755,6 +2041,10 @@ impl App {
             }
             AsyncResult::SetComplete(field, Ok(())) => {
                 self.status_msg = format!("{field} updated");
+                // Reload remaps after remap operations
+                if field.starts_with("Remap") && self.loading.remaps != LoadState::Loading {
+                    self.load_remaps();
+                }
                 // Reload macros after macro operations
                 if field.starts_with("Macro") && self.loading.macros != LoadState::Loading {
                     self.load_macros();
@@ -2346,28 +2636,179 @@ pub async fn run() -> io::Result<()> {
                         continue;
                     }
 
-                    // Handle macro editing mode first
-                    if app.macro_editing {
+                    // Handle macro modal editing mode (text input within modal)
+                    if let Some(ref mut modal) = app.macro_modal {
+                        if modal.editing {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    modal.editing = false;
+                                    modal.edit_text.clear();
+                                    app.status_msg = "Edit cancelled".to_string();
+                                }
+                                KeyCode::Enter => {
+                                    let text = modal.edit_text.clone();
+                                    let idx = modal.selected;
+                                    let mode = modal.edit_mode;
+                                    modal.editing = false;
+                                    modal.edit_text.clear();
+                                    if !text.is_empty() {
+                                        match mode {
+                                            MacroEditMode::Text => {
+                                                app.set_macro_text(idx, &text, 10, 1);
+                                            }
+                                            MacroEditMode::Sequence => {
+                                                app.set_macro_sequence(idx, &text, 10, 1);
+                                            }
+                                        }
+                                    }
+                                }
+                                KeyCode::Tab => {
+                                    if let Some(ref mut m) = app.macro_modal {
+                                        m.edit_mode = match m.edit_mode {
+                                            MacroEditMode::Text => MacroEditMode::Sequence,
+                                            MacroEditMode::Sequence => MacroEditMode::Text,
+                                        };
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    if let Some(ref mut m) = app.macro_modal {
+                                        m.edit_text.pop();
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    if let Some(ref mut m) = app.macro_modal {
+                                        if m.edit_text.len() < 200 {
+                                            m.edit_text.push(c);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Handle macro modal browse mode
+                    if app.macro_modal.is_some() {
                         match key.code {
                             KeyCode::Esc => {
-                                app.macro_editing = false;
-                                app.macro_edit_text.clear();
+                                app.macro_modal = None;
+                                app.status_msg = "Macro editor closed".to_string();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if let Some(ref mut m) = app.macro_modal {
+                                    if m.selected > 0 {
+                                        m.selected -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if let Some(ref mut m) = app.macro_modal {
+                                    if m.selected < app.macros.len().saturating_sub(1) {
+                                        m.selected += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('e') => {
+                                if let Some(ref mut m) = app.macro_modal {
+                                    m.editing = true;
+                                    m.edit_text.clear();
+                                    // Pre-fill with sequence string if available
+                                    let slot = &app.macros[m.selected];
+                                    if let Some(ref seq) = slot.sequence {
+                                        m.edit_text = seq.to_string();
+                                        m.edit_mode = MacroEditMode::Sequence;
+                                    } else if !slot.text_preview.is_empty()
+                                        && !slot.text_preview.contains("events")
+                                    {
+                                        m.edit_text = slot.text_preview.clone();
+                                        m.edit_mode = MacroEditMode::Text;
+                                    } else {
+                                        m.edit_mode = MacroEditMode::Text;
+                                    }
+                                    app.status_msg = format!(
+                                        "Editing macro {} — Tab toggles text/sequence mode",
+                                        m.selected
+                                    );
+                                }
+                            }
+                            KeyCode::Char('c') => {
+                                if let Some(ref m) = app.macro_modal {
+                                    app.clear_macro(m.selected);
+                                }
+                            }
+                            KeyCode::Char('a') | KeyCode::Enter => {
+                                // Assign selected macro to the remap key
+                                let filtered = app.filtered_remaps();
+                                if let Some(ref m) = app.macro_modal {
+                                    if let Some(&remap_idx) = filtered.get(app.remap_selected) {
+                                        let remap = &app.remaps[remap_idx];
+                                        let action = KeyAction::Macro {
+                                            index: m.selected as u8,
+                                            kind: 0,
+                                        };
+                                        let key_index = remap.index;
+                                        let layer = remap.layer;
+                                        app.apply_remap(key_index, layer, &action);
+                                        app.macro_modal = None;
+                                    } else {
+                                        app.status_msg =
+                                            "No remap key selected to assign macro to".to_string();
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    // Handle remap editor modal
+                    if app.remap_editing.is_some() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.remap_editing = None;
                                 app.status_msg = "Edit cancelled".to_string();
                             }
                             KeyCode::Enter => {
-                                if !app.macro_edit_text.is_empty() {
-                                    let text = app.macro_edit_text.clone();
-                                    app.set_macro_text(app.macro_selected, &text, 10, 1);
+                                let input = app
+                                    .remap_editing
+                                    .as_ref()
+                                    .map(|e| e.input.clone())
+                                    .unwrap_or_default();
+                                if !input.is_empty() {
+                                    match input.parse::<KeyAction>() {
+                                        Ok(action) => {
+                                            let filtered = app.filtered_remaps();
+                                            if let Some(&remap_idx) =
+                                                filtered.get(app.remap_selected)
+                                            {
+                                                let remap = &app.remaps[remap_idx];
+                                                let key_index = remap.index;
+                                                let layer = remap.layer;
+                                                app.apply_remap(key_index, layer, &action);
+                                            }
+                                            app.remap_editing = None;
+                                        }
+                                        Err(e) => {
+                                            if let Some(ref mut ed) = app.remap_editing {
+                                                ed.error = Some(format!("{e}"));
+                                            }
+                                        }
+                                    }
                                 }
-                                app.macro_editing = false;
-                                app.macro_edit_text.clear();
                             }
                             KeyCode::Backspace => {
-                                app.macro_edit_text.pop();
+                                if let Some(ref mut ed) = app.remap_editing {
+                                    ed.input.pop();
+                                    ed.error = None;
+                                }
                             }
                             KeyCode::Char(c) => {
-                                if app.macro_edit_text.len() < 50 {
-                                    app.macro_edit_text.push(c);
+                                if let Some(ref mut ed) = app.remap_editing {
+                                    if ed.input.len() < 80 {
+                                        ed.input.push(c);
+                                        ed.error = None;
+                                    }
                                 }
                             }
                             _ => {}
@@ -2451,8 +2892,8 @@ pub async fn run() -> io::Result<()> {
                                 app.load_triggers();
                             } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
                                 app.load_options();
-                            } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
-                                app.load_macros();
+                            } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                                app.load_remaps();
                             }
                         }
                         KeyCode::BackTab => {
@@ -2465,8 +2906,8 @@ pub async fn run() -> io::Result<()> {
                                 app.load_triggers();
                             } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
                                 app.load_options();
-                            } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
-                                app.load_macros();
+                            } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                                app.load_remaps();
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
@@ -2494,8 +2935,8 @@ pub async fn run() -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 5 {
-                                if app.macro_selected > 0 {
-                                    app.macro_selected -= 1;
+                                if app.remap_selected > 0 {
+                                    app.remap_selected -= 1;
                                 }
                             } else if app.selected > 0 {
                                 app.selected -= 1;
@@ -2530,8 +2971,9 @@ pub async fn run() -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 5 {
-                                if app.macro_selected < app.macros.len().saturating_sub(1) {
-                                    app.macro_selected += 1;
+                                let max = app.filtered_remaps().len().saturating_sub(1);
+                                if app.remap_selected < max {
+                                    app.remap_selected += 1;
                                 }
                             } else {
                                 app.selected += 1;
@@ -2653,7 +3095,7 @@ pub async fn run() -> io::Result<()> {
                                 app.load_device_info();
                                 if app.tab == 3 { app.load_triggers(); }
                                 else if app.tab == 4 { app.load_options(); }
-                                else if app.tab == 5 { app.load_macros(); }
+                                else if app.tab == 5 { app.load_remaps(); }
                             }
                         }
                         KeyCode::Char('u') if app.tab == 0 => {
@@ -2680,20 +3122,49 @@ pub async fn run() -> io::Result<()> {
                             app.hex_input.push(c.to_ascii_uppercase());
                         }
                         KeyCode::Char('e') if app.tab == 5 => {
-                            if !app.macros.is_empty() {
-                                app.macro_editing = true;
-                                app.macro_edit_text.clear();
-                                let m = &app.macros[app.macro_selected];
-                                if !m.text_preview.is_empty() && !m.text_preview.contains("events") {
-                                    app.macro_edit_text = m.text_preview.clone();
-                                }
-                                app.status_msg = format!("Editing macro {} - type text and press Enter", app.macro_selected);
+                            let filtered = app.filtered_remaps();
+                            if let Some(&remap_idx) = filtered.get(app.remap_selected) {
+                                let remap = &app.remaps[remap_idx];
+                                let prefill = format!("{}", remap.action);
+                                app.remap_editing = Some(RemapEditor {
+                                    input: prefill,
+                                    error: None,
+                                });
+                                app.status_msg = format!(
+                                    "Editing {} on layer {}",
+                                    remap.position,
+                                    if remap.layer == 0 { "Base" } else { "Fn" }
+                                );
                             }
                         }
-                        KeyCode::Char('c') if app.tab == 5 => {
-                            if !app.macros.is_empty() {
-                                app.clear_macro(app.macro_selected);
+                        KeyCode::Char('d') if app.tab == 5 => {
+                            let filtered = app.filtered_remaps();
+                            if let Some(&remap_idx) = filtered.get(app.remap_selected) {
+                                let remap = &app.remaps[remap_idx];
+                                app.reset_remap(remap.index, remap.layer);
                             }
+                        }
+                        KeyCode::Char('f') if app.tab == 5 => {
+                            app.remap_layer_view = app.remap_layer_view.cycle();
+                            app.remap_selected = 0;
+                            app.status_msg = format!(
+                                "Filter: {}",
+                                app.remap_layer_view.label()
+                            );
+                        }
+                        KeyCode::Char('m') if app.tab == 5 => {
+                            // Open macro modal
+                            if app.loading.macros == LoadState::NotLoaded {
+                                app.load_macros();
+                            }
+                            app.macro_modal = Some(MacroModal {
+                                selected: 0,
+                                editing: false,
+                                edit_text: String::new(),
+                                edit_mode: MacroEditMode::default(),
+                            });
+                            app.status_msg =
+                                "Macro editor — e:edit c:clear a:assign Esc:close".to_string();
                         }
                         KeyCode::Char('m') => {
                             app.toggle_depth_monitoring().await;
@@ -2775,7 +3246,7 @@ pub async fn run() -> io::Result<()> {
                         if tab_bar.contains(pos) {
                             // Calculate which tab was clicked
                             // Tabs render with border (1 char), then " Tab1 │ Tab2 │ ..."
-                            let tab_names = ["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Macros"];
+                            let tab_names = ["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Remaps"];
                             let inner_x = mouse.column.saturating_sub(tab_bar.x + 1); // Account for border
                             let mut tab_pos = 1u16; // Initial padding
                             for (i, name) in tab_names.iter().enumerate() {
@@ -2791,8 +3262,8 @@ pub async fn run() -> io::Result<()> {
                                         app.load_triggers();
                                     } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
                                         app.load_options();
-                                    } else if app.tab == 5 && app.loading.macros == LoadState::NotLoaded {
-                                        app.load_macros();
+                                    } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                                        app.load_remaps();
                                     }
                                     if old_tab != app.tab {
                                         app.status_msg = format!("Switched to tab {}", i);
@@ -2821,9 +3292,10 @@ pub async fn run() -> io::Result<()> {
                                     }
                                 }
                                 5 => {
-                                    // Macros tab - select macro slot
-                                    if content_row < app.macros.len() {
-                                        app.macro_selected = content_row;
+                                    // Remaps tab - select remap entry
+                                    let filtered = app.filtered_remaps();
+                                    if content_row < filtered.len() {
+                                        app.remap_selected = content_row;
                                     }
                                 }
                                 _ => {}
@@ -2989,7 +3461,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         "Key Depth",
         "Triggers",
         "Options",
-        "Macros",
+        "Remaps",
     ])
     .select(app.tab)
     .style(Style::default().fg(Color::White))
@@ -3016,7 +3488,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         2 => render_depth_monitor(f, app, chunks[2]),
         3 => render_trigger_settings(f, app, chunks[2]),
         4 => render_options(f, app, chunks[2]),
-        5 => render_macros(f, app, chunks[2]),
+        5 => render_remaps(f, app, chunks[2]),
         _ => {}
     }
 
@@ -3136,7 +3608,7 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
                 KeyContext::Led => "LED Tab",
                 KeyContext::Depth => "Depth Tab",
                 KeyContext::Triggers => "Triggers Tab",
-                KeyContext::Macros => "Macros Tab",
+                KeyContext::Remaps => "Remaps Tab",
             };
             tui_lines.push(Line::from(""));
             tui_lines.push(Line::from(Span::styled(
@@ -4829,72 +5301,82 @@ fn render_options(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn render_macros(f: &mut Frame, app: &mut App, area: Rect) {
-    use crate::protocol::hid::key_name;
-
+fn render_remaps(f: &mut Frame, app: &mut App, area: Rect) {
     // Check loading state first
-    if app.loading.macros == LoadState::Loading {
+    if app.loading.remaps == LoadState::Loading {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title("Macros [e: edit, c: clear, ↑/↓: select]");
+            .title("Remaps [e: edit, d: reset, m: macros, f: filter]");
         let inner = block.inner(area);
         f.render_widget(block, area);
 
         let throbber = Throbber::default()
-            .label("Loading macros...")
+            .label("Loading remaps...")
             .throbber_style(Style::default().fg(Color::Yellow));
         f.render_stateful_widget(throbber, inner, &mut app.throbber_state.clone());
         return;
     }
 
-    // Split into macro list (left) and detail/edit area (right)
+    let filtered = app.filtered_remaps();
+
+    // Split into remap list (left) and detail panel (right)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
 
-    // Left panel: Macro list
-    if app.macros.is_empty() {
-        let msg = if app.loading.macros == LoadState::Error {
-            "Failed to load macros"
+    // Left panel: Remap list
+    let filter_label = app.remap_layer_view.label();
+    let list_title = format!("Remaps ({}) [{}]", filtered.len(), filter_label);
+
+    if filtered.is_empty() {
+        let msg = if app.loading.remaps == LoadState::Error {
+            "Failed to load remaps"
         } else {
-            "No macros loaded"
+            "No remappings found. All keys at defaults."
         };
         let help = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(msg, Style::default().fg(Color::Yellow))),
             Line::from(""),
-            Line::from("Press 'r' to load macros from device"),
+            Line::from("Press 'r' to reload, 'f' to change filter"),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Macros"));
+        .block(Block::default().borders(Borders::ALL).title(list_title));
         f.render_widget(help, chunks[0]);
     } else {
-        let items: Vec<ListItem> = app
-            .macros
+        let items: Vec<ListItem> = filtered
             .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                let status = if m.events.is_empty() {
-                    Span::styled("(empty)", Style::default().fg(Color::DarkGray))
+            .map(|&remap_idx| {
+                let r = &app.remaps[remap_idx];
+                let layer_prefix = if r.layer == 1 {
+                    Span::styled("L1 ", Style::default().fg(Color::Cyan))
                 } else {
-                    Span::styled(
-                        format!("{} (x{})", &m.text_preview, m.repeat_count),
-                        Style::default().fg(Color::Green),
-                    )
+                    Span::styled("L0 ", Style::default().fg(Color::DarkGray))
+                };
+                let action_style = match r.action {
+                    KeyAction::Macro { .. } => Style::default().fg(Color::Magenta),
+                    KeyAction::Key(_) | KeyAction::Combo { .. } => {
+                        Style::default().fg(Color::Green)
+                    }
+                    KeyAction::Mouse(_) | KeyAction::Gamepad(_) => {
+                        Style::default().fg(Color::Yellow)
+                    }
+                    _ => Style::default().fg(Color::White),
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("M{i}: "), Style::default().fg(Color::Cyan)),
-                    status,
+                    layer_prefix,
+                    Span::styled(
+                        format!("{:<8}", r.position),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::raw(" -> "),
+                    Span::styled(format!("{}", r.action), action_style),
                 ]))
             })
             .collect();
 
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Macros [↑/↓ select]"),
-            )
+            .block(Block::default().borders(Borders::ALL).title(list_title))
             .highlight_style(
                 Style::default()
                     .bg(Color::DarkGray)
@@ -4904,83 +5386,287 @@ fn render_macros(f: &mut Frame, app: &mut App, area: Rect) {
 
         let mut state = ListState::default();
         state.select(Some(
-            app.macro_selected.min(app.macros.len().saturating_sub(1)),
+            app.remap_selected.min(filtered.len().saturating_sub(1)),
         ));
         f.render_stateful_widget(list, chunks[0], &mut state);
     }
 
-    // Right panel: Detail view or edit mode
+    // Right panel: Detail view + help bar
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(7)])
+        .constraints([Constraint::Min(8), Constraint::Length(5)])
         .split(chunks[1]);
 
-    if app.macro_editing {
-        // Edit mode
-        let edit_text = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("Text: "),
-                Span::styled(
-                    &app.macro_edit_text,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("█", Style::default().fg(Color::White)),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Type your macro text, then press Enter to save",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(
-                "Press Escape to cancel",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Edit Macro (typing mode)"),
-        );
-        f.render_widget(edit_text, right_chunks[0]);
-    } else if !app.macros.is_empty() && app.macro_selected < app.macros.len() {
-        // Detail view
-        let m = &app.macros[app.macro_selected];
+    // Detail for selected remap
+    if let Some(&remap_idx) = filtered.get(app.remap_selected) {
+        let r = &app.remaps[remap_idx];
+        let layer_name = if r.layer == 0 { "Base" } else { "Fn" };
         let mut lines = vec![
             Line::from(vec![Span::styled(
-                format!("Macro {}", app.macro_selected),
+                format!("{} (index {})", r.position, r.index),
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
             Line::from(vec![
-                Span::raw("Repeat: "),
-                Span::styled(
-                    format!("{}", m.repeat_count),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::raw("Layer:   "),
+                Span::styled(layer_name, Style::default().fg(Color::Yellow)),
             ]),
             Line::from(vec![
-                Span::raw("Events: "),
+                Span::raw("Action:  "),
                 Span::styled(
-                    format!("{}", m.events.len()),
-                    Style::default().fg(Color::Yellow),
+                    format!("{}", r.action),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
+        ];
+
+        // Show macro detail if this is a macro action
+        if let KeyAction::Macro { index, kind } = r.action {
+            let kind_str = match kind {
+                0 => "repeat",
+                1 => "toggle",
+                2 => "hold",
+                _ => "unknown",
+            };
+            lines.push(Line::from(vec![
+                Span::raw("Macro:   "),
+                Span::styled(
+                    format!("Slot {} ({})", index, kind_str),
+                    Style::default().fg(Color::Magenta),
+                ),
+            ]));
+            // Show macro sequence if loaded
+            if let Some(slot) = app.macros.get(index as usize) {
+                if let Some(ref seq) = slot.sequence {
+                    lines.push(Line::from(vec![
+                        Span::raw("Seq:     "),
+                        Span::styled(format!("{seq}"), Style::default().fg(Color::Magenta)),
+                    ]));
+                } else if !slot.text_preview.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::raw("Text:    "),
+                        Span::styled(&slot.text_preview, Style::default().fg(Color::Magenta)),
+                    ]));
+                }
+                if slot.repeat_count > 1 {
+                    lines.push(Line::from(vec![
+                        Span::raw("Repeat:  "),
+                        Span::styled(
+                            format!("x{}", slot.repeat_count),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]));
+                }
+            }
+        }
+
+        let detail = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Remap Details"),
+        );
+        f.render_widget(detail, right_chunks[0]);
+    } else {
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "No remap selected",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Remap Details"),
+        );
+        f.render_widget(empty, right_chunks[0]);
+    }
+
+    // Help bar
+    let help_lines = vec![Line::from(vec![
+        Span::styled("e", Style::default().fg(Color::Yellow)),
+        Span::raw(" Edit  "),
+        Span::styled("d", Style::default().fg(Color::Yellow)),
+        Span::raw(" Reset  "),
+        Span::styled("m", Style::default().fg(Color::Yellow)),
+        Span::raw(" Macros  "),
+        Span::styled("f", Style::default().fg(Color::Yellow)),
+        Span::raw(" Filter  "),
+        Span::styled("r", Style::default().fg(Color::Yellow)),
+        Span::raw(" Refresh"),
+    ])];
+    let help = Paragraph::new(help_lines)
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Keys"));
+    f.render_widget(help, right_chunks[1]);
+
+    // Render macro modal overlay if open
+    render_macro_modal(f, app, area);
+
+    // Render remap editor overlay if open
+    render_remap_editor(f, app, area);
+}
+
+/// Render the macro modal overlay on top of the remap tab content
+fn render_macro_modal(f: &mut Frame, app: &App, area: Rect) {
+    use crate::protocol::hid::key_name;
+
+    let modal = match &app.macro_modal {
+        Some(m) => m,
+        None => return,
+    };
+
+    // 70% width, 70% height popup
+    let popup_width = (area.width as f32 * 0.70).min(90.0) as u16;
+    let popup_height = (area.height as f32 * 0.70).min(28.0) as u16;
+    let popup_x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta))
+        .title(" Macro Slots [e:edit c:clear a:assign Esc:close] ")
+        .title_style(
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    // Split inner: left = slot list, right = slot detail
+    let modal_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(inner);
+
+    // Macro slot list
+    let items: Vec<ListItem> = app
+        .macros
+        .iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            let content = if slot.events.is_empty() {
+                Span::styled("(empty)", Style::default().fg(Color::DarkGray))
+            } else if let Some(ref seq) = slot.sequence {
+                let s = seq.to_string();
+                let display = if s.len() > 30 {
+                    format!("{}...", &s[..27])
+                } else {
+                    s
+                };
+                Span::styled(display, Style::default().fg(Color::Green))
+            } else {
+                Span::styled(&slot.text_preview, Style::default().fg(Color::Green))
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("M{i}: "), Style::default().fg(Color::Cyan)),
+                content,
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
+
+    let mut state = ListState::default();
+    state.select(Some(modal.selected.min(app.macros.len().saturating_sub(1))));
+    f.render_stateful_widget(list, modal_chunks[0], &mut state);
+
+    // Right side: detail for selected slot or edit input
+    if modal.editing {
+        let mode_label = match modal.edit_mode {
+            MacroEditMode::Text => "Text",
+            MacroEditMode::Sequence => "Sequence",
+        };
+        let hint = match modal.edit_mode {
+            MacroEditMode::Text => "Type characters to send as keystrokes",
+            MacroEditMode::Sequence => "Syntax: A, Escape, Ctrl+C, 100ms",
+        };
+        let edit_lines = vec![
+            Line::from(vec![
+                Span::raw("Mode: "),
+                Span::styled(
+                    mode_label,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  (Tab to switch)", Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("> "),
+                Span::styled(
+                    &modal.edit_text,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("\u{2588}", Style::default().fg(Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled(
+                "Enter: save  Esc: cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let edit_p = Paragraph::new(edit_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Edit Macro {}", modal.selected)),
+        );
+        f.render_widget(edit_p, modal_chunks[1]);
+    } else if modal.selected < app.macros.len() {
+        let slot = &app.macros[modal.selected];
+        let mut lines = vec![
+            Line::from(vec![Span::styled(
+                format!("Macro {}", modal.selected),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
         ];
 
-        // Show events (up to 10)
-        if !m.events.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "Events:",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            for (i, evt) in m.events.iter().take(12).enumerate() {
-                let arrow = if evt.is_down { "↓" } else { "↑" };
+        if let Some(ref seq) = slot.sequence {
+            lines.push(Line::from(vec![
+                Span::raw("Sequence: "),
+                Span::styled(format!("{seq}"), Style::default().fg(Color::Green)),
+            ]));
+        }
+        lines.push(Line::from(vec![
+            Span::raw("Repeat:   "),
+            Span::styled(
+                format!("{}", slot.repeat_count),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("Events:   "),
+            Span::styled(
+                format!("{}", slot.events.len()),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+
+        if !slot.events.is_empty() {
+            lines.push(Line::from(""));
+            for (i, evt) in slot.events.iter().take(8).enumerate() {
+                let arrow = if evt.is_down { "\u{2193}" } else { "\u{2191}" };
                 let delay_str = if evt.delay_ms > 0 {
                     format!(" +{}ms", evt.delay_ms)
                 } else {
@@ -5001,56 +5687,99 @@ fn render_macros(f: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(delay_str, Style::default().fg(Color::DarkGray)),
                 ]));
             }
-            if m.events.len() > 12 {
+            if slot.events.len() > 8 {
                 lines.push(Line::from(Span::styled(
-                    format!("... and {} more", m.events.len() - 12),
+                    format!("  ... and {} more", slot.events.len() - 8),
                     Style::default().fg(Color::DarkGray),
                 )));
             }
-        } else {
-            lines.push(Line::from(Span::styled(
-                "(empty)",
-                Style::default().fg(Color::DarkGray),
-            )));
         }
 
-        let detail = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Macro Details"),
-        );
-        f.render_widget(detail, right_chunks[0]);
-    } else {
-        let empty = Paragraph::new("Select a macro").block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Macro Details"),
-        );
-        f.render_widget(empty, right_chunks[0]);
+        let detail = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Slot Details"));
+        f.render_widget(detail, modal_chunks[1]);
     }
+}
 
-    // Help text at bottom
-    let help_lines = if app.macro_editing {
-        vec![Line::from(vec![
-            Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(" Save  "),
-            Span::styled("Escape", Style::default().fg(Color::Yellow)),
-            Span::raw(" Cancel"),
-        ])]
-    } else {
-        vec![Line::from(vec![
-            Span::styled("e", Style::default().fg(Color::Yellow)),
-            Span::raw(" Edit macro  "),
-            Span::styled("c", Style::default().fg(Color::Yellow)),
-            Span::raw(" Clear macro  "),
-            Span::styled("r", Style::default().fg(Color::Yellow)),
-            Span::raw(" Refresh"),
-        ])]
+/// Render the remap editor popup overlay
+fn render_remap_editor(f: &mut Frame, app: &App, area: Rect) {
+    let editor = match &app.remap_editing {
+        Some(e) => e,
+        None => return,
     };
-    let help = Paragraph::new(help_lines)
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title("Keys"));
-    f.render_widget(help, right_chunks[1]);
+
+    let filtered: Vec<usize> = app
+        .remaps
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| match app.remap_layer_view {
+            RemapLayerView::Both => true,
+            RemapLayerView::Base => r.layer == 0,
+            RemapLayerView::Fn => r.layer == 1,
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    let (key_name_str, layer_str) = if let Some(&remap_idx) = filtered.get(app.remap_selected) {
+        let r = &app.remaps[remap_idx];
+        (
+            r.position.to_string(),
+            if r.layer == 0 { "Base" } else { "Fn" }.to_string(),
+        )
+    } else {
+        ("?".to_string(), "?".to_string())
+    };
+
+    // Small centered popup
+    let popup_width = (area.width as f32 * 0.50).min(60.0) as u16;
+    let popup_height = 7u16;
+    let popup_x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    f.render_widget(Clear, popup_area);
+
+    let title = format!(" Remap {} on {} ", key_name_str, layer_str);
+
+    let mut lines = vec![Line::from(vec![
+        Span::raw("> "),
+        Span::styled(
+            &editor.input,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("\u{2588}", Style::default().fg(Color::White)),
+    ])];
+
+    if let Some(ref err) = editor.error {
+        lines.push(Line::from(Span::styled(
+            err.as_str(),
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "A, Escape, Ctrl+C, Macro(0), Disabled, Mouse1",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "Enter: apply  Esc: cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let para = Paragraph::new(lines).block(block);
+    f.render_widget(para, popup_area);
 }
 
 /// Try to reconstruct typed text from macro events
