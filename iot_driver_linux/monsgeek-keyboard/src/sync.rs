@@ -302,6 +302,16 @@ impl SyncKeyboard {
         block_on(self.inner.get_keymatrix(profile, num_pages))
     }
 
+    /// Read the Fn layer key matrix using GET_FN (0x90)
+    pub fn get_fn_keymatrix(
+        &self,
+        profile: u8,
+        sys: u8,
+        num_pages: usize,
+    ) -> Result<Vec<u8>, KeyboardError> {
+        block_on(self.inner.get_fn_keymatrix(profile, sys, num_pages))
+    }
+
     /// Set a single key's mapping
     pub fn set_keymatrix(
         &self,

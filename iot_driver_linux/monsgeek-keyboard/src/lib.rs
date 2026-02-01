@@ -1057,7 +1057,7 @@ impl KeyboardInterface {
     ///
     /// # Arguments
     /// * `profile` - Profile index (0-3)
-    /// * `num_pages` - Number of pages to read (based on key count, typically 2-3)
+    /// * `num_pages` - Number of pages to read (8 for full 126-key matrix)
     ///
     /// # Returns
     /// Raw key matrix data (4 bytes per key: type, enabled, layer, keycode)
@@ -1069,21 +1069,20 @@ impl KeyboardInterface {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
-            // Request format: [profile, 255 (magic), 0, page]
-            let data = [profile, 255, 0, page as u8];
+            // Request format: [layer, 255 (magic), page, magnetism_profile]
+            // Byte positions match webapp: ft[1]=layer, ft[2]=255, ft[3]=page, ft[4]=magnetism
+            let data = [profile, 255, page as u8, 0];
 
+            // GET_KEYMATRIX response may not echo the command byte — use raw
+            // query (same pattern as GET_MACRO and GET_MULTI_MAGNETISM)
             match self
                 .transport
-                .query_command(cmd::GET_KEYMATRIX, &data, ChecksumType::Bit7)
+                .query_raw(cmd::GET_KEYMATRIX, &data, ChecksumType::Bit7)
                 .await
             {
                 Ok(resp) => {
-                    // Response format: [cmd, data...]
-                    if resp.len() > 1 && resp[0] == cmd::GET_KEYMATRIX {
-                        all_data.extend_from_slice(&resp[1..]);
-                    } else if !resp.is_empty() {
-                        all_data.extend_from_slice(&resp);
-                    }
+                    // Include full response — no command echo for GET_KEYMATRIX.
+                    all_data.extend_from_slice(&resp);
                 }
                 Err(_) => continue,
             }
@@ -1092,6 +1091,47 @@ impl KeyboardInterface {
         if all_data.is_empty() {
             Err(KeyboardError::UnexpectedResponse(
                 "No keymatrix data".into(),
+            ))
+        } else {
+            Ok(all_data)
+        }
+    }
+
+    /// Read the Fn layer key matrix using GET_FN (0x90).
+    ///
+    /// Unlike `get_keymatrix` which reads base/Fn remaps via GET_KEYMATRIX (0x8A),
+    /// this reads the actual Fn layer bindings (media keys, LED controls, etc.)
+    /// via the dedicated GET_FN command.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile index (0-3)
+    /// * `sys` - OS mode: 0=Windows, 1=Mac
+    /// * `num_pages` - Number of pages to read (8 for full matrix)
+    pub async fn get_fn_keymatrix(
+        &self,
+        profile: u8,
+        sys: u8,
+        num_pages: usize,
+    ) -> Result<Vec<u8>, KeyboardError> {
+        let mut all_data = Vec::new();
+
+        for page in 0..num_pages {
+            let data = [sys, profile, 255, page as u8];
+            match self
+                .transport
+                .query_raw(cmd::GET_FN, &data, ChecksumType::Bit7)
+                .await
+            {
+                Ok(resp) => {
+                    all_data.extend_from_slice(&resp);
+                }
+                Err(_) => continue,
+            }
+        }
+
+        if all_data.is_empty() {
+            Err(KeyboardError::UnexpectedResponse(
+                "GET_FN returned no data".into(),
             ))
         } else {
             Ok(all_data)
