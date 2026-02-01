@@ -164,29 +164,31 @@ pub mod magnetism {
 
 /// Key matrix position to name mapping (M1 V5 / SG9000 layout)
 ///
-/// Derived from ledMatrix in device database - maps firmware matrix position to HID codes.
-/// The matrix is column-major with 6 rows per column.
+/// Column-major order, 6 rows per column.  Verified against firmware
+/// GET_KEYMATRIX data (factory-default keycodes at each position).
 pub mod matrix {
-    /// Key names indexed by matrix position (column-major order)
-    /// Derived from Common82_SG9000 ledMatrix which maps position -> HID usage code
+    /// Key names indexed by matrix position (column-major order).
+    ///
+    /// Row 0 = F-key row, rows 1-4 = main alpha/symbol rows,
+    /// row 5 = bottom modifier row.  "?" marks unused matrix slots
+    /// (e.g. spacebar columns that don't produce a keypress).
     const KEY_NAMES: &[&str] = &[
         // Col 0 (0-5)
-        "Esc", "`", "Tab", "Caps", "LShf", "LCtl",
-        // Col 1 (6-11) - has empty slots for layout variation
-        "?", "1", "Q", "A", "IntlBs", "?", // Col 2 (12-17)
-        "F1", "2", "W", "S", "Z", "Win", // Col 3 (18-23)
-        "F2", "3", "E", "D", "X", "LAlt", // Col 4 (24-29)
-        "F3", "4", "R", "F", "C", "?", // Col 5 (30-35)
-        "F4", "5", "T", "G", "V", "Spc", // Col 6 (36-41)
-        "F5", "6", "Y", "H", "B", "?", // Col 7 (42-47)
-        "F6", "7", "U", "J", "N", "?", // Col 8 (48-53)
-        "F7", "8", "I", "K", "M", "RAlt", // Col 9 (54-59)
-        "F8", "9", "O", "L", ",", "?", // Col 10 (60-65)
-        "F9", "0", "P", ";", ".", "RCtl", // Col 11 (66-71)
-        "F10", "-", "[", "'", "/", "?", // Col 12 (72-77)
-        "F11", "=", "]", "IntlRo", "RShf", "Left", // Col 13 (78-83)
-        "F12", "Bksp", "\\", "Ent", "Up", "Down", // Col 14 (84-89)
-        "Del", "Home", "PgUp", "PgDn", "End", "Right",
+        "Esc", "`", "Tab", "Caps", "LShf", "LCtl", // Col 1 (6-11)
+        "F1", "1", "Q", "A", "IntlBs", "Win", // Col 2 (12-17)
+        "F2", "2", "W", "S", "Z", "LAlt", // Col 3 (18-23)
+        "F3", "3", "E", "D", "X", "?", // Col 4 (24-29)
+        "F4", "4", "R", "F", "C", "?", // Col 5 (30-35)
+        "F5", "5", "T", "G", "V", "?", // Col 6 (36-41)
+        "F6", "6", "Y", "H", "B", "Spc", // Col 7 (42-47)
+        "F7", "7", "U", "J", "N", "?", // Col 8 (48-53)
+        "F8", "8", "I", "K", "M", "?", // Col 9 (54-59)
+        "F9", "9", "O", "L", ",", "RAlt", // Col 10 (60-65)
+        "F10", "0", "P", ";", ".", "Fn", // Col 11 (66-71)
+        "F11", "-", "[", "'", "/", "RCtl", // Col 12 (72-77)
+        "F12", "=", "]", "IntlRo", "RShf", "Left", // Col 13 (78-83)
+        "Del", "Bksp", "\\", "Ent", "Up", "Down", // Col 14 (84-89)
+        "?", "Home", "PgUp", "PgDn", "End", "Right",
     ];
 
     /// Get key name from matrix position

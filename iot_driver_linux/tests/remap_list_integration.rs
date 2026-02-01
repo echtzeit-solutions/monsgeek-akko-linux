@@ -140,13 +140,23 @@ fn mouse_detected() {
 
 #[test]
 fn default_for_matches_transport_matrix() {
-    // Verify default_for() resolves key names from the transport matrix
+    // Verify default_for() resolves key names from the transport matrix.
+    // Col 0 (positions 0-5)
     assert_eq!(default_for(0), 0x29); // Esc
     assert_eq!(default_for(1), 0x35); // `
     assert_eq!(default_for(2), 0x2B); // Tab
     assert_eq!(default_for(3), 0x39); // Caps
     assert_eq!(default_for(4), 0xE1); // LShf
     assert_eq!(default_for(5), 0xE0); // LCtl
+                                      // F-row and modifier positions (verified against firmware GET_KEYMATRIX)
+    assert_eq!(default_for(6), 0x3A); // F1 at Col 1 Row 0
+    assert_eq!(default_for(11), 0xE3); // Win at Col 1 Row 5
+    assert_eq!(default_for(12), 0x3B); // F2 at Col 2 Row 0
+    assert_eq!(default_for(17), 0xE2); // LAlt at Col 2 Row 5
+    assert_eq!(default_for(41), 0x2C); // Space at Col 6 Row 5
+    assert_eq!(default_for(59), 0xE6); // RAlt at Col 9 Row 5
+    assert_eq!(default_for(71), 0xE4); // RCtl at Col 11 Row 5
+    assert_eq!(default_for(78), 0x4C); // Del at Col 13 Row 0
 }
 
 // ── KeyAction parsing from wire bytes ──
