@@ -5,6 +5,7 @@
 
 use crate::protocol::{self, cmd};
 use crate::types::ChecksumType;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 // =============================================================================
 // Core Traits
@@ -744,6 +745,228 @@ impl HidCommand for SetMagnetismReport {
     fn to_data(&self) -> Vec<u8> {
         vec![if self.enabled { 1 } else { 0 }]
     }
+}
+
+// =============================================================================
+// Typed Packet Structs (zerocopy)
+// =============================================================================
+
+/// SET_KEYMATRIX (0x0A) — 11-byte data payload, Bit7 checksum.
+///
+/// Sets a key's config on the base layer (layer 0).
+/// Byte 6 (`_checksum`) is a placeholder overwritten by the transport's Bit7 checksum.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct SetKeyMatrixData {
+    pub profile: u8,
+    pub key_index: u8,
+    pub _pad0: u8,
+    pub _pad1: u8,
+    pub enabled: u8,
+    pub layer: u8,
+    pub _checksum: u8,
+    pub config_type: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
+}
+
+impl SetKeyMatrixData {
+    pub const ZERO: Self = Self {
+        profile: 0,
+        key_index: 0,
+        _pad0: 0,
+        _pad1: 0,
+        enabled: 0,
+        layer: 0,
+        _checksum: 0,
+        config_type: 0,
+        b1: 0,
+        b2: 0,
+        b3: 0,
+    };
+}
+
+impl HidCommand for SetKeyMatrixData {
+    const CMD: u8 = cmd::SET_KEYMATRIX;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+    fn to_data(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+/// SET_FN (0x10) — 11-byte data payload, Bit7 checksum.
+///
+/// Sets a key's config on the Fn layer (layer 1).
+/// Note the different field order vs SetKeyMatrixData: key_index is at byte 2.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct SetFnData {
+    pub profile: u8,
+    pub _pad0: u8,
+    pub key_index: u8,
+    pub _pad1: u8,
+    pub _pad2: u8,
+    pub _pad3: u8,
+    pub _checksum: u8,
+    pub config_type: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
+}
+
+impl SetFnData {
+    pub const ZERO: Self = Self {
+        profile: 0,
+        _pad0: 0,
+        key_index: 0,
+        _pad1: 0,
+        _pad2: 0,
+        _pad3: 0,
+        _checksum: 0,
+        config_type: 0,
+        b1: 0,
+        b2: 0,
+        b3: 0,
+    };
+}
+
+impl HidCommand for SetFnData {
+    const CMD: u8 = cmd::SET_FN;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+    fn to_data(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+/// GET_KEYMATRIX (0x8A) query data — 4 bytes.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct GetKeyMatrixData {
+    pub profile: u8,
+    pub magic: u8,
+    pub page: u8,
+    pub magnetism_profile: u8,
+}
+
+/// GET_FN (0x90) query data — 4 bytes.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct GetFnData {
+    pub sys: u8,
+    pub profile: u8,
+    pub magic: u8,
+    pub page: u8,
+}
+
+/// SET_MACRO (0x0B) — 7-byte header, Bit7 checksum.
+///
+/// The header is followed by a variable-length payload chunk.
+/// Use `SetMacroCommand` for the full command including payload.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct SetMacroHeader {
+    pub macro_index: u8,
+    pub page: u8,
+    pub chunk_len: u8,
+    pub is_last: u8,
+    pub _pad0: u8,
+    pub _pad1: u8,
+    pub _checksum: u8,
+}
+
+/// Full SET_MACRO command: header + variable payload.
+#[derive(Debug, Clone)]
+pub struct SetMacroCommand {
+    pub header: SetMacroHeader,
+    pub payload: Vec<u8>,
+}
+
+impl HidCommand for SetMacroCommand {
+    const CMD: u8 = cmd::SET_MACRO;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+    fn to_data(&self) -> Vec<u8> {
+        let mut data = self.header.as_bytes().to_vec();
+        data.extend_from_slice(&self.payload);
+        data
+    }
+}
+
+/// GET_MACRO (0x8B) query data — 2 bytes.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct GetMacroData {
+    pub macro_index: u8,
+    pub page: u8,
+}
+
+/// SET_MULTI_MAGNETISM (0x65) — 7-byte header + variable payload, Bit7 checksum.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct SetMultiMagnetismHeader {
+    pub sub_cmd: u8,
+    pub flag: u8,
+    pub page: u8,
+    pub commit: u8,
+    pub _pad0: u8,
+    pub _pad1: u8,
+    pub _checksum: u8,
+}
+
+/// Full SET_MULTI_MAGNETISM command: header + payload.
+#[derive(Debug, Clone)]
+pub struct SetMultiMagnetismCommand {
+    pub header: SetMultiMagnetismHeader,
+    pub payload: Vec<u8>,
+}
+
+impl HidCommand for SetMultiMagnetismCommand {
+    const CMD: u8 = cmd::SET_MULTI_MAGNETISM;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+    fn to_data(&self) -> Vec<u8> {
+        let mut data = self.header.as_bytes().to_vec();
+        data.extend_from_slice(&self.payload);
+        data
+    }
+}
+
+/// GET_MULTI_MAGNETISM (0xE5) query data — 3 bytes.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct GetMultiMagnetismData {
+    pub sub_cmd: u8,
+    pub flag: u8,
+    pub page: u8,
+}
+
+/// SET_KEY_MAGNETISM_MODE (0x1D) — 4-byte data payload, Bit7 checksum.
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct SetKeyMagnetismModeData {
+    pub key_index: u8,
+    pub actuation: u8,
+    pub deactuation: u8,
+    pub mode: u8,
+}
+
+impl HidCommand for SetKeyMagnetismModeData {
+    const CMD: u8 = cmd::SET_KEY_MAGNETISM_MODE;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+    fn to_data(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+/// Response entry for parsing GET_KEYMATRIX / GET_FN pages.
+///
+/// Each key config is 4 bytes: [config_type, b1, b2, b3].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, FromBytes, KnownLayout, Immutable)]
+#[repr(C)]
+pub struct KeyConfigEntry {
+    pub config_type: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
 }
 
 // =============================================================================
@@ -1575,5 +1798,250 @@ mod tests {
             try_parse_command(&[0xfc]),
             ParsedCommand::DongleFlush
         ));
+    }
+
+    // =========================================================================
+    // Typed Packet Struct Tests
+    // =========================================================================
+
+    #[test]
+    fn test_set_key_matrix_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<SetKeyMatrixData>(), 11);
+        let pkt = SetKeyMatrixData {
+            profile: 1,
+            key_index: 42,
+            enabled: 1,
+            config_type: 9,
+            b1: 0,
+            b2: 5,
+            b3: 0,
+            ..SetKeyMatrixData::ZERO
+        };
+        let bytes = pkt.as_bytes();
+        assert_eq!(bytes[0], 1); // profile
+        assert_eq!(bytes[1], 42); // key_index
+        assert_eq!(bytes[2], 0); // pad0
+        assert_eq!(bytes[3], 0); // pad1
+        assert_eq!(bytes[4], 1); // enabled
+        assert_eq!(bytes[5], 0); // layer
+        assert_eq!(bytes[6], 0); // checksum placeholder
+        assert_eq!(bytes[7], 9); // config_type
+        assert_eq!(bytes[8], 0); // b1
+        assert_eq!(bytes[9], 5); // b2
+        assert_eq!(bytes[10], 0); // b3
+    }
+
+    #[test]
+    fn test_set_fn_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<SetFnData>(), 11);
+        let pkt = SetFnData {
+            profile: 2,
+            key_index: 10,
+            config_type: 9,
+            b1: 1,
+            b2: 3,
+            b3: 0,
+            ..SetFnData::ZERO
+        };
+        let bytes = pkt.as_bytes();
+        assert_eq!(bytes[0], 2); // profile
+        assert_eq!(bytes[1], 0); // pad0
+        assert_eq!(bytes[2], 10); // key_index
+        assert_eq!(bytes[3], 0); // pad1
+        assert_eq!(bytes[4], 0); // pad2
+        assert_eq!(bytes[5], 0); // pad3
+        assert_eq!(bytes[6], 0); // checksum placeholder
+        assert_eq!(bytes[7], 9); // config_type
+        assert_eq!(bytes[8], 1); // b1
+        assert_eq!(bytes[9], 3); // b2
+        assert_eq!(bytes[10], 0); // b3
+    }
+
+    #[test]
+    fn test_get_key_matrix_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<GetKeyMatrixData>(), 4);
+        let pkt = GetKeyMatrixData {
+            profile: 0,
+            magic: 0xFF,
+            page: 3,
+            magnetism_profile: 0,
+        };
+        let bytes = pkt.as_bytes();
+        assert_eq!(bytes, &[0, 0xFF, 3, 0]);
+    }
+
+    #[test]
+    fn test_get_fn_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<GetFnData>(), 4);
+        let pkt = GetFnData {
+            sys: 0,
+            profile: 1,
+            magic: 0xFF,
+            page: 2,
+        };
+        let bytes = pkt.as_bytes();
+        assert_eq!(bytes, &[0, 1, 0xFF, 2]);
+    }
+
+    #[test]
+    fn test_set_macro_header_size_and_layout() {
+        assert_eq!(std::mem::size_of::<SetMacroHeader>(), 7);
+        let hdr = SetMacroHeader {
+            macro_index: 5,
+            page: 1,
+            chunk_len: 56,
+            is_last: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _checksum: 0,
+        };
+        let bytes = hdr.as_bytes();
+        assert_eq!(bytes[0], 5); // macro_index
+        assert_eq!(bytes[1], 1); // page
+        assert_eq!(bytes[2], 56); // chunk_len
+        assert_eq!(bytes[3], 0); // is_last
+        assert_eq!(bytes[6], 0); // checksum placeholder
+    }
+
+    #[test]
+    fn test_set_macro_command_to_data() {
+        let cmd = SetMacroCommand {
+            header: SetMacroHeader {
+                macro_index: 0,
+                page: 0,
+                chunk_len: 3,
+                is_last: 1,
+                _pad0: 0,
+                _pad1: 0,
+                _checksum: 0,
+            },
+            payload: vec![0xAA, 0xBB, 0xCC],
+        };
+        let data = cmd.to_data();
+        assert_eq!(data.len(), 10); // 7 header + 3 payload
+        assert_eq!(data[0], 0); // macro_index
+        assert_eq!(data[3], 1); // is_last
+        assert_eq!(data[7], 0xAA); // first payload byte
+        assert_eq!(data[9], 0xCC); // last payload byte
+    }
+
+    #[test]
+    fn test_get_macro_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<GetMacroData>(), 2);
+        let pkt = GetMacroData {
+            macro_index: 3,
+            page: 2,
+        };
+        assert_eq!(pkt.as_bytes(), &[3, 2]);
+    }
+
+    #[test]
+    fn test_set_multi_magnetism_header_size_and_layout() {
+        assert_eq!(std::mem::size_of::<SetMultiMagnetismHeader>(), 7);
+        let hdr = SetMultiMagnetismHeader {
+            sub_cmd: 0x01,
+            flag: 1,
+            page: 2,
+            commit: 1,
+            _pad0: 0,
+            _pad1: 0,
+            _checksum: 0,
+        };
+        let bytes = hdr.as_bytes();
+        assert_eq!(bytes[0], 0x01); // sub_cmd
+        assert_eq!(bytes[1], 1); // flag
+        assert_eq!(bytes[2], 2); // page
+        assert_eq!(bytes[3], 1); // commit
+    }
+
+    #[test]
+    fn test_get_multi_magnetism_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<GetMultiMagnetismData>(), 3);
+        let pkt = GetMultiMagnetismData {
+            sub_cmd: 0x0A,
+            flag: 1,
+            page: 0,
+        };
+        assert_eq!(pkt.as_bytes(), &[0x0A, 1, 0]);
+    }
+
+    #[test]
+    fn test_set_key_magnetism_mode_data_size_and_layout() {
+        assert_eq!(std::mem::size_of::<SetKeyMagnetismModeData>(), 4);
+        let pkt = SetKeyMagnetismModeData {
+            key_index: 15,
+            actuation: 200,
+            deactuation: 150,
+            mode: 1,
+        };
+        assert_eq!(pkt.as_bytes(), &[15, 200, 150, 1]);
+    }
+
+    #[test]
+    fn test_key_config_entry_size_and_roundtrip() {
+        assert_eq!(std::mem::size_of::<KeyConfigEntry>(), 4);
+        // Parse from bytes
+        let bytes = [9u8, 0, 5, 0]; // config_type=Macro, b2=macro_index=5
+        let entry = KeyConfigEntry::read_from_bytes(&bytes).unwrap();
+        assert_eq!(entry.config_type, 9);
+        assert_eq!(entry.b2, 5);
+        // Roundtrip
+        assert_eq!(entry.as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn test_set_key_matrix_hid_command_trait() {
+        assert_eq!(SetKeyMatrixData::CMD, cmd::SET_KEYMATRIX);
+        assert_eq!(SetKeyMatrixData::CHECKSUM, ChecksumType::Bit7);
+        let pkt = SetKeyMatrixData {
+            profile: 0,
+            key_index: 1,
+            enabled: 1,
+            config_type: 0,
+            b2: 0x04, // A key
+            ..SetKeyMatrixData::ZERO
+        };
+        let buf = pkt.build();
+        assert_eq!(buf.len(), REPORT_SIZE);
+        assert_eq!(buf[0], 0); // report ID
+        assert_eq!(buf[1], cmd::SET_KEYMATRIX); // command byte
+        assert_eq!(buf[2], 0); // profile
+        assert_eq!(buf[3], 1); // key_index
+    }
+
+    #[test]
+    fn test_set_fn_hid_command_trait() {
+        assert_eq!(SetFnData::CMD, cmd::SET_FN);
+        let pkt = SetFnData {
+            profile: 0,
+            key_index: 5,
+            config_type: 9,
+            b1: 0,
+            b2: 2,
+            b3: 0,
+            ..SetFnData::ZERO
+        };
+        let buf = pkt.build();
+        assert_eq!(buf.len(), REPORT_SIZE);
+        assert_eq!(buf[1], cmd::SET_FN);
+        assert_eq!(buf[4], 5); // key_index at byte 2 of data = buf[4]
+    }
+
+    #[test]
+    fn test_set_key_magnetism_mode_hid_command_trait() {
+        assert_eq!(SetKeyMagnetismModeData::CMD, cmd::SET_KEY_MAGNETISM_MODE);
+        let pkt = SetKeyMagnetismModeData {
+            key_index: 10,
+            actuation: 200,
+            deactuation: 150,
+            mode: 1,
+        };
+        let buf = pkt.build();
+        assert_eq!(buf.len(), REPORT_SIZE);
+        assert_eq!(buf[1], cmd::SET_KEY_MAGNETISM_MODE);
+        assert_eq!(buf[2], 10); // key_index
+        assert_eq!(buf[3], 200); // actuation
+        assert_eq!(buf[4], 150); // deactuation
+        assert_eq!(buf[5], 1); // mode
     }
 }

@@ -458,6 +458,16 @@ impl FlowControlTransport {
         self.send_command(C::CMD, &cmd.to_data(), C::CHECKSUM).await
     }
 
+    /// Send a typed command with custom delay (fire-and-forget)
+    pub async fn send_with_delay<C: HidCommand + Send + Sync>(
+        &self,
+        cmd: &C,
+        delay_ms: u64,
+    ) -> Result<(), TransportError> {
+        self.send_command_with_delay(C::CMD, &cmd.to_data(), C::CHECKSUM, delay_ms)
+            .await
+    }
+
     /// Query and parse a typed response (validates command echo)
     pub async fn query<C, R>(&self, cmd: &C) -> Result<R, TransportError>
     where
