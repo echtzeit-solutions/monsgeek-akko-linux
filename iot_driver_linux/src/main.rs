@@ -163,8 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Swap { key1, key2, layer }) => {
             commands::keymap::swap(&key1, &key2, layer)?;
         }
-        Some(Commands::RemapList { layer }) => {
-            commands::keymap::remap_list(layer)?;
+        Some(Commands::RemapList { layer, all }) => {
+            commands::keymap::remap_list(layer, all)?;
         }
         Some(Commands::FnLayout { sys }) => {
             commands::keymap::fn_layout(&sys)?;

@@ -249,24 +249,24 @@ pub enum Commands {
     },
 
     // === Key Remapping ===
-    /// Remap a key
+    /// Remap a key (supports layer prefix: Fn+Caps, L1+A)
     #[command(visible_alias = "set-key")]
     Remap {
-        /// Source key (matrix position 0-125 or key name)
+        /// Source key: name, index, or with layer prefix (Fn+Caps, L1+A, 42)
         from: String,
         /// Target HID keycode or key name
         to: String,
-        /// Layer (0-3)
+        /// Layer (0=base, 1=layer1, 2=fn) — overridden by prefix in FROM
         #[arg(short, long, default_value = "0")]
         layer: u8,
     },
 
-    /// Reset a key to default
+    /// Reset a key to default (supports layer prefix: Fn+Caps, L1+A)
     #[command(visible_alias = "rk")]
     ResetKey {
-        /// Key position (0-125 or key name)
+        /// Key position: name, index, or with layer prefix (Fn+Caps, L1+A)
         key: String,
-        /// Layer (0-3)
+        /// Layer (0=base, 1=layer1, 2=fn) — overridden by prefix in KEY
         #[arg(short, long, default_value = "0")]
         layer: u8,
     },
@@ -285,9 +285,12 @@ pub enum Commands {
     /// List key remappings (non-default bindings)
     #[command(visible_alias = "remaps")]
     RemapList {
-        /// Layer: 0=base, 1=fn, omit=both
+        /// Layer: 0=base, 1=layer1, 2=fn, omit=all
         #[arg(short, long)]
         layer: Option<u8>,
+        /// Show all keys including factory defaults and disabled positions
+        #[arg(short, long)]
+        all: bool,
     },
 
     /// Show the Fn layer key bindings (media keys, LED controls, etc.)

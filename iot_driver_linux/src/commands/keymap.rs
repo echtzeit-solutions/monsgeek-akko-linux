@@ -2,32 +2,29 @@
 
 use super::{with_keyboard, CommandResult};
 use iot_driver::key_action::KeyAction;
+use iot_driver::keymap::{self, KeyRef, Layer};
 use iot_driver::protocol::hid;
 use monsgeek_transport::protocol::matrix;
 
-/// Resolve a key name or numeric index to a matrix position.
-fn resolve_matrix_index(key: &str) -> Result<u8, String> {
-    // Try numeric index first
-    if let Ok(idx) = key.parse::<u8>() {
-        return Ok(idx);
-    }
-    // Try matrix key name (Esc, F3, LShf, etc.)
-    if let Some(idx) = matrix::key_index_from_name(key) {
-        return Ok(idx);
-    }
-    Err(format!(
-        "unknown key: \"{key}\". Use a matrix index (0-95) or name like F3, Esc, Tab"
-    ))
-}
-
-/// Remap a key
+/// Remap a key.
+///
+/// `from` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`, `"42"`.
+/// When a layer prefix is present, it takes precedence over the `--layer` flag.
 pub fn remap(from: &str, to: &str, layer: u8) -> CommandResult {
-    let key_index = match resolve_matrix_index(from) {
-        Ok(idx) => idx,
+    let key_ref: KeyRef = match from.parse() {
+        Ok(kr) => kr,
         Err(msg) => {
             eprintln!("{msg}");
             return Ok(());
         }
+    };
+
+    // If from has a layer prefix (not Base when the raw string contains "+"),
+    // use that; otherwise use the --layer flag as override.
+    let effective_layer = if from.contains('+') {
+        key_ref.layer
+    } else {
+        Layer::from_wire(layer)
     };
 
     let action: KeyAction = match to.parse() {
@@ -38,43 +35,50 @@ pub fn remap(from: &str, to: &str, layer: u8) -> CommandResult {
         }
     };
 
-    let hid_code = match action.hid_code() {
-        Some(code) => code,
-        None => {
-            eprintln!(
-                "Only simple key remaps are supported (got {action}). \
-                 Use assign-macro for macros."
-            );
-            return Ok(());
-        }
-    };
-
     with_keyboard(|keyboard| {
-        let from_name = matrix::key_name(key_index);
-        println!("Remapping {from_name} (index {key_index}) to {action} (0x{hid_code:02x}) on layer {layer}...");
-        match keyboard.set_keymatrix(layer, key_index, hid_code, true, 0) {
-            Ok(()) => println!("{from_name} remapped to {action}"),
+        let display_ref = KeyRef::new(key_ref.index, effective_layer);
+        println!(
+            "Remapping {} (index {}) to {action} on {} layer...",
+            display_ref,
+            key_ref.index,
+            effective_layer.name()
+        );
+        match keymap::set_key_sync(keyboard, key_ref.index, effective_layer, &action) {
+            Ok(()) => println!("{display_ref} remapped to {action}"),
             Err(e) => eprintln!("Failed to remap key: {e}"),
         }
         Ok(())
     })
 }
 
-/// Reset a key to default
+/// Reset a key to default.
+///
+/// `key` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`.
 pub fn reset_key(key: &str, layer: u8) -> CommandResult {
-    let key_index = match resolve_matrix_index(key) {
-        Ok(idx) => idx,
+    let key_ref: KeyRef = match key.parse() {
+        Ok(kr) => kr,
         Err(msg) => {
             eprintln!("{msg}");
             return Ok(());
         }
     };
 
+    let effective_layer = if key.contains('+') {
+        key_ref.layer
+    } else {
+        Layer::from_wire(layer)
+    };
+
     with_keyboard(|keyboard| {
-        let key_name = matrix::key_name(key_index);
-        println!("Resetting {key_name} (index {key_index}) on layer {layer}...");
-        match keyboard.reset_key(layer, key_index) {
-            Ok(()) => println!("{key_name} reset to default"),
+        let display_ref = KeyRef::new(key_ref.index, effective_layer);
+        println!(
+            "Resetting {} (index {}) on {}...",
+            display_ref,
+            key_ref.index,
+            effective_layer.name()
+        );
+        match keymap::reset_key_sync(keyboard, key_ref.index, effective_layer) {
+            Ok(()) => println!("{display_ref} reset to default"),
             Err(e) => eprintln!("Failed to reset key: {e}"),
         }
         Ok(())
@@ -83,15 +87,15 @@ pub fn reset_key(key: &str, layer: u8) -> CommandResult {
 
 /// Swap two keys
 pub fn swap(key1: &str, key2: &str, layer: u8) -> CommandResult {
-    let key_a = match resolve_matrix_index(key1) {
-        Ok(idx) => idx,
+    let kr_a: KeyRef = match key1.parse() {
+        Ok(kr) => kr,
         Err(msg) => {
             eprintln!("{msg}");
             return Ok(());
         }
     };
-    let key_b = match resolve_matrix_index(key2) {
-        Ok(idx) => idx,
+    let kr_b: KeyRef = match key2.parse() {
+        Ok(kr) => kr,
         Err(msg) => {
             eprintln!("{msg}");
             return Ok(());
@@ -101,6 +105,8 @@ pub fn swap(key1: &str, key2: &str, layer: u8) -> CommandResult {
     with_keyboard(|keyboard| {
         match keyboard.get_keymatrix(layer, 8) {
             Ok(data) => {
+                let key_a = kr_a.index;
+                let key_b = kr_b.index;
                 let code_a = if (key_a as usize) * 4 + 2 < data.len() {
                     data[(key_a as usize) * 4 + 2]
                 } else {
@@ -129,128 +135,55 @@ pub fn swap(key1: &str, key2: &str, layer: u8) -> CommandResult {
     })
 }
 
-/// A single key remapping (non-default binding).
-pub struct Remap {
-    /// Matrix position index.
-    pub index: u8,
-    /// Human-readable matrix key name (e.g. "Esc", "A").
-    pub position: &'static str,
-    /// Layer number (0 = base, 1 = Fn).
-    pub layer: u8,
-    /// Current action assigned to this key.
-    pub action: KeyAction,
-}
-
-/// Read both layers from the keyboard and return only user-modified keys.
-///
-/// Detection compares each key against factory defaults:
-/// - `[0, 0, 0, 0]` = disabled → skip
-/// - `[10, 1, 0, 0]` = Fn key (factory default at physical Fn position) → skip
-/// - config_type ≠ 0 (mouse/macro/consumer/etc.) → include
-/// - byte 1 ≠ 0 (user remap or combo) → include
-/// - `[0, 0, code, 0]`: include only if code ≠ factory default for that position
-///
-/// Factory defaults are derived from the transport matrix key names
-/// (e.g. position 12 = "F1" → HID 0x3A). Both layers use the same defaults
-/// since both store identity maps `[0, 0, default_code, 0]` in their base state.
-pub fn list_remaps(
-    keyboard: &monsgeek_keyboard::SyncKeyboard,
-) -> Result<Vec<Remap>, monsgeek_keyboard::KeyboardError> {
-    let key_count = keyboard.key_count() as usize;
-
-    // Build factory default keycodes from the transport's matrix key names.
-    // Each position has a name (e.g. "F1", "A") that resolves to its default HID code.
-    let defaults: Vec<u8> = (0..key_count as u8)
-        .map(|i| hid::key_code_from_name(matrix::key_name(i)).unwrap_or(0))
-        .collect();
-
-    let mut remaps = Vec::new();
-
-    for layer in 0..2u8 {
-        let data = keyboard.get_keymatrix(layer, 8)?;
-
-        for i in 0..key_count {
-            if i * 4 + 3 >= data.len() {
-                break;
-            }
-            let name = matrix::key_name(i as u8);
-            if name == "?" {
-                continue;
-            }
-
-            let k = &data[i * 4..(i + 1) * 4];
-
-            // Disabled entries are never remaps
-            if k == [0, 0, 0, 0] {
-                continue;
-            }
-
-            let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
-
-            // Fn key at physical position is factory default
-            if matches!(action, KeyAction::Fn) {
-                continue;
-            }
-
-            // Non-key config types or user byte format (byte1 != 0) are always remaps
-            if k[0] != 0 || k[1] != 0 {
-                remaps.push(Remap {
-                    index: i as u8,
-                    position: name,
-                    layer,
-                    action,
-                });
-                continue;
-            }
-
-            // config_type=0, byte1=0, byte2!=0: compare against factory default
-            if k[2] == defaults[i] {
-                continue; // matches factory default (identity map)
-            }
-
-            remaps.push(Remap {
-                index: i as u8,
-                position: name,
-                layer,
-                action,
-            });
-        }
-    }
-
-    Ok(remaps)
-}
-
 /// CLI handler: list key remappings.
-pub fn remap_list(layer_filter: Option<u8>) -> CommandResult {
+pub fn remap_list(layer_filter: Option<u8>, show_all: bool) -> CommandResult {
     with_keyboard(|keyboard| {
-        let remaps = match list_remaps(keyboard) {
-            Ok(r) => r,
+        let keymap = match keymap::load_sync(keyboard) {
+            Ok(km) => km,
             Err(e) => {
                 eprintln!("Failed to read key matrix: {e}");
                 return Ok(());
             }
         };
 
-        let remaps: Vec<&Remap> = remaps
-            .iter()
-            .filter(|r| layer_filter.is_none_or(|l| r.layer == l))
+        // Collect entries based on --all flag
+        let entries: Vec<_> = if show_all {
+            keymap.iter().collect()
+        } else {
+            keymap.remaps().collect()
+        };
+
+        // Apply layer filter
+        let filter_layer = layer_filter.map(Layer::from_wire);
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|e| filter_layer.is_none_or(|l| e.layer == l))
             .collect();
 
-        if remaps.is_empty() {
-            println!("No remappings found.");
+        if entries.is_empty() {
+            if show_all {
+                println!("No keys found.");
+            } else {
+                println!("No remappings found.");
+            }
             return Ok(());
         }
 
-        println!("Key remappings:\n");
+        if show_all {
+            println!("All key mappings:\n");
+        } else {
+            println!("Key remappings:\n");
+        }
 
-        for layer in 0..2u8 {
-            let layer_remaps: Vec<&&Remap> = remaps.iter().filter(|r| r.layer == layer).collect();
-            if layer_remaps.is_empty() {
+        for layer in Layer::ALL {
+            let layer_entries: Vec<_> = entries.iter().filter(|e| e.layer == layer).collect();
+            if layer_entries.is_empty() {
                 continue;
             }
-            println!("Layer {layer}:");
-            for r in &layer_remaps {
-                println!("  {:<12} ({:<3}) → {}", r.position, r.index, r.action);
+            println!("{}:", layer.name());
+            for e in &layer_entries {
+                let ref_display = e.key_ref();
+                println!("  {:<12} ({:<3}) -> {}", ref_display, e.index, e.action);
             }
             println!();
         }
@@ -285,9 +218,9 @@ pub fn fn_layout(sys: &str) -> CommandResult {
             if k == [0, 0, 0, 0] {
                 continue;
             }
-            let name = matrix::key_name(i as u8);
+            let ref_display = KeyRef::new(i as u8, Layer::Fn);
             let action = KeyAction::from_config_bytes(k);
-            println!("  {:<12} ({:<3}) -> {}", name, i, action);
+            println!("  {:<12} ({:<3}) -> {}", ref_display, i, action);
         }
         Ok(())
     })
