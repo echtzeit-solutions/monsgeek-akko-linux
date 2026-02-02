@@ -140,17 +140,14 @@ pub fn assign_macro(key: &str, macro_index_str: &str, fn_layer: bool) -> Command
 
     with_keyboard(|keyboard| {
         let key_name = matrix::key_name(key_index);
-        let layer = if fn_layer { "Fn+" } else { "" };
-        println!("Assigning macro {macro_index} to {layer}{key_name} (index {key_index})...");
+        let layer_num: u8 = if fn_layer { 1 } else { 0 };
+        let prefix = if fn_layer { "Fn+" } else { "" };
+        println!("Assigning macro {macro_index} to {prefix}{key_name} (index {key_index})...");
 
-        // Use profile 0, macro_type 0 (repeat by count)
-        let result = if fn_layer {
-            keyboard.assign_macro_to_fn_key(0, key_index, macro_index, 0)
-        } else {
-            keyboard.assign_macro_to_key(0, key_index, macro_index, 0)
-        };
+        // macro_type 0 = repeat by count
+        let result = keyboard.assign_macro_to_key(layer_num, key_index, macro_index, 0);
         match result {
-            Ok(()) => println!("Macro {macro_index} assigned to {layer}{key_name}"),
+            Ok(()) => println!("Macro {macro_index} assigned to {prefix}{key_name}"),
             Err(e) => eprintln!("Failed to assign macro: {e}"),
         }
         Ok(())
