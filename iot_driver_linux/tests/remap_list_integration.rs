@@ -12,6 +12,9 @@
 //! which uses a different position numbering.
 
 use iot_driver::key_action::KeyAction;
+use iot_driver::keymap::{
+    is_user_remap as shared_is_user_remap, KeyMap, KeyRef, Layer, RawKeyMapData,
+};
 use iot_driver::protocol::hid;
 use monsgeek_transport::protocol::matrix;
 
@@ -498,4 +501,529 @@ fn simulated_fn_layer_with_consumer_and_led() {
         }
     ));
     assert_eq!(entries[4].1, KeyAction::Fn);
+}
+
+// ── Caps key (position 3) roundtrip tests for all mapping types ──
+//
+// Each test: build a KeyAction → to_config_bytes → from_config_bytes → verify
+// roundtrip equality and is_user_remap detection.  Caps factory default is
+// CapsLock (HID 0x39).
+
+const CAPS_POS: u8 = 3;
+
+fn caps_default() -> u8 {
+    default_for(CAPS_POS) // 0x39
+}
+
+#[test]
+fn caps_roundtrip_simple_key() {
+    let action = KeyAction::Key(0x05); // B
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [0, 0, 0x05, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_identity_not_detected() {
+    // Caps mapped to CapsLock = factory default → NOT a remap
+    let action = KeyAction::Key(0x39);
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [0, 0, 0x39, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(!is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_combo() {
+    let action = KeyAction::Combo {
+        mods: 0x01, // LCtrl
+        key: 0x06,  // C
+    };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [0, 0x01, 0x06, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_combo_shift_alt() {
+    let action = KeyAction::Combo {
+        mods: 0x02 | 0x04, // LShift + LAlt
+        key: 0x3C,         // F3
+    };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [0, 0x06, 0x3C, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_macro_repeat() {
+    let action = KeyAction::Macro { index: 0, kind: 0 };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [9, 0, 0, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_macro_toggle() {
+    let action = KeyAction::Macro { index: 3, kind: 1 };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [9, 1, 3, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_macro_hold() {
+    let action = KeyAction::Macro { index: 7, kind: 2 };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [9, 2, 7, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_mouse() {
+    let action = KeyAction::Mouse(1);
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [1, 0, 1, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_gamepad() {
+    let action = KeyAction::Gamepad(5);
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [21, 0, 5, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_fn() {
+    let action = KeyAction::Fn;
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [10, 1, 0, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    // Fn is factory default at Fn position — detection filter excludes it
+    assert!(!is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_disabled() {
+    let action = KeyAction::Disabled;
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [0, 0, 0, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(!is_user_remap(&wire, caps_default()));
+}
+
+#[test]
+fn caps_roundtrip_consumer_volume_up() {
+    let action = KeyAction::Consumer(0x00E9);
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [3, 0, 0xE9, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+    assert_eq!(action.to_string(), "Volume Up");
+}
+
+#[test]
+fn caps_roundtrip_consumer_calculator() {
+    let action = KeyAction::Consumer(0x0192);
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [3, 0, 0x92, 0x01]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+    assert_eq!(action.to_string(), "Calculator");
+}
+
+#[test]
+fn caps_roundtrip_led_control() {
+    let action = KeyAction::LedControl { data: [2, 1, 0] };
+    let wire = action.to_config_bytes();
+    assert_eq!(wire, [13, 2, 1, 0]);
+    assert_eq!(KeyAction::from_config_bytes(wire), action);
+    assert!(is_user_remap(&wire, caps_default()));
+    assert_eq!(action.to_string(), "LED Brightness Up");
+}
+
+/// Full simulated matrix scan: assign several different action types to
+/// Caps (position 3) and verify remap-list would show each one correctly.
+#[test]
+fn caps_all_remap_types_in_matrix_scan() {
+    let caps = CAPS_POS as usize;
+    let caps_def = caps_default();
+
+    let actions: &[KeyAction] = &[
+        KeyAction::Key(0x05), // B
+        KeyAction::Combo {
+            mods: 0x01,
+            key: 0x06,
+        }, // Ctrl+C
+        KeyAction::Macro { index: 0, kind: 0 }, // Macro(0)
+        KeyAction::Macro { index: 2, kind: 2 }, // Macro(2,hold)
+        KeyAction::Mouse(1),
+        KeyAction::Gamepad(3),
+        KeyAction::Consumer(0x00E9), // Volume Up
+        KeyAction::LedControl { data: [2, 1, 0] },
+    ];
+
+    for action in actions {
+        let wire = action.to_config_bytes();
+        let parsed = KeyAction::from_config_bytes(wire);
+        assert_eq!(&parsed, action, "roundtrip failed for {action}");
+        assert!(
+            is_user_remap(&wire, caps_def),
+            "{action} should be detected as remap on Caps"
+        );
+    }
+}
+
+/// Actions that should NOT be detected as remaps on Caps.
+#[test]
+fn caps_non_remap_types_not_detected() {
+    let caps_def = caps_default();
+
+    // Disabled
+    assert!(!is_user_remap(
+        &KeyAction::Disabled.to_config_bytes(),
+        caps_def
+    ));
+    // Identity (CapsLock → CapsLock)
+    assert!(!is_user_remap(
+        &KeyAction::Key(0x39).to_config_bytes(),
+        caps_def
+    ));
+    // Fn (filtered as factory default regardless of position)
+    assert!(!is_user_remap(&KeyAction::Fn.to_config_bytes(), caps_def));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests for the shared keymap module (Layer, KeyRef, KeyMap)
+// ════════════════════════════════════════════════════════════════════════════
+
+// -- shared is_user_remap matches local --
+
+#[test]
+fn shared_remap_detection_matches_local() {
+    // Verify the shared module's is_user_remap matches our local version
+    let cases: &[([u8; 4], u8, bool)] = &[
+        ([0, 0, 0, 0], 0x29, false),      // disabled
+        ([0, 0, 0x29, 0], 0x29, false),   // identity
+        ([0, 0, 0x04, 0], 0x39, true),    // changed
+        ([9, 0, 0, 0], 0xE0, true),       // macro
+        ([10, 1, 0, 0], 0xE4, false),     // Fn key
+        ([0, 0x01, 0x06, 0], 0x39, true), // combo
+        ([1, 0, 1, 0], 0xE0, true),       // mouse
+    ];
+    for &(k, def, expected) in cases {
+        assert_eq!(
+            shared_is_user_remap(&k, def),
+            expected,
+            "shared_is_user_remap({k:?}, 0x{def:02x}) should be {expected}"
+        );
+        assert_eq!(
+            is_user_remap(&k, def),
+            expected,
+            "local is_user_remap({k:?}, 0x{def:02x}) should be {expected}"
+        );
+    }
+}
+
+// -- Layer --
+
+#[test]
+fn layer_parse_all_forms() {
+    assert_eq!("0".parse::<Layer>(), Ok(Layer::Base));
+    assert_eq!("L0".parse::<Layer>(), Ok(Layer::Base));
+    assert_eq!("base".parse::<Layer>(), Ok(Layer::Base));
+    assert_eq!("1".parse::<Layer>(), Ok(Layer::Layer1));
+    assert_eq!("l1".parse::<Layer>(), Ok(Layer::Layer1));
+    assert_eq!("L1".parse::<Layer>(), Ok(Layer::Layer1));
+    assert_eq!("2".parse::<Layer>(), Ok(Layer::Fn));
+    assert_eq!("fn".parse::<Layer>(), Ok(Layer::Fn));
+    assert_eq!("FN".parse::<Layer>(), Ok(Layer::Fn));
+    assert!("3".parse::<Layer>().is_err());
+    assert!("bad".parse::<Layer>().is_err());
+}
+
+#[test]
+fn layer_wire_roundtrip() {
+    for layer in Layer::ALL {
+        assert_eq!(Layer::from_wire(layer.wire_layer()), layer);
+    }
+}
+
+#[test]
+fn layer_display_short() {
+    assert_eq!(Layer::Base.to_string(), "L0");
+    assert_eq!(Layer::Layer1.to_string(), "L1");
+    assert_eq!(Layer::Fn.to_string(), "Fn");
+}
+
+// -- KeyRef --
+
+#[test]
+fn keyref_parse_bare_key() {
+    let kr: KeyRef = "Caps".parse().unwrap();
+    assert_eq!(kr.index, 3);
+    assert_eq!(kr.position, "Caps");
+    assert_eq!(kr.layer, Layer::Base);
+}
+
+#[test]
+fn keyref_parse_fn_prefix() {
+    let kr: KeyRef = "Fn+Caps".parse().unwrap();
+    assert_eq!(kr.index, 3);
+    assert_eq!(kr.layer, Layer::Fn);
+}
+
+#[test]
+fn keyref_parse_l1_prefix() {
+    let kr: KeyRef = "L1+A".parse().unwrap();
+    assert_eq!(kr.layer, Layer::Layer1);
+}
+
+#[test]
+fn keyref_parse_numeric() {
+    let kr: KeyRef = "42".parse().unwrap();
+    assert_eq!(kr.index, 42);
+    assert_eq!(kr.layer, Layer::Base);
+}
+
+#[test]
+fn keyref_parse_fn_numeric() {
+    let kr: KeyRef = "Fn+42".parse().unwrap();
+    assert_eq!(kr.index, 42);
+    assert_eq!(kr.layer, Layer::Fn);
+}
+
+#[test]
+fn keyref_display_base() {
+    let kr = KeyRef::new(3, Layer::Base);
+    assert_eq!(kr.to_string(), "Caps");
+}
+
+#[test]
+fn keyref_display_fn() {
+    let kr = KeyRef::new(3, Layer::Fn);
+    assert_eq!(kr.to_string(), "Fn+Caps");
+}
+
+#[test]
+fn keyref_display_l1() {
+    let kr = KeyRef::new(3, Layer::Layer1);
+    assert_eq!(kr.to_string(), "L1+Caps");
+}
+
+#[test]
+fn keyref_roundtrip() {
+    // Parse a KeyRef, display it, parse the display back → same
+    for s in &["Caps", "Fn+Caps", "L1+Caps", "42", "Fn+42"] {
+        let kr: KeyRef = s.parse().unwrap();
+        let display = kr.to_string();
+        let kr2: KeyRef = display.parse().unwrap();
+        assert_eq!(kr, kr2, "roundtrip failed for {s}");
+    }
+}
+
+// -- KeyMap::from_raw --
+
+fn make_test_raw(
+    key_count: usize,
+    base0: &[[u8; 4]],
+    base1: &[[u8; 4]],
+    fn_layer: &[[u8; 4]],
+) -> RawKeyMapData {
+    let to_vec = |entries: &[[u8; 4]]| -> Vec<u8> {
+        let mut v = vec![0u8; key_count * 4];
+        for (i, e) in entries.iter().enumerate() {
+            if i < key_count {
+                v[i * 4..i * 4 + 4].copy_from_slice(e);
+            }
+        }
+        v
+    };
+    RawKeyMapData {
+        base0: to_vec(base0),
+        base1: to_vec(base1),
+        fn_layer: if fn_layer.is_empty() {
+            None
+        } else {
+            Some(to_vec(fn_layer))
+        },
+        key_count,
+    }
+}
+
+#[test]
+fn keymap_from_raw_base_remap() {
+    let raw = make_test_raw(
+        6,
+        &[
+            [0, 0, 0x29, 0], // Esc default
+            [0, 0, 0x35, 0], // ` default
+            [0, 0, 0x2B, 0], // Tab default
+            [0, 0, 0x04, 0], // Caps → A (REMAP)
+            [0, 0, 0xE1, 0], // LShf default
+            [9, 0, 0, 0],    // LCtl → Macro(0) (REMAP)
+        ],
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x39, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[],
+    );
+
+    let km = KeyMap::from_raw(&raw);
+
+    // Base layer should have 2 remaps
+    let base_remaps: Vec<_> = km.layer_remaps(Layer::Base).collect();
+    assert_eq!(base_remaps.len(), 2);
+    assert_eq!(base_remaps[0].index, 3); // Caps
+    assert_eq!(base_remaps[0].action, KeyAction::Key(0x04));
+    assert_eq!(base_remaps[1].index, 5); // LCtl
+    assert_eq!(
+        base_remaps[1].action,
+        KeyAction::Macro { index: 0, kind: 0 }
+    );
+
+    // Layer 1 should have no remaps
+    let l1_remaps: Vec<_> = km.layer_remaps(Layer::Layer1).collect();
+    assert_eq!(l1_remaps.len(), 0);
+}
+
+#[test]
+fn keymap_from_raw_fn_layer() {
+    let raw = make_test_raw(
+        6,
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x39, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x39, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[
+            [0, 0, 0, 0],    // empty
+            [3, 0, 0xE9, 0], // Volume Up
+            [3, 0, 0xCD, 0], // Play/Pause
+            [0, 0, 0, 0],    // empty
+            [13, 2, 1, 0],   // LED Brightness Up
+            [0, 0, 0, 0],    // empty
+        ],
+    );
+
+    let km = KeyMap::from_raw(&raw);
+
+    let fn_entries: Vec<_> = km.layer(Layer::Fn).collect();
+    assert_eq!(fn_entries.len(), 3);
+    assert_eq!(fn_entries[0].action, KeyAction::Consumer(0x00E9));
+    assert_eq!(fn_entries[1].action, KeyAction::Consumer(0x00CD));
+    assert!(matches!(fn_entries[2].action, KeyAction::LedControl { .. }));
+
+    // All Fn entries should be marked as remapped
+    for e in &fn_entries {
+        assert!(e.is_remapped);
+    }
+}
+
+#[test]
+fn keymap_all_layers_combined() {
+    let raw = make_test_raw(
+        6,
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x04, 0], // Caps → A on L0
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x05, 0], // ` → B on L1
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x39, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[
+            [0, 0, 0, 0],
+            [3, 0, 0xE9, 0], // Volume Up on Fn
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+    );
+
+    let km = KeyMap::from_raw(&raw);
+    let all_remaps: Vec<_> = km.remaps().collect();
+
+    // Should find: Caps→A on L0, `→B on L1, Volume Up on Fn
+    assert_eq!(all_remaps.len(), 3);
+    assert_eq!(all_remaps[0].layer, Layer::Base);
+    assert_eq!(all_remaps[0].position, "Caps");
+    assert_eq!(all_remaps[1].layer, Layer::Layer1);
+    assert_eq!(all_remaps[1].position, "`");
+    assert_eq!(all_remaps[2].layer, Layer::Fn);
+    assert_eq!(all_remaps[2].action, KeyAction::Consumer(0x00E9));
+}
+
+#[test]
+fn keymap_get_lookup() {
+    let raw = make_test_raw(
+        6,
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x04, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[
+            [0, 0, 0x29, 0],
+            [0, 0, 0x35, 0],
+            [0, 0, 0x2B, 0],
+            [0, 0, 0x39, 0],
+            [0, 0, 0xE1, 0],
+            [0, 0, 0xE0, 0],
+        ],
+        &[],
+    );
+
+    let km = KeyMap::from_raw(&raw);
+
+    // Look up Caps on base: remapped to A
+    let entry = km.get(3, Layer::Base).unwrap();
+    assert_eq!(entry.action, KeyAction::Key(0x04));
+    assert!(entry.is_remapped);
+
+    // Look up Caps on L1: factory default
+    let entry = km.get(3, Layer::Layer1).unwrap();
+    assert_eq!(entry.action, KeyAction::Key(0x39));
+    assert!(!entry.is_remapped);
+
+    // Fn layer has no entries (no Fn data provided)
+    assert!(km.get(3, Layer::Fn).is_none());
 }
