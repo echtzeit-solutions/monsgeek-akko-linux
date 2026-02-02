@@ -2166,6 +2166,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "zerocopy",
 ]
 
 [[package]]
@@ -2183,6 +2184,7 @@ dependencies = [
  "tokio",
  "tokio-udev",
  "tracing",
+ "zerocopy",
 ]
 
 [[package]]

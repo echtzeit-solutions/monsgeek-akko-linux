@@ -40,11 +40,15 @@ use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
-    DebounceResponse, LedParamsResponse as TransportLedParamsResponse,
-    PollingRate as TransportPollingRate, PollingRateResponse, ProfileResponse, QueryDebounce,
-    QueryLedParams, QueryPollingRate, QueryProfile, QuerySleepTime, SetDebounce,
-    SetMagnetismReport, SetPollingRate, SetProfile, SetSleepTime, SleepTimeResponse,
+    DebounceResponse, GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData,
+    LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
+    PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
+    QueryProfile, QuerySleepTime, SetDebounce, SetFnData, SetKeyMagnetismModeData,
+    SetKeyMatrixData, SetMacroCommand, SetMacroHeader, SetMagnetismReport,
+    SetMultiMagnetismCommand, SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime,
+    SleepTimeResponse,
 };
+use zerocopy::IntoBytes;
 
 /// High-level keyboard interface using any transport
 ///
@@ -529,15 +533,13 @@ impl KeyboardInterface {
             ));
         }
 
-        let data = [
-            settings.key_index,
-            settings.actuation,
-            settings.deactuation,
-            settings.mode.to_u8(),
-        ];
-
         self.transport
-            .send_command(cmd::SET_KEY_MAGNETISM_MODE, &data, ChecksumType::Bit7)
+            .send(&SetKeyMagnetismModeData {
+                key_index: settings.key_index,
+                actuation: settings.actuation,
+                deactuation: settings.deactuation,
+                mode: settings.mode.to_u8(),
+            })
             .await?;
 
         Ok(())
@@ -552,18 +554,24 @@ impl KeyboardInterface {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
-            let data = [sub_cmd, 1, page as u8]; // sub_cmd, flag, page
+            let query = GetMultiMagnetismData {
+                sub_cmd,
+                flag: 1,
+                page: page as u8,
+            };
             match self
                 .transport
-                .query_raw(cmd::GET_MULTI_MAGNETISM, &data, ChecksumType::Bit7)
+                .query_raw(
+                    cmd::GET_MULTI_MAGNETISM,
+                    query.as_bytes(),
+                    ChecksumType::Bit7,
+                )
                 .await
             {
                 Ok(resp) => {
-                    // Response data starts at byte 0 (64 bytes per page)
                     all_data.extend_from_slice(&resp);
                 }
                 Err(_) => {
-                    // If page fails, fill with zeros
                     all_data.extend(std::iter::repeat_n(0u8, 64));
                 }
             }
@@ -635,20 +643,20 @@ impl KeyboardInterface {
 
         for (page, chunk) in bytes.chunks(PAGE_SIZE).enumerate() {
             let is_last = page == num_pages - 1;
-            let mut data = vec![
-                sub_cmd,
-                1,                           // flag = 1 for bulk mode
-                page as u8,                  // page number
-                if is_last { 1 } else { 0 }, // commit flag on last page
-                0,
-                0,
-                0,
-            ];
-            data.extend_from_slice(chunk);
+            let cmd = SetMultiMagnetismCommand {
+                header: SetMultiMagnetismHeader {
+                    sub_cmd,
+                    flag: 1,
+                    page: page as u8,
+                    commit: if is_last { 1 } else { 0 },
+                    _pad0: 0,
+                    _pad1: 0,
+                    _checksum: 0,
+                },
+                payload: chunk.to_vec(),
+            };
 
-            self.transport
-                .send_command_with_delay(cmd::SET_MULTI_MAGNETISM, &data, ChecksumType::Bit7, 30)
-                .await?;
+            self.transport.send_with_delay(&cmd, 30).await?;
         }
 
         Ok(())
@@ -993,10 +1001,18 @@ impl KeyboardInterface {
     /// # Returns
     /// Vector of 16-bit calibration values for up to 32 keys
     pub async fn get_calibration_progress(&self, page: u8) -> Result<Vec<u16>, KeyboardError> {
-        let data = [mag_cmd::CALIBRATION, 1, page]; // subcmd, flag, page
+        let query = GetMultiMagnetismData {
+            sub_cmd: mag_cmd::CALIBRATION,
+            flag: 1,
+            page,
+        };
         let response = self
             .transport
-            .query_raw(cmd::GET_MULTI_MAGNETISM, &data, ChecksumType::Bit7)
+            .query_raw(
+                cmd::GET_MULTI_MAGNETISM,
+                query.as_bytes(),
+                ChecksumType::Bit7,
+            )
             .await?;
 
         // Decode 16-bit LE values from response (64 bytes = 32 values)
@@ -1069,19 +1085,19 @@ impl KeyboardInterface {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
-            // Request format: [layer, 255 (magic), page, magnetism_profile]
-            // Byte positions match webapp: ft[1]=layer, ft[2]=255, ft[3]=page, ft[4]=magnetism
-            let data = [profile, 255, page as u8, 0];
+            let query = GetKeyMatrixData {
+                profile,
+                magic: 0xFF,
+                page: page as u8,
+                magnetism_profile: 0,
+            };
 
-            // GET_KEYMATRIX response may not echo the command byte — use raw
-            // query (same pattern as GET_MACRO and GET_MULTI_MAGNETISM)
             match self
                 .transport
-                .query_raw(cmd::GET_KEYMATRIX, &data, ChecksumType::Bit7)
+                .query_raw(cmd::GET_KEYMATRIX, query.as_bytes(), ChecksumType::Bit7)
                 .await
             {
                 Ok(resp) => {
-                    // Include full response — no command echo for GET_KEYMATRIX.
                     all_data.extend_from_slice(&resp);
                 }
                 Err(_) => continue,
@@ -1116,10 +1132,15 @@ impl KeyboardInterface {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
-            let data = [sys, profile, 255, page as u8];
+            let query = GetFnData {
+                sys,
+                profile,
+                magic: 0xFF,
+                page: page as u8,
+            };
             match self
                 .transport
-                .query_raw(cmd::GET_FN, &data, ChecksumType::Bit7)
+                .query_raw(cmd::GET_FN, query.as_bytes(), ChecksumType::Bit7)
                 .await
             {
                 Ok(resp) => {
@@ -1138,14 +1159,51 @@ impl KeyboardInterface {
         }
     }
 
-    /// Set a single key's mapping
+    /// Set a key's 4-byte config on any layer.
     ///
-    /// # Arguments
-    /// * `profile` - Profile index (0-3)
-    /// * `key_index` - Key position in the matrix (0-based)
-    /// * `hid_code` - HID usage code for the new key
-    /// * `enabled` - Whether the key is enabled (true = normal, false = use default)
-    /// * `layer` - Fn layer (0 = base layer)
+    /// Routes to SET_KEYMATRIX (0x0A) for layers 0-1 or SET_FN (0x10) for layer 2+.
+    /// The `config` bytes are `[config_type, b1, b2, b3]` as used by the protocol.
+    pub async fn set_key_config(
+        &self,
+        profile: u8,
+        key_index: u8,
+        layer: u8,
+        config: [u8; 4],
+    ) -> Result<(), KeyboardError> {
+        let enabled: u8 = if config == [0, 0, 0, 0] { 0 } else { 1 };
+        if layer <= 1 {
+            self.transport
+                .send(&SetKeyMatrixData {
+                    profile,
+                    key_index,
+                    enabled,
+                    layer,
+                    config_type: config[0],
+                    b1: config[1],
+                    b2: config[2],
+                    b3: config[3],
+                    ..SetKeyMatrixData::ZERO
+                })
+                .await?;
+        } else {
+            self.transport
+                .send(&SetFnData {
+                    profile,
+                    key_index,
+                    config_type: config[0],
+                    b1: config[1],
+                    b2: config[2],
+                    b3: config[3],
+                    ..SetFnData::ZERO
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Set a single key's mapping (base layer only).
+    ///
+    /// For layer-aware remapping, use [`set_key_config`](Self::set_key_config).
     pub async fn set_keymatrix(
         &self,
         profile: u8,
@@ -1154,32 +1212,24 @@ impl KeyboardInterface {
         enabled: bool,
         layer: u8,
     ) -> Result<(), KeyboardError> {
-        // Key code format for simple key: [0, 0, hid_code, 0]
-        let data = [
-            profile,   // profile
-            key_index, // key index in matrix
-            0,
-            0,                           // unused
-            if enabled { 1 } else { 0 }, // enabled flag
-            layer,                       // layer
-            0,                           // padding
-            0,
-            0,
-            hid_code,
-            0, // key code bytes
-        ];
-
         self.transport
-            .send_command(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
+            .send(&SetKeyMatrixData {
+                profile,
+                key_index,
+                enabled: if enabled { 1 } else { 0 },
+                layer,
+                b2: hid_code,
+                ..SetKeyMatrixData::ZERO
+            })
             .await?;
         Ok(())
     }
 
-    /// Reset a key to its default mapping
+    /// Reset a key to its default mapping on any layer.
     ///
-    /// Sets the key to "disabled" which causes the firmware to use the default
-    pub async fn reset_key(&self, profile: u8, key_index: u8) -> Result<(), KeyboardError> {
-        self.set_keymatrix(profile, key_index, 0, false, 0).await
+    /// Sets the key to "disabled" which causes the firmware to use the default.
+    pub async fn reset_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
+        self.set_key_config(0, key_index, layer, [0, 0, 0, 0]).await
     }
 
     /// Swap two keys
@@ -1210,12 +1260,11 @@ impl KeyboardInterface {
         let mut all_data = Vec::new();
 
         for page in 0..4u8 {
-            let data = [macro_index, page];
+            let query = GetMacroData { macro_index, page };
 
-            // GET_MACRO response doesn't echo the command byte — use raw query
             match self
                 .transport
-                .query_raw(cmd::GET_MACRO, &data, ChecksumType::Bit7)
+                .query_raw(cmd::GET_MACRO, query.as_bytes(), ChecksumType::Bit7)
                 .await
             {
                 Ok(resp) => {
@@ -1310,21 +1359,20 @@ impl KeyboardInterface {
             let chunk = &macro_data[start..end];
             let is_last = page == num_pages - 1;
 
-            // Build command data: [macro_index, page, chunk_len, is_last, 0, 0, 0, data...]
-            let mut data = vec![
-                macro_index,
-                page as u8,
-                chunk.len() as u8,
-                if is_last { 1 } else { 0 },
-                0,
-                0,
-                0,
-            ];
-            data.extend_from_slice(chunk);
+            let cmd = SetMacroCommand {
+                header: SetMacroHeader {
+                    macro_index,
+                    page: page as u8,
+                    chunk_len: chunk.len() as u8,
+                    is_last: if is_last { 1 } else { 0 },
+                    _pad0: 0,
+                    _pad1: 0,
+                    _checksum: 0,
+                },
+                payload: chunk.to_vec(),
+            };
 
-            self.transport
-                .send_command_with_delay(cmd::SET_MACRO, &data, ChecksumType::Bit7, 30)
-                .await?;
+            self.transport.send_with_delay(&cmd, 30).await?;
         }
 
         Ok(())
@@ -1366,97 +1414,28 @@ impl KeyboardInterface {
         self.set_macro(macro_index, &events, repeat).await
     }
 
-    /// Assign a macro to a key via SET_KEYMATRIX (0x0A) with config_type=9.
+    /// Assign a macro to a key on any layer.
     ///
-    /// This matches the webapp's protocol: command 0x0A with the 4-byte macro
-    /// config `[9, macro_type, macro_index, 0]` at bytes 8-11.
-    ///
-    /// # Arguments
-    /// * `profile` - Profile number (0-based)
-    /// * `key_index` - Matrix position of the key
-    /// * `macro_index` - Macro slot number (0-based)
-    /// * `macro_type` - Macro repeat mode (0=repeat count, 1=toggle, 2=hold to repeat)
+    /// * `layer` - 0 for base, 1 for Fn
+    /// * `macro_type` - 0=repeat by count, 1=toggle, 2=hold to repeat
     pub async fn assign_macro_to_key(
         &self,
-        profile: u8,
+        layer: u8,
         key_index: u8,
         macro_index: u8,
         macro_type: u8,
     ) -> Result<(), KeyboardError> {
-        // Webapp layout: [profile, key_index, 0, 0, save_to_device=1, 0, (checksum), 9, macro_type, macro_index, 0]
-        let data = [
-            profile,
-            key_index,
-            0,
-            0,
-            1, // save_to_device
-            0,
-            9, // config_type = macro assignment (after checksum at byte 7)
-            macro_type,
-            macro_index,
-            0,
-        ];
-
-        self.transport
-            .send_command(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
-            .await?;
-        Ok(())
+        self.set_key_config(0, key_index, layer, [9, macro_type, macro_index, 0])
+            .await
     }
 
     /// Remove macro assignment from a key, restoring default behavior.
-    ///
-    /// # Arguments
-    /// * `profile` - Profile number (0-based)
-    /// * `key_index` - Matrix position of the key
     pub async fn unassign_macro_from_key(
         &self,
-        profile: u8,
+        layer: u8,
         key_index: u8,
     ) -> Result<(), KeyboardError> {
-        let data = [
-            profile, key_index, 0, 0, 1, // save_to_device
-            0, 0, // config_type=0 clears the assignment
-            0, 0, 0,
-        ];
-
-        self.transport
-            .send_command(cmd::SET_KEYMATRIX, &data, ChecksumType::Bit7)
-            .await?;
-        Ok(())
-    }
-
-    /// Assign a macro to Fn+key via SET_FN (0x10) with config_type=9.
-    ///
-    /// # Arguments
-    /// * `profile` - Profile number (0-based)
-    /// * `key_index` - Matrix position of the key
-    /// * `macro_index` - Macro slot number (0-based)
-    /// * `macro_type` - Macro repeat mode (0=repeat count, 1=toggle, 2=hold to repeat)
-    pub async fn assign_macro_to_fn_key(
-        &self,
-        profile: u8,
-        key_index: u8,
-        macro_index: u8,
-        macro_type: u8,
-    ) -> Result<(), KeyboardError> {
-        let data = [
-            profile,
-            0,
-            key_index,
-            0,
-            0,
-            0,
-            0,
-            9, // config_type = macro
-            macro_type,
-            macro_index,
-            0,
-        ];
-
-        self.transport
-            .send_command(cmd::SET_FN, &data, ChecksumType::Bit7)
-            .await?;
-        Ok(())
+        self.reset_key(layer, key_index).await
     }
 
     // === Device Info ===

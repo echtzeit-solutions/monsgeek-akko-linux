@@ -312,7 +312,18 @@ impl SyncKeyboard {
         block_on(self.inner.get_fn_keymatrix(profile, sys, num_pages))
     }
 
-    /// Set a single key's mapping
+    /// Set a key's 4-byte config on any layer
+    pub fn set_key_config(
+        &self,
+        profile: u8,
+        key_index: u8,
+        layer: u8,
+        config: [u8; 4],
+    ) -> Result<(), KeyboardError> {
+        block_on(self.inner.set_key_config(profile, key_index, layer, config))
+    }
+
+    /// Set a single key's mapping (base layer only)
     pub fn set_keymatrix(
         &self,
         profile: u8,
@@ -327,9 +338,9 @@ impl SyncKeyboard {
         )
     }
 
-    /// Reset a key to its default mapping
-    pub fn reset_key(&self, profile: u8, key_index: u8) -> Result<(), KeyboardError> {
-        block_on(self.inner.reset_key(profile, key_index))
+    /// Reset a key to its default mapping on any layer
+    pub fn reset_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
+        block_on(self.inner.reset_key(layer, key_index))
     }
 
     /// Swap two keys
@@ -371,37 +382,23 @@ impl SyncKeyboard {
         )
     }
 
-    /// Assign a macro to a key via SET_KEYMATRIX with config_type=9
+    /// Assign a macro to a key on any layer
     pub fn assign_macro_to_key(
         &self,
-        profile: u8,
+        layer: u8,
         key_index: u8,
         macro_index: u8,
         macro_type: u8,
     ) -> Result<(), KeyboardError> {
         block_on(
             self.inner
-                .assign_macro_to_key(profile, key_index, macro_index, macro_type),
+                .assign_macro_to_key(layer, key_index, macro_index, macro_type),
         )
     }
 
-    /// Assign a macro to Fn+key via SET_FN
-    pub fn assign_macro_to_fn_key(
-        &self,
-        profile: u8,
-        key_index: u8,
-        macro_index: u8,
-        macro_type: u8,
-    ) -> Result<(), KeyboardError> {
-        block_on(
-            self.inner
-                .assign_macro_to_fn_key(profile, key_index, macro_index, macro_type),
-        )
-    }
-
-    /// Remove macro assignment from a key
-    pub fn unassign_macro_from_key(&self, profile: u8, key_index: u8) -> Result<(), KeyboardError> {
-        block_on(self.inner.unassign_macro_from_key(profile, key_index))
+    /// Remove macro assignment from a key on any layer
+    pub fn unassign_macro_from_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
+        block_on(self.inner.unassign_macro_from_key(layer, key_index))
     }
 
     // === Device Info ===
