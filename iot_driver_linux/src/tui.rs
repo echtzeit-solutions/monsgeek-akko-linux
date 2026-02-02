@@ -27,6 +27,7 @@ use crate::firmware_api::FirmwareCheckResult;
 use crate::hal::constants::{KEY_COUNT_M1_V5, MATRIX_SIZE_M1_V5};
 use crate::hid::BatteryInfo;
 use crate::key_action::KeyAction;
+use crate::keymap::{self, KeyEntry, Layer};
 use crate::macro_seq::MacroSeq;
 use crate::power_supply::{
     find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
@@ -75,7 +76,7 @@ struct App {
     // Sleep time settings (loaded separately, merged into options)
     sleep_settings: Option<SleepTimeSettings>,
     // Remap tab state (tab 5)
-    remaps: Vec<RemapEntry>,
+    remaps: Vec<KeyEntry>,
     remap_selected: usize,
     remap_layer_view: RemapLayerView,
     remap_editing: Option<RemapEditor>,
@@ -145,28 +146,22 @@ struct MacroEvent {
     delay_ms: u16,
 }
 
-/// A non-default key assignment discovered by reading the key matrix.
-struct RemapEntry {
-    index: u8,
-    position: &'static str,
-    layer: u8,
-    action: KeyAction,
-}
-
 /// Layer filter for the Remaps tab.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum RemapLayerView {
     #[default]
     Both,
-    Base,
+    L0,
+    L1,
     Fn,
 }
 
 impl RemapLayerView {
     fn cycle(self) -> Self {
         match self {
-            Self::Both => Self::Base,
-            Self::Base => Self::Fn,
+            Self::Both => Self::L0,
+            Self::L0 => Self::L1,
+            Self::L1 => Self::Fn,
             Self::Fn => Self::Both,
         }
     }
@@ -174,8 +169,18 @@ impl RemapLayerView {
     fn label(self) -> &'static str {
         match self {
             Self::Both => "All",
-            Self::Base => "L0",
-            Self::Fn => "L1",
+            Self::L0 => "L0",
+            Self::L1 => "L1",
+            Self::Fn => "Fn",
+        }
+    }
+
+    fn matches(self, layer: Layer) -> bool {
+        match self {
+            Self::Both => true,
+            Self::L0 => layer == Layer::Base,
+            Self::L1 => layer == Layer::Layer1,
+            Self::Fn => layer == Layer::Fn,
         }
     }
 }
@@ -649,7 +654,7 @@ enum AsyncResult {
     // Other tab results
     Triggers(Result<TriggerSettings, String>),
     Options(Result<KbOptions, String>),
-    Remaps(Result<Vec<RemapEntry>, String>),
+    Remaps(Result<Vec<KeyEntry>, String>),
     Macros(Result<Vec<MacroSlot>, String>),
     // Battery status (from keyboard API)
     Battery(Result<BatteryInfo, String>),
@@ -1664,72 +1669,18 @@ impl App {
         };
 
         self.loading.remaps = LoadState::Loading;
-        let key_count = self.key_count as usize;
         let tx = self.result_tx.clone();
         tokio::spawn(async move {
-            // Build factory default keycodes from transport matrix key names.
-            let defaults: Vec<u8> = (0..key_count as u8)
-                .map(|i| crate::protocol::hid::key_code_from_name(matrix::key_name(i)).unwrap_or(0))
-                .collect();
-
-            let mut remaps = Vec::new();
-            for layer in 0..2u8 {
-                let data = match keyboard.get_keymatrix(layer, 8).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let _ = tx.send(AsyncResult::Remaps(Err(e.to_string())));
-                        return;
-                    }
-                };
-
-                for i in 0..key_count {
-                    if i * 4 + 3 >= data.len() {
-                        break;
-                    }
-                    let name = matrix::key_name(i as u8);
-                    if name == "?" {
-                        continue;
-                    }
-
-                    let k = &data[i * 4..(i + 1) * 4];
-
-                    // Disabled entries are never remaps
-                    if k == [0, 0, 0, 0] {
-                        continue;
-                    }
-
-                    let action = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
-
-                    // Fn key at physical position is factory default
-                    if matches!(action, KeyAction::Fn) {
-                        continue;
-                    }
-
-                    // Non-key config types or user byte format (byte1 != 0)
-                    if k[0] != 0 || k[1] != 0 {
-                        remaps.push(RemapEntry {
-                            index: i as u8,
-                            position: name,
-                            layer,
-                            action,
-                        });
-                        continue;
-                    }
-
-                    // config_type=0, byte1=0, byte2!=0: compare against factory default
-                    if k[2] == defaults[i] {
-                        continue; // matches factory default (identity map)
-                    }
-
-                    remaps.push(RemapEntry {
-                        index: i as u8,
-                        position: name,
-                        layer,
-                        action,
-                    });
+            match keymap::load_async(&keyboard).await {
+                Ok(km) => {
+                    // Collect only remapped entries (matching old behavior)
+                    let remaps: Vec<KeyEntry> = km.remaps().cloned().collect();
+                    let _ = tx.send(AsyncResult::Remaps(Ok(remaps)));
+                }
+                Err(e) => {
+                    let _ = tx.send(AsyncResult::Remaps(Err(e.to_string())));
                 }
             }
-            let _ = tx.send(AsyncResult::Remaps(Ok(remaps)));
         });
     }
 
@@ -1738,17 +1689,13 @@ impl App {
         self.remaps
             .iter()
             .enumerate()
-            .filter(|(_, r)| match self.remap_layer_view {
-                RemapLayerView::Both => true,
-                RemapLayerView::Base => r.layer == 0,
-                RemapLayerView::Fn => r.layer == 1,
-            })
+            .filter(|(_, r)| self.remap_layer_view.matches(r.layer))
             .map(|(i, _)| i)
             .collect()
     }
 
     /// Apply a remap action to a key
-    fn apply_remap(&mut self, key_index: u8, layer: u8, action: &KeyAction) {
+    fn apply_remap(&mut self, key_index: u8, layer: Layer, action: &KeyAction) {
         let Some(keyboard) = self.keyboard.clone() else {
             self.status_msg = "No keyboard connected".to_string();
             return;
@@ -1760,36 +1707,7 @@ impl App {
         self.status_msg = format!("Remapping {position}...");
 
         tokio::spawn(async move {
-            let result = match action {
-                KeyAction::Key(code) => {
-                    keyboard
-                        .set_keymatrix(layer, key_index, code, true, 0)
-                        .await
-                }
-                KeyAction::Combo { mods: _, key: code } => {
-                    // For combos, encode the full config bytes via SET_KEYMATRIX raw
-                    // Currently only simple key remaps are supported at the wire level
-                    // TODO: support combo writes when protocol is understood
-                    keyboard
-                        .set_keymatrix(layer, key_index, code, true, 0)
-                        .await
-                }
-                KeyAction::Macro { index, kind } => {
-                    if layer == 0 {
-                        keyboard
-                            .assign_macro_to_key(layer, key_index, index, kind)
-                            .await
-                    } else {
-                        keyboard
-                            .assign_macro_to_fn_key(layer, key_index, index, kind)
-                            .await
-                    }
-                }
-                KeyAction::Disabled => keyboard.reset_key(layer, key_index).await,
-                _ => Err(monsgeek_keyboard::KeyboardError::InvalidParameter(
-                    "Unsupported action type for remap".to_string(),
-                )),
-            };
+            let result = keymap::set_key_async(&keyboard, key_index, layer, &action).await;
             let _ = tx.send(AsyncResult::SetComplete(
                 "Remap".to_string(),
                 result.map_err(|e: monsgeek_keyboard::KeyboardError| e.to_string()),
@@ -1798,7 +1716,7 @@ impl App {
     }
 
     /// Reset a key to its default mapping
-    fn reset_remap(&mut self, key_index: u8, layer: u8) {
+    fn reset_remap(&mut self, key_index: u8, layer: Layer) {
         let Some(keyboard) = self.keyboard.clone() else {
             self.status_msg = "No keyboard connected".to_string();
             return;
@@ -1809,8 +1727,7 @@ impl App {
         self.status_msg = format!("Resetting {position}...");
 
         tokio::spawn(async move {
-            let result = keyboard
-                .reset_key(layer, key_index)
+            let result = keymap::reset_key_async(&keyboard, key_index, layer)
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(AsyncResult::SetComplete("Remap".to_string(), result));
@@ -3131,9 +3048,9 @@ pub async fn run() -> io::Result<()> {
                                     error: None,
                                 });
                                 app.status_msg = format!(
-                                    "Editing {} on layer {}",
+                                    "Editing {} on {}",
                                     remap.position,
-                                    if remap.layer == 0 { "Base" } else { "Fn" }
+                                    remap.layer.name()
                                 );
                             }
                         }
@@ -5348,10 +5265,10 @@ fn render_remaps(f: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|&remap_idx| {
                 let r = &app.remaps[remap_idx];
-                let layer_prefix = if r.layer == 1 {
-                    Span::styled("L1 ", Style::default().fg(Color::Cyan))
-                } else {
-                    Span::styled("L0 ", Style::default().fg(Color::DarkGray))
+                let layer_prefix = match r.layer {
+                    Layer::Fn => Span::styled("Fn ", Style::default().fg(Color::Yellow)),
+                    Layer::Layer1 => Span::styled("L1 ", Style::default().fg(Color::Cyan)),
+                    Layer::Base => Span::styled("L0 ", Style::default().fg(Color::DarkGray)),
                 };
                 let action_style = match r.action {
                     KeyAction::Macro { .. } => Style::default().fg(Color::Magenta),
@@ -5400,7 +5317,7 @@ fn render_remaps(f: &mut Frame, app: &mut App, area: Rect) {
     // Detail for selected remap
     if let Some(&remap_idx) = filtered.get(app.remap_selected) {
         let r = &app.remaps[remap_idx];
-        let layer_name = if r.layer == 0 { "Base" } else { "Fn" };
+        let layer_name = r.layer.name();
         let mut lines = vec![
             Line::from(vec![Span::styled(
                 format!("{} (index {})", r.position, r.index),
@@ -5712,20 +5629,13 @@ fn render_remap_editor(f: &mut Frame, app: &App, area: Rect) {
         .remaps
         .iter()
         .enumerate()
-        .filter(|(_, r)| match app.remap_layer_view {
-            RemapLayerView::Both => true,
-            RemapLayerView::Base => r.layer == 0,
-            RemapLayerView::Fn => r.layer == 1,
-        })
+        .filter(|(_, r)| app.remap_layer_view.matches(r.layer))
         .map(|(i, _)| i)
         .collect();
 
     let (key_name_str, layer_str) = if let Some(&remap_idx) = filtered.get(app.remap_selected) {
         let r = &app.remaps[remap_idx];
-        (
-            r.position.to_string(),
-            if r.layer == 0 { "Base" } else { "Fn" }.to_string(),
-        )
+        (r.position.to_string(), r.layer.name().to_string())
     } else {
         ("?".to_string(), "?".to_string())
     };
