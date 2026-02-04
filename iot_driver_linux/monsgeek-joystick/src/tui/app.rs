@@ -82,6 +82,8 @@ pub struct App {
     pub show_help: bool,
     /// Should quit
     pub should_quit: bool,
+    /// Precision factor for depth conversion (depth_raw / precision_factor → mm)
+    pub precision_factor: f64,
 }
 
 impl App {
@@ -101,6 +103,7 @@ impl App {
             awaiting_key_press: false,
             show_help: false,
             should_quit: false,
+            precision_factor: 100.0,
         }
     }
 

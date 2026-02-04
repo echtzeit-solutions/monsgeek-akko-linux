@@ -1,8 +1,12 @@
 //! Configuration structures for the joystick mapper
 //!
 //! Supports TOML serialization for persistent config storage.
+//! Key references use the shared `KeyRef` type from monsgeek-transport,
+//! with custom serde that serializes as bare key name strings (e.g. `"W"`)
+//! and accepts both the new format and the old `{ key_index, label }` format.
 
-use serde::{Deserialize, Serialize};
+use monsgeek_transport::protocol::{matrix, KeyRef, Layer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::PathBuf;
 
 /// Joystick axis identifiers
@@ -40,22 +44,46 @@ impl AxisId {
     ];
 }
 
-/// A key binding referencing a physical key on the keyboard
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyBinding {
-    /// Matrix index of the key (0-125 for typical keyboards)
-    pub key_index: u8,
-    /// Human-readable label for the key (e.g., "W", "A", "LShift")
-    pub label: String,
+// ---------------------------------------------------------------------------
+// Custom serde for KeyRef — serialize as bare name, deserialize both formats
+// ---------------------------------------------------------------------------
+
+/// Serialize a `KeyRef` as its key name string (e.g. `"W"`, `"Caps"`).
+fn serialize_keyref<S: Serializer>(key: &KeyRef, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(key.position)
 }
 
-impl KeyBinding {
-    /// Create a new key binding
-    pub fn new(key_index: u8, label: impl Into<String>) -> Self {
-        Self {
-            key_index,
-            label: label.into(),
+/// Deserialize a `KeyRef` from either:
+/// - New format: bare string `"W"` → resolved via `matrix::key_index_from_name`
+/// - Old format: `{ key_index = 14, label = "W" }` → uses `key_index` directly
+fn deserialize_keyref<'de, D: Deserializer<'de>>(d: D) -> Result<KeyRef, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum KeyRefRepr {
+        /// New format: bare key name string
+        Name(String),
+        /// Old format: { key_index, label } — label accepted but ignored
+        Legacy {
+            key_index: u8,
+            #[serde(default)]
+            #[allow(dead_code)]
+            label: String,
+        },
+    }
+
+    match KeyRefRepr::deserialize(d)? {
+        KeyRefRepr::Name(name) => {
+            if let Some(idx) = matrix::key_index_from_name(&name) {
+                Ok(KeyRef::new(idx, Layer::Base))
+            } else if let Ok(idx) = name.parse::<u8>() {
+                Ok(KeyRef::new(idx, Layer::Base))
+            } else {
+                Err(serde::de::Error::custom(format!(
+                    "unknown key name: \"{name}\""
+                )))
+            }
         }
+        KeyRefRepr::Legacy { key_index, .. } => Ok(KeyRef::new(key_index, Layer::Base)),
     }
 }
 
@@ -66,12 +94,24 @@ pub enum AxisMappingMode {
     /// Two keys control positive and negative directions
     /// e.g., W/S for Y-axis: W pushes positive, S pushes negative
     TwoKey {
-        positive_key: KeyBinding,
-        negative_key: KeyBinding,
+        #[serde(
+            serialize_with = "serialize_keyref",
+            deserialize_with = "deserialize_keyref"
+        )]
+        positive_key: KeyRef,
+        #[serde(
+            serialize_with = "serialize_keyref",
+            deserialize_with = "deserialize_keyref"
+        )]
+        negative_key: KeyRef,
     },
     /// Single key controls 0 to max (throttle-style)
     SingleKey {
-        key: KeyBinding,
+        #[serde(
+            serialize_with = "serialize_keyref",
+            deserialize_with = "deserialize_keyref"
+        )]
+        key: KeyRef,
         /// If true, inverts the axis (pressed = 0, released = max)
         invert: bool,
     },
@@ -84,8 +124,8 @@ impl AxisMappingMode {
             AxisMappingMode::TwoKey {
                 positive_key,
                 negative_key,
-            } => vec![positive_key.key_index, negative_key.key_index],
-            AxisMappingMode::SingleKey { key, .. } => vec![key.key_index],
+            } => vec![positive_key.index, negative_key.index],
+            AxisMappingMode::SingleKey { key, .. } => vec![key.index],
         }
     }
 }
@@ -172,8 +212,8 @@ impl Default for JoystickConfig {
                     id: AxisId::X,
                     enabled: true,
                     mapping: AxisMappingMode::TwoKey {
-                        positive_key: KeyBinding::new(21, "D"),
-                        negative_key: KeyBinding::new(9, "A"),
+                        positive_key: KeyRef::new(21, Layer::Base),
+                        negative_key: KeyRef::new(9, Layer::Base),
                     },
                     calibration: AxisCalibration::default(),
                 },
@@ -181,8 +221,8 @@ impl Default for JoystickConfig {
                     id: AxisId::Y,
                     enabled: true,
                     mapping: AxisMappingMode::TwoKey {
-                        positive_key: KeyBinding::new(14, "W"),
-                        negative_key: KeyBinding::new(15, "S"),
+                        positive_key: KeyRef::new(14, Layer::Base),
+                        negative_key: KeyRef::new(15, Layer::Base),
                     },
                     calibration: AxisCalibration::default(),
                 },
@@ -252,6 +292,9 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("MonsGeek Virtual Joystick"));
         assert!(toml_str.contains("TwoKey"));
+        // New format: bare key names
+        assert!(toml_str.contains("positive_key = \"D\""));
+        assert!(toml_str.contains("negative_key = \"A\""));
     }
 
     #[test]
@@ -261,5 +304,125 @@ mod tests {
         let parsed: JoystickConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.device_name, config.device_name);
         assert_eq!(parsed.axes.len(), config.axes.len());
+        // Verify key indices survived roundtrip
+        if let AxisMappingMode::TwoKey {
+            positive_key,
+            negative_key,
+        } = &parsed.axes[0].mapping
+        {
+            assert_eq!(positive_key.index, 21); // D
+            assert_eq!(negative_key.index, 9); // A
+        } else {
+            panic!("Expected TwoKey mapping");
+        }
+    }
+
+    #[test]
+    fn test_backwards_compat_old_format() {
+        // Old format with { key_index, label } objects
+        let old_toml = r#"
+device_name = "MonsGeek Virtual Joystick"
+
+[[axes]]
+id = "X"
+enabled = true
+
+[axes.mapping]
+type = "TwoKey"
+
+[axes.mapping.positive_key]
+key_index = 21
+label = "D"
+
+[axes.mapping.negative_key]
+key_index = 9
+label = "A"
+
+[axes.calibration]
+min_travel_mm = 0.0
+max_travel_mm = 4.0
+deadzone_percent = 5.0
+curve_exponent = 1.0
+"#;
+        let config: JoystickConfig = toml::from_str(old_toml).unwrap();
+        assert_eq!(config.axes.len(), 1);
+        if let AxisMappingMode::TwoKey {
+            positive_key,
+            negative_key,
+        } = &config.axes[0].mapping
+        {
+            assert_eq!(positive_key.index, 21);
+            assert_eq!(positive_key.position, "D");
+            assert_eq!(negative_key.index, 9);
+            assert_eq!(negative_key.position, "A");
+        } else {
+            panic!("Expected TwoKey mapping");
+        }
+    }
+
+    #[test]
+    fn test_new_format_parse() {
+        // New format with bare key name strings
+        let new_toml = r#"
+device_name = "MonsGeek Virtual Joystick"
+
+[[axes]]
+id = "X"
+enabled = true
+
+[axes.mapping]
+type = "TwoKey"
+positive_key = "D"
+negative_key = "A"
+
+[axes.calibration]
+min_travel_mm = 0.0
+max_travel_mm = 4.0
+deadzone_percent = 5.0
+curve_exponent = 1.0
+"#;
+        let config: JoystickConfig = toml::from_str(new_toml).unwrap();
+        if let AxisMappingMode::TwoKey {
+            positive_key,
+            negative_key,
+        } = &config.axes[0].mapping
+        {
+            assert_eq!(positive_key.index, 21);
+            assert_eq!(positive_key.position, "D");
+            assert_eq!(negative_key.index, 9);
+            assert_eq!(negative_key.position, "A");
+        } else {
+            panic!("Expected TwoKey mapping");
+        }
+    }
+
+    #[test]
+    fn test_old_format_resaves_as_new() {
+        let old_toml = r#"
+device_name = "MonsGeek Virtual Joystick"
+
+[[axes]]
+id = "X"
+enabled = true
+
+[axes.mapping]
+type = "TwoKey"
+
+[axes.mapping.positive_key]
+key_index = 21
+label = "D"
+
+[axes.mapping.negative_key]
+key_index = 9
+label = "A"
+"#;
+        let config: JoystickConfig = toml::from_str(old_toml).unwrap();
+        let resaved = toml::to_string_pretty(&config).unwrap();
+        // After re-saving, should use new bare string format
+        assert!(resaved.contains("positive_key = \"D\""));
+        assert!(resaved.contains("negative_key = \"A\""));
+        // Should not contain old format
+        assert!(!resaved.contains("key_index"));
+        assert!(!resaved.contains("label"));
     }
 }

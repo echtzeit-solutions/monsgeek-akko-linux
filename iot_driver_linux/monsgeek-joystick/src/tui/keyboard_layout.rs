@@ -1,49 +1,32 @@
 //! Keyboard layout visualization widget
 //!
 //! Displays a visual keyboard layout with key depths and mapping highlights.
+//! Key names are sourced from `monsgeek_transport::protocol::matrix` — the
+//! single source of truth for matrix position → key name mapping.
 
 use crate::tui::app::App;
+use monsgeek_transport::protocol::matrix;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-/// Key names for M1 V5 HE matrix positions (column-major, 21x6).
-/// Each column has 6 rows (positions 0-5, 6-11, etc.)
-///
-/// These are abbreviated for TUI display width (e.g. "LSh" instead of "LShift").
-/// The authoritative full key names are in `iot_driver::profile::builtin::M1_V5_HE_KEY_NAMES`.
-const KEY_NAMES: &[&str] = &[
-    // Col 0 (0-5): Esc column
-    "Esc", "`", "Tab", "Caps", "LSh", "LCt", // Col 1 (6-11): F1/1/Q/A column
-    "F1", "1", "Q", "A", "", "LWin", // Col 2 (12-17): F2/2/W/S/Z column
-    "F2", "2", "W", "S", "Z", "LAlt", // Col 3 (18-23): F3/3/E/D/X column
-    "F3", "3", "E", "D", "X", "", // Col 4 (24-29): F4/4/R/F/C column
-    "F4", "4", "R", "F", "C", "", // Col 5 (30-35): F5/5/T/G/V column
-    "F5", "5", "T", "G", "V", "", // Col 6 (36-41): F6/6/Y/H/B/Space column
-    "F6", "6", "Y", "H", "B", "Spc", // Col 7 (42-47): F7/7/U/J/N column
-    "F7", "7", "U", "J", "N", "", // Col 8 (48-53): F8/8/I/K/M column
-    "F8", "8", "I", "K", "M", "", // Col 9 (54-59): F9/9/O/L/,/RAlt column
-    "F9", "9", "O", "L", ",", "RAlt", // Col 10 (60-65): F10/0/P/;/./Fn column
-    "F10", "0", "P", ";", ".", "Fn", // Col 11 (66-71): F11/-/[/'/RCtrl column
-    "F11", "-", "[", "'", "/", "RCt", // Col 12 (72-77): F12/=/]/RShift/Left column
-    "F12", "=", "]", "", "RSh", "<-", // Col 13 (78-83): Del/Bksp/\/Enter/Up/Down column
-    "Del", "Bks", "\\", "Ent", "^", "v", // Col 14 (84-89): Nav cluster
-    "", "Hom", "PgU", "PgD", "End", "->", // Col 15 (90-95): Media keys
-    "V+", "V-", "Mt", "", "", "", // Remaining (96-125): extra positions
-    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-    "", "", "", "", "", "",
-];
-
-/// Number of columns in the keyboard layout
-const LAYOUT_COLS: usize = 16;
+/// Number of columns in the visual keyboard layout (cols 0-14, no media keys)
+const LAYOUT_COLS: usize = 15;
 /// Number of rows in the keyboard layout
 const LAYOUT_ROWS: usize = 6;
 
-/// Get key name for a matrix position
+/// Get display-ready key name for a matrix position.
+///
+/// Delegates to `matrix::key_name()` and maps `"?"` to `""` for unused slots.
 pub fn get_key_name(index: u8) -> &'static str {
-    KEY_NAMES.get(index as usize).copied().unwrap_or("")
+    let name = matrix::key_name(index);
+    if name == "?" {
+        ""
+    } else {
+        name
+    }
 }
 
 /// Render the keyboard layout
@@ -55,12 +38,12 @@ pub fn render_keyboard_layout(frame: &mut Frame, app: &App, area: Rect) {
     // Get mapped key indices for highlighting
     let mapped_keys = app.config.mapped_key_indices();
 
-    // Render each key
+    // Render each key (columns 0-14 only, skip media columns 90-95)
     for pos in 0..(LAYOUT_COLS * LAYOUT_ROWS) {
         let col = pos / LAYOUT_ROWS;
         let row = pos % LAYOUT_ROWS;
 
-        let key_name = KEY_NAMES.get(pos).copied().unwrap_or("");
+        let key_name = get_key_name(pos as u8);
         if key_name.is_empty() {
             continue;
         }
@@ -99,7 +82,7 @@ pub fn render_keyboard_layout(frame: &mut Frame, app: &App, area: Rect) {
         let style = Style::default().fg(fg).bg(bg);
         let border_style = Style::default().fg(border_color);
 
-        // Truncate key name to fit
+        // Truncate key name to fit cell width
         let display_name: String = key_name.chars().take(3).collect();
 
         let key_block = Block::default()
@@ -140,15 +123,11 @@ pub fn render_keyboard_layout(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// Find key index by name (case-insensitive)
+/// Find key index by name (case-insensitive).
+///
+/// Delegates to the matrix module's canonical lookup.
 pub fn find_key_by_name(name: &str) -> Option<u8> {
-    let name_lower = name.to_lowercase();
-    for (i, &key_name) in KEY_NAMES.iter().enumerate() {
-        if key_name.to_lowercase() == name_lower {
-            return Some(i as u8);
-        }
-    }
-    None
+    matrix::key_index_from_name(name)
 }
 
 #[cfg(test)]
@@ -162,6 +141,14 @@ mod tests {
         assert_eq!(get_key_name(14), "W");
         assert_eq!(get_key_name(15), "S");
         assert_eq!(get_key_name(21), "D");
+    }
+
+    #[test]
+    fn test_unused_slots_empty() {
+        // "?" positions in the matrix should map to empty string for display
+        assert_eq!(get_key_name(23), ""); // Col 3 row 5 — unused
+        assert_eq!(get_key_name(29), ""); // Col 4 row 5 — unused
+        assert_eq!(matrix::key_name(23), "?");
     }
 
     #[test]

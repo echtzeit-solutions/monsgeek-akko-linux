@@ -118,8 +118,8 @@ fn render_axis_row(frame: &mut Frame, app: &App, axis: &AxisConfig, area: Rect) 
         AxisMappingMode::TwoKey {
             positive_key,
             negative_key,
-        } => format!("{}/{}", positive_key.label, negative_key.label),
-        AxisMappingMode::SingleKey { key, .. } => key.label.clone(),
+        } => format!("{}/{}", positive_key.position, negative_key.position),
+        AxisMappingMode::SingleKey { key, .. } => key.position.to_string(),
     };
 
     let label = format!("{} ({}) ", axis.id.display_name(), keys_str);
@@ -299,17 +299,17 @@ fn render_axis_details(frame: &mut Frame, app: &App, area: Rect) {
         } => {
             lines.push(Line::from(format!(
                 "Positive: {} (idx:{})",
-                positive_key.label, positive_key.key_index
+                positive_key.position, positive_key.index
             )));
             lines.push(Line::from(format!(
                 "Negative: {} (idx:{})",
-                negative_key.label, negative_key.key_index
+                negative_key.position, negative_key.index
             )));
         }
         AxisMappingMode::SingleKey { key, .. } => {
             lines.push(Line::from(format!(
                 "Key: {} (idx:{})",
-                key.label, key.key_index
+                key.position, key.index
             )));
         }
     }

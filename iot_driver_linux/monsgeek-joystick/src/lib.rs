@@ -8,8 +8,6 @@ pub mod joystick;
 pub mod mapper;
 pub mod tui;
 
-pub use config::{
-    AxisCalibration, AxisConfig, AxisId, AxisMappingMode, JoystickConfig, KeyBinding,
-};
+pub use config::{AxisCalibration, AxisConfig, AxisId, AxisMappingMode, JoystickConfig};
 pub use joystick::{JoystickError, VirtualJoystick, AXIS_MAX, AXIS_MIN};
 pub use mapper::AxisMapper;

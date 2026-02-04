@@ -64,12 +64,12 @@ impl AxisMapper {
                 positive_key,
                 negative_key,
             } => {
-                let pos_depth = self.get_key_depth(positive_key.key_index);
-                let neg_depth = self.get_key_depth(negative_key.key_index);
+                let pos_depth = self.get_key_depth(positive_key.index);
+                let neg_depth = self.get_key_depth(negative_key.index);
                 map_two_key(pos_depth, neg_depth, &config.calibration)
             }
             AxisMappingMode::SingleKey { key, invert } => {
-                let depth = self.get_key_depth(key.key_index);
+                let depth = self.get_key_depth(key.index);
                 map_single_key(depth, *invert, &config.calibration)
             }
         }
