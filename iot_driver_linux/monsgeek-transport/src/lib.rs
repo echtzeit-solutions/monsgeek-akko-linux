@@ -85,6 +85,7 @@ pub use error::TransportError;
 pub use printer::{
     DecodedPacket, OutputFormat, PacketFilter, Printer, PrinterConfig, PrinterTransport,
 };
+pub use protocol::{KeyRef, Layer};
 pub use types::{
     ChecksumType, DiscoveredDevice, DiscoveryEvent, TimestampedEvent, TransportDeviceInfo,
     TransportType, VendorEvent,

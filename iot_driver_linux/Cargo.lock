@@ -1723,7 +1723,6 @@ dependencies = [
  "http",
  "image",
  "libc",
- "monsgeek-joystick",
  "monsgeek-keyboard",
  "monsgeek-transport",
  "pcap-parser",

@@ -82,7 +82,6 @@ pcap-parser = "0.16"
 # New transport abstraction layer
 monsgeek-transport = { path = "monsgeek-transport" }
 monsgeek-keyboard = { path = "monsgeek-keyboard" }
-monsgeek-joystick = { path = "monsgeek-joystick" }
 
 # Firmware download/update
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }

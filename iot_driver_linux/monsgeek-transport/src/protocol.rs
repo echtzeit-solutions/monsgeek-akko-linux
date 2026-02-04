@@ -1,6 +1,8 @@
 //! Protocol constants and utilities for MonsGeek/Akko keyboard communication
 
 use crate::types::ChecksumType;
+use std::fmt;
+use std::str::FromStr;
 
 /// HID Protocol Commands (FEA_CMD_*)
 pub mod cmd {
@@ -206,6 +208,173 @@ pub mod matrix {
             .position(|&n| n.to_ascii_lowercase() == name_lower && n != "?")
             .map(|i| i as u8)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Layer
+// ---------------------------------------------------------------------------
+
+/// Logical key layer on the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Layer {
+    /// Base layer (GET_KEYMATRIX page 0, SET_KEYMATRIX layer=0).
+    Base,
+    /// Second base layer (GET_KEYMATRIX page 1, SET_KEYMATRIX layer=1).
+    Layer1,
+    /// Fn layer (GET_FN / SET_FN).
+    Fn,
+}
+
+impl Layer {
+    /// All layers in display order.
+    pub const ALL: [Layer; 3] = [Layer::Base, Layer::Layer1, Layer::Fn];
+
+    /// Human-readable name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Layer::Base => "Layer 0",
+            Layer::Layer1 => "Layer 1",
+            Layer::Fn => "Fn layer",
+        }
+    }
+
+    /// Short label for compact display.
+    pub fn short(self) -> &'static str {
+        match self {
+            Layer::Base => "L0",
+            Layer::Layer1 => "L1",
+            Layer::Fn => "Fn",
+        }
+    }
+
+    /// Wire value used by `set_key_config(profile, index, layer, config)`.
+    pub fn wire_layer(self) -> u8 {
+        match self {
+            Layer::Base => 0,
+            Layer::Layer1 => 1,
+            Layer::Fn => 2,
+        }
+    }
+
+    /// Convert from wire layer number.
+    pub fn from_wire(layer: u8) -> Self {
+        match layer {
+            0 => Layer::Base,
+            1 => Layer::Layer1,
+            _ => Layer::Fn,
+        }
+    }
+}
+
+impl fmt::Display for Layer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.short())
+    }
+}
+
+impl FromStr for Layer {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "0" | "l0" | "base" => Ok(Layer::Base),
+            "1" | "l1" => Ok(Layer::Layer1),
+            "2" | "fn" => Ok(Layer::Fn),
+            _ => Err(format!("unknown layer: \"{s}\". Use 0/L0/base, 1/L1, 2/fn")),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// KeyRef — parsed key + layer reference
+// ---------------------------------------------------------------------------
+
+/// A key position + layer reference, e.g. "Fn+Caps" → (Caps, Fn layer).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRef {
+    pub index: u8,
+    pub position: &'static str,
+    pub layer: Layer,
+}
+
+impl KeyRef {
+    pub fn new(index: u8, layer: Layer) -> Self {
+        Self {
+            index,
+            position: matrix::key_name(index),
+            layer,
+        }
+    }
+}
+
+impl fmt::Display for KeyRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.layer {
+            Layer::Base => write!(f, "{}", self.position),
+            Layer::Layer1 => write!(f, "L1+{}", self.position),
+            Layer::Fn => write!(f, "Fn+{}", self.position),
+        }
+    }
+}
+
+impl FromStr for KeyRef {
+    type Err = String;
+
+    /// Parse a key reference with optional layer prefix:
+    ///
+    /// - `"Caps"` → KeyRef { index=3, layer=Base }
+    /// - `"Fn+Caps"` → KeyRef { index=3, layer=Fn }
+    /// - `"L1+A"` → KeyRef { index=9, layer=Layer1 }
+    /// - `"42"` → KeyRef { index=42, layer=Base }
+    /// - `"Fn+42"` → KeyRef { index=42, layer=Fn }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Check for layer prefix: "Fn+", "L1+", "L0+"
+        let (layer, key_part) = if let Some(rest) = strip_prefix_ci(s, "Fn+") {
+            (Layer::Fn, rest)
+        } else if let Some(rest) = strip_prefix_ci(s, "L1+") {
+            (Layer::Layer1, rest)
+        } else if let Some(rest) = strip_prefix_ci(s, "L0+") {
+            (Layer::Base, rest)
+        } else {
+            (Layer::Base, s)
+        };
+
+        let index = resolve_key(key_part)?;
+        Ok(KeyRef {
+            index,
+            position: matrix::key_name(index),
+            layer,
+        })
+    }
+}
+
+/// Case-insensitive prefix strip that returns the remainder with original casing.
+///
+/// All prefixes used here ("Fn+", "L1+", "L0+") are pure ASCII, so the byte-length
+/// comparison is safe on UTF-8 strings.
+fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if s.len() >= prefix.len()
+        && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+    {
+        Some(&s[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+/// Resolve a key name or numeric index to a matrix position.
+pub fn resolve_key(key: &str) -> Result<u8, String> {
+    // Try numeric index first
+    if let Ok(idx) = key.parse::<u8>() {
+        return Ok(idx);
+    }
+    // Try matrix key name (Esc, F3, LShf, etc.)
+    if let Some(idx) = matrix::key_index_from_name(key) {
+        return Ok(idx);
+    }
+    Err(format!(
+        "unknown key: \"{key}\". Use a matrix index (0-95) or name like F3, Esc, Tab"
+    ))
 }
 
 /// HID report sizes
