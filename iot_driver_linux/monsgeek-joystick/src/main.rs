@@ -1,6 +1,8 @@
 //! MonsGeek Magnetic Key-to-Joystick Mapper
 //!
 //! Main entry point and TUI run loop.
+//! Uses event-driven depth from the keyboard's broadcast channel
+//! with coalescing drain for low-latency axis updates.
 
 use anyhow::Result;
 use clap::Parser;
@@ -11,10 +13,11 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::prelude::*;
+use std::collections::HashMap;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 use monsgeek_joystick::config::JoystickConfig;
@@ -24,7 +27,7 @@ use monsgeek_joystick::tui::app::{App, AppMode, JoystickStatus, KeyboardStatus};
 use monsgeek_joystick::tui::render;
 
 use monsgeek_keyboard::KeyboardInterface;
-use monsgeek_transport::{list_devices_sync, open_device_sync};
+use monsgeek_transport::{list_devices_sync, open_device_sync, TimestampedEvent, VendorEvent};
 
 #[derive(Parser)]
 #[command(name = "monsgeek-joystick")]
@@ -43,12 +46,83 @@ struct Cli {
     log_level: String,
 }
 
-/// Messages from the keyboard reader task
-enum KeyboardMessage {
-    Connected { precision: f64 },
-    Disconnected,
-    KeyDepth { key_index: u8, depth_mm: f32 },
-    Error(String),
+/// Encapsulates a live keyboard connection with event subscription.
+struct KeyboardConnection {
+    keyboard: KeyboardInterface,
+    precision_factor: f64,
+    event_rx: broadcast::Receiver<TimestampedEvent>,
+}
+
+/// Connect to a keyboard, get precision, start magnetism reporting,
+/// and subscribe to the event broadcast channel.
+///
+/// Returns `None` if no keyboard is found or connection fails.
+async fn connect_keyboard() -> Option<KeyboardConnection> {
+    let devices = match list_devices_sync() {
+        Ok(d) if !d.is_empty() => d,
+        Ok(_) => {
+            debug!("No supported keyboard found");
+            return None;
+        }
+        Err(e) => {
+            warn!("Failed to list devices: {}", e);
+            return None;
+        }
+    };
+
+    let transport = match open_device_sync(&devices[0]) {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("Failed to open device: {}", e);
+            return None;
+        }
+    };
+
+    let info = transport.device_info();
+    info!(
+        "Connected to keyboard: {} ({:04x}:{:04x})",
+        info.product_name.as_deref().unwrap_or("Unknown"),
+        info.vid,
+        info.pid
+    );
+
+    let keyboard = KeyboardInterface::new(
+        transport.inner().clone(),
+        monsgeek_keyboard::KEY_COUNT_M1_V5,
+        true,
+    );
+
+    let precision_factor = match keyboard.get_precision().await {
+        Ok(precision) => {
+            let factor = precision.factor();
+            info!("Precision: {} (factor: {})", precision.as_str(), factor);
+            factor
+        }
+        Err(e) => {
+            warn!("Failed to get precision: {}", e);
+            return None;
+        }
+    };
+
+    if let Err(e) = keyboard.start_magnetism_report().await {
+        warn!("Failed to start magnetism report: {}", e);
+        return None;
+    }
+    info!("Started magnetism reporting");
+
+    let event_rx = match keyboard.subscribe_events() {
+        Some(rx) => rx,
+        None => {
+            warn!("Event subscription not supported (no input endpoint)");
+            return None;
+        }
+    };
+
+    Some(KeyboardConnection {
+        keyboard,
+        precision_factor,
+        event_rx,
+    })
 }
 
 #[tokio::main]
@@ -75,7 +149,44 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Run in headless mode (no TUI)
+/// Drain all pending depth events from the broadcast channel, coalescing
+/// by key_index (keeping only the latest depth per key).
+///
+/// Returns `true` if the channel closed during drain.
+fn drain_depth_events(
+    rx: &mut broadcast::Receiver<TimestampedEvent>,
+    pending_depths: &mut HashMap<u8, u16>,
+) -> bool {
+    loop {
+        match rx.try_recv() {
+            Ok(ts) => {
+                if let VendorEvent::KeyDepth {
+                    key_index,
+                    depth_raw,
+                } = ts.event
+                {
+                    pending_depths.insert(key_index, depth_raw);
+                }
+                // Ignore non-depth events in joystick mode
+            }
+            Err(broadcast::error::TryRecvError::Empty) => return false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                debug!("Event receiver lagged by {} events (drain)", n);
+            }
+            Err(broadcast::error::TryRecvError::Closed) => return true,
+        }
+    }
+}
+
+/// Apply coalesced depth events to the mapper, converting raw → mm.
+fn apply_depths(pending_depths: &HashMap<u8, u16>, precision_factor: f64, mapper: &mut AxisMapper) {
+    for (&key_index, &depth_raw) in pending_depths {
+        let depth_mm = (depth_raw as f64 / precision_factor) as f32;
+        mapper.update_key_depth(key_index, depth_mm);
+    }
+}
+
+/// Run in headless mode (no TUI) with event-driven depth.
 async fn run_headless(config: JoystickConfig, _config_path: PathBuf) -> Result<()> {
     info!("Running in headless mode");
 
@@ -94,68 +205,69 @@ async fn run_headless(config: JoystickConfig, _config_path: PathBuf) -> Result<(
         info!("Device path: {}", path.display());
     }
 
-    // Connect to keyboard
-    let devices = list_devices_sync()?;
-    if devices.is_empty() {
-        error!("No supported keyboard found");
-        return Err(anyhow::anyhow!("No keyboard found"));
-    }
-
-    let transport = open_device_sync(&devices[0])?;
-    let info = transport.device_info();
-    info!(
-        "Connected to keyboard: {} ({:04x}:{:04x})",
-        info.product_name.as_deref().unwrap_or("Unknown"),
-        info.vid,
-        info.pid
-    );
-
-    // Get precision
-    let keyboard = KeyboardInterface::new(
-        transport.inner().clone(),
-        monsgeek_keyboard::KEY_COUNT_M1_V5,
-        true,
-    );
-    let precision = keyboard.get_precision().await?;
-    let precision_factor = precision.factor();
-    info!(
-        "Precision: {} (factor: {})",
-        precision.as_str(),
-        precision_factor
-    );
-
-    // Start magnetism reporting
-    keyboard.start_magnetism_report().await?;
-    info!("Started magnetism reporting");
-
-    // Main loop
     let mut mapper = AxisMapper::new();
 
     info!("Entering main loop. Press Ctrl+C to exit.");
 
     loop {
-        match keyboard.read_key_depth(100, precision_factor).await {
-            Ok(Some(event)) => {
-                mapper.update_key_depth(event.key_index, event.depth_mm);
+        // Connect (or reconnect) to keyboard
+        let conn = loop {
+            if let Some(conn) = connect_keyboard().await {
+                break conn;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        };
 
-                // Compute and update axes
-                let axis_values = mapper.compute_axes(&config);
-                if let Err(e) = joystick.set_axes(&axis_values) {
-                    warn!("Failed to update joystick: {}", e);
+        let mut event_rx = conn.event_rx;
+        let precision_factor = conn.precision_factor;
+
+        // Event loop: recv + coalescing drain
+        loop {
+            match event_rx.recv().await {
+                Ok(ts) => {
+                    let mut pending_depths: HashMap<u8, u16> = HashMap::new();
+
+                    // Process first event
+                    if let VendorEvent::KeyDepth {
+                        key_index,
+                        depth_raw,
+                    } = ts.event
+                    {
+                        pending_depths.insert(key_index, depth_raw);
+                    }
+
+                    // Drain remaining pending events (coalesce by key)
+                    let closed = drain_depth_events(&mut event_rx, &mut pending_depths);
+
+                    // Apply to mapper and update joystick
+                    apply_depths(&pending_depths, precision_factor, &mut mapper);
+                    let axis_values = mapper.compute_axes(&config);
+                    if let Err(e) = joystick.set_axes(&axis_values) {
+                        warn!("Failed to update joystick: {}", e);
+                    }
+
+                    if closed {
+                        info!("Event channel closed, reconnecting...");
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    debug!("Event receiver lagged by {} events", n);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    info!("Event channel closed, reconnecting...");
+                    break;
                 }
             }
-            Ok(None) => {
-                // Timeout, continue
-            }
-            Err(e) => {
-                error!("Error reading key depth: {}", e);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
         }
+
+        // Stop magnetism before reconnect
+        let _ = conn.keyboard.stop_magnetism_report().await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-/// Run with TUI
+/// Run with TUI using event-driven depth from broadcast channel.
 async fn run_tui(config: JoystickConfig, config_path: PathBuf) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
@@ -167,9 +279,6 @@ async fn run_tui(config: JoystickConfig, config_path: PathBuf) -> Result<()> {
 
     // Create app state
     let mut app = App::new(config, config_path);
-
-    // Channel for keyboard messages
-    let (kb_tx, mut kb_rx) = mpsc::unbounded_channel::<KeyboardMessage>();
 
     // Create virtual joystick
     let mut joystick: Option<VirtualJoystick> = None;
@@ -186,13 +295,15 @@ async fn run_tui(config: JoystickConfig, config_path: PathBuf) -> Result<()> {
         }
     }
 
-    // Spawn keyboard connection task
-    let kb_tx_clone = kb_tx.clone();
-    tokio::spawn(async move {
-        keyboard_task(kb_tx_clone).await;
-    });
+    // Event subscription from keyboard (None until connected)
+    let mut event_rx: Option<broadcast::Receiver<TimestampedEvent>> = None;
 
-    // Event stream
+    // Spawn initial connection attempt
+    app.keyboard_status = KeyboardStatus::Connecting;
+    let mut reconnect_handle: Option<tokio::task::JoinHandle<Option<KeyboardConnection>>> =
+        Some(tokio::spawn(async { connect_keyboard().await }));
+
+    // Event stream for terminal input
     let mut events = EventStream::new();
 
     // Main loop
@@ -203,7 +314,6 @@ async fn run_tui(config: JoystickConfig, config_path: PathBuf) -> Result<()> {
         // Draw UI
         terminal.draw(|f| render::render(f, &app))?;
 
-        // Handle events with timeout
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
 
         tokio::select! {
@@ -216,16 +326,110 @@ async fn run_tui(config: JoystickConfig, config_path: PathBuf) -> Result<()> {
                 }
             }
 
-            // Keyboard messages
-            msg = kb_rx.recv() => {
-                if let Some(msg) = msg {
-                    handle_keyboard_message(&mut app, &mut joystick, msg);
+            // Keyboard depth events - low-latency broadcast channel with coalescing
+            result = async {
+                match &mut event_rx {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let mut pending_depths: HashMap<u8, u16> = HashMap::new();
+                let mut channel_closed = false;
+
+                match result {
+                    Ok(ts) => {
+                        if let VendorEvent::KeyDepth { key_index, depth_raw } = ts.event {
+                            pending_depths.insert(key_index, depth_raw);
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        debug!("Event receiver lagged by {} events", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        channel_closed = true;
+                    }
+                }
+
+                // Drain remaining events (coalesce depth by key)
+                if !channel_closed {
+                    if let Some(ref mut rx) = event_rx {
+                        channel_closed = drain_depth_events(rx, &mut pending_depths);
+                    }
+                }
+
+                // Apply coalesced depth events
+                if !pending_depths.is_empty() {
+                    apply_depths(&pending_depths, app.precision_factor, &mut app.mapper);
+
+                    // Update pressed key display (show last key that moved)
+                    if let Some(&key_index) = pending_depths.keys().next() {
+                        app.pressed_key = Some(key_index);
+                    }
+
+                    // Update joystick
+                    if let Some(ref mut js) = joystick {
+                        let axis_values = app.mapper.compute_axes(&app.config);
+                        if let Err(e) = js.set_axes(&axis_values) {
+                            debug!("Failed to update joystick: {}", e);
+                        }
+                    }
+                }
+
+                if channel_closed {
+                    event_rx = None;
+                    app.keyboard_status = KeyboardStatus::Disconnected;
+                    app.status_message = Some("Keyboard disconnected".to_string());
+                    // Spawn reconnect
+                    if reconnect_handle.is_none() {
+                        reconnect_handle = Some(tokio::spawn(async {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            connect_keyboard().await
+                        }));
+                        app.keyboard_status = KeyboardStatus::Connecting;
+                    }
                 }
             }
 
-            // Tick timeout
+            // Check if reconnection task completed
+            result = async {
+                match &mut reconnect_handle {
+                    Some(h) => h.await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                reconnect_handle = None;
+                match result {
+                    Ok(Some(conn)) => {
+                        app.keyboard_status = KeyboardStatus::Connected;
+                        app.precision_factor = conn.precision_factor;
+                        app.status_message = Some(format!(
+                            "Keyboard connected (precision factor: {:.0})",
+                            conn.precision_factor
+                        ));
+                        event_rx = Some(conn.event_rx);
+                        // conn.keyboard is dropped — that's fine, the transport
+                        // and its reader thread continue running independently
+                    }
+                    Ok(None) => {
+                        // Connection failed, retry
+                        app.keyboard_status = KeyboardStatus::Disconnected;
+                        reconnect_handle = Some(tokio::spawn(async {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            connect_keyboard().await
+                        }));
+                        app.keyboard_status = KeyboardStatus::Connecting;
+                    }
+                    Err(e) => {
+                        error!("Connect task panicked: {}", e);
+                        app.keyboard_status = KeyboardStatus::Error;
+                        app.status_message = Some("Connection task failed".to_string());
+                    }
+                }
+            }
+
+            // Tick timeout for UI refresh
             _ = tokio::time::sleep(timeout) => {
-                // Update axes even without new events (for smooth display)
+                // Periodic joystick update (for smooth display even without new events)
                 if let Some(ref mut js) = joystick {
                     let axis_values = app.mapper.compute_axes(&app.config);
                     if let Err(e) = js.set_axes(&axis_values) {
@@ -333,130 +537,4 @@ fn handle_event(app: &mut App, event: Event) -> Result<bool> {
     }
 
     Ok(false)
-}
-
-/// Handle keyboard messages
-fn handle_keyboard_message(
-    app: &mut App,
-    joystick: &mut Option<VirtualJoystick>,
-    msg: KeyboardMessage,
-) {
-    match msg {
-        KeyboardMessage::Connected { precision } => {
-            app.keyboard_status = KeyboardStatus::Connected;
-            app.status_message = Some(format!("Keyboard connected (precision: {})", precision));
-        }
-        KeyboardMessage::Disconnected => {
-            app.keyboard_status = KeyboardStatus::Disconnected;
-            app.status_message = Some("Keyboard disconnected".to_string());
-        }
-        KeyboardMessage::KeyDepth {
-            key_index,
-            depth_mm,
-        } => {
-            app.update_key_depth(key_index, depth_mm);
-
-            // Update joystick
-            if let Some(ref mut js) = joystick {
-                let axis_values = app.mapper.compute_axes(&app.config);
-                if let Err(e) = js.set_axes(&axis_values) {
-                    debug!("Failed to update joystick: {}", e);
-                }
-            }
-        }
-        KeyboardMessage::Error(e) => {
-            app.keyboard_status = KeyboardStatus::Error;
-            app.status_message = Some(format!("Keyboard error: {}", e));
-        }
-    }
-}
-
-/// Background task to connect to keyboard and read depth events
-async fn keyboard_task(tx: mpsc::UnboundedSender<KeyboardMessage>) {
-    loop {
-        // Try to connect
-        let devices = match list_devices_sync() {
-            Ok(d) => d,
-            Err(e) => {
-                let _ = tx.send(KeyboardMessage::Error(format!("List devices: {}", e)));
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-        };
-
-        if devices.is_empty() {
-            let _ = tx.send(KeyboardMessage::Disconnected);
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        }
-
-        let transport = match open_device_sync(&devices[0]) {
-            Ok(t) => t,
-            Err(e) => {
-                let _ = tx.send(KeyboardMessage::Error(format!("Open device: {}", e)));
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-        };
-
-        let keyboard = KeyboardInterface::new(
-            transport.inner().clone(),
-            monsgeek_keyboard::KEY_COUNT_M1_V5,
-            true,
-        );
-
-        // Get precision
-        let precision_factor = match keyboard.get_precision().await {
-            Ok(precision) => precision.factor(),
-            Err(e) => {
-                let _ = tx.send(KeyboardMessage::Error(format!("Get precision: {}", e)));
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-        };
-
-        // Start magnetism reporting
-        if let Err(e) = keyboard.start_magnetism_report().await {
-            let _ = tx.send(KeyboardMessage::Error(format!("Start magnetism: {}", e)));
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        }
-
-        let _ = tx.send(KeyboardMessage::Connected {
-            precision: precision_factor,
-        });
-
-        // Read loop
-        loop {
-            match keyboard.read_key_depth(100, precision_factor).await {
-                Ok(Some(event)) => {
-                    if tx
-                        .send(KeyboardMessage::KeyDepth {
-                            key_index: event.key_index,
-                            depth_mm: event.depth_mm,
-                        })
-                        .is_err()
-                    {
-                        // Channel closed, exit
-                        return;
-                    }
-                }
-                Ok(None) => {
-                    // Timeout, check if still connected
-                    if !keyboard.is_connected().await {
-                        let _ = tx.send(KeyboardMessage::Disconnected);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(KeyboardMessage::Error(format!("Read depth: {}", e)));
-                    break;
-                }
-            }
-        }
-
-        // Stop magnetism before reconnect attempt
-        let _ = keyboard.stop_magnetism_report().await;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
 }
