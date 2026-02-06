@@ -11,6 +11,7 @@ This document is the single source of truth for the MonsGeek/Akko keyboard HID p
 5. [Data Structures](#5-data-structures)
 6. [Events & Notifications](#6-events--notifications)
 7. [Device Database](#7-device-database)
+8. [Firmware Limits: Chunked SET Commands](#firmware-limits-chunked-set-commands)
 
 ---
 
@@ -382,12 +383,12 @@ Clear this context after receiving a response to avoid stale matches.
 | 0x07 | SET_LEDPARAM | Set LED effect parameters | Bit8 |
 | 0x08 | SET_SLEDPARAM | Set side/secondary LED params | Bit8 |
 | 0x09 | SET_KBOPTION | Set keyboard options | Bit7 |
-| 0x0A | SET_KEYMATRIX | Set key mappings | Bit7 |
-| 0x0B | SET_MACRO | Set macro definitions | Bit7 |
+| 0x0A | SET_KEYMATRIX | Set key mappings (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
+| 0x0B | SET_MACRO | Set macro definitions (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
 | 0x0C | SET_USERPIC | Set per-key RGB colors (static) | Bit7 |
 | 0x0D | SET_AUDIO_VIZ | Send 16 frequency bands for music mode | Bit7 |
 | 0x0E | SET_SCREEN_COLOR | Send RGB for screen sync mode | Bit7 |
-| 0x10 | SET_FN | Set Fn layer configuration | Bit7 |
+| 0x10 | SET_FN | Set Fn layer configuration (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
 | 0x11 | SET_SLEEPTIME | Set sleep/deep sleep timeouts | Bit7 |
 | 0x12 | SET_USERGIF | Set per-key RGB animation | Bit7 |
 | 0x17 | SET_AUTOOS_EN | Set auto-OS detection | Bit7 |
@@ -911,6 +912,73 @@ Interface:      2
 Report Size:    64 bytes
 Report ID:      0
 ```
+
+---
+
+## Firmware Limits: Chunked SET Commands
+
+> **Warning:** The v407 firmware (AT32F405) performs **no bounds checking** on
+> chunked SET commands. A malicious or buggy host can corrupt RAM or trigger
+> stack buffer overflows. The limits below are derived from the firmware
+> decompilation and must be enforced by the host driver.
+
+### Chunked Write Protocol
+
+`SET_KEYMATRIX` (0x0A), `SET_MACRO` (0x0B), and `SET_FN` (0x10) use a
+multi-report chunked write protocol. The first report carries the
+`slot_id` / `macro_id` / `layer_id` and the first chunk of payload; subsequent
+reports carry continuation chunks. The firmware accumulates data into a shared
+staging buffer at `g_vendor_cmd_buf + 0x42` (RAM 0x2000831E).
+
+```
+Report layout (64 bytes):
+  [0]    command (0x0A / 0x0B / 0x10)
+  [1]    slot/macro/layer id      ← NOT bounds-checked
+  [2]    chunk_index (0-based)    ← NOT bounds-checked
+  [3-6]  padding / params
+  [7]    checksum
+  [8-63] payload (up to 56 bytes per chunk)
+```
+
+### Per-Command Limits
+
+| Command | ID Field | Safe Range | Staging Size | Overflow Target |
+|---------|----------|------------|--------------|-----------------|
+| SET_KEYMATRIX (0x0A) | layer_id (byte 1) | 0-5 | 514 bytes | g_rgb_anim_state (0x20008528) |
+| SET_MACRO (0x0B) | macro_id (byte 1) | 0-31 | 514 bytes | g_rgb_anim_state (0x20008528) |
+| SET_FN (0x10) | layer_id (byte 1) | 0-5 | 514 bytes | g_rgb_anim_state (0x20008528) |
+
+**chunk_index** is also unchecked for all three commands. Each chunk writes 56
+bytes at `staging + chunk_index * 56`. With staging at offset 0x42 inside the
+588-byte `g_vendor_cmd_buf`, only ~9 chunks fit before overflowing into
+adjacent RAM.
+
+### SET_MACRO (0x0B) Flash Save Hazard
+
+After chunked transfer, `flash_save_macro` (0x0800eaf0) writes the
+accumulated macro to flash at `0x0802B800 + macro_id * 0x100`. Two paths:
+
+1. **Single-event path** — writes one 256-byte flash page. Uses
+   `macro_id` as an array index into a stack-allocated 16×256-byte buffer
+   without bounds checking. macro_id > 15 overflows the stack frame.
+
+2. **Multi-page path** — copies `accumulated_size` bytes through a
+   stack-local 4096-byte page buffer. Same unbounded `macro_id` index.
+
+**Impact:** A SET_MACRO with `macro_id >= 16` can overwrite the return
+address on the stack, giving arbitrary code execution on the keyboard MCU.
+
+### Host Driver Recommendations
+
+```
+assert 0 <= layer_id <= 5    for SET_KEYMATRIX / SET_FN
+assert 0 <= macro_id <= 15   for SET_MACRO (flash path limit)
+assert chunk_index <= 9      for all chunked commands
+assert total_size <= 514     accumulated payload bytes
+```
+
+`SET_AUDIO_VIZ` (0x0D) is safe — it reads a fixed 16-band array from
+byte offsets 1-48 with no index indirection.
 
 ---
 
