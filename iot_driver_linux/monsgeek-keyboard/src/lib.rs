@@ -44,9 +44,8 @@ use monsgeek_transport::command::{
     LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
     PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
     QueryProfile, QuerySleepTime, SetDebounce, SetFnData, SetKeyMagnetismModeData,
-    SetKeyMatrixData, SetMacroCommand, SetMacroHeader, SetMagnetismReport,
-    SetMultiMagnetismCommand, SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime,
-    SleepTimeResponse,
+    SetKeyMatrixData, SetMacroCommand, SetMagnetismReport, SetMultiMagnetismCommand,
+    SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime, SleepTimeResponse,
 };
 use zerocopy::IntoBytes;
 
@@ -1342,18 +1341,7 @@ impl KeyboardInterface {
             let chunk = &macro_data[start..end];
             let is_last = page == num_pages - 1;
 
-            let cmd = SetMacroCommand {
-                header: SetMacroHeader {
-                    macro_index,
-                    page: page as u8,
-                    chunk_len: chunk.len() as u8,
-                    is_last: if is_last { 1 } else { 0 },
-                    _pad0: 0,
-                    _pad1: 0,
-                    _checksum: 0,
-                },
-                payload: chunk.to_vec(),
-            };
+            let cmd = SetMacroCommand::new(macro_index, page as u8, is_last, chunk.to_vec())?;
 
             self.transport.send_with_delay(&cmd, 30).await?;
         }

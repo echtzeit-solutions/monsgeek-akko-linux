@@ -19,10 +19,16 @@ pub const MAX_PROFILE: u8 = 3;
 pub const MAX_KEY_INDEX: u8 = 125;
 /// Maximum valid layer index (0 = base, 1 = layer1, 2 = Fn).
 pub const MAX_LAYER: u8 = 2;
+/// Maximum valid macro slot index (0-15, flash save overflows stack at >=16).
+pub const MAX_MACRO_INDEX: u8 = 15;
+/// Maximum valid chunk page index (staging buffer holds ~9 chunks of 56 bytes).
+pub const MAX_CHUNK_PAGE: u8 = 9;
+/// Maximum payload bytes per chunk.
+pub const CHUNK_PAYLOAD_SIZE: usize = 56;
 
-/// The firmware's `cmd_set_keymatrix` writes `base + layer * 0x200 + key_index * 4`
-/// with NO bounds checking.  Out-of-range values corrupt RAM; if that RAM is then
-/// saved to flash the MCU boot-loops (config is loaded before USB init).
+/// Firmware commands write to RAM and flash using indices from the HID report
+/// with NO bounds checking. Out-of-range values corrupt RAM or overflow the
+/// stack; if corrupted data reaches flash the MCU boot-loops.
 #[derive(Debug, Clone)]
 pub struct KeyMatrixBoundsError(String);
 
@@ -933,24 +939,71 @@ pub struct GetFnData {
 /// SET_MACRO (0x0B) — 7-byte header, Bit7 checksum.
 ///
 /// The header is followed by a variable-length payload chunk.
-/// Use `SetMacroCommand` for the full command including payload.
+/// Use `SetMacroCommand::new()` to construct with bounds-checked parameters.
+///
+/// Fields are private: the firmware's `flash_save_macro` uses `macro_index`
+/// as an unbounded array index into a stack-allocated buffer — macro_index >= 16
+/// overflows the stack frame (arbitrary code execution on the MCU).
+/// `page` indexes into a 514-byte staging buffer at 56 bytes/chunk — page >= 10
+/// overflows into adjacent RAM.
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct SetMacroHeader {
-    pub macro_index: u8,
-    pub page: u8,
-    pub chunk_len: u8,
-    pub is_last: u8,
-    pub _pad0: u8,
-    pub _pad1: u8,
-    pub _checksum: u8,
+    macro_index: u8,
+    page: u8,
+    chunk_len: u8,
+    is_last: u8,
+    _pad0: u8,
+    _pad1: u8,
+    _checksum: u8,
 }
 
 /// Full SET_MACRO command: header + variable payload.
 #[derive(Debug, Clone)]
 pub struct SetMacroCommand {
-    pub header: SetMacroHeader,
-    pub payload: Vec<u8>,
+    header: SetMacroHeader,
+    payload: Vec<u8>,
+}
+
+impl SetMacroCommand {
+    /// Create a bounds-checked SET_MACRO command.
+    ///
+    /// Returns `Err` if macro_index, page, or payload size exceed firmware limits.
+    pub fn new(
+        macro_index: u8,
+        page: u8,
+        is_last: bool,
+        payload: Vec<u8>,
+    ) -> Result<Self, KeyMatrixBoundsError> {
+        if macro_index > MAX_MACRO_INDEX {
+            return Err(KeyMatrixBoundsError(format!(
+                "macro_index {macro_index} out of range (max {MAX_MACRO_INDEX})"
+            )));
+        }
+        if page > MAX_CHUNK_PAGE {
+            return Err(KeyMatrixBoundsError(format!(
+                "page {page} out of range (max {MAX_CHUNK_PAGE})"
+            )));
+        }
+        if payload.len() > CHUNK_PAYLOAD_SIZE {
+            return Err(KeyMatrixBoundsError(format!(
+                "payload {} bytes exceeds chunk limit ({CHUNK_PAYLOAD_SIZE})",
+                payload.len()
+            )));
+        }
+        Ok(Self {
+            header: SetMacroHeader {
+                macro_index,
+                page,
+                chunk_len: payload.len() as u8,
+                is_last: u8::from(is_last),
+                _pad0: 0,
+                _pad1: 0,
+                _checksum: 0,
+            },
+            payload,
+        })
+    }
 }
 
 impl HidCommand for SetMacroCommand {
@@ -1965,43 +2018,44 @@ mod tests {
     #[test]
     fn test_set_macro_header_size_and_layout() {
         assert_eq!(std::mem::size_of::<SetMacroHeader>(), 7);
-        let hdr = SetMacroHeader {
-            macro_index: 5,
-            page: 1,
-            chunk_len: 56,
-            is_last: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _checksum: 0,
-        };
-        let bytes = hdr.as_bytes();
-        assert_eq!(bytes[0], 5); // macro_index
-        assert_eq!(bytes[1], 1); // page
-        assert_eq!(bytes[2], 56); // chunk_len
-        assert_eq!(bytes[3], 0); // is_last
-        assert_eq!(bytes[6], 0); // checksum placeholder
+        let cmd = SetMacroCommand::new(5, 1, false, vec![0u8; 56]).unwrap();
+        let data = cmd.to_data();
+        assert_eq!(data[0], 5); // macro_index
+        assert_eq!(data[1], 1); // page
+        assert_eq!(data[2], 56); // chunk_len
+        assert_eq!(data[3], 0); // is_last
+        assert_eq!(data[6], 0); // checksum placeholder
     }
 
     #[test]
     fn test_set_macro_command_to_data() {
-        let cmd = SetMacroCommand {
-            header: SetMacroHeader {
-                macro_index: 0,
-                page: 0,
-                chunk_len: 3,
-                is_last: 1,
-                _pad0: 0,
-                _pad1: 0,
-                _checksum: 0,
-            },
-            payload: vec![0xAA, 0xBB, 0xCC],
-        };
+        let cmd = SetMacroCommand::new(0, 0, true, vec![0xAA, 0xBB, 0xCC]).unwrap();
         let data = cmd.to_data();
         assert_eq!(data.len(), 10); // 7 header + 3 payload
         assert_eq!(data[0], 0); // macro_index
         assert_eq!(data[3], 1); // is_last
         assert_eq!(data[7], 0xAA); // first payload byte
         assert_eq!(data[9], 0xCC); // last payload byte
+    }
+
+    #[test]
+    fn test_set_macro_rejects_bad_index() {
+        assert!(SetMacroCommand::new(16, 0, true, vec![0; 56]).is_err());
+    }
+
+    #[test]
+    fn test_set_macro_rejects_bad_page() {
+        assert!(SetMacroCommand::new(0, 10, true, vec![0; 56]).is_err());
+    }
+
+    #[test]
+    fn test_set_macro_rejects_oversized_payload() {
+        assert!(SetMacroCommand::new(0, 0, true, vec![0; 57]).is_err());
+    }
+
+    #[test]
+    fn test_set_macro_accepts_boundary_values() {
+        assert!(SetMacroCommand::new(15, 9, true, vec![0; 56]).is_ok());
     }
 
     #[test]
