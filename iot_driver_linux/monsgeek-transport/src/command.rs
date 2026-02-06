@@ -3,9 +3,36 @@
 //! This module provides a cleaner API for building HID commands and parsing responses,
 //! handling protocol quirks (checksums, byte ordering, value transformations) in one place.
 
+use std::fmt;
+
 use crate::protocol::{self, cmd};
 use crate::types::ChecksumType;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+// =============================================================================
+// Bounds limits for keymatrix writes
+// =============================================================================
+
+/// Maximum valid profile index (0-3).
+pub const MAX_PROFILE: u8 = 3;
+/// Maximum valid key index (0-125, matrix has 126 positions).
+pub const MAX_KEY_INDEX: u8 = 125;
+/// Maximum valid layer index (0 = base, 1 = layer1, 2 = Fn).
+pub const MAX_LAYER: u8 = 2;
+
+/// The firmware's `cmd_set_keymatrix` writes `base + layer * 0x200 + key_index * 4`
+/// with NO bounds checking.  Out-of-range values corrupt RAM; if that RAM is then
+/// saved to flash the MCU boot-loops (config is loaded before USB init).
+#[derive(Debug, Clone)]
+pub struct KeyMatrixBoundsError(String);
+
+impl fmt::Display for KeyMatrixBoundsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for KeyMatrixBoundsError {}
 
 // =============================================================================
 // Core Traits
@@ -753,38 +780,67 @@ impl HidCommand for SetMagnetismReport {
 
 /// SET_KEYMATRIX (0x0A) — 11-byte data payload, Bit7 checksum.
 ///
-/// Sets a key's config on the base layer (layer 0).
+/// Sets a key's config on the base layer (layer 0-1).
 /// Byte 6 (`_checksum`) is a placeholder overwritten by the transport's Bit7 checksum.
+///
+/// Fields are private to enforce bounds at construction time — the firmware
+/// performs NO bounds checking on profile/key_index/layer.
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct SetKeyMatrixData {
-    pub profile: u8,
-    pub key_index: u8,
-    pub _pad0: u8,
-    pub _pad1: u8,
-    pub enabled: u8,
-    pub layer: u8,
-    pub _checksum: u8,
-    pub config_type: u8,
-    pub b1: u8,
-    pub b2: u8,
-    pub b3: u8,
+    profile: u8,
+    key_index: u8,
+    _pad0: u8,
+    _pad1: u8,
+    enabled: u8,
+    layer: u8,
+    _checksum: u8,
+    config_type: u8,
+    b1: u8,
+    b2: u8,
+    b3: u8,
 }
 
 impl SetKeyMatrixData {
-    pub const ZERO: Self = Self {
-        profile: 0,
-        key_index: 0,
-        _pad0: 0,
-        _pad1: 0,
-        enabled: 0,
-        layer: 0,
-        _checksum: 0,
-        config_type: 0,
-        b1: 0,
-        b2: 0,
-        b3: 0,
-    };
+    /// Create a new keymatrix write command with bounds-checked parameters.
+    ///
+    /// Returns `Err` if any of profile/key_index/layer exceed firmware limits.
+    pub fn new(
+        profile: u8,
+        key_index: u8,
+        layer: u8,
+        enabled: bool,
+        config: [u8; 4],
+    ) -> Result<Self, KeyMatrixBoundsError> {
+        if profile > MAX_PROFILE {
+            return Err(KeyMatrixBoundsError(format!(
+                "profile {profile} out of range (max {MAX_PROFILE})"
+            )));
+        }
+        if key_index > MAX_KEY_INDEX {
+            return Err(KeyMatrixBoundsError(format!(
+                "key_index {key_index} out of range (max {MAX_KEY_INDEX})"
+            )));
+        }
+        if layer > MAX_LAYER {
+            return Err(KeyMatrixBoundsError(format!(
+                "layer {layer} out of range (max {MAX_LAYER})"
+            )));
+        }
+        Ok(Self {
+            profile,
+            key_index,
+            _pad0: 0,
+            _pad1: 0,
+            enabled: u8::from(enabled),
+            layer,
+            _checksum: 0,
+            config_type: config[0],
+            b1: config[1],
+            b2: config[2],
+            b3: config[3],
+        })
+    }
 }
 
 impl HidCommand for SetKeyMatrixData {
@@ -797,38 +853,53 @@ impl HidCommand for SetKeyMatrixData {
 
 /// SET_FN (0x10) — 11-byte data payload, Bit7 checksum.
 ///
-/// Sets a key's config on the Fn layer (layer 1).
+/// Sets a key's config on the Fn layer (layer 2+).
 /// Note the different field order vs SetKeyMatrixData: key_index is at byte 2.
+///
+/// Fields are private to enforce bounds at construction time.
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct SetFnData {
-    pub profile: u8,
-    pub _pad0: u8,
-    pub key_index: u8,
-    pub _pad1: u8,
-    pub _pad2: u8,
-    pub _pad3: u8,
-    pub _checksum: u8,
-    pub config_type: u8,
-    pub b1: u8,
-    pub b2: u8,
-    pub b3: u8,
+    profile: u8,
+    _pad0: u8,
+    key_index: u8,
+    _pad1: u8,
+    _pad2: u8,
+    _pad3: u8,
+    _checksum: u8,
+    config_type: u8,
+    b1: u8,
+    b2: u8,
+    b3: u8,
 }
 
 impl SetFnData {
-    pub const ZERO: Self = Self {
-        profile: 0,
-        _pad0: 0,
-        key_index: 0,
-        _pad1: 0,
-        _pad2: 0,
-        _pad3: 0,
-        _checksum: 0,
-        config_type: 0,
-        b1: 0,
-        b2: 0,
-        b3: 0,
-    };
+    /// Create a new Fn-layer write command with bounds-checked parameters.
+    pub fn new(profile: u8, key_index: u8, config: [u8; 4]) -> Result<Self, KeyMatrixBoundsError> {
+        if profile > MAX_PROFILE {
+            return Err(KeyMatrixBoundsError(format!(
+                "profile {profile} out of range (max {MAX_PROFILE})"
+            )));
+        }
+        if key_index > MAX_KEY_INDEX {
+            return Err(KeyMatrixBoundsError(format!(
+                "key_index {key_index} out of range (max {MAX_KEY_INDEX})"
+            )));
+        }
+        Ok(Self {
+            profile,
+            _pad0: 0,
+            key_index,
+            _pad1: 0,
+            _pad2: 0,
+            _pad3: 0,
+            _checksum: 0,
+            config_type: config[0],
+            b1: config[1],
+            b2: config[2],
+            b3: config[3],
+        })
+    }
 }
 
 impl HidCommand for SetFnData {
@@ -1807,16 +1878,7 @@ mod tests {
     #[test]
     fn test_set_key_matrix_data_size_and_layout() {
         assert_eq!(std::mem::size_of::<SetKeyMatrixData>(), 11);
-        let pkt = SetKeyMatrixData {
-            profile: 1,
-            key_index: 42,
-            enabled: 1,
-            config_type: 9,
-            b1: 0,
-            b2: 5,
-            b3: 0,
-            ..SetKeyMatrixData::ZERO
-        };
+        let pkt = SetKeyMatrixData::new(1, 42, 0, true, [9, 0, 5, 0]).unwrap();
         let bytes = pkt.as_bytes();
         assert_eq!(bytes[0], 1); // profile
         assert_eq!(bytes[1], 42); // key_index
@@ -1832,17 +1894,29 @@ mod tests {
     }
 
     #[test]
+    fn test_set_key_matrix_rejects_bad_profile() {
+        assert!(SetKeyMatrixData::new(4, 0, 0, true, [0; 4]).is_err());
+    }
+
+    #[test]
+    fn test_set_key_matrix_rejects_bad_key_index() {
+        assert!(SetKeyMatrixData::new(0, 126, 0, true, [0; 4]).is_err());
+    }
+
+    #[test]
+    fn test_set_key_matrix_rejects_bad_layer() {
+        assert!(SetKeyMatrixData::new(0, 0, 3, true, [0; 4]).is_err());
+    }
+
+    #[test]
+    fn test_set_key_matrix_accepts_boundary_values() {
+        assert!(SetKeyMatrixData::new(3, 125, 2, true, [0; 4]).is_ok());
+    }
+
+    #[test]
     fn test_set_fn_data_size_and_layout() {
         assert_eq!(std::mem::size_of::<SetFnData>(), 11);
-        let pkt = SetFnData {
-            profile: 2,
-            key_index: 10,
-            config_type: 9,
-            b1: 1,
-            b2: 3,
-            b3: 0,
-            ..SetFnData::ZERO
-        };
+        let pkt = SetFnData::new(2, 10, [9, 1, 3, 0]).unwrap();
         let bytes = pkt.as_bytes();
         assert_eq!(bytes[0], 2); // profile
         assert_eq!(bytes[1], 0); // pad0
@@ -1855,6 +1929,11 @@ mod tests {
         assert_eq!(bytes[8], 1); // b1
         assert_eq!(bytes[9], 3); // b2
         assert_eq!(bytes[10], 0); // b3
+    }
+
+    #[test]
+    fn test_set_fn_rejects_bad_key_index() {
+        assert!(SetFnData::new(0, 126, [0; 4]).is_err());
     }
 
     #[test]
@@ -1993,14 +2072,7 @@ mod tests {
     fn test_set_key_matrix_hid_command_trait() {
         assert_eq!(SetKeyMatrixData::CMD, cmd::SET_KEYMATRIX);
         assert_eq!(SetKeyMatrixData::CHECKSUM, ChecksumType::Bit7);
-        let pkt = SetKeyMatrixData {
-            profile: 0,
-            key_index: 1,
-            enabled: 1,
-            config_type: 0,
-            b2: 0x04, // A key
-            ..SetKeyMatrixData::ZERO
-        };
+        let pkt = SetKeyMatrixData::new(0, 1, 0, true, [0, 0, 0x04, 0]).unwrap();
         let buf = pkt.build();
         assert_eq!(buf.len(), REPORT_SIZE);
         assert_eq!(buf[0], 0); // report ID
@@ -2012,15 +2084,7 @@ mod tests {
     #[test]
     fn test_set_fn_hid_command_trait() {
         assert_eq!(SetFnData::CMD, cmd::SET_FN);
-        let pkt = SetFnData {
-            profile: 0,
-            key_index: 5,
-            config_type: 9,
-            b1: 0,
-            b2: 2,
-            b3: 0,
-            ..SetFnData::ZERO
-        };
+        let pkt = SetFnData::new(0, 5, [9, 0, 2, 0]).unwrap();
         let buf = pkt.build();
         assert_eq!(buf.len(), REPORT_SIZE);
         assert_eq!(buf[1], cmd::SET_FN);

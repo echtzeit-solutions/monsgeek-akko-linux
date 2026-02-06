@@ -1170,32 +1170,16 @@ impl KeyboardInterface {
         layer: u8,
         config: [u8; 4],
     ) -> Result<(), KeyboardError> {
-        let enabled: u8 = if config == [0, 0, 0, 0] { 0 } else { 1 };
+        let enabled = config != [0, 0, 0, 0];
         if layer <= 1 {
             self.transport
-                .send(&SetKeyMatrixData {
-                    profile,
-                    key_index,
-                    enabled,
-                    layer,
-                    config_type: config[0],
-                    b1: config[1],
-                    b2: config[2],
-                    b3: config[3],
-                    ..SetKeyMatrixData::ZERO
-                })
+                .send(&SetKeyMatrixData::new(
+                    profile, key_index, layer, enabled, config,
+                )?)
                 .await?;
         } else {
             self.transport
-                .send(&SetFnData {
-                    profile,
-                    key_index,
-                    config_type: config[0],
-                    b1: config[1],
-                    b2: config[2],
-                    b3: config[3],
-                    ..SetFnData::ZERO
-                })
+                .send(&SetFnData::new(profile, key_index, config)?)
                 .await?;
         }
         Ok(())
@@ -1213,14 +1197,13 @@ impl KeyboardInterface {
         layer: u8,
     ) -> Result<(), KeyboardError> {
         self.transport
-            .send(&SetKeyMatrixData {
+            .send(&SetKeyMatrixData::new(
                 profile,
                 key_index,
-                enabled: if enabled { 1 } else { 0 },
                 layer,
-                b2: hid_code,
-                ..SetKeyMatrixData::ZERO
-            })
+                enabled,
+                [0, 0, hid_code, 0],
+            )?)
             .await?;
         Ok(())
     }

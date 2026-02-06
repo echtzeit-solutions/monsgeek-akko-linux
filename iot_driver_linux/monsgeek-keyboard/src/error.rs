@@ -1,5 +1,6 @@
 //! Keyboard interface error types
 
+use monsgeek_transport::command::KeyMatrixBoundsError;
 use monsgeek_transport::TransportError;
 use thiserror::Error;
 
@@ -33,4 +34,10 @@ pub enum KeyboardError {
     /// Device not found
     #[error("Device not found: {0}")]
     NotFound(String),
+}
+
+impl From<KeyMatrixBoundsError> for KeyboardError {
+    fn from(e: KeyMatrixBoundsError) -> Self {
+        Self::InvalidParameter(e.to_string())
+    }
 }
