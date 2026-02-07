@@ -6,8 +6,16 @@
 # All MonsGeek/Akko devices (VID 0x3151)
 # =============================================================================
 
+# Allow non-root access to create UHID virtual devices
+KERNEL=="uhid", MODE="0666"
+
 # USB HID devices (wired, 2.4GHz dongle)
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
+
+# UHID dummy device (virtual)
+SUBSYSTEM=="hidraw", ATTRS{phys}=="uhid/akko", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{name}=="MonsGeek Dummy Device*", MODE="0666", TAG+="uaccess", ENV{HID_MANUFACTURER}="SUPVAN"
+SUBSYSTEM=="hidraw", KERNELS=="uhid", MODE="0666", TAG+="uaccess"
 
 # Bluetooth HID devices (via hid-over-gatt, bus type 0005)
 SUBSYSTEM=="hidraw", KERNELS=="0005:3151:*", MODE="0666"

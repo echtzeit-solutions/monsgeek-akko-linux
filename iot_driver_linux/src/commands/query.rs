@@ -23,7 +23,8 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
     let version = u16::from_le_bytes([resp[7], resp[8]]);
     println!("Device ID: {device_id} (0x{device_id:08X})");
     println!(
-        "Version:   {} (v{}.{:02})",
+        "Version:   {} (hex v{:X}, dec v{}.{:02})",
+        version,
         version,
         version / 100,
         version % 100
