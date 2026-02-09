@@ -242,24 +242,45 @@ fn poll_for_bootloader(
     }
 }
 
-/// Send the ENTER_BOOTLOADER command to a normal-mode device.
+/// Build a 65-byte vendor command with Bit7 checksum.
 ///
-/// The device reboots immediately after receiving this command, so the
-/// ioctl may return EIO due to device disconnection. That's expected.
+/// Layout: `[report_id=0x00] [cmd] [data...] [checksum at byte 8] [zeros...]`
+/// Checksum = 255 - sum(buf[1..8]), placed at buf[8].
+fn vendor_feature_report(cmd: u8, data: &[u8]) -> [u8; 65] {
+    let mut buf = [0u8; 65];
+    buf[0] = 0x00; // report ID
+    buf[1] = cmd;
+    let len = data.len().min(6);
+    buf[2..2 + len].copy_from_slice(&data[..len]);
+    // Bit7 checksum: sum bytes 1-7 (cmd + 6 data bytes), complement at byte 8
+    let sum: u8 = buf[1..8].iter().fold(0u8, |a, &b| a.wrapping_add(b));
+    buf[8] = 0xFF_u8.wrapping_sub(sum);
+    buf
+}
+
+/// Send the ENTER_BOOTLOADER sequence to a normal-mode device.
+///
+/// Sends ISP_PREPARE (0xC5, param 0x3A) first, matching the official app,
+/// then ENTER_BOOTLOADER (0x7F + 55AA55AA magic). The device reboots
+/// immediately after receiving the second command, so EIO is expected.
 fn send_enter_bootloader(path: &CString) -> Result<(), FlashError> {
     let api = HidApi::new()?;
     let dev = api.open_path(path.as_c_str())?;
 
-    // 65 bytes: report_id(0) + 0x7F + 55AA55AA + padding
-    let mut buf = [0u8; 65];
-    buf[0] = 0x00; // report ID
-    buf[1] = firmware_update::BOOT_ENTRY_USB[0]; // 0x7F
-    buf[2] = firmware_update::BOOT_ENTRY_USB[1]; // 0x55
-    buf[3] = firmware_update::BOOT_ENTRY_USB[2]; // 0xAA
-    buf[4] = firmware_update::BOOT_ENTRY_USB[3]; // 0x55
-    buf[5] = firmware_update::BOOT_ENTRY_USB[4]; // 0xAA
+    // 1. ISP_PREPARE: cmd=0xC5, param=0x3A (tells firmware to prepare for update)
+    let isp_buf = vendor_feature_report(0xC5, &[0x3A]);
+    dev.send_feature_report(&isp_buf)
+        .map_err(|e| FlashError::TransferFailed(format!("ISP_PREPARE failed: {e}")))?;
 
-    match dev.send_feature_report(&buf) {
+    // Small delay for ISP_PREPARE to take effect
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // 2. ENTER_BOOTLOADER: cmd=0x7F, magic=55AA55AA
+    let boot_buf = vendor_feature_report(
+        firmware_update::BOOT_ENTRY_USB[0],
+        &firmware_update::BOOT_ENTRY_USB[1..],
+    );
+    match dev.send_feature_report(&boot_buf) {
         Ok(_) => {}
         Err(_) => {
             // EIO is expected — device reboots immediately after receiving

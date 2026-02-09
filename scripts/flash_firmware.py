@@ -63,17 +63,32 @@ def open_device(vid: int, pid: int, usage_page: int | None = None) -> hid.Device
     return d
 
 
-def enter_bootloader(dev: hid.Device) -> None:
-    """Send ENTER_BOOTLOADER command (0x7F with 55AA55AA magic)."""
-    buf = bytearray(REPORT_SIZE + 1)  # +1 for report ID
+def build_vendor_report(cmd: int, data: bytes = b"") -> bytes:
+    """Build a 65-byte vendor feature report with Bit7 checksum.
+
+    Layout: [report_id=0x00] [cmd] [data...] [checksum at byte 8] [zeros...]
+    Checksum = 0xFF - sum(bytes 1-7) & 0xFF, placed at byte 8.
+    """
+    buf = bytearray(REPORT_SIZE + 1)  # 65 bytes
     buf[0] = 0x00  # report ID
-    buf[1] = 0x7F  # ENTER_BOOTLOADER
-    buf[2] = 0x55
-    buf[3] = 0xAA
-    buf[4] = 0x55
-    buf[5] = 0xAA
-    dev.send_feature_report(bytes(buf))
-    print("Sent ENTER_BOOTLOADER (0x7F + 55AA55AA)")
+    buf[1] = cmd
+    for i, b in enumerate(data[:6]):
+        buf[2 + i] = b
+    checksum_sum = sum(buf[1:8]) & 0xFF
+    buf[8] = (0xFF - checksum_sum) & 0xFF
+    return bytes(buf)
+
+
+def enter_bootloader(dev: hid.Device) -> None:
+    """Send ISP_PREPARE + ENTER_BOOTLOADER commands."""
+    # ISP_PREPARE (0xC5, param 0x3A) — tells firmware to prepare for update
+    dev.send_feature_report(build_vendor_report(0xC5, b"\x3A"))
+    print("Sent ISP_PREPARE (0xC5)")
+    time.sleep(0.05)
+
+    # ENTER_BOOTLOADER (0x7F + 55AA55AA magic + Bit7 checksum)
+    dev.send_feature_report(build_vendor_report(0x7F, b"\x55\xAA\x55\xAA"))
+    print("Sent ENTER_BOOTLOADER (0x7F + 55AA55AA + checksum)")
 
 
 def wait_for_bootloader(timeout: float = 10.0) -> hid.Device:
