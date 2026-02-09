@@ -656,7 +656,6 @@ fn caps_roundtrip_led_control() {
 /// Caps (position 3) and verify remap-list would show each one correctly.
 #[test]
 fn caps_all_remap_types_in_matrix_scan() {
-    let caps = CAPS_POS as usize;
     let caps_def = caps_default();
 
     let actions: &[KeyAction] = &[
