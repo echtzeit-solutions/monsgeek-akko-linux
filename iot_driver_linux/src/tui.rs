@@ -40,6 +40,7 @@ use monsgeek_keyboard::{
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
     SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
+use monsgeek_transport::command::{max_user_macro_slot, user_to_wire_macro, wire_to_user_macro};
 use monsgeek_transport::{FlowControlTransport, HidDiscovery};
 
 /// Battery data source
@@ -369,6 +370,7 @@ struct BindingEditor {
     consumer_index: usize,
     consumer_filter: String,
     // Macro
+    macro_stride_quirk: bool,
     macro_slot: u8,
     macro_kind: u8,
     macro_text: String,
@@ -398,6 +400,7 @@ impl BindingEditor {
             mouse_button: 1,
             consumer_index: 0,
             consumer_filter: String::new(),
+            macro_stride_quirk: true,
             macro_slot: 0,
             macro_kind: 0,
             macro_text: String::new(),
@@ -412,8 +415,12 @@ impl BindingEditor {
     }
 
     /// Initialize from a KeyAction (and optionally macros data).
-    fn from_action(action: &KeyAction, macros: &[MacroSlot]) -> Self {
+    ///
+    /// `macro_stride_quirk`: whether the GET_MACRO stride bug workaround is
+    /// active — wire macro indices are halved to produce user-visible slots.
+    fn from_action(action: &KeyAction, macros: &[MacroSlot], macro_stride_quirk: bool) -> Self {
         let mut ed = Self::new();
+        ed.macro_stride_quirk = macro_stride_quirk;
         ed.binding_type = BindingType::from_action(action);
         match *action {
             KeyAction::Key(code) => {
@@ -435,9 +442,10 @@ impl BindingEditor {
                     .unwrap_or(0);
             }
             KeyAction::Macro { index, kind } => {
-                ed.macro_slot = index;
+                let user_slot = wire_to_user_macro(index, macro_stride_quirk);
+                ed.macro_slot = user_slot;
                 ed.macro_kind = kind;
-                if let Some(slot) = macros.get(index as usize) {
+                if let Some(slot) = macros.get(user_slot as usize) {
                     ed.macro_events = slot.events.clone();
                     ed.macro_repeat = slot.repeat_count.max(1);
                     if !slot.text_preview.is_empty() && !slot.text_preview.contains("events") {
@@ -497,7 +505,7 @@ impl BindingEditor {
                 KeyAction::Consumer(code)
             }
             BindingType::Macro => KeyAction::Macro {
-                index: self.macro_slot,
+                index: user_to_wire_macro(self.macro_slot, self.macro_stride_quirk),
                 kind: self.macro_kind,
             },
             BindingType::Gamepad => KeyAction::Gamepad(self.gamepad_button),
@@ -590,7 +598,8 @@ impl BindingEditor {
                 self.combo_mod_cursor = (self.combo_mod_cursor + 1) % MODIFIER_LIST.len();
             }
             BindingField::MacroSlot => {
-                self.macro_slot = (self.macro_slot + 1).min(49);
+                let max = max_user_macro_slot(self.macro_stride_quirk);
+                self.macro_slot = (self.macro_slot + 1).min(max);
             }
             BindingField::MacroKind => {
                 self.macro_kind = (self.macro_kind + 1) % 3;
@@ -2458,12 +2467,20 @@ impl App {
         });
     }
 
+    /// Whether the GET_MACRO stride quirk workaround is active.
+    fn macro_stride_quirk(&self) -> bool {
+        self.keyboard
+            .as_ref()
+            .is_none_or(|kb| kb.macro_stride_quirk())
+    }
+
     /// Sync the binding editor to the currently selected remap entry.
     fn sync_binding_editor(&mut self) {
+        let quirk = self.macro_stride_quirk();
         let filtered = self.filtered_remaps();
         if let Some(&remap_idx) = filtered.get(self.remap_selected) {
             let action = self.remaps[remap_idx].action;
-            self.binding_editor = BindingEditor::from_action(&action, &self.macros);
+            self.binding_editor = BindingEditor::from_action(&action, &self.macros, quirk);
         } else {
             self.binding_editor = BindingEditor::new();
         }
@@ -2475,11 +2492,12 @@ impl App {
             return;
         };
 
+        let slot_count = max_user_macro_slot(self.macro_stride_quirk()) + 1;
         self.loading.macros = LoadState::Loading;
         let tx = self.result_tx.clone();
         tokio::spawn(async move {
             let mut slots = Vec::new();
-            for i in 0..8u8 {
+            for i in 0..slot_count {
                 let slot = match keyboard.get_macro(i).await {
                     Ok(data) => {
                         let (repeat_count, events) = monsgeek_keyboard::parse_macro_events(&data);

@@ -34,13 +34,14 @@ pub const MATRIX_SIZE_M1_V5: usize = 126;
 // Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
 pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
-    DebounceResponse, GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData,
+    self, DebounceResponse, GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData,
     LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
     PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
     QueryProfile, QuerySleepTime, SetDebounce, SetFnData, SetKeyMagnetismModeData,
@@ -57,6 +58,9 @@ pub struct KeyboardInterface {
     transport: Arc<FlowControlTransport>,
     key_count: u8,
     has_magnetism: bool,
+    /// Work around the GET_MACRO stride bug by using only even wire indices.
+    /// See [`command::user_to_wire_macro`] for details.
+    macro_get_stride_quirk: AtomicBool,
 }
 
 impl KeyboardInterface {
@@ -71,7 +75,24 @@ impl KeyboardInterface {
             transport,
             key_count,
             has_magnetism,
+            macro_get_stride_quirk: AtomicBool::new(true),
         }
+    }
+
+    /// Whether the GET_MACRO stride quirk workaround is active.
+    pub fn macro_stride_quirk(&self) -> bool {
+        self.macro_get_stride_quirk.load(Ordering::Relaxed)
+    }
+
+    /// Enable or disable the GET_MACRO stride quirk workaround.
+    ///
+    /// When enabled (default), macro user slots are mapped to even wire indices
+    /// so that GET_MACRO (stride 512) and SET_MACRO (stride 256) access the
+    /// same flash offset.  Disable this if the firmware is updated to fix the
+    /// stride mismatch.
+    pub fn set_macro_stride_quirk(&self, enabled: bool) {
+        self.macro_get_stride_quirk
+            .store(enabled, Ordering::Relaxed);
     }
 
     /// Get the underlying transport
@@ -1279,10 +1300,11 @@ impl KeyboardInterface {
         }
     }
 
-    /// Set macro data for a macro slot
+    /// Set macro data for a user-visible macro slot.
     ///
     /// # Arguments
-    /// * `macro_index` - Macro slot number (0-based)
+    /// * `macro_index` - User-visible macro slot (0-based); automatically
+    ///   mapped to the correct wire index when the stride quirk is active.
     /// * `events` - List of (keycode, is_down, delay_ms) tuples with u16 delay
     /// * `repeat_count` - How many times to repeat the macro
     ///
@@ -1295,6 +1317,7 @@ impl KeyboardInterface {
         events: &[(u8, bool, u16)],
         repeat_count: u16,
     ) -> Result<(), KeyboardError> {
+        let wire_index = command::user_to_wire_macro(macro_index, self.macro_stride_quirk());
         // Build macro data
         let mut macro_data = Vec::with_capacity(256);
 
@@ -1341,7 +1364,7 @@ impl KeyboardInterface {
             let chunk = &macro_data[start..end];
             let is_last = page == num_pages - 1;
 
-            let cmd = SetMacroCommand::new(macro_index, page as u8, is_last, chunk.to_vec())?;
+            let cmd = SetMacroCommand::new(wire_index, page as u8, is_last, chunk.to_vec())?;
 
             self.transport.send_with_delay(&cmd, 30).await?;
         }
@@ -1388,6 +1411,7 @@ impl KeyboardInterface {
     /// Assign a macro to a key on any layer.
     ///
     /// * `layer` - 0 for base, 1 for Fn
+    /// * `macro_index` - User-visible macro slot; mapped to wire index
     /// * `macro_type` - 0=repeat by count, 1=toggle, 2=hold to repeat
     pub async fn assign_macro_to_key(
         &self,
@@ -1396,7 +1420,8 @@ impl KeyboardInterface {
         macro_index: u8,
         macro_type: u8,
     ) -> Result<(), KeyboardError> {
-        self.set_key_config(0, key_index, layer, [9, macro_type, macro_index, 0])
+        let wire_index = command::user_to_wire_macro(macro_index, self.macro_stride_quirk());
+        self.set_key_config(0, key_index, layer, [9, macro_type, wire_index, 0])
             .await
     }
 

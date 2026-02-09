@@ -19,14 +19,25 @@ pub const MAX_PROFILE: u8 = 3;
 pub const MAX_KEY_INDEX: u8 = 125;
 /// Maximum valid layer index (0 = base, 1 = layer1, 2 = Fn).
 pub const MAX_LAYER: u8 = 2;
-/// Maximum valid macro slot index (0-49).
+/// Maximum valid macro wire index (0-49).
 ///
 /// The firmware's macro save function (Ghidra 0x08008384) writes 256 bytes per
 /// macro at `(macro_id & 7) * 0x100` within 2KB flash pages at
 /// `0x0802B800 + (macro_id >> 3) * 0x800`.  The 0x800-byte stack buffer cannot
 /// overflow (max offset 7*256+256 = 2048 = buffer size).  The web app supports
 /// 50 macros (maxMacro=50), fitting in 7 pages (14KB) below the userpic area.
+///
+/// **Firmware quirk (GET_MACRO stride bug):** GET_MACRO (0x8B) reads at stride
+/// 512 bytes (`macroIndex << 9`) while SET_MACRO (0x0B) and macro playback use
+/// stride 256 bytes (`macroIndex << 8`).  Use [`user_to_wire_macro`] and
+/// [`wire_to_user_macro`] to map user-visible slot numbers to wire indices.
 pub const MAX_MACRO_INDEX: u8 = 49;
+
+/// Maximum user-visible macro slot when the GET_MACRO stride quirk is active.
+///
+/// With the workaround (using only even wire indices), we get 25 usable slots
+/// (0-24) out of the 50 wire indices.
+pub const MAX_USER_MACRO_SLOT_QUIRK: u8 = 24;
 /// Maximum valid chunk page index (staging buffer holds ~9 chunks of 56 bytes).
 pub const MAX_CHUNK_PAGE: u8 = 9;
 /// Maximum payload bytes per chunk.
@@ -1033,11 +1044,58 @@ impl HidCommand for SetMacroCommand {
 }
 
 /// GET_MACRO (0x8B) query data — 2 bytes.
+///
+/// **Firmware quirk:** GET_MACRO reads flash at `macro_index * 512` (shift 9),
+/// but SET_MACRO writes at `macro_index * 256` (shift 8).  When the stride
+/// quirk workaround is active, pass the user-visible slot directly (GET's 2x
+/// stride compensates for SET writing at `slot * 2 * 256 = slot * 512`).
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct GetMacroData {
     pub macro_index: u8,
     pub page: u8,
+}
+
+// =============================================================================
+// GET_MACRO stride quirk helpers
+// =============================================================================
+
+/// Convert a user-visible macro slot to the SET_MACRO / keymap wire index.
+///
+/// When `get_stride_quirk` is true, doubles the index so that SET (stride 256)
+/// writes to the same flash offset that GET (stride 512) reads:
+///   SET wire `slot*2` → flash offset `slot*2*256 = slot*512`
+///   GET wire `slot`   → flash offset `slot*512`
+///
+/// When false (firmware fixed), returns the slot unchanged.
+pub fn user_to_wire_macro(user_slot: u8, get_stride_quirk: bool) -> u8 {
+    if get_stride_quirk {
+        user_slot * 2
+    } else {
+        user_slot
+    }
+}
+
+/// Convert a wire macro index (from keymap config bytes) to user-visible slot.
+///
+/// Inverse of [`user_to_wire_macro`].  When the quirk is active, halves the
+/// wire index (odd indices are mapped to the same user slot as the preceding
+/// even index).
+pub fn wire_to_user_macro(wire_index: u8, get_stride_quirk: bool) -> u8 {
+    if get_stride_quirk {
+        wire_index / 2
+    } else {
+        wire_index
+    }
+}
+
+/// Maximum user-visible macro slot for the given quirk state.
+pub fn max_user_macro_slot(get_stride_quirk: bool) -> u8 {
+    if get_stride_quirk {
+        MAX_USER_MACRO_SLOT_QUIRK
+    } else {
+        MAX_MACRO_INDEX
+    }
 }
 
 /// SET_MULTI_MAGNETISM (0x65) — 7-byte header + variable payload, Bit7 checksum.
@@ -2179,5 +2237,52 @@ mod tests {
         assert_eq!(buf[3], 200); // actuation
         assert_eq!(buf[4], 150); // deactuation
         assert_eq!(buf[5], 1); // mode
+    }
+
+    // --- GET_MACRO stride quirk helpers ---
+
+    #[test]
+    fn test_user_to_wire_macro_quirk_on() {
+        assert_eq!(user_to_wire_macro(0, true), 0);
+        assert_eq!(user_to_wire_macro(1, true), 2);
+        assert_eq!(user_to_wire_macro(12, true), 24);
+        assert_eq!(user_to_wire_macro(24, true), 48);
+    }
+
+    #[test]
+    fn test_user_to_wire_macro_quirk_off() {
+        assert_eq!(user_to_wire_macro(0, false), 0);
+        assert_eq!(user_to_wire_macro(1, false), 1);
+        assert_eq!(user_to_wire_macro(49, false), 49);
+    }
+
+    #[test]
+    fn test_wire_to_user_macro_quirk_on() {
+        assert_eq!(wire_to_user_macro(0, true), 0);
+        assert_eq!(wire_to_user_macro(2, true), 1);
+        assert_eq!(wire_to_user_macro(48, true), 24);
+        // Odd wire indices map down (same as preceding even)
+        assert_eq!(wire_to_user_macro(3, true), 1);
+    }
+
+    #[test]
+    fn test_wire_to_user_macro_quirk_off() {
+        assert_eq!(wire_to_user_macro(0, false), 0);
+        assert_eq!(wire_to_user_macro(1, false), 1);
+        assert_eq!(wire_to_user_macro(49, false), 49);
+    }
+
+    #[test]
+    fn test_max_user_macro_slot() {
+        assert_eq!(max_user_macro_slot(true), MAX_USER_MACRO_SLOT_QUIRK);
+        assert_eq!(max_user_macro_slot(false), MAX_MACRO_INDEX);
+    }
+
+    #[test]
+    fn test_macro_quirk_roundtrip() {
+        for slot in 0..=MAX_USER_MACRO_SLOT_QUIRK {
+            let wire = user_to_wire_macro(slot, true);
+            assert_eq!(wire_to_user_macro(wire, true), slot);
+        }
     }
 }
