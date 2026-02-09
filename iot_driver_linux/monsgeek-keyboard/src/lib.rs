@@ -1178,7 +1178,7 @@ impl KeyboardInterface {
                 .await?;
         } else {
             self.transport
-                .send(&SetFnData::new(profile, key_index, config)?)
+                .send(&SetFnData::new(0, profile, key_index, config)?)
                 .await?;
         }
         Ok(())

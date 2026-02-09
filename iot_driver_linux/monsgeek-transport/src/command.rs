@@ -19,8 +19,14 @@ pub const MAX_PROFILE: u8 = 3;
 pub const MAX_KEY_INDEX: u8 = 125;
 /// Maximum valid layer index (0 = base, 1 = layer1, 2 = Fn).
 pub const MAX_LAYER: u8 = 2;
-/// Maximum valid macro slot index (0-15, flash save overflows stack at >=16).
-pub const MAX_MACRO_INDEX: u8 = 15;
+/// Maximum valid macro slot index (0-49).
+///
+/// The firmware's macro save function (Ghidra 0x08008384) writes 256 bytes per
+/// macro at `(macro_id & 7) * 0x100` within 2KB flash pages at
+/// `0x0802B800 + (macro_id >> 3) * 0x800`.  The 0x800-byte stack buffer cannot
+/// overflow (max offset 7*256+256 = 2048 = buffer size).  The web app supports
+/// 50 macros (maxMacro=50), fitting in 7 pages (14KB) below the userpic area.
+pub const MAX_MACRO_INDEX: u8 = 49;
 /// Maximum valid chunk page index (staging buffer holds ~9 chunks of 56 bytes).
 pub const MAX_CHUNK_PAGE: u8 = 9;
 /// Maximum payload bytes per chunk.
@@ -860,14 +866,17 @@ impl HidCommand for SetKeyMatrixData {
 /// SET_FN (0x10) — 11-byte data payload, Bit7 checksum.
 ///
 /// Sets a key's config on the Fn layer (layer 2+).
-/// Note the different field order vs SetKeyMatrixData: key_index is at byte 2.
+///
+/// Wire layout differs from SetKeyMatrixData: byte 0 is `fn_sys` (sub-target
+/// selecting the OS-specific Fn layer: 0 = Win, 1 = Mac), byte 1 is `profile`,
+/// and `key_index` is at byte 2.
 ///
 /// Fields are private to enforce bounds at construction time.
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct SetFnData {
+    fn_sys: u8,
     profile: u8,
-    _pad0: u8,
     key_index: u8,
     _pad1: u8,
     _pad2: u8,
@@ -881,7 +890,14 @@ pub struct SetFnData {
 
 impl SetFnData {
     /// Create a new Fn-layer write command with bounds-checked parameters.
-    pub fn new(profile: u8, key_index: u8, config: [u8; 4]) -> Result<Self, KeyMatrixBoundsError> {
+    ///
+    /// `fn_sys` selects the OS-specific Fn layer (0 = Win, 1 = Mac).
+    pub fn new(
+        fn_sys: u8,
+        profile: u8,
+        key_index: u8,
+        config: [u8; 4],
+    ) -> Result<Self, KeyMatrixBoundsError> {
         if profile > MAX_PROFILE {
             return Err(KeyMatrixBoundsError(format!(
                 "profile {profile} out of range (max {MAX_PROFILE})"
@@ -893,8 +909,8 @@ impl SetFnData {
             )));
         }
         Ok(Self {
+            fn_sys,
             profile,
-            _pad0: 0,
             key_index,
             _pad1: 0,
             _pad2: 0,
@@ -941,9 +957,9 @@ pub struct GetFnData {
 /// The header is followed by a variable-length payload chunk.
 /// Use `SetMacroCommand::new()` to construct with bounds-checked parameters.
 ///
-/// Fields are private: the firmware's `flash_save_macro` uses `macro_index`
-/// as an unbounded array index into a stack-allocated buffer — macro_index >= 16
-/// overflows the stack frame (arbitrary code execution on the MCU).
+/// Fields are private: `macro_index` is bounds-checked to 0-49 (matching the web
+/// app's maxMacro=50).  The firmware's macro save (Ghidra 0x08008384) uses 256
+/// bytes per slot, 8 per 2KB page — no stack overflow for any index.
 /// `page` indexes into a 514-byte staging buffer at 56 bytes/chunk — page >= 10
 /// overflows into adjacent RAM.
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, KnownLayout, Immutable)]
@@ -1969,10 +1985,10 @@ mod tests {
     #[test]
     fn test_set_fn_data_size_and_layout() {
         assert_eq!(std::mem::size_of::<SetFnData>(), 11);
-        let pkt = SetFnData::new(2, 10, [9, 1, 3, 0]).unwrap();
+        let pkt = SetFnData::new(0, 2, 10, [9, 1, 3, 0]).unwrap();
         let bytes = pkt.as_bytes();
-        assert_eq!(bytes[0], 2); // profile
-        assert_eq!(bytes[1], 0); // pad0
+        assert_eq!(bytes[0], 0); // fn_sys (win)
+        assert_eq!(bytes[1], 2); // profile
         assert_eq!(bytes[2], 10); // key_index
         assert_eq!(bytes[3], 0); // pad1
         assert_eq!(bytes[4], 0); // pad2
@@ -1986,7 +2002,7 @@ mod tests {
 
     #[test]
     fn test_set_fn_rejects_bad_key_index() {
-        assert!(SetFnData::new(0, 126, [0; 4]).is_err());
+        assert!(SetFnData::new(0, 0, 126, [0; 4]).is_err());
     }
 
     #[test]
@@ -2018,9 +2034,9 @@ mod tests {
     #[test]
     fn test_set_macro_header_size_and_layout() {
         assert_eq!(std::mem::size_of::<SetMacroHeader>(), 7);
-        let cmd = SetMacroCommand::new(5, 1, false, vec![0u8; 56]).unwrap();
+        let cmd = SetMacroCommand::new(3, 1, false, vec![0u8; 56]).unwrap();
         let data = cmd.to_data();
-        assert_eq!(data[0], 5); // macro_index
+        assert_eq!(data[0], 3); // macro_index
         assert_eq!(data[1], 1); // page
         assert_eq!(data[2], 56); // chunk_len
         assert_eq!(data[3], 0); // is_last
@@ -2040,7 +2056,7 @@ mod tests {
 
     #[test]
     fn test_set_macro_rejects_bad_index() {
-        assert!(SetMacroCommand::new(16, 0, true, vec![0; 56]).is_err());
+        assert!(SetMacroCommand::new(50, 0, true, vec![0; 56]).is_err());
     }
 
     #[test]
@@ -2055,7 +2071,7 @@ mod tests {
 
     #[test]
     fn test_set_macro_accepts_boundary_values() {
-        assert!(SetMacroCommand::new(15, 9, true, vec![0; 56]).is_ok());
+        assert!(SetMacroCommand::new(49, 9, true, vec![0; 56]).is_ok());
     }
 
     #[test]
@@ -2138,10 +2154,12 @@ mod tests {
     #[test]
     fn test_set_fn_hid_command_trait() {
         assert_eq!(SetFnData::CMD, cmd::SET_FN);
-        let pkt = SetFnData::new(0, 5, [9, 0, 2, 0]).unwrap();
+        let pkt = SetFnData::new(0, 0, 5, [9, 0, 2, 0]).unwrap();
         let buf = pkt.build();
         assert_eq!(buf.len(), REPORT_SIZE);
         assert_eq!(buf[1], cmd::SET_FN);
+        assert_eq!(buf[2], 0); // fn_sys at byte 0 of data = buf[2]
+        assert_eq!(buf[3], 0); // profile at byte 1 of data = buf[3]
         assert_eq!(buf[4], 5); // key_index at byte 2 of data = buf[4]
     }
 

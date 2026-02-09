@@ -590,7 +590,7 @@ impl BindingEditor {
                 self.combo_mod_cursor = (self.combo_mod_cursor + 1) % MODIFIER_LIST.len();
             }
             BindingField::MacroSlot => {
-                self.macro_slot = (self.macro_slot + 1).min(7);
+                self.macro_slot = (self.macro_slot + 1).min(49);
             }
             BindingField::MacroKind => {
                 self.macro_kind = (self.macro_kind + 1) % 3;
