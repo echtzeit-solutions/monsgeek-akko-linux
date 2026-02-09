@@ -8,6 +8,7 @@ pub mod device_loader;
 pub mod devices;
 pub mod firmware;
 pub mod firmware_api;
+pub mod flash;
 pub mod gif;
 pub mod hal;
 pub mod hid;

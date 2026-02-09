@@ -908,10 +908,29 @@ pub mod firmware_update {
     /// Firmware transfer complete marker
     pub const TRANSFER_COMPLETE: [u8; 2] = [0xBA, 0xC2];
 
+    /// Our keyboard's bootloader PID (VID stays 0x3151)
+    pub const BOOT_PID_M1_V5: u16 = 0x502A;
+
+    /// Bootloader usage page
+    pub const BOOT_USAGE_PAGE: u16 = 0xFF01;
+
+    /// Normal-mode vendor usage page
+    pub const NORMAL_USAGE_PAGE: u16 = 0xFFFF;
+
+    /// Normal-mode PID
+    pub const NORMAL_PID: u16 = 0x5030;
+
+    /// Normal-mode vendor config usage (IF2)
+    pub const NORMAL_USAGE: u16 = 0x02;
+
+    /// Common VID for MonsGeek M1 V5
+    pub const VID: u16 = 0x3151;
+
     /// Boot mode VID/PIDs - device uses these when in bootloader mode
-    pub const BOOT_VID_PIDS: [(u16, u16); 4] = [
-        (0x3141, 0x504A), // USB boot mode 1
-        (0x3141, 0x404A), // USB boot mode 2
+    pub const BOOT_VID_PIDS: [(u16, u16); 5] = [
+        (0x3151, 0x502A), // MonsGeek M1 V5 TMR bootloader
+        (0x3141, 0x504A), // USB boot mode 1 (generic RY)
+        (0x3141, 0x404A), // USB boot mode 2 (generic RY)
         (0x046A, 0x012E), // RF boot mode 1
         (0x046A, 0x0130), // RF boot mode 2
     ];

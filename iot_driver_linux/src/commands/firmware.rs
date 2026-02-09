@@ -246,3 +246,112 @@ pub async fn download(_device_id: Option<u32>, _output: &PathBuf) -> CommandResu
     eprintln!("Firmware API not enabled. Rebuild with: cargo build --features firmware-api");
     Ok(())
 }
+
+/// CLI progress reporter for flash operations.
+struct CliFlashProgress {
+    last_pct: usize,
+}
+
+impl CliFlashProgress {
+    fn new() -> Self {
+        Self {
+            last_pct: usize::MAX,
+        }
+    }
+}
+
+impl iot_driver::flash::FlashProgress for CliFlashProgress {
+    fn on_phase(&mut self, phase: &iot_driver::flash::FlashPhase) {
+        println!("[flash] {phase}");
+    }
+
+    fn on_chunk(&mut self, sent: usize, total: usize) {
+        let pct = sent * 100 / total;
+        // Print every 5% or at completion
+        if pct != self.last_pct && (pct.is_multiple_of(5) || sent == total) {
+            self.last_pct = pct;
+            let bar_len = 40;
+            let filled = bar_len * sent / total;
+            let bar: String = "=".repeat(filled) + &" ".repeat(bar_len - filled);
+            print!("\r  [{bar}] {pct:3}% ({sent}/{total})");
+            if sent == total {
+                println!();
+            }
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+        }
+    }
+
+    fn on_error(&mut self, error: &iot_driver::flash::FlashError) {
+        eprintln!("[flash] ERROR: {error}");
+    }
+
+    fn on_complete(&mut self) {
+        println!("[flash] Flash complete! Device should reboot to normal mode.");
+    }
+}
+
+/// Flash firmware to a connected keyboard.
+pub fn flash(file: &PathBuf, device: Option<&str>, yes: bool) -> CommandResult {
+    use iot_driver::flash::{flash_firmware, FlashOptions};
+
+    // 1. Load + validate firmware
+    let fw = match FirmwareFile::load(file) {
+        Ok(fw) => fw,
+        Err(e) => {
+            eprintln!("Failed to load firmware file: {e}");
+            return Ok(());
+        }
+    };
+
+    if let Err(e) = fw.validate() {
+        eprintln!("Firmware validation failed: {e}");
+        return Ok(());
+    }
+
+    // 2. Print summary + safety warning
+    println!("Firmware Flash");
+    println!("===============");
+    println!("File:       {}", fw.filename);
+    println!("Type:       {}", fw.firmware_type);
+    println!("Size:       {} bytes ({} KB)", fw.size, fw.size / 1024);
+    println!("Checksum:   0x{:08X}", fw.checksum);
+    println!("Chunks:     {} (64 bytes each)", fw.chunk_count);
+    println!();
+    println!("WARNING: This will overwrite the keyboard firmware!");
+    println!("The keyboard will be unusable if the process is interrupted.");
+    println!("Make sure you have a DFU recovery method available.");
+
+    // 3. Confirmation
+    if !yes {
+        println!();
+        print!("Type 'yes' to continue: ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim() != "yes" {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    println!();
+
+    // 4. Flash
+    let mut progress = CliFlashProgress::new();
+    let options = FlashOptions {
+        device_path: device.map(String::from),
+        ..Default::default()
+    };
+
+    match flash_firmware(&fw, &mut progress, &options) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("\nFlash failed: {e}");
+        }
+    }
+
+    Ok(())
+}

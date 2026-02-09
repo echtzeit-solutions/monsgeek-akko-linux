@@ -13,8 +13,8 @@ pub struct Cli {
     pub monitor: bool,
 
     /// Use pcap file instead of real device (passive replay)
-    #[arg(long, global = true, value_name = "FILE")]
-    pub file: Option<PathBuf>,
+    #[arg(long = "file", global = true, value_name = "FILE")]
+    pub pcap_file: Option<PathBuf>,
 
     /// Include standard HID reports (keyboard, consumer, NKRO)
     #[arg(long, global = true)]
@@ -445,8 +445,8 @@ pub enum Commands {
         verbose: bool,
     },
 
-    // === Firmware Commands (DRY-RUN ONLY) ===
-    /// Firmware update tools (dry-run only, no actual flashing)
+    // === Firmware Commands ===
+    /// Firmware update tools
     #[command(subcommand, visible_alias = "fw")]
     Firmware(FirmwareCommands),
 
@@ -534,7 +534,7 @@ pub enum PcapOutputFormat {
     Json,
 }
 
-/// Firmware commands (DRY-RUN ONLY - no actual flashing)
+/// Firmware commands
 #[derive(Subcommand)]
 pub enum FirmwareCommands {
     /// Show current device firmware version
@@ -577,5 +577,20 @@ pub enum FirmwareCommands {
         /// Output file path
         #[arg(short, long, default_value = "firmware.zip")]
         output: PathBuf,
+    },
+
+    /// Flash firmware to keyboard (DANGEROUS - overwrites firmware!)
+    #[command(visible_alias = "fl")]
+    Flash {
+        /// Path to firmware file (.bin or .zip)
+        file: PathBuf,
+
+        /// HID device path (required when multiple devices found)
+        #[arg(long)]
+        device: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 }

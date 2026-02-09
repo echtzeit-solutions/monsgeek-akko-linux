@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Handle --file flag for pcap replay mode (no device needed)
-    if let Some(ref pcap_file) = cli.file {
+    if let Some(ref pcap_file) = cli.pcap_file {
         return iot_driver::pcap_analyzer::run_pcap_analysis(
             pcap_file,
             iot_driver::pcap_analyzer::OutputFormat::Text,
@@ -260,6 +260,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             FirmwareCommands::Download { device_id, output } => {
                 commands::firmware::download(device_id, &output).await?;
+            }
+            FirmwareCommands::Flash { file, device, yes } => {
+                commands::firmware::flash(&file, device.as_deref(), yes)?;
             }
         },
 
