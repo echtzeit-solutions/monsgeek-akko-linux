@@ -11,7 +11,8 @@ This document is the single source of truth for the MonsGeek/Akko keyboard HID p
 5. [Data Structures](#5-data-structures)
 6. [Events & Notifications](#6-events--notifications)
 7. [Device Database](#7-device-database)
-8. [Firmware Limits: Chunked SET Commands](#firmware-limits-chunked-set-commands)
+8. [Firmware Update (RY Bootloader)](#8-firmware-update-ry-bootloader)
+9. [Firmware Limits: Chunked SET Commands](#firmware-limits-chunked-set-commands)
 
 ---
 
@@ -911,6 +912,142 @@ Usage:          0x02
 Interface:      2
 Report Size:    64 bytes
 Report ID:      0
+```
+
+---
+
+## 8. Firmware Update (RY Bootloader)
+
+The RY bootloader occupies the first 20KB of flash (0x08000000–0x08004FFF) and handles firmware updates via a vendor HID protocol over USB Feature Reports.
+
+### 8.1 Boot Decision
+
+On every power-on/reset, the bootloader decides whether to boot the firmware or stay in update mode:
+
+1. **Read mailbox** at flash 0x08004800 (4 bytes)
+2. **Read chip ID** from 0x08005000 (14 bytes: `"AT32F405 8KMKB"`)
+3. **Compare:**
+   - If mailbox == `0x55AA55AA` → **stay in bootloader** (firmware update requested)
+   - If chip ID doesn't match expected string → **stay in bootloader** (no valid firmware)
+   - Otherwise → **boot firmware**: set VTOR to 0x08005200, load SP from vector table, jump to reset handler
+
+### 8.2 Bootloader Device Identification
+
+```
+VID:        0x3151
+PID:        0x502A (MonsGeek M1 V5 HE TMR)
+Usage Page: 0xFF01
+Report Size: 64 bytes
+Report ID:  0
+```
+
+Additional bootloader VID/PIDs for other models are listed in section 7.3.
+
+### 8.3 Update Protocol Sequence
+
+The firmware update is a multi-phase process using Feature Reports:
+
+```
+Phase 1: Prepare (normal mode, PID=0x5030)
+──────────────────────────────────────────
+1. SET_REPORT: ISP_PREPARE      [0xC5, 0x3A, 0,0,0,0,0, checksum]
+2. SET_REPORT: ENTER_BOOTLOADER [0x7F, 0x55, 0xAA, 0x55, 0xAA, 0,0, checksum]
+   → Device erases config, writes 0x55AA55AA to mailbox, reboots
+   → Device re-enumerates as PID=0x502A
+
+Phase 2: Transfer (bootloader mode, PID=0x502A)
+────────────────────────────────────────────────
+3. SET_REPORT: FW_TRANSFER_START
+   [0xBA, 0xC0, chunk_count_lo, chunk_count_hi, size_lo, size_mid, size_hi, 0, ...]
+
+4. GET_REPORT: Read ack (1 report)
+
+5. SET_REPORT × N: Firmware data chunks (64 bytes each)
+   Last chunk padded with 0xFF if firmware size is not a multiple of 64.
+
+6. SET_REPORT: FW_TRANSFER_COMPLETE
+   [0xBA, 0xC2, chunk_count(2B), checksum(4B LE), size(4B LE), 0, ...]
+
+Phase 3: Verification (bootloader validates, then reboots)
+──────────────────────────────────────────────────────────
+7. Bootloader compares received checksum (masked to 24 bits) with its
+   running sum. If match AND no transfer errors:
+   - Erases flash page at 0x08004800 (clears mailbox)
+   - Reboots → firmware boots normally
+8. If mismatch or errors:
+   - Does NOT clear mailbox
+   - Reboots → stays in bootloader mode (mailbox still 0x55AA55AA)
+```
+
+### 8.4 Checksum Calculation
+
+The bootloader accumulates a running checksum by summing **every byte of every 64-byte chunk**, including 0xFF padding bytes in the last chunk. The host must match this exactly.
+
+```python
+def calculate_checksum(firmware_data: bytes) -> int:
+    """Calculate checksum matching the bootloader's algorithm."""
+    total = sum(firmware_data)
+    remainder = len(firmware_data) % 64
+    if remainder != 0:
+        # Bootloader checksums the full 64-byte chunk including padding
+        total += (64 - remainder) * 0xFF
+    return total
+```
+
+The FW_TRANSFER_COMPLETE command sends the checksum as 4 bytes (little-endian u32), but the bootloader only compares the lower 24 bits (`checksum & 0xFFFFFF`).
+
+> **Bug:** If the firmware size is an exact multiple of 64, no padding exists and host/bootloader checksums naturally agree. Firmware sizes that are NOT multiples of 64 will cause a checksum mismatch if the host omits the padding bytes from its calculation, leaving the device stuck in bootloader mode.
+
+### 8.5 ENTER_BOOTLOADER Side Effects
+
+The `ENTER_BOOTLOADER` command (0x7F + 0x55AA55AA magic) triggers:
+
+1. **Config erase** — the firmware erases the config header at 0x08028000 before writing the mailbox. This means all LED settings, profiles, keymaps, macros, and Fn layers are lost on every firmware update.
+2. **Mailbox write** — writes 0x55AA55AA to flash 0x08004800.
+3. **Immediate reboot** — the device resets, re-enumerates with bootloader PID. The USB SET_REPORT may return EIO (expected).
+
+### 8.6 Recovery via AT32 ROM DFU
+
+If the RY bootloader itself is non-functional, the AT32F405's built-in ROM bootloader provides a fallback:
+
+1. Bridge the **BOOT0** pad to 3.3V (VDD)
+2. Plug USB (or reset while bridged)
+3. Device enumerates as `VID:PID 2e3c:df11` ("Artery-Tech DFU in FS Mode")
+
+```bash
+# Read flash (e.g., dump entire 256KB)
+dfu-util -a 0 -d 2e3c:df11 --dfuse-address 0x08000000 -U dump.bin --upload-size 262144
+
+# Write firmware (starting at 0x08005000, after bootloader)
+dfu-util -a 0 -d 2e3c:df11 --dfuse-address 0x08005000 -D firmware.bin
+
+# Factory reset (erase config only, 2KB at 0x08028000)
+# Write 2KB of 0xFF to config region
+dfu-util -a 0 -d 2e3c:df11 --dfuse-address 0x08028000 -D ff_2k.bin
+```
+
+> **Warning:** Do NOT write to 0x08000000–0x08004FFF unless restoring a bootloader backup. Corrupting the bootloader requires physical BOOT0 access to recover.
+
+### 8.7 Flash Memory Map
+
+```
+0x08000000  ┌──────────────────────────┐
+            │  RY Bootloader (20KB)    │  Protected, do not overwrite
+0x08004800  │  ├─ Mailbox (4B)         │  0x55AA55AA = enter bootloader
+0x08005000  ├──────────────────────────┤
+            │  Chip ID Header (512B)   │  "AT32F405 8KMKB\0\0..."
+0x08005200  │  Vector Table (64B)      │  VTOR set here by bootloader
+0x08005240  │  Firmware Code + Data    │  ~129KB for v407
+0x08025800  │  [Patch Zone] (10KB)     │  Gap between code and config
+0x08028000  ├──────────────────────────┤
+            │  Config Header (2KB)     │  Profile, LED, settings
+0x08028800  │  Keymaps                 │
+0x0802A800  │  FN Layers               │
+0x0802B800  │  Macros                  │
+0x0802F800  │  User Pictures / LEDs    │
+0x08032000  │  Magnetism Calibration   │  Preserved across factory reset
+0x08033800  │  Magnetism Per-Key Data  │
+0x08040000  └──────────────────────────┘  End of 256KB flash
 ```
 
 ---
