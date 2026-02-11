@@ -94,6 +94,16 @@ impl SyncTransport {
         block_on(self.transport.close())
     }
 
+    /// Send command and wait for any non-empty response without echo check (blocking)
+    pub fn query_raw(
+        &self,
+        cmd: u8,
+        data: &[u8],
+        checksum: ChecksumType,
+    ) -> Result<Vec<u8>, TransportError> {
+        block_on(self.transport.query_raw(cmd, data, checksum))
+    }
+
     /// Get the underlying flow-controlled transport
     pub fn inner(&self) -> &Arc<FlowControlTransport> {
         &self.transport

@@ -22,6 +22,24 @@ pub use settings::{
 };
 pub use sync::{list_keyboards, SyncKeyboard};
 
+/// Information about firmware patches applied to the keyboard
+#[derive(Debug, Clone)]
+pub struct PatchInfo {
+    pub version: u8,
+    pub capabilities: u16,
+    pub name: String,
+}
+
+impl PatchInfo {
+    pub fn has_battery(&self) -> bool {
+        self.capabilities & 0x01 != 0
+    }
+
+    pub fn has_led_stream(&self) -> bool {
+        self.capabilities & 0x02 != 0
+    }
+}
+
 // Macro parsing
 // (MacroEvent struct and parse_macro_events fn are defined after KeyboardInterface impl)
 
@@ -1441,6 +1459,80 @@ impl KeyboardInterface {
     pub async fn close(&self) -> Result<(), KeyboardError> {
         self.transport.close().await?;
         Ok(())
+    }
+
+    // === Patch Features ===
+
+    /// Stream a page of per-key RGB data to the LED frame buffer (patched firmware)
+    ///
+    /// Writes 18 keys of RGB data directly to the WS2812 frame buffer without
+    /// touching flash. Call `stream_led_commit()` after sending all pages to
+    /// update the LEDs.
+    ///
+    /// # Arguments
+    /// * `page` - Page index (0-6, each page = 18 keys)
+    /// * `rgb_data` - RGB data (up to 54 bytes = 18 keys × 3 bytes)
+    pub async fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
+        let mut data = vec![0u8; 55]; // page + 54 RGB bytes
+        data[0] = page;
+        let len = rgb_data.len().min(54);
+        data[1..1 + len].copy_from_slice(&rgb_data[..len]);
+        self.transport
+            .send_command(0xFC, &data, ChecksumType::Bit8)
+            .await?;
+        Ok(())
+    }
+
+    /// Commit streamed LED data — copies frame buffer to DMA buffer for display
+    pub async fn stream_led_commit(&self) -> Result<(), KeyboardError> {
+        self.transport
+            .send_command(0xFC, &[0xFF], ChecksumType::Bit8)
+            .await?;
+        Ok(())
+    }
+
+    /// Release LED streaming — signals end of streaming session
+    pub async fn stream_led_release(&self) -> Result<(), KeyboardError> {
+        self.transport
+            .send_command(0xFC, &[0xFE], ChecksumType::Bit8)
+            .await?;
+        Ok(())
+    }
+
+    /// Query patch info from modded firmware
+    ///
+    /// Returns `Some(PatchInfo)` if the keyboard is running patched firmware,
+    /// `None` if it's running stock firmware (command 0xFB not recognized or
+    /// response doesn't contain the expected magic bytes).
+    pub async fn get_patch_info(&self) -> Result<Option<PatchInfo>, KeyboardError> {
+        let resp = self
+            .transport
+            .query_raw(0xFB, &[], ChecksumType::Bit7)
+            .await;
+
+        match resp {
+            Ok(resp) => {
+                // Check magic bytes at offsets 3-4 (after cmd_ready, cmd_ack, cmd_id)
+                if resp.len() < 8 || resp[3] != 0xCA || resp[4] != 0xFE {
+                    return Ok(None);
+                }
+                let version = resp[5];
+                let capabilities = u16::from_le_bytes([resp[6], resp[7]]);
+                let name_end = resp.len().min(16);
+                let name_bytes = &resp[8..name_end];
+                let name_len = name_bytes
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(name_bytes.len());
+                let name = String::from_utf8_lossy(&name_bytes[..name_len]).to_string();
+                Ok(Some(PatchInfo {
+                    version,
+                    capabilities,
+                    name,
+                }))
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     /// Subscribe to timestamped vendor events via broadcast channel

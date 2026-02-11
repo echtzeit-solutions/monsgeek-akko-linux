@@ -891,6 +891,34 @@ pub mod hid {
     }
 }
 
+/// Firmware patch discovery protocol (command 0xFB)
+///
+/// Used to detect whether the keyboard is running patched firmware and
+/// what capabilities are available.
+pub mod patch_info {
+    /// Patch info query command
+    pub const CMD: u8 = 0xFB;
+    /// Magic high byte in response
+    pub const MAGIC_HI: u8 = 0xCA;
+    /// Magic low byte in response
+    pub const MAGIC_LO: u8 = 0xFE;
+    /// Capability: HID battery reporting
+    pub const CAP_BATTERY: u16 = 1 << 0;
+    /// Capability: LED streaming (0xFC)
+    pub const CAP_LED_STREAM: u16 = 1 << 1;
+
+    pub fn capability_names(caps: u16) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if caps & CAP_BATTERY != 0 {
+            names.push("battery");
+        }
+        if caps & CAP_LED_STREAM != 0 {
+            names.push("led_stream");
+        }
+        names
+    }
+}
+
 /// Firmware update protocol constants (DRY-RUN ONLY - no actual flashing)
 /// These constants document the protocol but should NOT be used to send boot commands
 pub mod firmware_update {
@@ -955,9 +983,18 @@ pub mod firmware_update {
         BOOT_VID_PIDS.contains(&(vid, pid))
     }
 
-    /// Calculate firmware checksum (simple 32-bit sum of all bytes)
+    /// Calculate firmware checksum matching the bootloader's algorithm.
+    ///
+    /// The bootloader checksums every byte of every 64-byte chunk, including
+    /// 0xFF padding in the last chunk. We must match this exactly.
     pub fn calculate_checksum(data: &[u8]) -> u32 {
-        data.iter().map(|&b| b as u32).sum()
+        let mut sum: u32 = data.iter().map(|&b| b as u32).sum();
+        let remainder = data.len() % CHUNK_SIZE;
+        if remainder != 0 {
+            // Add the 0xFF padding bytes that the bootloader will also checksum
+            sum += (CHUNK_SIZE - remainder) as u32 * 0xFF;
+        }
+        sum
     }
 
     /// Build transfer start command header

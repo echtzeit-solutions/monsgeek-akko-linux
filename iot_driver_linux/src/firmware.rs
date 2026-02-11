@@ -466,8 +466,17 @@ mod tests {
 
     #[test]
     fn test_checksum_calculation() {
+        // 5 bytes → 1 chunk of 64, with 59 bytes of 0xFF padding
         let data = [1u8, 2, 3, 4, 5];
-        assert_eq!(firmware_update::calculate_checksum(&data), 15);
+        let expected = 15u32 + 59 * 0xFF; // data sum + padding sum
+        assert_eq!(firmware_update::calculate_checksum(&data), expected);
+    }
+
+    #[test]
+    fn test_checksum_exact_chunk_boundary() {
+        // Exactly 64 bytes → no padding needed
+        let data = [1u8; 64];
+        assert_eq!(firmware_update::calculate_checksum(&data), 64);
     }
 
     #[test]

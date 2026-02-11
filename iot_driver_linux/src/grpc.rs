@@ -172,6 +172,9 @@ impl<S: Stream> Stream for GuardedStream<S> {
     }
 }
 
+/// Key for the in-memory DB: (dbPath, key)
+type DbKey = (String, Vec<u8>);
+
 /// Driver service implementation using transport abstraction layer
 pub struct DriverService {
     discovery: Arc<HidDiscovery>,
@@ -181,6 +184,8 @@ pub struct DriverService {
     vendor_polling: Arc<AsyncMutex<bool>>,
     vendor_subscribers: Arc<AtomicUsize>,
     hotplug_running: Arc<std::sync::Mutex<bool>>,
+    /// In-memory key-value store for webapp DB RPCs
+    db: Arc<AsyncMutex<HashMap<DbKey, Vec<u8>>>>,
 }
 
 impl DriverService {
@@ -204,6 +209,7 @@ impl DriverService {
             vendor_polling: Arc::new(AsyncMutex::new(false)),
             vendor_subscribers: Arc::new(AtomicUsize::new(0)),
             hotplug_running: Arc::new(std::sync::Mutex::new(false)),
+            db: Arc::new(AsyncMutex::new(HashMap::new())),
         })
     }
 
@@ -961,40 +967,95 @@ impl DriverGrpc for DriverService {
         }
     }
 
-    async fn get_item_from_db(&self, _request: Request<GetItem>) -> Result<Response<Item>, Status> {
+    async fn get_item_from_db(&self, request: Request<GetItem>) -> Result<Response<Item>, Status> {
+        let req = request.into_inner();
+        let key_str = String::from_utf8_lossy(&req.key);
+        let db = self.db.lock().await;
+        let db_key = (req.db_path.clone(), req.key.clone());
+        let value = db.get(&db_key).cloned().unwrap_or_default();
+        info!(
+            "get_item_from_db: dbPath={:?}, key={:?}, found={} bytes",
+            req.db_path,
+            key_str,
+            value.len()
+        );
         Ok(Response::new(Item {
-            value: vec![],
+            value,
             err_str: String::new(),
         }))
     }
 
-    async fn insert_db(&self, _request: Request<InsertDb>) -> Result<Response<ResSend>, Status> {
+    async fn insert_db(&self, request: Request<InsertDb>) -> Result<Response<ResSend>, Status> {
+        let req = request.into_inner();
+        let key_str = String::from_utf8_lossy(&req.key);
+        let value_preview = String::from_utf8_lossy(&req.value[..req.value.len().min(200)]);
+        info!(
+            "insert_db: dbPath={:?}, key={:?}, value_len={}, preview={:?}",
+            req.db_path,
+            key_str,
+            req.value.len(),
+            value_preview
+        );
+        let mut db = self.db.lock().await;
+        db.insert((req.db_path, req.key), req.value);
         Ok(Response::new(ResSend { err: String::new() }))
     }
 
     async fn delete_item_from_db(
         &self,
-        _request: Request<DeleteItem>,
+        request: Request<DeleteItem>,
     ) -> Result<Response<ResSend>, Status> {
+        let req = request.into_inner();
+        let key_str = String::from_utf8_lossy(&req.key);
+        info!(
+            "delete_item_from_db: dbPath={:?}, key={:?}",
+            req.db_path, key_str
+        );
+        let mut db = self.db.lock().await;
+        db.remove(&(req.db_path, req.key));
         Ok(Response::new(ResSend { err: String::new() }))
     }
 
     async fn get_all_keys_from_db(
         &self,
-        _request: Request<GetAll>,
+        request: Request<GetAll>,
     ) -> Result<Response<AllList>, Status> {
+        let req = request.into_inner();
+        let db = self.db.lock().await;
+        let keys: Vec<Vec<u8>> = db
+            .keys()
+            .filter(|(path, _)| *path == req.db_path)
+            .map(|(_, key)| key.clone())
+            .collect();
+        info!(
+            "get_all_keys_from_db: dbPath={:?}, returning {} keys",
+            req.db_path,
+            keys.len()
+        );
         Ok(Response::new(AllList {
-            data: vec![],
+            data: keys,
             err_str: String::new(),
         }))
     }
 
     async fn get_all_values_from_db(
         &self,
-        _request: Request<GetAll>,
+        request: Request<GetAll>,
     ) -> Result<Response<AllList>, Status> {
+        let req = request.into_inner();
+        let db = self.db.lock().await;
+        let values: Vec<Vec<u8>> = db
+            .iter()
+            .filter(|((path, _), _)| *path == req.db_path)
+            .map(|(_, value)| value.clone())
+            .collect();
+        info!(
+            "get_all_values_from_db: dbPath={:?}, returning {} values",
+            req.db_path,
+            values.len()
+        );
         Ok(Response::new(AllList {
-            data: vec![],
+            data: values,
             err_str: String::new(),
         }))
     }

@@ -12,7 +12,7 @@ use crate::settings::{
     BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
     SleepTimeSettings,
 };
-use crate::KeyboardInterface;
+use crate::{KeyboardInterface, PatchInfo};
 
 use monsgeek_transport::{
     list_devices_sync, open_device_sync, DiscoveredDevice, FlowControlTransport, VendorEvent,
@@ -142,6 +142,9 @@ impl SyncKeyboard {
     sync_method!(get_version() -> Result<FirmwareVersion, KeyboardError>);
     sync_method!(get_battery() -> Result<BatteryInfo, KeyboardError>);
 
+    // === Patch Info ===
+    sync_method!(get_patch_info() -> Result<Option<PatchInfo>, KeyboardError>);
+
     // === LED ===
     sync_method!(get_led_params() -> Result<LedParams, KeyboardError>);
     sync_method!(set_led_params(&params: &LedParams) -> Result<(), KeyboardError>);
@@ -259,6 +262,16 @@ impl SyncKeyboard {
     ) -> Result<(), KeyboardError> {
         block_on(self.inner.set_per_key_colors_to_layer(colors, layer))
     }
+
+    // === LED Streaming (patched firmware) ===
+
+    /// Stream a page of per-key RGB data to the LED frame buffer
+    pub fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
+        block_on(self.inner.stream_led_page(page, rgb_data))
+    }
+
+    sync_method!(stream_led_commit() -> Result<(), KeyboardError>);
+    sync_method!(stream_led_release() -> Result<(), KeyboardError>);
 
     // === Animation Upload ===
     sync_method!(start_user_gif() -> Result<(), KeyboardError>);

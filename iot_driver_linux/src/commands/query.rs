@@ -29,6 +29,32 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
         version / 100,
         version % 100
     );
+
+    // Probe for patched firmware
+    if let Ok(resp) = transport.query_raw(protocol::patch_info::CMD, &[], ChecksumType::Bit7) {
+        if resp.len() >= 8
+            && resp[3] == protocol::patch_info::MAGIC_HI
+            && resp[4] == protocol::patch_info::MAGIC_LO
+        {
+            let patch_ver = resp[5];
+            let caps = u16::from_le_bytes([resp[6], resp[7]]);
+            let name_end = resp.len().min(16);
+            let name_bytes = &resp[8..name_end];
+            let name_len = name_bytes
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(name_bytes.len());
+            let name = String::from_utf8_lossy(&name_bytes[..name_len]);
+            let cap_names = protocol::patch_info::capability_names(caps);
+            println!(
+                "Patch:     {} v{} [{}]",
+                name,
+                patch_ver,
+                cap_names.join(", ")
+            );
+        }
+    }
+
     Ok(())
 }
 
