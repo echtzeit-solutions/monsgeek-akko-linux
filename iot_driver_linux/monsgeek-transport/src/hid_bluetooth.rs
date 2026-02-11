@@ -47,9 +47,8 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
@@ -135,9 +134,8 @@ impl HidBluetoothTransport {
     }
 }
 
-#[async_trait]
 impl Transport for HidBluetoothTransport {
-    async fn send_report(
+    fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
@@ -149,12 +147,12 @@ impl Transport for HidBluetoothTransport {
         Ok(())
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let device = self.vendor_device.lock();
         let mut buf = vec![0u8; ble::REPORT_SIZE];
-        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        let deadline = Instant::now() + Duration::from_millis(500);
 
-        while std::time::Instant::now() < deadline {
+        while Instant::now() < deadline {
             match device.read_timeout(&mut buf, 50) {
                 Ok(0) => continue,
                 Ok(n) => {
@@ -177,21 +175,22 @@ impl Transport for HidBluetoothTransport {
 
     // send_flush: uses default no-op
 
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         if let Some(ref tx) = self.event_tx {
             let mut rx = tx.subscribe();
-            let timeout = Duration::from_millis(timeout_ms as u64);
-            match tokio::time::timeout(timeout, rx.recv()).await {
-                Ok(Ok(timestamped)) => Ok(Some(timestamped.event)),
-                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
-                    debug!("BLE event receiver lagged by {} events", n);
-                    match rx.recv().await {
-                        Ok(timestamped) => Ok(Some(timestamped.event)),
-                        Err(_) => Ok(None),
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+            loop {
+                match rx.try_recv() {
+                    Ok(timestamped) => return Ok(Some(timestamped.event)),
+                    Err(broadcast::error::TryRecvError::Empty) => {
+                        if Instant::now() >= deadline {
+                            return Ok(None);
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
                     }
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
                 }
-                Ok(Err(broadcast::error::RecvError::Closed)) => Ok(None),
-                Err(_) => Ok(None), // Timeout
             }
         } else {
             Ok(None)
@@ -206,21 +205,16 @@ impl Transport for HidBluetoothTransport {
         &self.info
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         let device = self.vendor_device.lock();
         device.get_product_string().is_ok()
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
+    fn close(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
-        // For Bluetooth, query via BlueZ Battery1 interface
-        // The keyboard sends battery level as BLE notifications on handle 0x0e
-        // which BlueZ exposes via org.bluez.Battery1
-
-        // Extract MAC address from serial (format: "F4:EE:25:AF:3A:38" or similar)
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         if let Some(ref serial) = self.info.serial {
             if let Some(level) = query_bluez_battery(serial) {
                 debug!("BLE battery from BlueZ: {}%", level);
@@ -228,7 +222,6 @@ impl Transport for HidBluetoothTransport {
             }
         }
 
-        // Fallback: try to find by product name
         if let Some(ref name) = self.info.product_name {
             if let Some(level) = query_bluez_battery_by_name(name) {
                 debug!("BLE battery from BlueZ (by name): {}%", level);
@@ -236,9 +229,8 @@ impl Transport for HidBluetoothTransport {
             }
         }
 
-        // Battery query failed - device might be disconnected or BlueZ doesn't have it
         trace!("Could not get BLE battery from BlueZ");
-        Ok((0, true, false)) // Level 0 indicates unknown
+        Ok((0, true, false))
     }
 }
 

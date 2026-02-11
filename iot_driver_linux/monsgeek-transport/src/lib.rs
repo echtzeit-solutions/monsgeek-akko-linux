@@ -98,22 +98,21 @@ pub use hid_dongle::HidDongleTransport;
 pub use hid_wired::HidWiredTransport;
 pub use sync_adapter::{list_devices_sync, open_device_sync, SyncTransport};
 
-use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// The core transport trait — raw I/O only.
 ///
-/// Backends implement this for the bare send/read of HID reports.
+/// All methods are synchronous (blocking).  The underlying HID backends
+/// (hidapi) are inherently blocking, so the trait reflects that honestly.
 /// Flow control (retries, echo matching, dongle polling) lives in
 /// `FlowControlTransport`.
-#[async_trait]
 pub trait Transport: Send + Sync {
     // ---- Raw I/O (used by FlowControlTransport and gRPC) ----
 
     /// Frame cmd/data/checksum into a HID report and send it.
     /// No delay, no retry.
-    async fn send_report(
+    fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
@@ -122,29 +121,30 @@ pub trait Transport: Send + Sync {
 
     /// Read one HID report.  Returns 64 bytes (report ID stripped).
     /// WARNING: On Linux wired, bare GET_FEATURE without prior SET_FEATURE hangs.
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError>;
+    fn read_report(&self) -> Result<Vec<u8>, TransportError>;
 
     /// Push dongle response buffer (sends 0xFC).  No-op on wired/BLE.
-    async fn send_flush(&self) -> Result<(), TransportError> {
+    fn send_flush(&self) -> Result<(), TransportError> {
         Ok(()) // default: no-op
     }
 
     // ---- Housekeeping ----
 
     /// Read vendor events (key depth, battery status, etc.)
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError>;
+    /// Blocks up to `timeout_ms` milliseconds.
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError>;
 
     /// Get device information
     fn device_info(&self) -> &TransportDeviceInfo;
 
     /// Check if transport is still connected
-    async fn is_connected(&self) -> bool;
+    fn is_connected(&self) -> bool;
 
     /// Close the transport gracefully
-    async fn close(&self) -> Result<(), TransportError>;
+    fn close(&self) -> Result<(), TransportError>;
 
     /// Get battery status
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError>;
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError>;
 
     /// Subscribe to vendor events via broadcast channel
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {

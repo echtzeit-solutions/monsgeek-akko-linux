@@ -423,7 +423,7 @@ impl DriverService {
         devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
         device_tx: &broadcast::Sender<DeviceList>,
     ) {
-        let discovered = match discovery.list_devices().await {
+        let discovered = match discovery.list_devices() {
             Ok(d) => d,
             Err(e) => {
                 warn!("Failed to list devices: {}", e);
@@ -440,7 +440,7 @@ impl DriverService {
                 continue;
             }
 
-            match discovery.open_device(&dev).await {
+            match discovery.open_device(&dev) {
                 Ok(transport) => {
                     info!("Hot-plug: opened new device {}", path);
 
@@ -449,7 +449,7 @@ impl DriverService {
 
                     // Query battery for dongles
                     let (battery, is_online) = if dev.info.is_dongle {
-                        match transport.get_battery_status().await {
+                        match transport.get_battery_status() {
                             Ok((level, online, _idle)) => (level as u32, online),
                             Err(_) => (100, true),
                         }
@@ -501,7 +501,7 @@ impl DriverService {
         devices: &Arc<AsyncMutex<HashMap<String, ConnectedTransport>>>,
         device_tx: &broadcast::Sender<DeviceList>,
     ) {
-        let discovered = match discovery.list_devices().await {
+        let discovered = match discovery.list_devices() {
             Ok(d) => d,
             Err(_) => return,
         };
@@ -566,18 +566,15 @@ impl DriverService {
     async fn query_device_id_static(transport: &Arc<dyn Transport>) -> Option<i32> {
         use monsgeek_transport::protocol::cmd;
 
-        if let Err(e) = transport
-            .send_report(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
-            .await
-        {
+        if let Err(e) = transport.send_report(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7) {
             warn!("Failed to send device ID query: {}", e);
             return None;
         }
 
-        let _ = transport.send_flush().await;
+        let _ = transport.send_flush();
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        match transport.read_report().await {
+        match transport.read_report() {
             Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
                 let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]) as i32;
                 info!("Device ID: {}", device_id);
@@ -601,7 +598,7 @@ impl DriverService {
     pub async fn scan_devices(&self) -> Vec<DjDev> {
         let mut found = Vec::new();
 
-        let discovered = match self.discovery.list_devices().await {
+        let discovered = match self.discovery.list_devices() {
             Ok(d) => d,
             Err(e) => {
                 warn!("Failed to list devices: {}", e);
@@ -632,7 +629,7 @@ impl DriverService {
                 (connected.device_id, 100, true)
             } else {
                 // Open new device
-                match self.discovery.open_device(&dev).await {
+                match self.discovery.open_device(&dev) {
                     Ok(transport) => {
                         debug!(
                             "Opened device (type={:?}), querying device ID...",
@@ -643,7 +640,7 @@ impl DriverService {
 
                         // Query battery status for dongles
                         let (batt, online) = if dev.info.is_dongle {
-                            match transport.get_battery_status().await {
+                            match transport.get_battery_status() {
                                 Ok((level, online, _idle)) => (level as u32, online),
                                 Err(_) => (100, true),
                             }
@@ -736,7 +733,6 @@ impl DriverService {
         let discovered = self
             .discovery
             .list_devices()
-            .await
             .map_err(|e| Status::internal(format!("Discovery error: {}", e)))?;
 
         for dev in discovered {
@@ -744,7 +740,6 @@ impl DriverService {
                 let transport = self
                     .discovery
                     .open_device(&dev)
-                    .await
                     .map_err(|e| Status::internal(format!("Failed to open device: {}", e)))?;
 
                 let mut devices = self.devices.lock().await;
@@ -799,13 +794,11 @@ impl DriverService {
         connected
             .transport
             .send_report(cmd, payload, checksum)
-            .await
             .map_err(|e| Status::internal(format!("Send error: {}", e)))?;
 
         connected
             .transport
             .send_flush()
-            .await
             .map_err(|e| Status::internal(format!("Flush error: {}", e)))?;
 
         Ok(())
@@ -827,7 +820,6 @@ impl DriverService {
         let response = connected
             .transport
             .read_report()
-            .await
             .map_err(|e| Status::internal(format!("Read error: {}", e)))?;
 
         debug!(

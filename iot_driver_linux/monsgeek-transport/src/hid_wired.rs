@@ -2,9 +2,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use hidapi::HidDevice;
 use tokio::sync::broadcast;
 use tracing::debug;
@@ -92,9 +91,8 @@ impl HidWiredTransport {
     }
 }
 
-#[async_trait]
 impl Transport for HidWiredTransport {
-    async fn send_report(
+    fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
@@ -106,30 +104,29 @@ impl Transport for HidWiredTransport {
         Ok(())
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let resp = self.read_response()?;
         Ok(resp[1..].to_vec())
     }
 
     // send_flush: uses default no-op
 
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        // If we have an event channel, receive from it with timeout
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         if let Some(ref tx) = self.event_tx {
             let mut rx = tx.subscribe();
-            let timeout = Duration::from_millis(timeout_ms as u64);
-            match tokio::time::timeout(timeout, rx.recv()).await {
-                Ok(Ok(timestamped)) => Ok(Some(timestamped.event)),
-                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
-                    debug!("Event receiver lagged by {} events", n);
-                    // Try again immediately after lag
-                    match rx.recv().await {
-                        Ok(timestamped) => Ok(Some(timestamped.event)),
-                        Err(_) => Ok(None),
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+            loop {
+                match rx.try_recv() {
+                    Ok(timestamped) => return Ok(Some(timestamped.event)),
+                    Err(broadcast::error::TryRecvError::Empty) => {
+                        if Instant::now() >= deadline {
+                            return Ok(None);
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
                     }
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
                 }
-                Ok(Err(broadcast::error::RecvError::Closed)) => Ok(None),
-                Err(_) => Ok(None), // Timeout
             }
         } else {
             Ok(None)
@@ -144,19 +141,16 @@ impl Transport for HidWiredTransport {
         &self.info
     }
 
-    async fn is_connected(&self) -> bool {
-        // Try to read device info to check connection
+    fn is_connected(&self) -> bool {
         let device = self.feature_device.lock().unwrap();
         device.get_product_string().is_ok()
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
-        // HidDevice drops automatically
+    fn close(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
-        // Wired connection has no battery - return "always full"
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         Ok((100, true, false))
     }
 }

@@ -8,9 +8,7 @@ description = "High-level keyboard interface for MonsGeek/Akko keyboards"
 [dependencies]
 monsgeek-transport = { path = "../monsgeek-transport" }
 thiserror = "2.0"
-async-trait = "0.1"
-tokio = { version = "1", features = ["sync", "time"] }
-futures = "0.3"
+tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 

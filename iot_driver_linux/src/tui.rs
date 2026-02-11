@@ -1661,7 +1661,7 @@ impl App {
         (app, result_rx)
     }
 
-    async fn connect(&mut self) -> Result<(), String> {
+    fn connect(&mut self) -> Result<(), String> {
         // Use async device discovery with smart probing
         let discovery = HidDiscovery::new();
 
@@ -1669,7 +1669,6 @@ impl App {
         // This handles cases where dongle is plugged in but keyboard is on BT
         let transport = discovery
             .open_preferred()
-            .await
             .map_err(|e| format!("Failed to open device: {e}"))?;
 
         let transport_info = transport.device_info().clone();
@@ -1780,7 +1779,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = match (kb.get_device_id().await, kb.get_version().await) {
+                let result = match (kb.get_device_id(), kb.get_version()) {
                     (Ok(id), Ok(ver)) => Ok((id, ver)),
                     (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
                 };
@@ -1793,7 +1792,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_profile().await.map_err(|e| e.to_string());
+                let result = kb.get_profile().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::Profile(result));
             });
         }
@@ -1803,7 +1802,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_debounce().await.map_err(|e| e.to_string());
+                let result = kb.get_debounce().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::Debounce(result));
             });
         }
@@ -1815,7 +1814,6 @@ impl App {
             tokio::spawn(async move {
                 let result = kb
                     .get_polling_rate()
-                    .await
                     .map(|r| r as u16)
                     .map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::PollingRate(result));
@@ -1827,7 +1825,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_led_params().await.map_err(|e| e.to_string());
+                let result = kb.get_led_params().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::LedParams(result));
             });
         }
@@ -1837,7 +1835,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_side_led_params().await.map_err(|e| e.to_string());
+                let result = kb.get_side_led_params().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::SideLedParams(result));
             });
         }
@@ -1847,7 +1845,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_kb_options().await.map_err(|e| e.to_string());
+                let result = kb.get_kb_options().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::KbOptions(result));
             });
         }
@@ -1857,7 +1855,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_precision().await.map_err(|e| e.to_string());
+                let result = kb.get_precision().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::Precision(result));
             });
         }
@@ -1867,7 +1865,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb.get_sleep_time().await.map_err(|e| e.to_string());
+                let result = kb.get_sleep_time().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::SleepTime(result));
             });
         }
@@ -1885,7 +1883,6 @@ impl App {
         tokio::spawn(async move {
             let result = keyboard
                 .get_all_triggers()
-                .await
                 .map(|triggers| TriggerSettings {
                     press_travel: triggers.press_travel,
                     lift_travel: triggers.lift_travel,
@@ -1926,7 +1923,6 @@ impl App {
                 tokio::spawn(async move {
                     let result = keyboard
                         .get_battery()
-                        .await
                         .map(|kb_info| BatteryInfo {
                             level: kb_info.level,
                             online: kb_info.online,
@@ -1976,13 +1972,13 @@ impl App {
         });
     }
 
-    async fn toggle_depth_monitoring(&mut self) {
+    fn toggle_depth_monitoring(&mut self) {
         self.depth_monitoring = !self.depth_monitoring;
         if let Some(ref keyboard) = self.keyboard {
             if self.depth_monitoring {
-                let _ = keyboard.start_magnetism_report().await;
+                let _ = keyboard.start_magnetism_report();
             } else {
-                let _ = keyboard.stop_magnetism_report().await;
+                let _ = keyboard.stop_magnetism_report();
             }
         }
         self.status_msg = if self.depth_monitoring {
@@ -1993,44 +1989,42 @@ impl App {
     }
 
     /// Send current main LED params to keyboard
-    async fn send_main_led(&self) {
+    fn send_main_led(&self) {
         if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_led(
-                    self.info.led_mode,
-                    self.info.led_brightness,
-                    speed_to_wire(self.info.led_speed),
-                    self.info.led_r,
-                    self.info.led_g,
-                    self.info.led_b,
-                    self.info.led_dazzle,
-                )
-                .await;
+            let _ = keyboard.set_led(
+                self.info.led_mode,
+                self.info.led_brightness,
+                speed_to_wire(self.info.led_speed),
+                self.info.led_r,
+                self.info.led_g,
+                self.info.led_b,
+                self.info.led_dazzle,
+            );
         }
     }
 
-    async fn set_led_mode(&mut self, mode: u8) {
+    fn set_led_mode(&mut self, mode: u8) {
         self.info.led_mode = mode;
-        self.send_main_led().await;
+        self.send_main_led();
         self.status_msg = format!("LED mode: {}", cmd::led_mode_name(mode));
     }
 
-    async fn set_brightness(&mut self, brightness: u8) {
+    fn set_brightness(&mut self, brightness: u8) {
         self.info.led_brightness = brightness.min(4);
-        self.send_main_led().await;
+        self.send_main_led();
         self.status_msg = format!("Brightness: {}/4", self.info.led_brightness);
     }
 
-    async fn set_speed(&mut self, speed: u8) {
+    fn set_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
         self.info.led_speed = speed_from_wire(speed);
-        self.send_main_led().await;
+        self.send_main_led();
         self.status_msg = format!("Speed: {speed}/4");
     }
 
-    async fn set_profile(&mut self, profile: u8) {
+    fn set_profile(&mut self, profile: u8) {
         if let Some(ref keyboard) = self.keyboard {
-            if keyboard.set_profile(profile).await.is_ok() {
+            if keyboard.set_profile(profile).is_ok() {
                 self.info.profile = profile;
                 self.status_msg = format!("Profile {} active", profile + 1);
                 // Reload device info after profile switch
@@ -2041,17 +2035,17 @@ impl App {
         }
     }
 
-    async fn set_color(&mut self, r: u8, g: u8, b: u8) {
+    fn set_color(&mut self, r: u8, g: u8, b: u8) {
         self.info.led_r = r;
         self.info.led_g = g;
         self.info.led_b = b;
-        self.send_main_led().await;
+        self.send_main_led();
         self.status_msg = format!("Color: #{r:02X}{g:02X}{b:02X}");
     }
 
-    async fn toggle_dazzle(&mut self) {
+    fn toggle_dazzle(&mut self) {
         self.info.led_dazzle = !self.info.led_dazzle;
-        self.send_main_led().await;
+        self.send_main_led();
         self.status_msg = format!(
             "Dazzle: {}",
             if self.info.led_dazzle { "ON" } else { "OFF" }
@@ -2079,11 +2073,11 @@ impl App {
     }
 
     /// Apply hex color input
-    async fn apply_hex_input(&mut self) {
+    fn apply_hex_input(&mut self) {
         if let Some((r, g, b)) = parse_hex_color(&self.hex_input) {
             match self.hex_target {
-                HexColorTarget::MainLed => self.set_color(r, g, b).await,
-                HexColorTarget::SideLed => self.set_side_color(r, g, b).await,
+                HexColorTarget::MainLed => self.set_color(r, g, b),
+                HexColorTarget::SideLed => self.set_side_color(r, g, b),
             }
         } else {
             self.status_msg = format!("Invalid hex color: {}", self.hex_input);
@@ -2106,51 +2100,49 @@ impl App {
     }
 
     /// Send current side LED params to keyboard
-    async fn send_side_led(&self) {
+    fn send_side_led(&self) {
         if let Some(ref keyboard) = self.keyboard {
-            let _ = keyboard
-                .set_side_led_params(&self.current_side_led_params())
-                .await;
+            let _ = keyboard.set_side_led_params(&self.current_side_led_params());
         }
     }
 
-    async fn set_side_mode(&mut self, mode: u8) {
+    fn set_side_mode(&mut self, mode: u8) {
         self.info.side_mode = mode;
-        self.send_side_led().await;
+        self.send_side_led();
         self.status_msg = format!("Side LED mode: {}", cmd::led_mode_name(mode));
     }
 
-    async fn set_side_brightness(&mut self, brightness: u8) {
+    fn set_side_brightness(&mut self, brightness: u8) {
         self.info.side_brightness = brightness.min(4);
-        self.send_side_led().await;
+        self.send_side_led();
         self.status_msg = format!("Side brightness: {}/4", self.info.side_brightness);
     }
 
-    async fn set_side_speed(&mut self, speed: u8) {
+    fn set_side_speed(&mut self, speed: u8) {
         let speed = speed.min(4);
         self.info.side_speed = speed_from_wire(speed);
-        self.send_side_led().await;
+        self.send_side_led();
         self.status_msg = format!("Side speed: {speed}/4");
     }
 
-    async fn set_side_color(&mut self, r: u8, g: u8, b: u8) {
+    fn set_side_color(&mut self, r: u8, g: u8, b: u8) {
         self.info.side_r = r;
         self.info.side_g = g;
         self.info.side_b = b;
-        self.send_side_led().await;
+        self.send_side_led();
         self.status_msg = format!("Side color: #{r:02X}{g:02X}{b:02X}");
     }
 
-    async fn toggle_side_dazzle(&mut self) {
+    fn toggle_side_dazzle(&mut self) {
         self.info.side_dazzle = !self.info.side_dazzle;
-        self.send_side_led().await;
+        self.send_side_led();
         self.status_msg = format!(
             "Side dazzle: {}",
             if self.info.side_dazzle { "ON" } else { "OFF" }
         );
     }
 
-    async fn set_all_key_modes(&mut self, mode: u8) {
+    fn set_all_key_modes(&mut self, mode: u8) {
         let key_count = self
             .triggers
             .as_ref()
@@ -2169,7 +2161,7 @@ impl App {
     }
 
     /// Set mode for a single key (used in layout view)
-    async fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
+    fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
         let valid = self
             .triggers
             .as_ref()
@@ -2193,21 +2185,19 @@ impl App {
     }
 
     /// Set key mode - dispatches to single or all based on view mode
-    async fn set_key_mode(&mut self, mode: u8) {
+    fn set_key_mode(&mut self, mode: u8) {
         if self.trigger_view_mode == TriggerViewMode::Layout {
-            self.set_single_key_mode(self.trigger_selected_key, mode)
-                .await;
+            self.set_single_key_mode(self.trigger_selected_key, mode);
         } else {
-            self.set_all_key_modes(mode).await;
+            self.set_all_key_modes(mode);
         }
     }
 
-    async fn apply_per_key_color(&mut self) {
+    fn apply_per_key_color(&mut self) {
         let (r, g, b) = (self.info.led_r, self.info.led_g, self.info.led_b);
         if let Some(ref keyboard) = self.keyboard {
             if keyboard
                 .set_all_keys_color(RgbColor::new(r, g, b), 0)
-                .await
                 .is_ok()
             {
                 self.info.led_mode = 25; // Per-Key Color mode
@@ -2228,12 +2218,12 @@ impl App {
         self.loading.options = LoadState::Loading;
         let tx = self.result_tx.clone();
         tokio::spawn(async move {
-            let result = keyboard.get_kb_options().await.map_err(|e| e.to_string());
+            let result = keyboard.get_kb_options().map_err(|e| e.to_string());
             let _ = tx.send(AsyncResult::Options(result));
         });
     }
 
-    async fn save_options(&mut self) {
+    fn save_options(&mut self) {
         if let Some(ref opts) = self.options {
             if let Some(ref keyboard) = self.keyboard {
                 let kb_opts = KbOptions {
@@ -2243,7 +2233,7 @@ impl App {
                     rt_stability: opts.rt_stability,
                     wasd_swap: opts.wasd_swap,
                 };
-                if keyboard.set_kb_options(&kb_opts).await.is_ok() {
+                if keyboard.set_kb_options(&kb_opts).is_ok() {
                     self.status_msg = "Options saved".to_string();
                 } else {
                     self.status_msg = "Failed to save options".to_string();
@@ -2252,25 +2242,25 @@ impl App {
         }
     }
 
-    async fn set_fn_layer(&mut self, layer: u8) {
+    fn set_fn_layer(&mut self, layer: u8) {
         let layer = layer.min(3);
         if let Some(ref mut opts) = self.options {
             opts.fn_layer = layer;
         }
-        self.save_options().await;
+        self.save_options();
         self.status_msg = format!("Fn layer: {layer}");
     }
 
-    async fn toggle_wasd_swap(&mut self) {
+    fn toggle_wasd_swap(&mut self) {
         let new_val = self.options.as_ref().map(|o| !o.wasd_swap).unwrap_or(false);
         if let Some(ref mut opts) = self.options {
             opts.wasd_swap = new_val;
         }
-        self.save_options().await;
+        self.save_options();
         self.status_msg = format!("WASD swap: {}", if new_val { "ON" } else { "OFF" });
     }
 
-    async fn toggle_anti_mistouch(&mut self) {
+    fn toggle_anti_mistouch(&mut self) {
         let new_val = self
             .options
             .as_ref()
@@ -2279,21 +2269,21 @@ impl App {
         if let Some(ref mut opts) = self.options {
             opts.anti_mistouch = new_val;
         }
-        self.save_options().await;
+        self.save_options();
         self.status_msg = format!("Anti-mistouch: {}", if new_val { "ON" } else { "OFF" });
     }
 
-    async fn set_rt_stability(&mut self, value: u8) {
+    fn set_rt_stability(&mut self, value: u8) {
         let value = value.min(125);
         if let Some(ref mut opts) = self.options {
             opts.rt_stability = value;
         }
-        self.save_options().await;
+        self.save_options();
         self.status_msg = format!("RT stability: {value}ms");
     }
 
     /// Update a single sleep time value with validation (deep >= idle)
-    async fn update_sleep_time(&mut self, field: SleepField, delta: i32) {
+    fn update_sleep_time(&mut self, field: SleepField, delta: i32) {
         let Some(ref mut opts) = self.options else {
             return;
         };
@@ -2343,7 +2333,7 @@ impl App {
         if let Some(ref keyboard) = self.keyboard {
             let settings =
                 SleepTimeSettings::new(opts.idle_bt, opts.idle_24g, opts.deep_bt, opts.deep_24g);
-            if keyboard.set_sleep_time(&settings).await.is_ok() {
+            if keyboard.set_sleep_time(&settings).is_ok() {
                 let field_name = match field {
                     SleepField::IdleBt => "BT Idle",
                     SleepField::Idle24g => "2.4G Idle",
@@ -2376,7 +2366,7 @@ impl App {
         self.loading.remaps = LoadState::Loading;
         let tx = self.result_tx.clone();
         tokio::spawn(async move {
-            match keymap::load_async(&keyboard).await {
+            match keymap::load_async(&keyboard) {
                 Ok(km) => {
                     // Collect only remapped entries (matching old behavior)
                     let remaps: Vec<KeyEntry> = km.remaps().cloned().collect();
@@ -2412,7 +2402,7 @@ impl App {
         self.status_msg = format!("Remapping {position}...");
 
         tokio::spawn(async move {
-            let result = keymap::set_key_async(&keyboard, key_index, layer, &action).await;
+            let result = keymap::set_key_async(&keyboard, key_index, layer, &action);
             let _ = tx.send(AsyncResult::SetComplete(
                 "Remap".to_string(),
                 result.map_err(|e: monsgeek_keyboard::KeyboardError| e.to_string()),
@@ -2432,9 +2422,8 @@ impl App {
         self.status_msg = format!("Resetting {position}...");
 
         tokio::spawn(async move {
-            let result = keymap::reset_key_async(&keyboard, key_index, layer)
-                .await
-                .map_err(|e| e.to_string());
+            let result =
+                keymap::reset_key_async(&keyboard, key_index, layer).map_err(|e| e.to_string());
             let _ = tx.send(AsyncResult::SetComplete("Remap".to_string(), result));
         });
     }
@@ -2452,7 +2441,6 @@ impl App {
         tokio::spawn(async move {
             let result = keyboard
                 .set_macro(index, &events, repeat)
-                .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(AsyncResult::SetComplete("Macro".to_string(), result));
         });
@@ -2480,7 +2468,7 @@ impl App {
         tokio::spawn(async move {
             let mut slots = Vec::new();
             for i in 0..8u8 {
-                let slot = match keyboard.get_macro(i).await {
+                let slot = match keyboard.get_macro(i) {
                     Ok(data) => {
                         let (repeat_count, events) = monsgeek_keyboard::parse_macro_events(&data);
                         let tui_events: Vec<MacroEvent> = events
@@ -2932,14 +2920,14 @@ impl App {
     }
 
     /// Open trigger edit modal for global settings
-    async fn open_trigger_edit_global(&mut self) {
+    fn open_trigger_edit_global(&mut self) {
         if let Some(ref triggers) = self.triggers {
             let modal = TriggerEditModal::new_global(triggers, self.precision);
             self.trigger_edit_modal = Some(modal);
             // Enable depth monitoring for the modal
             if !self.depth_monitoring {
                 if let Some(ref keyboard) = self.keyboard {
-                    let _ = keyboard.start_magnetism_report().await;
+                    let _ = keyboard.start_magnetism_report();
                 }
                 self.depth_monitoring = true;
             }
@@ -2950,14 +2938,14 @@ impl App {
     }
 
     /// Open trigger edit modal for a specific key
-    async fn open_trigger_edit_key(&mut self, key_index: usize) {
+    fn open_trigger_edit_key(&mut self, key_index: usize) {
         if let Some(ref triggers) = self.triggers {
             let modal = TriggerEditModal::new_per_key(key_index, triggers, self.precision);
             self.trigger_edit_modal = Some(modal);
             // Enable depth monitoring for the modal
             if !self.depth_monitoring {
                 if let Some(ref keyboard) = self.keyboard {
-                    let _ = keyboard.start_magnetism_report().await;
+                    let _ = keyboard.start_magnetism_report();
                 }
                 self.depth_monitoring = true;
             }
@@ -2978,7 +2966,7 @@ impl App {
     }
 
     /// Save trigger edit modal changes
-    async fn save_trigger_edit_modal(&mut self) {
+    fn save_trigger_edit_modal(&mut self) {
         let modal = match self.trigger_edit_modal.take() {
             Some(m) => m,
             None => return,
@@ -3004,22 +2992,22 @@ impl App {
 
                 let mut errors = Vec::new();
 
-                if let Err(e) = keyboard.set_actuation_all_u16(actuation_raw).await {
+                if let Err(e) = keyboard.set_actuation_all_u16(actuation_raw) {
                     errors.push(format!("actuation: {e}"));
                 }
-                if let Err(e) = keyboard.set_release_all_u16(release_raw).await {
+                if let Err(e) = keyboard.set_release_all_u16(release_raw) {
                     errors.push(format!("release: {e}"));
                 }
-                if let Err(e) = keyboard.set_rt_press_all_u16(rt_press_raw).await {
+                if let Err(e) = keyboard.set_rt_press_all_u16(rt_press_raw) {
                     errors.push(format!("rt_press: {e}"));
                 }
-                if let Err(e) = keyboard.set_rt_lift_all_u16(rt_lift_raw).await {
+                if let Err(e) = keyboard.set_rt_lift_all_u16(rt_lift_raw) {
                     errors.push(format!("rt_lift: {e}"));
                 }
-                if let Err(e) = keyboard.set_top_deadzone_all_u16(top_dz_raw).await {
+                if let Err(e) = keyboard.set_top_deadzone_all_u16(top_dz_raw) {
                     errors.push(format!("top_dz: {e}"));
                 }
-                if let Err(e) = keyboard.set_bottom_deadzone_all_u16(bottom_dz_raw).await {
+                if let Err(e) = keyboard.set_bottom_deadzone_all_u16(bottom_dz_raw) {
                     errors.push(format!("bottom_dz: {e}"));
                 }
 
@@ -3043,7 +3031,7 @@ impl App {
                     mode: monsgeek_keyboard::KeyMode::from_u8(modal.mode),
                 };
 
-                match keyboard.set_key_trigger(&settings).await {
+                match keyboard.set_key_trigger(&settings) {
                     Ok(()) => {
                         let key_name = get_key_label(key_index);
                         self.status_msg = format!(
@@ -3184,7 +3172,7 @@ pub async fn run() -> io::Result<()> {
     let (mut app, mut result_rx) = App::new();
 
     // Try to connect
-    if let Err(e) = app.connect().await {
+    if let Err(e) = app.connect() {
         app.status_msg = e;
     } else {
         // Skip loading if keyboard is sleeping (queries will fail/timeout)
@@ -3329,7 +3317,7 @@ pub async fn run() -> io::Result<()> {
                     if app.hex_editing {
                         match key.code {
                             KeyCode::Esc => app.cancel_hex_input(),
-                            KeyCode::Enter => app.apply_hex_input().await,
+                            KeyCode::Enter => app.apply_hex_input(),
                             KeyCode::Backspace => {
                                 app.hex_input.pop();
                             }
@@ -3348,7 +3336,7 @@ pub async fn run() -> io::Result<()> {
                         let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                         match key.code {
                             KeyCode::Esc => app.close_trigger_edit_modal(),
-                            KeyCode::Enter => app.save_trigger_edit_modal().await,
+                            KeyCode::Enter => app.save_trigger_edit_modal(),
                             KeyCode::Tab | KeyCode::Down => {
                                 if let Some(ref mut modal) = app.trigger_edit_modal {
                                     modal.next_field();
@@ -3489,42 +3477,42 @@ pub async fn run() -> io::Result<()> {
                             } else if app.tab == 1 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.selected {
-                                    0 => app.set_led_mode(app.info.led_mode.saturating_sub(1)).await,
-                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)).await,
+                                    0 => app.set_led_mode(app.info.led_mode.saturating_sub(1)),
+                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)),
                                     2 => {
                                         let current = speed_to_wire(app.info.led_speed);
-                                        app.set_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
+                                        app.set_speed(SPEED_SPINNER.decrement_u8(current, coarse));
                                     }
-                                    3 => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
-                                    4 => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b).await; }
-                                    5 => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b).await; }
-                                    7 => app.toggle_dazzle().await,
+                                    3 => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
+                                    4 => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
+                                    5 => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
+                                    7 => app.toggle_dazzle(),
                                     // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight => app.set_side_mode(app.info.side_mode.saturating_sub(1)).await,
-                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)).await,
+                                    9 if app.has_sidelight => app.set_side_mode(app.info.side_mode.saturating_sub(1)),
+                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)),
                                     11 if app.has_sidelight => {
                                         let current = speed_to_wire(app.info.side_speed);
-                                        app.set_side_speed(SPEED_SPINNER.decrement_u8(current, coarse)).await;
+                                        app.set_side_speed(SPEED_SPINNER.decrement_u8(current, coarse));
                                     }
-                                    12 if app.has_sidelight => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 if app.has_sidelight => { let g = RGB_SPINNER.decrement_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 if app.has_sidelight => { let b = RGB_SPINNER.decrement_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
-                                    16 if app.has_sidelight => app.toggle_side_dazzle().await,
+                                    12 if app.has_sidelight => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
+                                    13 if app.has_sidelight => { let g = RGB_SPINNER.decrement_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
+                                    14 if app.has_sidelight => { let b = RGB_SPINNER.decrement_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
+                                    16 if app.has_sidelight => app.toggle_side_dazzle(),
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.decrement_u8(opts.fn_layer, coarse)).await,
-                                        1 => app.toggle_wasd_swap().await,
-                                        2 => app.toggle_anti_mistouch().await,
-                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.decrement_u8(opts.rt_stability, coarse)).await,
+                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.decrement_u8(opts.fn_layer, coarse)),
+                                        1 => app.toggle_wasd_swap(),
+                                        2 => app.toggle_anti_mistouch(),
+                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.decrement_u8(opts.rt_stability, coarse)),
                                         // Sleep time sliders
-                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, -step).await; }
-                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step).await; }
-                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step).await; }
-                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step).await; }
+                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, -step); }
+                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step); }
+                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step); }
+                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
                                         _ => {}
                                     }
                                 }
@@ -3560,42 +3548,42 @@ pub async fn run() -> io::Result<()> {
                             } else if app.tab == 1 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.selected {
-                                    0 => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)).await,
-                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)).await,
+                                    0 => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)),
+                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)),
                                     2 => {
                                         let current = speed_to_wire(app.info.led_speed);
-                                        app.set_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
+                                        app.set_speed(SPEED_SPINNER.increment_u8(current, coarse));
                                     }
-                                    3 => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b).await; }
-                                    4 => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b).await; }
-                                    5 => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b).await; }
-                                    7 => app.toggle_dazzle().await,
+                                    3 => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
+                                    4 => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
+                                    5 => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
+                                    7 => app.toggle_dazzle(),
                                     // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)).await,
-                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)).await,
+                                    9 if app.has_sidelight => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)),
+                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)),
                                     11 if app.has_sidelight => {
                                         let current = speed_to_wire(app.info.side_speed);
-                                        app.set_side_speed(SPEED_SPINNER.increment_u8(current, coarse)).await;
+                                        app.set_side_speed(SPEED_SPINNER.increment_u8(current, coarse));
                                     }
-                                    12 if app.has_sidelight => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b).await; }
-                                    13 if app.has_sidelight => { let g = RGB_SPINNER.increment_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b).await; }
-                                    14 if app.has_sidelight => { let b = RGB_SPINNER.increment_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b).await; }
-                                    16 if app.has_sidelight => app.toggle_side_dazzle().await,
+                                    12 if app.has_sidelight => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
+                                    13 if app.has_sidelight => { let g = RGB_SPINNER.increment_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
+                                    14 if app.has_sidelight => { let b = RGB_SPINNER.increment_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
+                                    16 if app.has_sidelight => app.toggle_side_dazzle(),
                                     _ => {}
                                 }
                             } else if app.tab == 4 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 if let Some(ref opts) = app.options.clone() {
                                     match app.selected {
-                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.increment_u8(opts.fn_layer, coarse)).await,
-                                        1 => app.toggle_wasd_swap().await,
-                                        2 => app.toggle_anti_mistouch().await,
-                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.increment_u8(opts.rt_stability, coarse)).await,
+                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.increment_u8(opts.fn_layer, coarse)),
+                                        1 => app.toggle_wasd_swap(),
+                                        2 => app.toggle_anti_mistouch(),
+                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.increment_u8(opts.rt_stability, coarse)),
                                         // Sleep time sliders
-                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, step).await; }
-                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step).await; }
-                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step).await; }
-                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step).await; }
+                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, step); }
+                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step); }
+                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step); }
+                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
                                         _ => {}
                                     }
                                 }
@@ -3677,10 +3665,10 @@ pub async fn run() -> io::Result<()> {
                             );
                         }
                         KeyCode::Char('m') => {
-                            app.toggle_depth_monitoring().await;
+                            app.toggle_depth_monitoring();
                         }
                         KeyCode::Char('c') => {
-                            if let Err(e) = app.connect().await {
+                            if let Err(e) = app.connect() {
                                 app.status_msg = e;
                             } else {
                                 // Skip loading if keyboard is sleeping
@@ -3690,10 +3678,10 @@ pub async fn run() -> io::Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(0).await,
-                        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(1).await,
-                        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(2).await,
-                        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(3).await,
+                        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(0),
+                        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(1),
+                        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(2),
+                        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(3),
                         KeyCode::PageUp => {
                             if app.tab == 3 {
                                 app.trigger_scroll = app.trigger_scroll.saturating_sub(15);
@@ -3707,28 +3695,28 @@ pub async fn run() -> io::Result<()> {
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
                             }
                         }
-                        KeyCode::Char('n') if app.tab == 3 => app.set_key_mode(magnetism::MODE_NORMAL).await,
-                        KeyCode::Char('N') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_NORMAL).await,
-                        KeyCode::Char('t') if app.tab == 3 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER).await,
-                        KeyCode::Char('T') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER).await,
-                        KeyCode::Char('d') if app.tab == 3 => app.set_key_mode(magnetism::MODE_DKS).await,
-                        KeyCode::Char('D') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_DKS).await,
-                        KeyCode::Char('s') if app.tab == 3 => app.set_key_mode(magnetism::MODE_SNAPTAP).await,
-                        KeyCode::Char('S') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_SNAPTAP).await,
-                        KeyCode::Char('p') if app.tab == 1 => app.apply_per_key_color().await,
+                        KeyCode::Char('n') if app.tab == 3 => app.set_key_mode(magnetism::MODE_NORMAL),
+                        KeyCode::Char('N') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_NORMAL),
+                        KeyCode::Char('t') if app.tab == 3 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER),
+                        KeyCode::Char('T') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER),
+                        KeyCode::Char('d') if app.tab == 3 => app.set_key_mode(magnetism::MODE_DKS),
+                        KeyCode::Char('D') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_DKS),
+                        KeyCode::Char('s') if app.tab == 3 => app.set_key_mode(magnetism::MODE_SNAPTAP),
+                        KeyCode::Char('S') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_SNAPTAP),
+                        KeyCode::Char('p') if app.tab == 1 => app.apply_per_key_color(),
                         KeyCode::Char('v') if app.tab == 2 => app.toggle_depth_view(),
                         KeyCode::Char('v') if app.tab == 3 => app.toggle_trigger_view(),
                         KeyCode::Enter if app.tab == 3 => {
                             // Open trigger edit modal for selected key (both views)
-                            app.open_trigger_edit_key(app.trigger_selected_key).await;
+                            app.open_trigger_edit_key(app.trigger_selected_key);
                         }
                         KeyCode::Char('e') if app.tab == 3 => {
                             // 'e' also opens edit modal for selected key
-                            app.open_trigger_edit_key(app.trigger_selected_key).await;
+                            app.open_trigger_edit_key(app.trigger_selected_key);
                         }
                         KeyCode::Char('g') if app.tab == 3 => {
                             // 'g' opens global edit modal
-                            app.open_trigger_edit_global().await;
+                            app.open_trigger_edit_global();
                         }
                         KeyCode::Char('x') if app.tab == 2 => app.clear_depth_data(),
                         KeyCode::Char(' ') if app.tab == 2 => {
@@ -3927,7 +3915,7 @@ pub async fn run() -> io::Result<()> {
     // Cleanup - stop magnetism reporting
     if app.depth_monitoring {
         if let Some(ref keyboard) = app.keyboard {
-            let _ = keyboard.stop_magnetism_report().await;
+            let _ = keyboard.stop_magnetism_report();
         }
     }
     disable_raw_mode()?;

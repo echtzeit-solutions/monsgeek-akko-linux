@@ -256,10 +256,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 commands::firmware::dry_run(&file, verbose)?;
             }
             FirmwareCommands::Check { device_id } => {
-                commands::firmware::check(device_id).await?;
+                commands::firmware::check(device_id)?;
             }
             FirmwareCommands::Download { device_id, output } => {
-                commands::firmware::download(device_id, &output).await?;
+                commands::firmware::download(device_id, &output)?;
             }
             FirmwareCommands::Flash { file, device, yes } => {
                 commands::firmware::flash(&file, device.as_deref(), yes)?;

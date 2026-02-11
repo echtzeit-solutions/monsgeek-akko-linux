@@ -112,8 +112,10 @@ pub fn dry_run(file: &PathBuf, verbose: bool) -> CommandResult {
 
 /// Check for firmware updates from server
 #[cfg(feature = "firmware-api")]
-pub async fn check(device_id: Option<u32>) -> CommandResult {
-    use iot_driver::firmware_api::{check_firmware, device_ids, ApiError};
+pub fn check(device_id: Option<u32>) -> CommandResult {
+    use iot_driver::firmware_api::{
+        check_firmware_blocking as check_firmware, device_ids, ApiError,
+    };
 
     // Try to get device ID from connected device or argument
     let (api_device_id, keyboard) = if let Some(id) = device_id {
@@ -141,7 +143,7 @@ pub async fn check(device_id: Option<u32>) -> CommandResult {
 
     println!("Checking for firmware updates for device ID {api_device_id}...");
 
-    match check_firmware(api_device_id).await {
+    match check_firmware(api_device_id) {
         Ok(response) => {
             println!("\nServer Firmware Versions");
             println!("========================");
@@ -184,15 +186,18 @@ pub async fn check(device_id: Option<u32>) -> CommandResult {
 }
 
 #[cfg(not(feature = "firmware-api"))]
-pub async fn check(_device_id: Option<u32>) -> CommandResult {
+pub fn check(_device_id: Option<u32>) -> CommandResult {
     eprintln!("Firmware API not enabled. Rebuild with: cargo build --features firmware-api");
     Ok(())
 }
 
 /// Download firmware from server
 #[cfg(feature = "firmware-api")]
-pub async fn download(device_id: Option<u32>, output: &PathBuf) -> CommandResult {
-    use iot_driver::firmware_api::{check_firmware, device_ids, download_firmware};
+pub fn download(device_id: Option<u32>, output: &PathBuf) -> CommandResult {
+    use iot_driver::firmware_api::{
+        check_firmware_blocking as check_firmware, device_ids,
+        download_firmware_blocking as download_firmware,
+    };
 
     // Try to get device ID from connected device or argument
     let api_device_id = device_id.or_else(|| {
@@ -218,11 +223,11 @@ pub async fn download(device_id: Option<u32>, output: &PathBuf) -> CommandResult
 
     println!("Getting firmware info for device ID {api_device_id}...");
 
-    match check_firmware(api_device_id).await {
+    match check_firmware(api_device_id) {
         Ok(response) => {
             if let Some(path) = response.versions.download_path {
                 println!("Downloading from: {path}");
-                match download_firmware(&path, output).await {
+                match download_firmware(&path, output) {
                     Ok(size) => {
                         println!("Downloaded {} bytes to {}", size, output.display());
                     }
@@ -242,7 +247,7 @@ pub async fn download(device_id: Option<u32>, output: &PathBuf) -> CommandResult
 }
 
 #[cfg(not(feature = "firmware-api"))]
-pub async fn download(_device_id: Option<u32>, _output: &PathBuf) -> CommandResult {
+pub fn download(_device_id: Option<u32>, _output: &PathBuf) -> CommandResult {
     eprintln!("Firmware API not enabled. Rebuild with: cargo build --features firmware-api");
     Ok(())
 }

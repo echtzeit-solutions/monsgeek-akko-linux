@@ -120,11 +120,10 @@ impl KeyboardInterface {
     // === Device Info ===
 
     /// Get device ID (unique identifier)
-    pub async fn get_device_id(&self) -> Result<u32, KeyboardError> {
+    pub fn get_device_id(&self) -> Result<u32, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
 
         if resp.len() < 5 || resp[0] != cmd::GET_USB_VERSION {
             return Err(KeyboardError::UnexpectedResponse(
@@ -137,12 +136,11 @@ impl KeyboardInterface {
     }
 
     /// Get firmware version
-    pub async fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
+    pub fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
         // Use GET_USB_VERSION which returns device_id and version
         let resp = self
             .transport
-            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
 
         if resp.len() < 9 || resp[0] != cmd::GET_USB_VERSION {
             return Err(KeyboardError::UnexpectedResponse(
@@ -160,8 +158,8 @@ impl KeyboardInterface {
     ///
     /// For dongle connections, this sends F7 to refresh and reads the cached
     /// value from feature report 0x05. For wired connections, returns full battery.
-    pub async fn get_battery(&self) -> Result<BatteryInfo, KeyboardError> {
-        let (level, online, idle) = self.transport.get_battery_status().await?;
+    pub fn get_battery(&self) -> Result<BatteryInfo, KeyboardError> {
+        let (level, online, idle) = self.transport.get_battery_status()?;
         Ok(BatteryInfo {
             level,
             online,
@@ -173,79 +171,76 @@ impl KeyboardInterface {
     // === LED Control ===
 
     /// Get current LED parameters
-    pub async fn get_led_params(&self) -> Result<LedParams, KeyboardError> {
-        let resp: TransportLedParamsResponse =
-            self.transport.query(&QueryLedParams::default()).await?;
+    pub fn get_led_params(&self) -> Result<LedParams, KeyboardError> {
+        let resp: TransportLedParamsResponse = self.transport.query(&QueryLedParams::default())?;
         Ok(LedParams::from_transport_response(&resp))
     }
 
     /// Set LED mode
-    pub async fn set_led_mode(&self, mode: LedMode) -> Result<(), KeyboardError> {
-        let mut params = self.get_led_params().await?;
+    pub fn set_led_mode(&self, mode: LedMode) -> Result<(), KeyboardError> {
+        let mut params = self.get_led_params()?;
         params.mode = mode;
-        self.set_led_params(&params).await
+        self.set_led_params(&params)
     }
 
     /// Set LED parameters
-    pub async fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
-        self.transport.send(&params.to_transport_cmd()).await?;
+    pub fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
+        self.transport.send(&params.to_transport_cmd())?;
         Ok(())
     }
 
     // === Settings ===
 
     /// Get current profile (0-3)
-    pub async fn get_profile(&self) -> Result<u8, KeyboardError> {
-        let resp: ProfileResponse = self.transport.query(&QueryProfile::default()).await?;
+    pub fn get_profile(&self) -> Result<u8, KeyboardError> {
+        let resp: ProfileResponse = self.transport.query(&QueryProfile::default())?;
         Ok(resp.profile)
     }
 
     /// Set current profile (0-3)
-    pub async fn set_profile(&self, profile: u8) -> Result<(), KeyboardError> {
+    pub fn set_profile(&self, profile: u8) -> Result<(), KeyboardError> {
         if profile > 3 {
             return Err(KeyboardError::InvalidParameter(
                 "Profile must be 0-3".into(),
             ));
         }
-        self.transport.send(&SetProfile::new(profile)).await?;
+        self.transport.send(&SetProfile::new(profile))?;
         Ok(())
     }
 
     /// Get polling rate
-    pub async fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
-        let resp: PollingRateResponse = self.transport.query(&QueryPollingRate::default()).await?;
+    pub fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
+        let resp: PollingRateResponse = self.transport.query(&QueryPollingRate::default())?;
         // Convert transport PollingRate to keyboard PollingRate
         PollingRate::from_hz(resp.rate.to_hz())
             .ok_or_else(|| KeyboardError::UnexpectedResponse("Unknown polling rate".into()))
     }
 
     /// Set polling rate
-    pub async fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
+    pub fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
         // Convert keyboard PollingRate to transport PollingRate
         let transport_rate = TransportPollingRate::from_hz(rate as u16)
             .ok_or_else(|| KeyboardError::InvalidParameter("Invalid polling rate".into()))?;
-        self.transport
-            .send(&SetPollingRate::new(transport_rate))
-            .await?;
+        self.transport.send(&SetPollingRate::new(transport_rate))?;
         Ok(())
     }
 
     // === Debounce ===
 
     /// Get debounce time in milliseconds
-    pub async fn get_debounce(&self) -> Result<u8, KeyboardError> {
-        let resp: DebounceResponse = self.transport.query(&QueryDebounce::default()).await?;
+    pub fn get_debounce(&self) -> Result<u8, KeyboardError> {
+        let resp: DebounceResponse = self.transport.query(&QueryDebounce::default())?;
         Ok(resp.ms)
     }
 
     /// Set debounce time in milliseconds (0-50)
-    pub async fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
+    pub fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
         if ms > 50 {
             return Err(KeyboardError::InvalidParameter(
                 "Debounce must be 0-50ms".into(),
             ));
         }
-        self.transport.send(&SetDebounce::new(ms)).await?;
+        self.transport.send(&SetDebounce::new(ms))?;
         Ok(())
     }
 
@@ -255,8 +250,8 @@ impl KeyboardInterface {
     ///
     /// Returns idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
     /// All values are in seconds.
-    pub async fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
-        let resp: SleepTimeResponse = self.transport.query(&QuerySleepTime::default()).await?;
+    pub fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
+        let resp: SleepTimeResponse = self.transport.query(&QuerySleepTime::default())?;
         Ok(SleepTimeSettings {
             idle_bt: resp.idle_bt,
             idle_24g: resp.idle_24g,
@@ -269,26 +264,23 @@ impl KeyboardInterface {
     ///
     /// Sets idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
     /// All values are in seconds. Set to 0 to disable a particular timeout.
-    pub async fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
-        self.transport
-            .send(&SetSleepTime::new(
-                settings.idle_bt,
-                settings.idle_24g,
-                settings.deep_bt,
-                settings.deep_24g,
-            ))
-            .await?;
+    pub fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
+        self.transport.send(&SetSleepTime::new(
+            settings.idle_bt,
+            settings.idle_24g,
+            settings.deep_bt,
+            settings.deep_24g,
+        ))?;
         Ok(())
     }
 
     // === Keyboard Options ===
 
     /// Get keyboard options (OS mode, Fn layer, etc.)
-    pub async fn get_kb_options(&self) -> Result<KeyboardOptions, KeyboardError> {
+    pub fn get_kb_options(&self) -> Result<KeyboardOptions, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd::GET_KBOPTION, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd::GET_KBOPTION, &[], ChecksumType::Bit7)?;
 
         if resp.len() < 9 || resp[0] != cmd::GET_KBOPTION {
             return Err(KeyboardError::UnexpectedResponse(
@@ -300,10 +292,9 @@ impl KeyboardInterface {
     }
 
     /// Set keyboard options
-    pub async fn set_kb_options(&self, options: &KeyboardOptions) -> Result<(), KeyboardError> {
+    pub fn set_kb_options(&self, options: &KeyboardOptions) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(cmd::SET_KBOPTION, &options.to_bytes(), ChecksumType::Bit7)
-            .await?;
+            .send_command(cmd::SET_KBOPTION, &options.to_bytes(), ChecksumType::Bit7)?;
 
         Ok(())
     }
@@ -311,11 +302,10 @@ impl KeyboardInterface {
     // === Feature List ===
 
     /// Get device feature list (precision, capabilities)
-    pub async fn get_feature_list(&self) -> Result<FeatureList, KeyboardError> {
+    pub fn get_feature_list(&self) -> Result<FeatureList, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd::GET_FEATURE_LIST, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd::GET_FEATURE_LIST, &[], ChecksumType::Bit7)?;
 
         if resp.is_empty() || resp[0] != cmd::GET_FEATURE_LIST {
             return Err(KeyboardError::UnexpectedResponse(
@@ -334,27 +324,26 @@ impl KeyboardInterface {
     ///
     /// This is the recommended way to get precision - consumers should use this
     /// instead of calling get_feature_list() or get_version() directly for precision.
-    pub async fn get_precision(&self) -> Result<settings::Precision, KeyboardError> {
+    pub fn get_precision(&self) -> Result<settings::Precision, KeyboardError> {
         // Try feature list first
-        if let Ok(features) = self.get_feature_list().await {
+        if let Ok(features) = self.get_feature_list() {
             if let Some(precision) = features.precision() {
                 return Ok(precision);
             }
         }
 
         // Fall back to firmware version
-        let version = self.get_version().await?;
+        let version = self.get_version()?;
         Ok(version.precision())
     }
 
     // === Side LED (Sidelight) ===
 
     /// Get side LED parameters
-    pub async fn get_side_led_params(&self) -> Result<LedParams, KeyboardError> {
+    pub fn get_side_led_params(&self) -> Result<LedParams, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd::GET_SLEDPARAM, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd::GET_SLEDPARAM, &[], ChecksumType::Bit7)?;
 
         if resp.len() < 8 || resp[0] != cmd::GET_SLEDPARAM {
             return Err(KeyboardError::UnexpectedResponse(
@@ -374,7 +363,7 @@ impl KeyboardInterface {
     }
 
     /// Set side LED parameters
-    pub async fn set_side_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
+    pub fn set_side_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
         // Protocol format: [mode, speed, brightness, option, r, g, b]
         // Note: Side LED speed is NOT inverted (unlike main LED)
         let data = [
@@ -388,8 +377,7 @@ impl KeyboardInterface {
         ];
 
         self.transport
-            .send_command(cmd::SET_SLEDPARAM, &data, ChecksumType::Bit8)
-            .await?;
+            .send_command(cmd::SET_SLEDPARAM, &data, ChecksumType::Bit8)?;
 
         Ok(())
     }
@@ -397,11 +385,7 @@ impl KeyboardInterface {
     // === Per-Key RGB ===
 
     /// Set all keys to a single color (for per-key RGB mode)
-    pub async fn set_all_keys_color(
-        &self,
-        color: RgbColor,
-        layer: u8,
-    ) -> Result<(), KeyboardError> {
+    pub fn set_all_keys_color(&self, color: RgbColor, layer: u8) -> Result<(), KeyboardError> {
         // Build the color data: MATRIX_SIZE * 3 bytes (RGB) = 378 bytes
         // Sent in chunks with SET_USERPIC command
         let mut colors = vec![0u8; MATRIX_SIZE_M1_V5 * 3];
@@ -411,15 +395,11 @@ impl KeyboardInterface {
             colors[i * 3 + 2] = color.b;
         }
 
-        self.upload_per_key_colors(&colors, layer).await
+        self.upload_per_key_colors(&colors, layer)
     }
 
     /// Upload per-key RGB colors
-    pub async fn upload_per_key_colors(
-        &self,
-        colors: &[u8],
-        layer: u8,
-    ) -> Result<(), KeyboardError> {
+    pub fn upload_per_key_colors(&self, colors: &[u8], layer: u8) -> Result<(), KeyboardError> {
         // Colors are sent in chunks of 54 bytes (18 keys * 3 RGB)
         const CHUNK_SIZE: usize = 54;
         let chunks: Vec<_> = colors.chunks(CHUNK_SIZE).collect();
@@ -431,8 +411,7 @@ impl KeyboardInterface {
             data[2..2 + chunk.len()].copy_from_slice(chunk);
 
             self.transport
-                .send_command(cmd::SET_USERPIC, &data, ChecksumType::Bit8)
-                .await?;
+                .send_command(cmd::SET_USERPIC, &data, ChecksumType::Bit8)?;
         }
 
         Ok(())
@@ -441,34 +420,34 @@ impl KeyboardInterface {
     // === Magnetism / Hall Effect ===
 
     /// Start magnetism (key depth) reporting
-    pub async fn start_magnetism_report(&self) -> Result<(), KeyboardError> {
+    pub fn start_magnetism_report(&self) -> Result<(), KeyboardError> {
         if !self.has_magnetism {
             return Err(KeyboardError::NotSupported(
                 "Device does not have Hall Effect switches".into(),
             ));
         }
-        self.transport.send(&SetMagnetismReport::enable()).await?;
+        self.transport.send(&SetMagnetismReport::enable())?;
         Ok(())
     }
 
     /// Stop magnetism (key depth) reporting
-    pub async fn stop_magnetism_report(&self) -> Result<(), KeyboardError> {
+    pub fn stop_magnetism_report(&self) -> Result<(), KeyboardError> {
         if !self.has_magnetism {
             return Ok(());
         }
-        self.transport.send(&SetMagnetismReport::disable()).await?;
+        self.transport.send(&SetMagnetismReport::disable())?;
         Ok(())
     }
 
     /// Read a key depth event
     ///
     /// Returns None on timeout
-    pub async fn read_key_depth(
+    pub fn read_key_depth(
         &self,
         timeout_ms: u32,
         precision_factor: f64,
     ) -> Result<Option<KeyDepthEvent>, KeyboardError> {
-        match self.transport.read_event(timeout_ms).await? {
+        match self.transport.read_event(timeout_ms)? {
             Some(VendorEvent::KeyDepth {
                 key_index,
                 depth_raw,
@@ -495,35 +474,25 @@ impl KeyboardInterface {
     /// settings via the keyboard's Fn key combinations.
     ///
     /// Returns None on timeout (no event within timeout_ms)
-    pub async fn poll_notification(
-        &self,
-        timeout_ms: u32,
-    ) -> Result<Option<VendorEvent>, KeyboardError> {
+    pub fn poll_notification(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, KeyboardError> {
         self.transport
             .read_event(timeout_ms)
-            .await
             .map_err(KeyboardError::Transport)
     }
 
     /// Get trigger settings for a specific key
-    pub async fn get_key_trigger(
-        &self,
-        key_index: u8,
-    ) -> Result<KeyTriggerSettings, KeyboardError> {
+    pub fn get_key_trigger(&self, key_index: u8) -> Result<KeyTriggerSettings, KeyboardError> {
         if !self.has_magnetism {
             return Err(KeyboardError::NotSupported(
                 "Device does not have Hall Effect switches".into(),
             ));
         }
 
-        let resp = self
-            .transport
-            .query_command(
-                cmd::GET_KEY_MAGNETISM_MODE,
-                &[key_index],
-                ChecksumType::Bit7,
-            )
-            .await?;
+        let resp = self.transport.query_command(
+            cmd::GET_KEY_MAGNETISM_MODE,
+            &[key_index],
+            ChecksumType::Bit7,
+        )?;
 
         if resp.len() < 5 || resp[0] != cmd::GET_KEY_MAGNETISM_MODE {
             return Err(KeyboardError::UnexpectedResponse(
@@ -540,24 +509,19 @@ impl KeyboardInterface {
     }
 
     /// Set trigger settings for a specific key
-    pub async fn set_key_trigger(
-        &self,
-        settings: &KeyTriggerSettings,
-    ) -> Result<(), KeyboardError> {
+    pub fn set_key_trigger(&self, settings: &KeyTriggerSettings) -> Result<(), KeyboardError> {
         if !self.has_magnetism {
             return Err(KeyboardError::NotSupported(
                 "Device does not have Hall Effect switches".into(),
             ));
         }
 
-        self.transport
-            .send(&SetKeyMagnetismModeData {
-                key_index: settings.key_index,
-                actuation: settings.actuation,
-                deactuation: settings.deactuation,
-                mode: settings.mode.to_u8(),
-            })
-            .await?;
+        self.transport.send(&SetKeyMagnetismModeData {
+            key_index: settings.key_index,
+            actuation: settings.actuation,
+            deactuation: settings.deactuation,
+            mode: settings.mode.to_u8(),
+        })?;
 
         Ok(())
     }
@@ -567,7 +531,7 @@ impl KeyboardInterface {
     /// Magnetism queries use a multi-page protocol:
     /// - Send: [sub_cmd, flag=1, page]
     /// - Response doesn't echo command, data starts at byte 0
-    async fn get_magnetism(&self, sub_cmd: u8, num_pages: usize) -> Result<Vec<u8>, KeyboardError> {
+    fn get_magnetism(&self, sub_cmd: u8, num_pages: usize) -> Result<Vec<u8>, KeyboardError> {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
@@ -576,15 +540,11 @@ impl KeyboardInterface {
                 flag: 1,
                 page: page as u8,
             };
-            match self
-                .transport
-                .query_raw(
-                    cmd::GET_MULTI_MAGNETISM,
-                    query.as_bytes(),
-                    ChecksumType::Bit7,
-                )
-                .await
-            {
+            match self.transport.query_raw(
+                cmd::GET_MULTI_MAGNETISM,
+                query.as_bytes(),
+                ChecksumType::Bit7,
+            ) {
                 Ok(resp) => {
                     all_data.extend_from_slice(&resp);
                 }
@@ -598,7 +558,7 @@ impl KeyboardInterface {
     }
 
     /// Get all trigger settings
-    pub async fn get_all_triggers(&self) -> Result<TriggerSettings, KeyboardError> {
+    pub fn get_all_triggers(&self) -> Result<TriggerSettings, KeyboardError> {
         if !self.has_magnetism {
             return Err(KeyboardError::NotSupported(
                 "Device does not have Hall Effect switches".into(),
@@ -610,22 +570,20 @@ impl KeyboardInterface {
         let pages_u16 = (self.key_count as usize * 2).div_ceil(64); // 2 bytes per key
 
         // Key modes use 1 byte per key
-        let modes = self.get_magnetism(mag_cmd::KEY_MODE, pages_u8).await?;
+        let modes = self.get_magnetism(mag_cmd::KEY_MODE, pages_u8)?;
 
         // Travel values use 2 bytes per key (16-bit little-endian)
-        let press = self.get_magnetism(mag_cmd::PRESS_TRAVEL, pages_u16).await?;
-        let lift = self.get_magnetism(mag_cmd::LIFT_TRAVEL, pages_u16).await?;
-        let rt_press = self.get_magnetism(mag_cmd::RT_PRESS, pages_u16).await?;
-        let rt_lift = self.get_magnetism(mag_cmd::RT_LIFT, pages_u16).await?;
+        let press = self.get_magnetism(mag_cmd::PRESS_TRAVEL, pages_u16)?;
+        let lift = self.get_magnetism(mag_cmd::LIFT_TRAVEL, pages_u16)?;
+        let rt_press = self.get_magnetism(mag_cmd::RT_PRESS, pages_u16)?;
+        let rt_lift = self.get_magnetism(mag_cmd::RT_LIFT, pages_u16)?;
 
         // Deadzones - may fail on older firmware
         let bottom_dz = self
             .get_magnetism(mag_cmd::BOTTOM_DEADZONE, pages_u16)
-            .await
             .unwrap_or_default();
         let top_dz = self
             .get_magnetism(mag_cmd::TOP_DEADZONE, pages_u16)
-            .await
             .unwrap_or_default();
 
         Ok(TriggerSettings {
@@ -646,7 +604,7 @@ impl KeyboardInterface {
     ///
     /// Sends values in pages of 56 bytes each.
     /// Format: [sub_cmd, flag=1, page, commit, 0, 0, 0, data...]
-    async fn set_magnetism_u16(&self, sub_cmd: u8, values: &[u16]) -> Result<(), KeyboardError> {
+    fn set_magnetism_u16(&self, sub_cmd: u8, values: &[u16]) -> Result<(), KeyboardError> {
         // Convert u16 values to bytes (little-endian)
         let bytes: Vec<u8> = values
             .iter()
@@ -673,71 +631,69 @@ impl KeyboardInterface {
                 payload: chunk.to_vec(),
             };
 
-            self.transport.send_with_delay(&cmd, 30).await?;
+            self.transport.send_with_delay(&cmd, 30)?;
         }
 
         Ok(())
     }
 
     /// Set magnetism values for all keys (u8 version, legacy)
-    async fn set_magnetism_u8(&self, sub_cmd: u8, values: &[u8]) -> Result<(), KeyboardError> {
+    fn set_magnetism_u8(&self, sub_cmd: u8, values: &[u8]) -> Result<(), KeyboardError> {
         let mut data = vec![sub_cmd];
         data.extend_from_slice(&values[..self.key_count as usize]);
         self.transport
-            .send_command(cmd::SET_MULTI_MAGNETISM, &data, ChecksumType::Bit7)
-            .await?;
+            .send_command(cmd::SET_MULTI_MAGNETISM, &data, ChecksumType::Bit7)?;
         Ok(())
     }
 
     /// Set actuation point for all keys (u16 raw value)
     ///
     /// Value is in precision units (e.g., 200 = 2.0mm at 0.01mm precision)
-    pub async fn set_actuation_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+    pub fn set_actuation_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
         let values = vec![travel; self.key_count as usize];
-        self.set_magnetism_u16(mag_cmd::PRESS_TRAVEL, &values).await
+        self.set_magnetism_u16(mag_cmd::PRESS_TRAVEL, &values)
     }
 
     /// Set release point for all keys (u16 raw value)
-    pub async fn set_release_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+    pub fn set_release_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
         let values = vec![travel; self.key_count as usize];
-        self.set_magnetism_u16(mag_cmd::LIFT_TRAVEL, &values).await
+        self.set_magnetism_u16(mag_cmd::LIFT_TRAVEL, &values)
     }
 
     /// Set Rapid Trigger press sensitivity for all keys (u16 raw value)
-    pub async fn set_rt_press_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
+    pub fn set_rt_press_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
         let values = vec![sensitivity; self.key_count as usize];
-        self.set_magnetism_u16(mag_cmd::RT_PRESS, &values).await
+        self.set_magnetism_u16(mag_cmd::RT_PRESS, &values)
     }
 
     /// Set Rapid Trigger release sensitivity for all keys (u16 raw value)
-    pub async fn set_rt_lift_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
+    pub fn set_rt_lift_all_u16(&self, sensitivity: u16) -> Result<(), KeyboardError> {
         let values = vec![sensitivity; self.key_count as usize];
-        self.set_magnetism_u16(mag_cmd::RT_LIFT, &values).await
+        self.set_magnetism_u16(mag_cmd::RT_LIFT, &values)
     }
 
     /// Enable/disable Rapid Trigger for all keys
-    pub async fn set_rapid_trigger_all(&self, enable: bool) -> Result<(), KeyboardError> {
+    pub fn set_rapid_trigger_all(&self, enable: bool) -> Result<(), KeyboardError> {
         // Mode values: 0=Normal, 1=RapidTrigger
         let mode = if enable { 1u8 } else { 0u8 };
         let values = vec![mode; self.key_count as usize];
-        self.set_magnetism_u8(mag_cmd::KEY_MODE, &values).await
+        self.set_magnetism_u8(mag_cmd::KEY_MODE, &values)
     }
 
     /// Set bottom deadzone for all keys (u16 raw value)
     ///
     /// Bottom deadzone is the distance from bottom of travel that is ignored.
-    pub async fn set_bottom_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+    pub fn set_bottom_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
         let values = vec![travel; self.key_count as usize];
         self.set_magnetism_u16(mag_cmd::BOTTOM_DEADZONE, &values)
-            .await
     }
 
     /// Set top deadzone for all keys (u16 raw value)
     ///
     /// Top deadzone is the distance from top of travel that is ignored.
-    pub async fn set_top_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
+    pub fn set_top_deadzone_all_u16(&self, travel: u16) -> Result<(), KeyboardError> {
         let values = vec![travel; self.key_count as usize];
-        self.set_magnetism_u16(mag_cmd::TOP_DEADZONE, &values).await
+        self.set_magnetism_u16(mag_cmd::TOP_DEADZONE, &values)
     }
 
     // === Extended LED Control ===
@@ -751,7 +707,7 @@ impl KeyboardInterface {
     /// * `r`, `g`, `b` - RGB color values
     /// * `dazzle` - Enable rainbow color cycling
     #[allow(clippy::too_many_arguments)]
-    pub async fn set_led(
+    pub fn set_led(
         &self,
         mode: u8,
         brightness: u8,
@@ -762,7 +718,6 @@ impl KeyboardInterface {
         dazzle: bool,
     ) -> Result<(), KeyboardError> {
         self.set_led_with_option(mode, brightness, speed, r, g, b, dazzle, 0)
-            .await
     }
 
     /// Set LED mode with layer option (for UserPicture mode)
@@ -771,7 +726,7 @@ impl KeyboardInterface {
     /// - `layer`: which custom color layer to display (0-3)
     /// - RGB values are ignored, using (0, 200, 200) per protocol
     #[allow(clippy::too_many_arguments)]
-    pub async fn set_led_with_option(
+    pub fn set_led_with_option(
         &self,
         mode: u8,
         brightness: u8,
@@ -805,8 +760,7 @@ impl KeyboardInterface {
         ];
 
         self.transport
-            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)
-            .await?;
+            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)?;
 
         Ok(())
     }
@@ -817,7 +771,7 @@ impl KeyboardInterface {
     /// * `colors` - Tuple of (r, g, b) for each key (126 keys)
     /// * `repeat` - Number of times to send (for reliability)
     /// * `layer` - Which layer to update (0-3)
-    pub async fn set_per_key_colors_fast(
+    pub fn set_per_key_colors_fast(
         &self,
         colors: &[(u8, u8, u8)],
         repeat: u8,
@@ -841,9 +795,12 @@ impl KeyboardInterface {
                     data[2 + i * 3 + 2] = b;
                 }
 
-                self.transport
-                    .send_command_with_delay(cmd::SET_USERPIC, &data, ChecksumType::Bit8, 5)
-                    .await?;
+                self.transport.send_command_with_delay(
+                    cmd::SET_USERPIC,
+                    &data,
+                    ChecksumType::Bit8,
+                    5,
+                )?;
             }
         }
 
@@ -851,31 +808,29 @@ impl KeyboardInterface {
     }
 
     /// Store per-key colors to a specific layer
-    pub async fn set_per_key_colors_to_layer(
+    pub fn set_per_key_colors_to_layer(
         &self,
         colors: &[(u8, u8, u8)],
         layer: u8,
     ) -> Result<(), KeyboardError> {
-        self.set_per_key_colors_fast(colors, 1, layer).await
+        self.set_per_key_colors_fast(colors, 1, layer)
     }
 
     // === Animation Upload ===
 
     /// Initialize per-key RGB/animation mode (sends SET_USERGIF start command)
-    pub async fn start_user_gif(&self) -> Result<(), KeyboardError> {
+    pub fn start_user_gif(&self) -> Result<(), KeyboardError> {
         use monsgeek_transport::protocol::timing;
 
         // Official driver: data[0..2] = 0, send with Bit7 checksum
         let data = [0, 0, 0];
         self.transport
-            .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)
-            .await?;
+            .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)?;
 
         // Official driver waits after start
-        tokio::time::sleep(tokio::time::Duration::from_millis(
+        std::thread::sleep(std::time::Duration::from_millis(
             timing::ANIMATION_START_DELAY_MS,
-        ))
-        .await;
+        ));
 
         Ok(())
     }
@@ -888,7 +843,7 @@ impl KeyboardInterface {
     /// # Arguments
     /// * `frames` - Vector of frames, each containing (R, G, B) tuples per key
     /// * `frame_delay_ms` - Delay between frames in milliseconds
-    pub async fn upload_animation(
+    pub fn upload_animation(
         &self,
         frames: &[Vec<(u8, u8, u8)>],
         frame_delay_ms: u16,
@@ -902,7 +857,7 @@ impl KeyboardInterface {
         let total_frames = frames.len() as u8;
 
         // Step 1: Initialize upload
-        self.start_user_gif().await?;
+        self.start_user_gif()?;
 
         // Step 2: Upload each frame
         for (frame_idx, frame_colors) in frames.iter().enumerate() {
@@ -911,24 +866,22 @@ impl KeyboardInterface {
                 total_frames,
                 frame_delay_ms,
                 frame_colors,
-            )
-            .await?;
+            )?;
         }
 
         // Step 3: Switch to UserColor mode to play animation
         // Use dazzle=true (option byte = 8) for animation playback
         let mode = 25u8; // LightUserColor mode
-        self.set_led_with_option(mode, 4, 0, 0, 0, 0, true, 0)
-            .await?;
+        self.set_led_with_option(mode, 4, 0, 0, 0, 0, true, 0)?;
 
         // Small delay after mode switch
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         Ok(())
     }
 
     /// Upload a single frame of an animation
-    async fn upload_animation_frame(
+    fn upload_animation_frame(
         &self,
         frame_idx: u8,
         total_frames: u8,
@@ -971,11 +924,10 @@ impl KeyboardInterface {
             data.extend_from_slice(&rgb_data[start..end.min(rgb_data.len())]);
 
             self.transport
-                .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)
-                .await?;
+                .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)?;
 
             // Small delay between pages
-            tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
         Ok(())
@@ -984,26 +936,22 @@ impl KeyboardInterface {
     // === Calibration ===
 
     /// Start/stop minimum position calibration (keys released)
-    pub async fn calibrate_min(&self, start: bool) -> Result<(), KeyboardError> {
-        self.transport
-            .send_command(
-                cmd::SET_MAGNETISM_CAL,
-                &[if start { 1 } else { 0 }],
-                ChecksumType::Bit7,
-            )
-            .await?;
+    pub fn calibrate_min(&self, start: bool) -> Result<(), KeyboardError> {
+        self.transport.send_command(
+            cmd::SET_MAGNETISM_CAL,
+            &[if start { 1 } else { 0 }],
+            ChecksumType::Bit7,
+        )?;
         Ok(())
     }
 
     /// Start/stop maximum position calibration (keys pressed)
-    pub async fn calibrate_max(&self, start: bool) -> Result<(), KeyboardError> {
-        self.transport
-            .send_command(
-                cmd::SET_MAGNETISM_MAX_CAL,
-                &[if start { 1 } else { 0 }],
-                ChecksumType::Bit7,
-            )
-            .await?;
+    pub fn calibrate_max(&self, start: bool) -> Result<(), KeyboardError> {
+        self.transport.send_command(
+            cmd::SET_MAGNETISM_MAX_CAL,
+            &[if start { 1 } else { 0 }],
+            ChecksumType::Bit7,
+        )?;
         Ok(())
     }
 
@@ -1017,20 +965,17 @@ impl KeyboardInterface {
     ///
     /// # Returns
     /// Vector of 16-bit calibration values for up to 32 keys
-    pub async fn get_calibration_progress(&self, page: u8) -> Result<Vec<u16>, KeyboardError> {
+    pub fn get_calibration_progress(&self, page: u8) -> Result<Vec<u16>, KeyboardError> {
         let query = GetMultiMagnetismData {
             sub_cmd: mag_cmd::CALIBRATION,
             flag: 1,
             page,
         };
-        let response = self
-            .transport
-            .query_raw(
-                cmd::GET_MULTI_MAGNETISM,
-                query.as_bytes(),
-                ChecksumType::Bit7,
-            )
-            .await?;
+        let response = self.transport.query_raw(
+            cmd::GET_MULTI_MAGNETISM,
+            query.as_bytes(),
+            ChecksumType::Bit7,
+        )?;
 
         // Decode 16-bit LE values from response (64 bytes = 32 values)
         let mut values = Vec::with_capacity(32);
@@ -1045,42 +990,34 @@ impl KeyboardInterface {
     // === Factory Reset ===
 
     /// Factory reset the keyboard
-    pub async fn reset(&self) -> Result<(), KeyboardError> {
+    pub fn reset(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(cmd::SET_RESET, &[], ChecksumType::Bit7)
-            .await?;
+            .send_command(cmd::SET_RESET, &[], ChecksumType::Bit7)?;
         Ok(())
     }
 
     // === Raw Commands (for CLI compatibility) ===
 
     /// Send a raw command and get response
-    pub async fn query_raw_cmd(&self, cmd_byte: u8) -> Result<Vec<u8>, KeyboardError> {
+    pub fn query_raw_cmd(&self, cmd_byte: u8) -> Result<Vec<u8>, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd_byte, &[], ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
         Ok(resp)
     }
 
     /// Send raw command with data
-    pub async fn query_raw_cmd_data(
-        &self,
-        cmd_byte: u8,
-        data: &[u8],
-    ) -> Result<Vec<u8>, KeyboardError> {
+    pub fn query_raw_cmd_data(&self, cmd_byte: u8, data: &[u8]) -> Result<Vec<u8>, KeyboardError> {
         let resp = self
             .transport
-            .query_command(cmd_byte, data, ChecksumType::Bit7)
-            .await?;
+            .query_command(cmd_byte, data, ChecksumType::Bit7)?;
         Ok(resp)
     }
 
     /// Send raw command without expecting response
-    pub async fn send_raw_cmd(&self, cmd_byte: u8, data: &[u8]) -> Result<(), KeyboardError> {
+    pub fn send_raw_cmd(&self, cmd_byte: u8, data: &[u8]) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(cmd_byte, data, ChecksumType::Bit7)
-            .await?;
+            .send_command(cmd_byte, data, ChecksumType::Bit7)?;
         Ok(())
     }
 
@@ -1094,11 +1031,7 @@ impl KeyboardInterface {
     ///
     /// # Returns
     /// Raw key matrix data (4 bytes per key: type, enabled, layer, keycode)
-    pub async fn get_keymatrix(
-        &self,
-        profile: u8,
-        num_pages: usize,
-    ) -> Result<Vec<u8>, KeyboardError> {
+    pub fn get_keymatrix(&self, profile: u8, num_pages: usize) -> Result<Vec<u8>, KeyboardError> {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
@@ -1112,7 +1045,6 @@ impl KeyboardInterface {
             match self
                 .transport
                 .query_raw(cmd::GET_KEYMATRIX, query.as_bytes(), ChecksumType::Bit7)
-                .await
             {
                 Ok(resp) => {
                     all_data.extend_from_slice(&resp);
@@ -1140,7 +1072,7 @@ impl KeyboardInterface {
     /// * `profile` - Profile index (0-3)
     /// * `sys` - OS mode: 0=Windows, 1=Mac
     /// * `num_pages` - Number of pages to read (8 for full matrix)
-    pub async fn get_fn_keymatrix(
+    pub fn get_fn_keymatrix(
         &self,
         profile: u8,
         sys: u8,
@@ -1158,7 +1090,6 @@ impl KeyboardInterface {
             match self
                 .transport
                 .query_raw(cmd::GET_FN, query.as_bytes(), ChecksumType::Bit7)
-                .await
             {
                 Ok(resp) => {
                     all_data.extend_from_slice(&resp);
@@ -1180,7 +1111,7 @@ impl KeyboardInterface {
     ///
     /// Routes to SET_KEYMATRIX (0x0A) for layers 0-1 or SET_FN (0x10) for layer 2+.
     /// The `config` bytes are `[config_type, b1, b2, b3]` as used by the protocol.
-    pub async fn set_key_config(
+    pub fn set_key_config(
         &self,
         profile: u8,
         key_index: u8,
@@ -1189,15 +1120,12 @@ impl KeyboardInterface {
     ) -> Result<(), KeyboardError> {
         let enabled = config != [0, 0, 0, 0];
         if layer <= 1 {
-            self.transport
-                .send(&SetKeyMatrixData::new(
-                    profile, key_index, layer, enabled, config,
-                )?)
-                .await?;
+            self.transport.send(&SetKeyMatrixData::new(
+                profile, key_index, layer, enabled, config,
+            )?)?;
         } else {
             self.transport
-                .send(&SetFnData::new(0, profile, key_index, config)?)
-                .await?;
+                .send(&SetFnData::new(0, profile, key_index, config)?)?;
         }
         Ok(())
     }
@@ -1205,7 +1133,7 @@ impl KeyboardInterface {
     /// Set a single key's mapping (base layer only).
     ///
     /// For layer-aware remapping, use [`set_key_config`](Self::set_key_config).
-    pub async fn set_keymatrix(
+    pub fn set_keymatrix(
         &self,
         profile: u8,
         key_index: u8,
@@ -1213,27 +1141,25 @@ impl KeyboardInterface {
         enabled: bool,
         layer: u8,
     ) -> Result<(), KeyboardError> {
-        self.transport
-            .send(&SetKeyMatrixData::new(
-                profile,
-                key_index,
-                layer,
-                enabled,
-                [0, 0, hid_code, 0],
-            )?)
-            .await?;
+        self.transport.send(&SetKeyMatrixData::new(
+            profile,
+            key_index,
+            layer,
+            enabled,
+            [0, 0, hid_code, 0],
+        )?)?;
         Ok(())
     }
 
     /// Reset a key to its default mapping on any layer.
     ///
     /// Sets the key to "disabled" which causes the firmware to use the default.
-    pub async fn reset_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
-        self.set_key_config(0, key_index, layer, [0, 0, 0, 0]).await
+    pub fn reset_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
+        self.set_key_config(0, key_index, layer, [0, 0, 0, 0])
     }
 
     /// Swap two keys
-    pub async fn swap_keys(
+    pub fn swap_keys(
         &self,
         profile: u8,
         key_a: u8,
@@ -1242,9 +1168,9 @@ impl KeyboardInterface {
         code_b: u8,
     ) -> Result<(), KeyboardError> {
         // Set key_a to code_b
-        self.set_keymatrix(profile, key_a, code_b, true, 0).await?;
+        self.set_keymatrix(profile, key_a, code_b, true, 0)?;
         // Set key_b to code_a
-        self.set_keymatrix(profile, key_b, code_a, true, 0).await
+        self.set_keymatrix(profile, key_b, code_a, true, 0)
     }
 
     // === Macros ===
@@ -1256,7 +1182,7 @@ impl KeyboardInterface {
     ///
     /// # Returns
     /// Raw macro data: [2-byte repeat count (LE), then 2-byte events (keycode, flags)]
-    pub async fn get_macro(&self, macro_index: u8) -> Result<Vec<u8>, KeyboardError> {
+    pub fn get_macro(&self, macro_index: u8) -> Result<Vec<u8>, KeyboardError> {
         let mut all_data = Vec::new();
 
         for page in 0..4u8 {
@@ -1265,7 +1191,6 @@ impl KeyboardInterface {
             match self
                 .transport
                 .query_raw(cmd::GET_MACRO, query.as_bytes(), ChecksumType::Bit7)
-                .await
             {
                 Ok(resp) => {
                     // Skip command echo if present (some transports may add it)
@@ -1307,7 +1232,7 @@ impl KeyboardInterface {
     /// Events use variable-length encoding:
     /// - Short delay (0-127ms): 2 bytes `[keycode, direction_bit | delay]`
     /// - Long delay (128+ms): 4 bytes `[keycode, direction_bit, delay_lo, delay_hi]`
-    pub async fn set_macro(
+    pub fn set_macro(
         &self,
         macro_index: u8,
         events: &[(u8, bool, u16)],
@@ -1361,7 +1286,7 @@ impl KeyboardInterface {
 
             let cmd = SetMacroCommand::new(macro_index, page as u8, is_last, chunk.to_vec())?;
 
-            self.transport.send_with_delay(&cmd, 30).await?;
+            self.transport.send_with_delay(&cmd, 30)?;
         }
 
         Ok(())
@@ -1374,7 +1299,7 @@ impl KeyboardInterface {
     /// * `text` - Text to type
     /// * `delay_ms` - Delay between keystrokes in ms
     /// * `repeat` - How many times to repeat
-    pub async fn set_text_macro(
+    pub fn set_text_macro(
         &self,
         macro_index: u8,
         text: &str,
@@ -1400,14 +1325,14 @@ impl KeyboardInterface {
             }
         }
 
-        self.set_macro(macro_index, &events, repeat).await
+        self.set_macro(macro_index, &events, repeat)
     }
 
     /// Assign a macro to a key on any layer.
     ///
     /// * `layer` - 0 for base, 1 for Fn
     /// * `macro_type` - 0=repeat by count, 1=toggle, 2=hold to repeat
-    pub async fn assign_macro_to_key(
+    pub fn assign_macro_to_key(
         &self,
         layer: u8,
         key_index: u8,
@@ -1415,16 +1340,11 @@ impl KeyboardInterface {
         macro_type: u8,
     ) -> Result<(), KeyboardError> {
         self.set_key_config(0, key_index, layer, [9, macro_type, macro_index, 0])
-            .await
     }
 
     /// Remove macro assignment from a key, restoring default behavior.
-    pub async fn unassign_macro_from_key(
-        &self,
-        layer: u8,
-        key_index: u8,
-    ) -> Result<(), KeyboardError> {
-        self.reset_key(layer, key_index).await
+    pub fn unassign_macro_from_key(&self, layer: u8, key_index: u8) -> Result<(), KeyboardError> {
+        self.reset_key(layer, key_index)
     }
 
     // === Device Info ===
@@ -1451,13 +1371,13 @@ impl KeyboardInterface {
     // === Connection ===
 
     /// Check if the keyboard is still connected
-    pub async fn is_connected(&self) -> bool {
-        self.transport.is_connected().await
+    pub fn is_connected(&self) -> bool {
+        self.transport.is_connected()
     }
 
     /// Close the connection
-    pub async fn close(&self) -> Result<(), KeyboardError> {
-        self.transport.close().await?;
+    pub fn close(&self) -> Result<(), KeyboardError> {
+        self.transport.close()?;
         Ok(())
     }
 
@@ -1472,30 +1392,27 @@ impl KeyboardInterface {
     /// # Arguments
     /// * `page` - Page index (0-6, each page = 18 keys)
     /// * `rgb_data` - RGB data (up to 54 bytes = 18 keys × 3 bytes)
-    pub async fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
+    pub fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
         let mut data = vec![0u8; 55]; // page + 54 RGB bytes
         data[0] = page;
         let len = rgb_data.len().min(54);
         data[1..1 + len].copy_from_slice(&rgb_data[..len]);
         self.transport
-            .send_command(0xFC, &data, ChecksumType::Bit8)
-            .await?;
+            .send_command(0xFC, &data, ChecksumType::Bit8)?;
         Ok(())
     }
 
     /// Commit streamed LED data — copies frame buffer to DMA buffer for display
-    pub async fn stream_led_commit(&self) -> Result<(), KeyboardError> {
+    pub fn stream_led_commit(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(0xFC, &[0xFF], ChecksumType::Bit8)
-            .await?;
+            .send_command(0xFC, &[0xFF], ChecksumType::Bit8)?;
         Ok(())
     }
 
     /// Release LED streaming — signals end of streaming session
-    pub async fn stream_led_release(&self) -> Result<(), KeyboardError> {
+    pub fn stream_led_release(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(0xFC, &[0xFE], ChecksumType::Bit8)
-            .await?;
+            .send_command(0xFC, &[0xFE], ChecksumType::Bit8)?;
         Ok(())
     }
 
@@ -1504,11 +1421,8 @@ impl KeyboardInterface {
     /// Returns `Some(PatchInfo)` if the keyboard is running patched firmware,
     /// `None` if it's running stock firmware (command 0xFB not recognized or
     /// response doesn't contain the expected magic bytes).
-    pub async fn get_patch_info(&self) -> Result<Option<PatchInfo>, KeyboardError> {
-        let resp = self
-            .transport
-            .query_raw(0xFB, &[], ChecksumType::Bit7)
-            .await;
+    pub fn get_patch_info(&self) -> Result<Option<PatchInfo>, KeyboardError> {
+        let resp = self.transport.query_raw(0xFB, &[], ChecksumType::Bit7);
 
         match resp {
             Ok(resp) => {

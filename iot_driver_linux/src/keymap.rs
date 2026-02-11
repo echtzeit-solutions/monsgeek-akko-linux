@@ -226,11 +226,11 @@ pub fn load_sync(keyboard: &SyncKeyboard) -> Result<KeyMap, KeyboardError> {
 }
 
 /// Load from KeyboardInterface (TUI async).
-pub async fn load_async(keyboard: &KeyboardInterface) -> Result<KeyMap, KeyboardError> {
+pub fn load_async(keyboard: &KeyboardInterface) -> Result<KeyMap, KeyboardError> {
     let key_count = keyboard.key_count() as usize;
-    let base0 = keyboard.get_keymatrix(0, KEYMATRIX_PAGES).await?;
-    let base1 = keyboard.get_keymatrix(1, KEYMATRIX_PAGES).await?;
-    let fn_layer = keyboard.get_fn_keymatrix(0, 0, KEYMATRIX_PAGES).await.ok();
+    let base0 = keyboard.get_keymatrix(0, KEYMATRIX_PAGES)?;
+    let base1 = keyboard.get_keymatrix(1, KEYMATRIX_PAGES)?;
+    let fn_layer = keyboard.get_fn_keymatrix(0, 0, KEYMATRIX_PAGES).ok();
 
     Ok(KeyMap::from_raw(&RawKeyMapData {
         base0,
@@ -255,14 +255,13 @@ pub fn set_key_sync(
 }
 
 /// Write a key config via KeyboardInterface (TUI async).
-pub async fn set_key_async(
+pub fn set_key_async(
     kb: &KeyboardInterface,
     index: u8,
     layer: Layer,
     action: &KeyAction,
 ) -> Result<(), KeyboardError> {
     kb.set_key_config(0, index, layer.wire_layer(), action.to_config_bytes())
-        .await
 }
 
 /// Reset a key to default via SyncKeyboard (CLI).
@@ -271,12 +270,12 @@ pub fn reset_key_sync(kb: &SyncKeyboard, index: u8, layer: Layer) -> Result<(), 
 }
 
 /// Reset a key to default via KeyboardInterface (TUI async).
-pub async fn reset_key_async(
+pub fn reset_key_async(
     kb: &KeyboardInterface,
     index: u8,
     layer: Layer,
 ) -> Result<(), KeyboardError> {
-    kb.reset_key(layer.wire_layer(), index).await
+    kb.reset_key(layer.wire_layer(), index)
 }
 
 // ---------------------------------------------------------------------------

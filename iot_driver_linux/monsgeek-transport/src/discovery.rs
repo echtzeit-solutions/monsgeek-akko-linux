@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use hidapi::HidApi;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -24,19 +23,15 @@ use crate::types::{DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, Transp
 use crate::Transport;
 
 /// Device discovery abstraction
-#[async_trait]
 pub trait DeviceDiscovery: Send + Sync {
     /// List currently available devices
-    async fn list_devices(&self) -> Result<Vec<DiscoveredDevice>, TransportError>;
+    fn list_devices(&self) -> Result<Vec<DiscoveredDevice>, TransportError>;
 
     /// Open a specific device
-    async fn open_device(
-        &self,
-        device: &DiscoveredDevice,
-    ) -> Result<Arc<dyn Transport>, TransportError>;
+    fn open_device(&self, device: &DiscoveredDevice) -> Result<Arc<dyn Transport>, TransportError>;
 
     /// Subscribe to hot-plug events
-    async fn watch(&self) -> Result<broadcast::Receiver<DiscoveryEvent>, TransportError>;
+    fn watch(&self) -> Result<broadcast::Receiver<DiscoveryEvent>, TransportError>;
 }
 
 /// HID device discovery for wired and dongle connections
@@ -151,9 +146,8 @@ impl HidDiscovery {
     }
 }
 
-#[async_trait]
 impl DeviceDiscovery for HidDiscovery {
-    async fn list_devices(&self) -> Result<Vec<DiscoveredDevice>, TransportError> {
+    fn list_devices(&self) -> Result<Vec<DiscoveredDevice>, TransportError> {
         let api = HidApi::new().map_err(|e| TransportError::HidError(e.to_string()))?;
         let mut devices = Vec::new();
 
@@ -215,10 +209,7 @@ impl DeviceDiscovery for HidDiscovery {
         Ok(devices)
     }
 
-    async fn open_device(
-        &self,
-        device: &DiscoveredDevice,
-    ) -> Result<Arc<dyn Transport>, TransportError> {
+    fn open_device(&self, device: &DiscoveredDevice) -> Result<Arc<dyn Transport>, TransportError> {
         let api = HidApi::new().map_err(|e| TransportError::HidError(e.to_string()))?;
 
         // Create appropriate transport based on type
@@ -323,7 +314,7 @@ impl DeviceDiscovery for HidDiscovery {
         Ok(transport)
     }
 
-    async fn watch(&self) -> Result<broadcast::Receiver<DiscoveryEvent>, TransportError> {
+    fn watch(&self) -> Result<broadcast::Receiver<DiscoveryEvent>, TransportError> {
         // TODO: Implement udev hot-plug monitoring
         // For now, just return a receiver that won't get events
         warn!("Hot-plug monitoring not yet implemented");
@@ -355,26 +346,21 @@ impl HidDiscovery {
     /// Returns a list of all discovered devices with their probe results,
     /// sorted by preference (Bluetooth > Dongle > Wired) with responsive
     /// devices first.
-    pub async fn probe_devices(&self) -> Result<Vec<ProbedDevice>, TransportError> {
+    pub fn probe_devices(&self) -> Result<Vec<ProbedDevice>, TransportError> {
         use crate::protocol::cmd;
         use crate::ChecksumType;
 
-        let devices = self.list_devices().await?;
+        let devices = self.list_devices()?;
         let mut probed = Vec::with_capacity(devices.len());
 
         for device in devices {
-            let probe_result = match self.open_device(&device).await {
+            let probe_result = match self.open_device(&device) {
                 Ok(raw_transport) => {
                     // Wrap with FlowControlTransport for probing
                     let transport = FlowControlTransport::new(raw_transport);
-                    // Try to query device ID with short timeout
-                    match tokio::time::timeout(
-                        std::time::Duration::from_millis(800),
-                        transport.query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7),
-                    )
-                    .await
-                    {
-                        Ok(Ok(resp)) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
+                    // Try to query device ID
+                    match transport.query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7) {
+                        Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
                             let device_id =
                                 u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]);
                             let version = if resp.len() >= 9 {
@@ -388,7 +374,7 @@ impl HidDiscovery {
                             );
                             (true, Some(device_id), version)
                         }
-                        Ok(Ok(resp)) => {
+                        Ok(resp) => {
                             debug!(
                                 "Probe {:?}: unexpected response {:02X?}",
                                 device.info.transport_type,
@@ -396,12 +382,8 @@ impl HidDiscovery {
                             );
                             (false, None, None)
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             debug!("Probe {:?}: error {}", device.info.transport_type, e);
-                            (false, None, None)
-                        }
-                        Err(_) => {
-                            debug!("Probe {:?}: timeout", device.info.transport_type);
                             (false, None, None)
                         }
                     }
@@ -458,8 +440,8 @@ impl HidDiscovery {
     /// - If only one device responds, use that one
     /// - If multiple respond, prefer Bluetooth > Dongle > Wired
     /// - If none respond but devices exist, try to open the preferred transport type anyway
-    pub async fn open_preferred(&self) -> Result<Arc<dyn Transport>, TransportError> {
-        let probed = self.probe_devices().await?;
+    pub fn open_preferred(&self) -> Result<Arc<dyn Transport>, TransportError> {
+        let probed = self.probe_devices()?;
 
         if probed.is_empty() {
             return Err(TransportError::DeviceNotFound("No devices found".into()));
@@ -493,18 +475,18 @@ impl HidDiscovery {
             &probed[0].device
         };
 
-        self.open_device(chosen).await
+        self.open_device(chosen)
     }
 
     /// Get all responsive devices (for multi-device scenarios)
     ///
     /// Returns transports for all devices that responded to the probe.
-    pub async fn open_all_responsive(&self) -> Result<Vec<Arc<dyn Transport>>, TransportError> {
-        let probed = self.probe_devices().await?;
+    pub fn open_all_responsive(&self) -> Result<Vec<Arc<dyn Transport>>, TransportError> {
+        let probed = self.probe_devices()?;
         let mut transports = Vec::new();
 
         for p in probed.iter().filter(|p| p.responsive) {
-            match self.open_device(&p.device).await {
+            match self.open_device(&p.device) {
                 Ok(t) => transports.push(t),
                 Err(e) => warn!("Failed to reopen {:?}: {}", p.device.info.transport_type, e),
             }

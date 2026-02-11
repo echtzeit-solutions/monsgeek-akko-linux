@@ -1,12 +1,8 @@
-//! Synchronous adapter for async transports
+//! Synchronous convenience wrappers
 //!
-//! This module provides blocking wrappers around the async transport layer,
-//! enabling use in synchronous code (like TUI worker threads) without
-//! requiring a full async runtime refactor.
-//!
-//! Note: When running within an async runtime (e.g., under `#[tokio::main]`),
-//! these functions use `futures::executor::block_on` instead of creating
-//! a new runtime to avoid nesting issues.
+//! Now that `Transport` and `FlowControlTransport` are natively synchronous,
+//! `SyncTransport` is just a thin convenience wrapper.  Kept for backward
+//! compatibility with existing consumers (CLI, TUI worker threads).
 
 use std::sync::Arc;
 
@@ -15,68 +11,59 @@ use crate::flow_control::FlowControlTransport;
 use crate::types::{ChecksumType, TransportDeviceInfo, VendorEvent};
 use crate::{DeviceDiscovery, HidDiscovery, Transport};
 
-/// Block on a future, handling both runtime and non-runtime contexts
-fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    // Use futures crate's block_on which doesn't require a runtime
-    futures::executor::block_on(f)
-}
-
-/// Synchronous wrapper around any async transport
+/// Convenience wrapper around `FlowControlTransport`.
 ///
-/// This provides blocking versions of all Transport methods.
+/// Since the transport layer is now fully synchronous, this is a thin
+/// delegation layer kept for API compatibility.
 pub struct SyncTransport {
     transport: Arc<FlowControlTransport>,
 }
 
 impl SyncTransport {
-    /// Wrap an existing flow-controlled transport for synchronous use
+    /// Wrap an existing flow-controlled transport
     pub fn new(transport: Arc<FlowControlTransport>) -> Self {
         Self { transport }
     }
 
     /// Open any supported device (auto-detecting wired vs dongle)
     pub fn open_any() -> Result<Self, TransportError> {
-        let raw_transport = block_on(async {
-            let discovery = HidDiscovery::new();
-            let devices = discovery.list_devices().await?;
+        let discovery = HidDiscovery::new();
+        let devices = discovery.list_devices()?;
 
-            if devices.is_empty() {
-                return Err(TransportError::DeviceNotFound(
-                    "No supported device found".into(),
-                ));
-            }
+        if devices.is_empty() {
+            return Err(TransportError::DeviceNotFound(
+                "No supported device found".into(),
+            ));
+        }
 
-            // Open the first device
-            discovery.open_device(&devices[0]).await
-        })?;
-
+        let raw_transport = discovery.open_device(&devices[0])?;
         let transport = Arc::new(FlowControlTransport::new(raw_transport));
         Ok(Self { transport })
     }
 
-    /// Send a command without expecting response (blocking)
+    /// Send a command without expecting response
     pub fn send_command(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
-        block_on(self.transport.send_command(cmd, data, checksum))
+        self.transport.send_command(cmd, data, checksum)
     }
 
-    /// Send a command and wait for response (blocking)
+    /// Send a command and wait for response
     pub fn query_command(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        block_on(self.transport.query_command(cmd, data, checksum))
+        self.transport.query_command(cmd, data, checksum)
     }
 
-    /// Read a vendor event (blocking)
+    /// Read a vendor event (blocking up to timeout)
     pub fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        block_on(self.transport.read_event(timeout_ms))
+        self.transport.read_event(timeout_ms)
     }
 
     /// Get device info
@@ -84,24 +71,24 @@ impl SyncTransport {
         self.transport.device_info()
     }
 
-    /// Check if connected (blocking)
+    /// Check if connected
     pub fn is_connected(&self) -> bool {
-        block_on(self.transport.is_connected())
+        self.transport.is_connected()
     }
 
-    /// Close the transport (blocking)
+    /// Close the transport
     pub fn close(&self) -> Result<(), TransportError> {
-        block_on(self.transport.close())
+        self.transport.close()
     }
 
-    /// Send command and wait for any non-empty response without echo check (blocking)
+    /// Send command and wait for any non-empty response without echo check
     pub fn query_raw(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<Vec<u8>, TransportError> {
-        block_on(self.transport.query_raw(cmd, data, checksum))
+        self.transport.query_raw(cmd, data, checksum)
     }
 
     /// Get the underlying flow-controlled transport
@@ -112,19 +99,14 @@ impl SyncTransport {
 
 /// List all connected devices synchronously
 pub fn list_devices_sync() -> Result<Vec<crate::DiscoveredDevice>, TransportError> {
-    block_on(async {
-        let discovery = HidDiscovery::new();
-        discovery.list_devices().await
-    })
+    let discovery = HidDiscovery::new();
+    discovery.list_devices()
 }
 
 /// Open a specific device synchronously
 pub fn open_device_sync(device: &crate::DiscoveredDevice) -> Result<SyncTransport, TransportError> {
-    let raw_transport = block_on(async {
-        let discovery = HidDiscovery::new();
-        discovery.open_device(device).await
-    })?;
-
+    let discovery = HidDiscovery::new();
+    let raw_transport = discovery.open_device(device)?;
     let transport = Arc::new(FlowControlTransport::new(raw_transport));
     Ok(SyncTransport { transport })
 }

@@ -18,7 +18,6 @@
 //! - `btleplug` crate for cross-platform BLE support
 //! - Platform-specific APIs (BlueZ on Linux) for advanced features
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::error::TransportError;
@@ -56,14 +55,12 @@ impl BluetoothTransport {
     /// # Returns
     ///
     /// Empty vec as Bluetooth is not yet implemented.
-    pub async fn scan_devices(
-        _timeout_ms: u32,
-    ) -> Result<Vec<BluetoothDeviceInfo>, TransportError> {
+    pub fn scan_devices(_timeout_ms: u32) -> Result<Vec<BluetoothDeviceInfo>, TransportError> {
         Ok(Vec::new())
     }
 
     /// Pair with a keyboard (stub)
-    pub async fn pair(&self) -> Result<(), TransportError> {
+    pub fn pair(&self) -> Result<(), TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))
@@ -81,9 +78,8 @@ pub struct BluetoothDeviceInfo {
     pub rssi: Option<i16>,
 }
 
-#[async_trait]
 impl Transport for BluetoothTransport {
-    async fn send_report(
+    fn send_report(
         &self,
         _cmd: u8,
         _data: &[u8],
@@ -94,13 +90,13 @@ impl Transport for BluetoothTransport {
         ))
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))
     }
 
-    async fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+    fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))
@@ -110,15 +106,15 @@ impl Transport for BluetoothTransport {
         &self.device_info
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         false
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
+    fn close(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))
@@ -137,14 +133,14 @@ impl BluetoothDiscovery {
     }
 
     /// Start scanning for devices
-    pub async fn start_scan(&self) -> Result<(), TransportError> {
+    pub fn start_scan(&self) -> Result<(), TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))
     }
 
     /// Stop scanning
-    pub async fn stop_scan(&self) -> Result<(), TransportError> {
+    pub fn stop_scan(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
@@ -154,7 +150,7 @@ impl BluetoothDiscovery {
     }
 
     /// Connect to a device
-    pub async fn connect(&self, _address: &str) -> Result<Arc<BluetoothTransport>, TransportError> {
+    pub fn connect(&self, _address: &str) -> Result<Arc<BluetoothTransport>, TransportError> {
         Err(TransportError::BluetoothError(
             "Bluetooth transport not yet implemented".into(),
         ))

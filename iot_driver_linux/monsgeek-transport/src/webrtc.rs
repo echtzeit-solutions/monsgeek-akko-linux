@@ -35,7 +35,6 @@
 //! - `webrtc-rs` crate for WebRTC stack
 //! - `tokio-tungstenite` for WebSocket signaling
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::error::TransportError;
@@ -95,7 +94,7 @@ impl WebRtcTransport {
     /// # Note
     ///
     /// This currently returns an error as WebRTC is not yet implemented.
-    pub async fn new(
+    pub fn new(
         _config: WebRtcConfig,
         _underlying: Option<Arc<dyn Transport>>,
     ) -> Result<Self, TransportError> {
@@ -105,14 +104,14 @@ impl WebRtcTransport {
     }
 
     /// Create a WebRTC transport as a client connecting to a remote keyboard
-    pub async fn connect_remote(_config: WebRtcConfig) -> Result<Self, TransportError> {
+    pub fn connect_remote(_config: WebRtcConfig) -> Result<Self, TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
     }
 
     /// Create a WebRTC transport as a server exposing a local keyboard
-    pub async fn expose_local(
+    pub fn expose_local(
         _config: WebRtcConfig,
         _transport: Arc<dyn Transport>,
     ) -> Result<Self, TransportError> {
@@ -147,9 +146,8 @@ pub enum WebRtcState {
     Closed,
 }
 
-#[async_trait]
 impl Transport for WebRtcTransport {
-    async fn send_report(
+    fn send_report(
         &self,
         _cmd: u8,
         _data: &[u8],
@@ -160,13 +158,13 @@ impl Transport for WebRtcTransport {
         ))
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
     }
 
-    async fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+    fn read_event(&self, _timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
@@ -176,15 +174,15 @@ impl Transport for WebRtcTransport {
         &self.device_info
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         false
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
+    fn close(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
@@ -223,14 +221,14 @@ impl WebRtcAgent {
     }
 
     /// Start the agent (connect to signaling server)
-    pub async fn start(&self) -> Result<(), TransportError> {
+    pub fn start(&self) -> Result<(), TransportError> {
         Err(TransportError::WebRtcError(
             "WebRTC transport not yet implemented".into(),
         ))
     }
 
     /// Stop the agent
-    pub async fn stop(&self) -> Result<(), TransportError> {
+    pub fn stop(&self) -> Result<(), TransportError> {
         Ok(())
     }
 

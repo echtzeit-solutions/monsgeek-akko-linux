@@ -17,9 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use parking_lot::Mutex;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
 use crate::error::TransportError;
@@ -42,8 +41,7 @@ const MAX_CACHE_SIZE: usize = 16;
 /// A concrete transport wrapper that adds flow control (retries, echo matching,
 /// dongle polling) on top of a raw `Transport`.
 ///
-/// Consumers that need query semantics (TUI, KeyboardInterface) hold this.
-/// The gRPC layer uses the raw `Transport` directly.
+/// All methods are synchronous (blocking).
 pub struct FlowControlTransport {
     inner: Arc<dyn Transport>,
     flow: FlowState,
@@ -52,20 +50,20 @@ pub struct FlowControlTransport {
 enum FlowState {
     /// Wired / BLE: simple send → delay → read → check echo.
     /// The `query_lock` serializes command-response cycles — without it,
-    /// concurrent tasks interleave their sends/reads and get echo mismatches.
+    /// concurrent callers interleave their sends/reads and get echo mismatches.
     Simple {
         command_delay_ms: u64,
-        query_lock: tokio::sync::Mutex<()>,
+        query_lock: std::sync::Mutex<()>,
     },
     /// Dongle: serialized worker, adaptive timing, response cache
     Dongle {
-        request_tx: mpsc::Sender<CommandRequest>,
+        request_tx: std::sync::mpsc::Sender<CommandRequest>,
         _worker_running: Arc<AtomicBool>,
         state: Arc<DongleSharedState>,
     },
 }
 
-// ---- Dongle internals (moved from hid_dongle.rs) ----
+// ---- Dongle internals ----
 
 /// Shared state between transport handle and dongle worker
 struct DongleSharedState {
@@ -143,7 +141,7 @@ struct CommandRequest {
     cmd: u8,
     data: Vec<u8>,
     checksum: ChecksumType,
-    response_tx: oneshot::Sender<Result<Vec<u8>, TransportError>>,
+    response_tx: std::sync::mpsc::Sender<Result<Vec<u8>, TransportError>>,
     raw_mode: bool,
     fire_and_forget: bool,
 }
@@ -169,21 +167,19 @@ impl FlowControlTransport {
                     wake_mode: AtomicBool::new(false),
                 });
 
-                let (request_tx, request_rx) = mpsc::channel(dongle_timing::REQUEST_QUEUE_SIZE);
+                let (request_tx, request_rx) = std::sync::mpsc::channel();
                 let worker_running = Arc::new(AtomicBool::new(true));
 
                 let worker_inner = Arc::clone(&inner);
                 let worker_state = Arc::clone(&state);
                 let worker_flag = Arc::clone(&worker_running);
+
+                // Dedicated thread for dongle command serialization.
+                // Fully synchronous — no async runtime needed.
                 std::thread::Builder::new()
                     .name("flow-dongle-worker".into())
                     .spawn(move || {
-                        futures::executor::block_on(dongle_command_worker(
-                            worker_inner,
-                            worker_state,
-                            request_rx,
-                            worker_flag,
-                        ));
+                        dongle_command_worker(worker_inner, worker_state, request_rx, worker_flag);
                     })
                     .expect("Failed to spawn dongle flow-control worker");
 
@@ -195,11 +191,11 @@ impl FlowControlTransport {
             }
             TransportType::Bluetooth => FlowState::Simple {
                 command_delay_ms: 150,
-                query_lock: tokio::sync::Mutex::new(()),
+                query_lock: std::sync::Mutex::new(()),
             },
             _ => FlowState::Simple {
                 command_delay_ms: timing::DEFAULT_DELAY_MS,
-                query_lock: tokio::sync::Mutex::new(()),
+                query_lock: std::sync::Mutex::new(()),
             },
         };
 
@@ -216,7 +212,7 @@ impl FlowControlTransport {
     // ========================================================================
 
     /// Send command and wait for echoed response (validates cmd byte match).
-    pub async fn query_command(
+    pub fn query_command(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -227,19 +223,17 @@ impl FlowControlTransport {
                 command_delay_ms,
                 query_lock,
             } => {
-                let _guard = query_lock.lock().await;
+                let _guard = query_lock.lock().unwrap();
                 self.simple_query(cmd_byte, data, checksum, *command_delay_ms, false)
-                    .await
             }
             FlowState::Dongle { request_tx, .. } => {
                 self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, false)
-                    .await
             }
         }
     }
 
     /// Send command and wait for any non-empty response (no echo check).
-    pub async fn query_raw(
+    pub fn query_raw(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -250,19 +244,17 @@ impl FlowControlTransport {
                 command_delay_ms,
                 query_lock,
             } => {
-                let _guard = query_lock.lock().await;
+                let _guard = query_lock.lock().unwrap();
                 self.simple_query(cmd_byte, data, checksum, *command_delay_ms, true)
-                    .await
             }
             FlowState::Dongle { request_tx, .. } => {
                 self.dongle_dispatch(request_tx, cmd_byte, data, checksum, true, false)
-                    .await
             }
         }
     }
 
     /// Fire-and-forget command with default delay.
-    pub async fn send_command(
+    pub fn send_command(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -273,23 +265,22 @@ impl FlowControlTransport {
                 command_delay_ms,
                 query_lock,
             } => {
-                let _guard = query_lock.lock().await;
-                self.inner.send_report(cmd_byte, data, checksum).await?;
+                let _guard = query_lock.lock().unwrap();
+                self.inner.send_report(cmd_byte, data, checksum)?;
                 if *command_delay_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(*command_delay_ms)).await;
+                    std::thread::sleep(Duration::from_millis(*command_delay_ms));
                 }
                 Ok(())
             }
             FlowState::Dongle { request_tx, .. } => {
-                self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, true)
-                    .await?;
+                self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, true)?;
                 Ok(())
             }
         }
     }
 
     /// Fire-and-forget command with custom delay.
-    pub async fn send_command_with_delay(
+    pub fn send_command_with_delay(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -298,18 +289,17 @@ impl FlowControlTransport {
     ) -> Result<(), TransportError> {
         match &self.flow {
             FlowState::Simple { query_lock, .. } => {
-                let _guard = query_lock.lock().await;
-                self.inner.send_report(cmd_byte, data, checksum).await?;
+                let _guard = query_lock.lock().unwrap();
+                self.inner.send_report(cmd_byte, data, checksum)?;
                 if delay_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    std::thread::sleep(Duration::from_millis(delay_ms));
                 }
                 Ok(())
             }
             FlowState::Dongle { request_tx, .. } => {
-                self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, true)
-                    .await?;
+                self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, true)?;
                 if delay_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    std::thread::sleep(Duration::from_millis(delay_ms));
                 }
                 Ok(())
             }
@@ -318,7 +308,7 @@ impl FlowControlTransport {
 
     // ---- Simple flow ----
 
-    async fn simple_query(
+    fn simple_query(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -327,21 +317,16 @@ impl FlowControlTransport {
         raw_mode: bool,
     ) -> Result<Vec<u8>, TransportError> {
         for attempt in 0..timing::QUERY_RETRIES {
-            if self
-                .inner
-                .send_report(cmd_byte, data, checksum)
-                .await
-                .is_err()
-            {
+            if self.inner.send_report(cmd_byte, data, checksum).is_err() {
                 debug!("Send attempt {} failed for 0x{:02X}", attempt, cmd_byte);
                 continue;
             }
 
             if delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                std::thread::sleep(Duration::from_millis(delay_ms));
             }
 
-            match self.inner.read_report().await {
+            match self.inner.read_report() {
                 Ok(resp) => {
                     if raw_mode {
                         return Ok(resp);
@@ -366,16 +351,16 @@ impl FlowControlTransport {
 
     // ---- Dongle dispatch ----
 
-    async fn dongle_dispatch(
+    fn dongle_dispatch(
         &self,
-        request_tx: &mpsc::Sender<CommandRequest>,
+        request_tx: &std::sync::mpsc::Sender<CommandRequest>,
         cmd_byte: u8,
         data: &[u8],
         checksum: ChecksumType,
         raw_mode: bool,
         fire_and_forget: bool,
     ) -> Result<Vec<u8>, TransportError> {
-        let (response_tx, response_rx) = oneshot::channel();
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
 
         request_tx
             .send(CommandRequest {
@@ -386,11 +371,10 @@ impl FlowControlTransport {
                 raw_mode,
                 fire_and_forget,
             })
-            .await
             .map_err(|_| TransportError::Disconnected)?;
 
         response_rx
-            .await
+            .recv()
             .map_err(|_| TransportError::Disconnected)?
     }
 }
@@ -399,31 +383,26 @@ impl FlowControlTransport {
 // Transport delegation (so FlowControlTransport can be used as dyn Transport)
 // ============================================================================
 
-#[async_trait]
 impl Transport for FlowControlTransport {
-    // ---- Raw I/O: delegate to inner ----
-
-    async fn send_report(
+    fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
-        self.inner.send_report(cmd, data, checksum).await
+        self.inner.send_report(cmd, data, checksum)
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
-        self.inner.read_report().await
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+        self.inner.read_report()
     }
 
-    async fn send_flush(&self) -> Result<(), TransportError> {
-        self.inner.send_flush().await
+    fn send_flush(&self) -> Result<(), TransportError> {
+        self.inner.send_flush()
     }
 
-    // ---- Housekeeping: delegate to inner ----
-
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        self.inner.read_event(timeout_ms).await
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+        self.inner.read_event(timeout_ms)
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
@@ -434,16 +413,16 @@ impl Transport for FlowControlTransport {
         self.inner.device_info()
     }
 
-    async fn is_connected(&self) -> bool {
-        self.inner.is_connected().await
+    fn is_connected(&self) -> bool {
+        self.inner.is_connected()
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
-        self.inner.close().await
+    fn close(&self) -> Result<(), TransportError> {
+        self.inner.close()
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
-        self.inner.get_battery_status().await
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+        self.inner.get_battery_status()
     }
 }
 
@@ -454,29 +433,26 @@ impl Transport for FlowControlTransport {
 /// Extension trait for sending typed commands via FlowControlTransport
 impl FlowControlTransport {
     /// Send a typed command (fire-and-forget)
-    pub async fn send<C: HidCommand + Send + Sync>(&self, cmd: &C) -> Result<(), TransportError> {
-        self.send_command(C::CMD, &cmd.to_data(), C::CHECKSUM).await
+    pub fn send<C: HidCommand + Send + Sync>(&self, cmd: &C) -> Result<(), TransportError> {
+        self.send_command(C::CMD, &cmd.to_data(), C::CHECKSUM)
     }
 
     /// Send a typed command with custom delay (fire-and-forget)
-    pub async fn send_with_delay<C: HidCommand + Send + Sync>(
+    pub fn send_with_delay<C: HidCommand + Send + Sync>(
         &self,
         cmd: &C,
         delay_ms: u64,
     ) -> Result<(), TransportError> {
         self.send_command_with_delay(C::CMD, &cmd.to_data(), C::CHECKSUM, delay_ms)
-            .await
     }
 
     /// Query and parse a typed response (validates command echo)
-    pub async fn query<C, R>(&self, cmd: &C) -> Result<R, TransportError>
+    pub fn query<C, R>(&self, cmd: &C) -> Result<R, TransportError>
     where
         C: HidCommand + Send + Sync,
         R: HidResponse,
     {
-        let resp = self
-            .query_command(C::CMD, &cmd.to_data(), C::CHECKSUM)
-            .await?;
+        let resp = self.query_command(C::CMD, &cmd.to_data(), C::CHECKSUM)?;
         R::parse(&resp).map_err(|e| match e {
             ParseError::CommandMismatch { expected, got } => TransportError::InvalidResponse {
                 expected,
@@ -487,29 +463,29 @@ impl FlowControlTransport {
     }
 
     /// Query without command echo validation (for special responses)
-    pub async fn query_no_echo<C, R>(&self, cmd: &C) -> Result<R, TransportError>
+    pub fn query_no_echo<C, R>(&self, cmd: &C) -> Result<R, TransportError>
     where
         C: HidCommand + Send + Sync,
         R: HidResponse,
     {
-        let resp = self.query_raw(C::CMD, &cmd.to_data(), C::CHECKSUM).await?;
+        let resp = self.query_raw(C::CMD, &cmd.to_data(), C::CHECKSUM)?;
         R::parse(&resp).map_err(|e| TransportError::Internal(e.to_string()))
     }
 }
 
 // ============================================================================
-// Dongle worker
+// Dongle worker (fully synchronous)
 // ============================================================================
 
-async fn dongle_command_worker(
+fn dongle_command_worker(
     inner: Arc<dyn Transport>,
     state: Arc<DongleSharedState>,
-    mut rx: mpsc::Receiver<CommandRequest>,
+    rx: std::sync::mpsc::Receiver<CommandRequest>,
     running: Arc<AtomicBool>,
 ) {
     debug!("Dongle flow-control worker started");
 
-    while let Some(req) = rx.recv().await {
+    while let Ok(req) = rx.recv() {
         let result = if req.fire_and_forget {
             execute_send_only(&inner, &state, req.cmd, &req.data, req.checksum)
         } else {
@@ -541,11 +517,8 @@ fn execute_send_only(
         cmd_byte
     );
 
-    futures::executor::block_on(async {
-        inner.send_report(cmd_byte, data, checksum).await?;
-        inner.send_flush().await?;
-        Ok::<(), TransportError>(())
-    })?;
+    inner.send_report(cmd_byte, data, checksum)?;
+    inner.send_flush()?;
 
     std::thread::sleep(Duration::from_millis(dongle_timing::POLL_CYCLE_MS * 5));
     Ok(Vec::new())
@@ -578,7 +551,7 @@ fn execute_query(
 
     // Send command
     debug!("Dongle sending command 0x{:02X}", cmd_byte);
-    futures::executor::block_on(inner.send_report(cmd_byte, data, checksum))?;
+    inner.send_report(cmd_byte, data, checksum)?;
 
     // Get adaptive initial wait
     let initial_wait = state.latency_tracker.lock().estimate_initial_wait();
@@ -590,9 +563,9 @@ fn execute_query(
         poll_count += 1;
 
         // Flush + read
-        futures::executor::block_on(inner.send_flush())?;
+        inner.send_flush()?;
 
-        if let Ok(resp) = futures::executor::block_on(inner.read_report()) {
+        if let Ok(resp) = inner.read_report() {
             let resp_cmd = resp.first().copied().unwrap_or(0);
 
             if raw_mode {

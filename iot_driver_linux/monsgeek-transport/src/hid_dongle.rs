@@ -7,9 +7,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
@@ -81,9 +80,8 @@ impl HidDongleTransport {
     }
 }
 
-#[async_trait]
 impl Transport for HidDongleTransport {
-    async fn send_report(
+    fn send_report(
         &self,
         cmd_byte: u8,
         data: &[u8],
@@ -95,7 +93,7 @@ impl Transport for HidDongleTransport {
         Ok(())
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let device = self.device.lock();
         let mut buf = vec![0u8; REPORT_SIZE];
         buf[0] = 0;
@@ -103,7 +101,7 @@ impl Transport for HidDongleTransport {
         Ok(buf[1..].to_vec())
     }
 
-    async fn send_flush(&self) -> Result<(), TransportError> {
+    fn send_flush(&self) -> Result<(), TransportError> {
         let device = self.device.lock();
         let mut buf = vec![0u8; REPORT_SIZE];
         buf[0] = 0;
@@ -113,21 +111,22 @@ impl Transport for HidDongleTransport {
         Ok(())
     }
 
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         if let Some(ref tx) = self.event_tx {
             let mut rx = tx.subscribe();
-            let timeout = Duration::from_millis(timeout_ms as u64);
-            match tokio::time::timeout(timeout, rx.recv()).await {
-                Ok(Ok(timestamped)) => Ok(Some(timestamped.event)),
-                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
-                    debug!("Dongle event receiver lagged by {} events", n);
-                    match rx.recv().await {
-                        Ok(timestamped) => Ok(Some(timestamped.event)),
-                        Err(_) => Ok(None),
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+            loop {
+                match rx.try_recv() {
+                    Ok(timestamped) => return Ok(Some(timestamped.event)),
+                    Err(broadcast::error::TryRecvError::Empty) => {
+                        if Instant::now() >= deadline {
+                            return Ok(None);
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
                     }
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
                 }
-                Ok(Err(broadcast::error::RecvError::Closed)) => Ok(None),
-                Err(_) => Ok(None), // Timeout
             }
         } else {
             Ok(None)
@@ -142,30 +141,25 @@ impl Transport for HidDongleTransport {
         &self.info
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         let device = self.device.lock();
         device.get_product_string().is_ok()
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
+    fn close(&self) -> Result<(), TransportError> {
         Ok(())
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         let device = self.device.lock();
 
-        // Send F7 command to trigger battery refresh
         let buf = protocol::build_command(cmd::BATTERY_REFRESH, &[], ChecksumType::Bit7);
         device.send_feature_report(&buf)?;
 
-        // Read cached value via feature report 0x05
         let mut buf = vec![0u8; REPORT_SIZE];
         buf[0] = 0x05;
-
         device.get_feature_report(&mut buf)?;
 
-        // Parse battery response:
-        // [1] = level (0-100), [3] = idle flag, [4] = online flag
         let level = buf[1];
         let idle = buf.len() > 3 && buf[3] != 0;
         let online = buf.len() > 4 && buf[4] != 0;

@@ -33,7 +33,6 @@ use crate::{
     ParsedCommand, ParsedResponse, TimestampedEvent, Transport, TransportDeviceInfo,
     TransportError, VendorEvent,
 };
-use async_trait::async_trait;
 use crossterm::style::Stylize;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -818,9 +817,8 @@ fn decode_utf16le(data: &[u8]) -> Option<String> {
     }
 }
 
-#[async_trait]
 impl Transport for Printer {
-    async fn send_report(
+    fn send_report(
         &self,
         cmd: u8,
         data: &[u8],
@@ -831,35 +829,31 @@ impl Transport for Printer {
             .as_ref()
             .ok_or(TransportError::Disconnected)?
             .send_report(cmd, data, checksum)
-            .await
     }
 
-    async fn read_report(&self) -> Result<Vec<u8>, TransportError> {
+    fn read_report(&self) -> Result<Vec<u8>, TransportError> {
         let result = self
             .inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
-            .read_report()
-            .await?;
+            .read_report()?;
         self.on_response(&result, None, None);
         Ok(result)
     }
 
-    async fn send_flush(&self) -> Result<(), TransportError> {
+    fn send_flush(&self) -> Result<(), TransportError> {
         self.inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
             .send_flush()
-            .await
     }
 
-    async fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
+    fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
         let event = self
             .inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
-            .read_event(timeout_ms)
-            .await?;
+            .read_event(timeout_ms)?;
         if let Some(ref e) = event {
             self.on_event(e, None, None);
         }
@@ -867,34 +861,31 @@ impl Transport for Printer {
     }
 
     fn device_info(&self) -> &TransportDeviceInfo {
-        // In standalone mode, we don't have device info - panic is acceptable
-        // as this should only be called in live mode
         self.inner
             .as_ref()
             .expect("device_info() called on standalone Printer")
             .device_info()
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         match &self.inner {
-            Some(inner) => inner.is_connected().await,
+            Some(inner) => inner.is_connected(),
             None => false,
         }
     }
 
-    async fn close(&self) -> Result<(), TransportError> {
+    fn close(&self) -> Result<(), TransportError> {
         match &self.inner {
-            Some(inner) => inner.close().await,
+            Some(inner) => inner.close(),
             None => Ok(()),
         }
     }
 
-    async fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+    fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         self.inner
             .as_ref()
             .ok_or(TransportError::Disconnected)?
             .get_battery_status()
-            .await
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {

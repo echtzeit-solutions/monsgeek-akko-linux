@@ -54,35 +54,31 @@ pub fn open_preferred_transport(
 ) -> Result<SyncTransport, Box<dyn std::error::Error>> {
     use monsgeek_transport::{DeviceDiscovery, HidDiscovery};
 
-    // Use futures block_on for sync context
-    let transport: Arc<dyn monsgeek_transport::Transport> = futures::executor::block_on(async {
-        // Create discovery with printer config - wrapping happens automatically in open_device()
-        let discovery = match printer_config {
-            Some(config) => HidDiscovery::with_printer_config(config),
-            None => HidDiscovery::new(),
-        };
-        let devices = discovery.list_devices().await?;
+    let discovery = match printer_config {
+        Some(config) => HidDiscovery::with_printer_config(config),
+        None => HidDiscovery::new(),
+    };
+    let devices = discovery.list_devices()?;
 
-        if devices.is_empty() {
-            return Err(monsgeek_transport::TransportError::DeviceNotFound(
-                "No supported device found".into(),
-            ));
-        }
+    if devices.is_empty() {
+        return Err(monsgeek_transport::TransportError::DeviceNotFound(
+            "No supported device found".into(),
+        )
+        .into());
+    }
 
-        // Prefer Bluetooth for vendor protocol testing (then dongle, then wired)
-        let preferred = devices
-            .iter()
-            .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
-            .or_else(|| {
-                devices
-                    .iter()
-                    .find(|d| d.info.transport_type == monsgeek_transport::TransportType::HidDongle)
-            })
-            .unwrap_or(&devices[0]);
+    // Prefer Bluetooth for vendor protocol testing (then dongle, then wired)
+    let preferred = devices
+        .iter()
+        .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|d| d.info.transport_type == monsgeek_transport::TransportType::HidDongle)
+        })
+        .unwrap_or(&devices[0]);
 
-        discovery.open_device(preferred).await
-    })?;
-
+    let transport = discovery.open_device(preferred)?;
     let flow = Arc::new(FlowControlTransport::new(transport));
     Ok(SyncTransport::new(flow))
 }
