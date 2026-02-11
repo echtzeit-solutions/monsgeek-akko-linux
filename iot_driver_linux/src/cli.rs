@@ -384,6 +384,25 @@ pub enum Commands {
         r#loop: bool,
     },
 
+    /// Test LED streaming (one LED at a time, cycling colors)
+    StreamTest {
+        /// Frames per second
+        #[arg(long, default_value = "10")]
+        fps: f32,
+    },
+
+    /// Stream a GIF to keyboard LEDs via patch protocol (0xFC)
+    Stream {
+        /// GIF file path
+        file: String,
+        /// Override FPS (default: use GIF frame delays)
+        #[arg(long)]
+        fps: Option<f32>,
+        /// Loop animation continuously
+        #[arg(long)]
+        r#loop: bool,
+    },
+
     /// Set LED mode by name or number
     Mode {
         /// Mode name (breathing, wave, rainbow, etc.) or number (0-25)

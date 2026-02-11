@@ -16,6 +16,7 @@ pub mod animations;
 pub mod debug;
 pub mod firmware;
 pub mod keymap;
+pub mod led_stream;
 pub mod macros;
 pub mod query;
 pub mod reactive;

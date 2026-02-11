@@ -75,6 +75,7 @@ aya = { version = "0.13", optional = true }
 
 # GIF/Image processing
 image = { version = "0.25", default-features = false, features = ["gif", "png"] }
+gif = "0.13"
 
 # PCAP analysis
 pcap-parser = "0.16"

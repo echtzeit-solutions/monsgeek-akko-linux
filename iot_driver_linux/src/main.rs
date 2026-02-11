@@ -210,6 +210,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::GifStream { file, mode, r#loop }) => {
             commands::animations::gif_stream(&file, mode.into(), r#loop)?;
         }
+        Some(Commands::StreamTest { fps }) => {
+            commands::led_stream::stream_test(fps)?;
+        }
+        Some(Commands::Stream { file, fps, r#loop }) => {
+            commands::led_stream::stream_gif(&file, fps, r#loop)?;
+        }
         Some(Commands::Mode { mode, layer }) => {
             commands::animations::mode(&mode, layer)?;
         }
