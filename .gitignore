@@ -61,11 +61,26 @@ wine_iot/
 
 # Claude artifacts (keep .claude/plans for reference)
 .claude/projects/
+CLAUDE.local.md
 
 # Large data files that can be regenerated
 large_data.json
 outline.json
 modules.json
+
+# Firmware patch build artifacts
+firmwares/*/patch/*.o
+firmwares/*/patch/hook.bin
+firmwares/*/patch/hook.elf
+firmwares/*/patch/hooks_gen.S
+firmwares/*/patch/__pycache__/
+firmwares/*/firmware_patched.bin
+
+# Generated from Ghidra exports (regenerate via generate_patch_files.py)
+firmwares/*/patch/fw_*.h
+firmwares/*/patch/fw_symbols.ld
+firmwares/*/patch/symbols.json
+firmwares/*/patch/callgraph.*
 
 # Misc temp
 aux
