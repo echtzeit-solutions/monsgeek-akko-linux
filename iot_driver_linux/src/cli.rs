@@ -372,18 +372,6 @@ pub enum Commands {
         delay: u16,
     },
 
-    /// Stream GIF animation in real-time
-    GifStream {
-        /// GIF file path
-        file: String,
-        /// Mapping mode
-        #[arg(value_enum, default_value = "scale")]
-        mode: MappingMode,
-        /// Loop animation continuously
-        #[arg(long)]
-        r#loop: bool,
-    },
-
     /// Test LED streaming (one LED at a time, cycling colors)
     StreamTest {
         /// Frames per second

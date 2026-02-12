@@ -1,10 +1,9 @@
 //! Animation command handlers.
 
-use super::{setup_interrupt_handler, CommandResult};
+use super::CommandResult;
 use iot_driver::gif::{generate_test_animation, load_gif, print_animation_info, MappingMode};
 use iot_driver::protocol::cmd::LedMode;
 use monsgeek_keyboard::SyncKeyboard;
-use std::sync::atomic::Ordering;
 
 /// Upload GIF animation to keyboard memory
 pub fn gif(
@@ -53,43 +52,6 @@ pub fn gif(
         Ok(()) => println!("Animation uploaded! Keyboard will play it autonomously."),
         Err(e) => eprintln!("Failed to upload animation: {e}"),
     }
-    Ok(())
-}
-
-/// Stream GIF animation in real-time
-pub fn gif_stream(file: &str, mode: MappingMode, loop_anim: bool) -> CommandResult {
-    println!("Loading GIF: {file}");
-    let animation = load_gif(file, mode).map_err(|e| format!("Failed to load GIF: {e}"))?;
-
-    print_animation_info(&animation);
-
-    let keyboard = SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
-
-    let _ = keyboard.set_led_with_option(13, 4, 0, 0, 0, 0, false, 0);
-
-    let running = setup_interrupt_handler();
-
-    println!("\nStreaming animation (Ctrl+C to stop)...");
-
-    loop {
-        for (idx, frame) in animation.frames.iter().enumerate() {
-            if !running.load(Ordering::SeqCst) {
-                break;
-            }
-
-            let _ = keyboard.set_per_key_colors_fast(&frame.colors, 10, 3);
-            print!("\rFrame {:3}/{}", idx + 1, animation.frame_count);
-            std::io::Write::flush(&mut std::io::stdout()).ok();
-
-            std::thread::sleep(std::time::Duration::from_millis(frame.delay_ms as u64));
-        }
-
-        if !loop_anim || !running.load(Ordering::SeqCst) {
-            break;
-        }
-    }
-
-    println!("\nAnimation stopped.");
     Ok(())
 }
 

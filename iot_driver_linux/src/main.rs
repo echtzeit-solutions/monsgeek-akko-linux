@@ -235,9 +235,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             commands::animations::gif(file.as_deref(), mode.into(), test, frames, delay)?;
         }
-        Some(Commands::GifStream { file, mode, r#loop }) => {
-            commands::animations::gif_stream(&file, mode.into(), r#loop)?;
-        }
         Some(Commands::StreamTest { fps }) => {
             commands::led_stream::stream_test(printer_config, fps)?;
         }
