@@ -33,6 +33,8 @@
 
 #define LED_BUF_SIZE  0x7B0   /* 1968 bytes: 82 LEDs × 24 bytes WS2812 encoding */
 #define LED_COUNT     82
+#define MATRIX_LEN    96      /* 16 cols × 6 rows; host sends col*6+row */
+
 
 /* ── Battery HID report descriptor (appended to IF1) ─────────────────── */
 
@@ -139,6 +141,9 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
         log_buf.count = LOG_BUF_SIZE;
 }
 
+/* Forward declaration for USB path (GET_REPORT IF2) and handle_patch_info. */
+static void fill_patch_info_response(volatile uint8_t *buf);
+
 /* ── HID class setup handler (battery reporting) ─────────────────────── */
 /* The stub saves {r0-r3,r12,lr} then does `bl handle_hid_setup`.
  * At the bl, r0 still holds the original first argument (udev) from
@@ -188,12 +193,8 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
     /* Only intercept GET_REPORT for IF1 battery Feature report.
      * All other requests (GET_DESCRIPTOR, SET_IDLE, etc.) pass through to
      * the original handler, which now reads from our extended_rdesc buffer. */
-    if (wIndex != 1)
-        return 0;
-
-    /* GET_REPORT — class request (bmRequestType bit[6:5] = 0b01) */
-    if (bmReqType == 0xA1 && bRequest == 0x01) {
-        /* wValue = (report_type << 8) | report_id
+    if (wIndex == 1 && bmReqType == 0xA1 && bRequest == 0x01) {
+        /* GET_REPORT — wValue = (report_type << 8) | report_id
          * Feature report type = 3, Report ID = 7 → wValue = 0x0307 */
         if (wValue == 0x0307) {
             uint8_t bat_level = *(volatile uint8_t *)&g_battery_level;
@@ -242,7 +243,11 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
     return 0;   /* passthrough to original handler */
 }
 
-/* ── WS2812 encoding helpers ─────────────────────────────────────────── */
+/* ── WS2812 encoding for SPI scanout ─────────────────────────────────────
+ * Matches firmware ws2812_set_pixel(): each byte expands to 8 SPI bytes;
+ * 1 bit → 0xF0 (long high), 0 bit → 0xC0 (short high). MSB first (byte 0 =
+ * bit 7). Assumes SPI sends MSB of each byte first. Buffer layout per LED:
+ * bytes 0–7 G, 8–15 R, 16–23 B (GRB order for WS2812). */
 
 static void encode_ws2812_byte(volatile uint8_t *p, uint8_t val) {
     p[0] = (val & 0x80) ? 0xF0 : 0xC0;
@@ -255,9 +260,20 @@ static void encode_ws2812_byte(volatile uint8_t *p, uint8_t val) {
     p[7] = (val & 0x01) ? 0xF0 : 0xC0;
 }
 
-/* ── Patch discovery (0xFB) ────────────────────────────────────────────── */
-
-static int handle_patch_info(volatile uint8_t *buf) {
+/* ── Patch discovery (0xFB) ──────────────────────────────────────────────
+ * Response layout in g_vendor_cmd_buffer (buf = cmd_buf):
+ *   buf[3..4] = magic 0xCA 0xFE    → host sees resp[1..2]
+ *   buf[5]    = patch version       → resp[3]
+ *   buf[6..7] = capabilities LE16   → resp[4..5]
+ *   buf[8..15]= name (NUL-padded)   → resp[6..13]
+ *   buf[16..] = diagnostics         → resp[14..]
+ *
+ * (GET_REPORT returns from lp_class_report_buf = cmd_buf+2, so resp[N] = buf[N+2])
+ *
+ * fill_patch_info_response() is used from both the wired path (handle_vendor_cmd
+ * → handle_patch_info) and the USB GET_REPORT interception in handle_hid_setup.
+ */
+static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[3]  = 0xCA;           /* magic hi */
     buf[4]  = 0xFE;           /* magic lo */
     buf[5]  = 1;              /* patch version */
@@ -300,21 +316,52 @@ static int handle_patch_info(volatile uint8_t *buf) {
     volatile uint32_t *adc_ctr = (volatile uint32_t *)0x20005234;
     buf[36] = (uint8_t)(*adc_ctr & 0xFF);
     buf[37] = (uint8_t)((*adc_ctr >> 8) & 0xFF);
+}
 
-    buf[0]  = 0;              /* mark consumed */
+static int handle_patch_info(volatile uint8_t *buf) {
+    fill_patch_info_response(buf);
+    buf[0] = 0;   /* mark consumed */
     return 1;
 }
 
 /* ── LED streaming (0xFC) ──────────────────────────────────────────────
  *
- * Page 0-6:  Write 18 keys × RGB to frame buffer (WS2812 encoded)
- * Page 0xFF: Commit — memcpy frame buffer → DMA buffer (instant update)
- * Page 0xFE: Release — no-op (CLI handles LED mode restore)
+ * Page 0-6:  Write 18 keys × RGB directly to g_led_frame_buf (WS2812 encoded)
+ * Page 0xFF: Commit — copy g_led_frame_buf → g_led_dma_buf for immediate display
+ * Page 0xFE: Release — restore built-in LED effect mode
  *
- * Data layout in cmd_buf (after firmware SET_REPORT parsing):
- *   [3] = page index
- *   [4..57] = RGB data (18 keys × 3 bytes = 54 bytes)
- */
+ * On first page write, we set led_effect_mode to 0xFF (invalid) so
+ * rgb_led_animate()'s switch falls through without touching the frame buffer.
+ * On release, the saved mode is restored.
+ *
+ * Data layout: buf[3] = page, buf[4..57] = 18×RGB (54 bytes).
+ * Host sends column-major indices (page*18 + i), where pos = col*6 + row.
+ *
+ * The host matrix (M1_V5_HE_LED_MATRIX) uses a compact column layout that
+ * differs from the firmware's physical 16-column grid (which has gaps for
+ * wide keys like Caps, Backspace, etc.).  Rather than converting between
+ * coordinate systems, we use a direct host_pos → strip_idx lookup table
+ * (cross-referenced from both tables at build time).  0xFF = no LED. */
+static const uint8_t host_pos_to_strip[96] = {
+    0x00, 0x1C, 0x1D, 0x39, 0x3A, 0x51,  /* col  0: Esc..LCtrl    */
+    0x01, 0x1B, 0x1E, 0x38, 0xFF, 0x50,  /* col  1: F1..LWin      */
+    0x02, 0x1A, 0x1F, 0x37, 0x3B, 0x4F,  /* col  2: F2..LAlt      */
+    0x03, 0x19, 0x20, 0x36, 0x3C, 0xFF,  /* col  3: F3..X         */
+    0x04, 0x18, 0x21, 0x35, 0x3D, 0xFF,  /* col  4: F4..C         */
+    0x05, 0x17, 0x22, 0x34, 0x3E, 0xFF,  /* col  5: F5..V         */
+    0x06, 0x16, 0x23, 0x33, 0x3F, 0x4E,  /* col  6: F6..Space     */
+    0x07, 0x15, 0x24, 0x32, 0x40, 0xFF,  /* col  7: F7..N         */
+    0x08, 0x14, 0x25, 0x31, 0x41, 0xFF,  /* col  8: F8..M         */
+    0x09, 0x13, 0x26, 0x30, 0x42, 0x4D,  /* col  9: F9..RAlt      */
+    0x0A, 0x12, 0x27, 0x2F, 0x43, 0x4C,  /* col 10: F10..Fn       */
+    0x0B, 0x11, 0x28, 0x2E, 0x44, 0x4B,  /* col 11: F11..RCtrl    */
+    0x0C, 0x10, 0x29, 0xFF, 0x45, 0x4A,  /* col 12: F12..Left     */
+    0x0D, 0x0F, 0x2A, 0x2D, 0x46, 0x49,  /* col 13: Del..Down     */
+    0xFF, 0x0E, 0x2B, 0x2C, 0x47, 0x48,  /* col 14: -..Right      */
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* col 15: (media/empty) */
+};
+static uint8_t stream_active;
+static uint8_t saved_led_effect_mode;
 
 static int handle_led_stream(volatile uint8_t *buf) {
     uint8_t page = buf[3];
@@ -327,22 +374,39 @@ static int handle_led_stream(volatile uint8_t *buf) {
     }
 
     if (page == 0xFE) {
-        /* Release: no-op, CLI handles mode restoration */
+        /* Release: restore built-in LED effect mode */
+        if (stream_active) {
+            stream_active = 0;
+            ((volatile connection_config_t *)&g_fw_config)->led_effect_mode = saved_led_effect_mode;
+        }
         buf[0] = 0;
         return 1;
     }
 
     if (page < 7) {
+        /* First page write: suppress built-in animation */
+        if (!stream_active) {
+            stream_active = 1;
+            saved_led_effect_mode = ((volatile connection_config_t *)&g_fw_config)->led_effect_mode;
+            /* 0xFF = invalid mode → rgb_led_animate switch default does nothing */
+            ((volatile connection_config_t *)&g_fw_config)->led_effect_mode = 0xFF;
+        }
+
         volatile uint8_t *rgb = &buf[4];
         uint8_t start = page * 18;
         volatile uint8_t *frame = (volatile uint8_t *)&g_led_frame_buf;
 
-        for (int i = 0; i < 18 && (start + i) < LED_COUNT; i++) {
+        /* Direct lookup: host position → physical strip index. */
+        for (int i = 0; i < 18 && (start + i) < MATRIX_LEN; i++) {
+            uint32_t pos = start + i;
+            uint8_t strip_idx = host_pos_to_strip[pos];
+            if (strip_idx >= LED_COUNT)
+                continue;
             uint8_t r = rgb[i * 3];
             uint8_t g = rgb[i * 3 + 1];
             uint8_t b = rgb[i * 3 + 2];
-            volatile uint8_t *p = &frame[(start + i) * 24];
-            encode_ws2812_byte(p,      g);   /* GRB order */
+            volatile uint8_t *p = &frame[strip_idx * 24];
+            encode_ws2812_byte(p,      g);   /* GRB order for WS2812 */
             encode_ws2812_byte(p + 8,  r);
             encode_ws2812_byte(p + 16, b);
         }
@@ -383,12 +447,12 @@ int handle_usb_connect(void) {
 /* ── Debug log read (0xFD) ─────────────────────────────────────────────
  *
  * Reads pages from the ring buffer.
- *   cmd_buf[3] = page number (0-9)
- * Response:
- *   cmd_buf[3..4] = count (uint16_t LE)
- *   cmd_buf[5..6] = head  (uint16_t LE)
- *   cmd_buf[7]    = LOG_BUF_SIZE >> 8 (= 2, so host knows buffer is 512)
- *   cmd_buf[8..63] = 56 bytes of ring data starting at page*56
+ *   buf[3] = page number (0-9)
+ * Response (host sees resp[N] = buf[N+2]):
+ *   buf[3..4] = count (uint16_t LE)   → resp[1..2]
+ *   buf[5..6] = head  (uint16_t LE)   → resp[3..4]
+ *   buf[7]    = LOG_BUF_SIZE >> 8      → resp[5]
+ *   buf[8..63] = 56 bytes of ring data → resp[6..61]
  */
 static int handle_log_read(volatile uint8_t *buf) {
     uint8_t page = buf[3];
@@ -437,7 +501,7 @@ int handle_vendor_cmd(void) {
         }
     }
 
-    /* No pending command */
+    /* No pending command — cmd_buf[0] is set non-zero by firmware SET_REPORT handler */
     if (cmd_buf[0] == 0)
         return 0;
 
@@ -448,6 +512,8 @@ int handle_vendor_cmd(void) {
         log_entry(LOG_VENDOR_CMD_ENTRY, log_payload, 2);
     }
 
+    /* Command byte is at cmd_buf[2] = lp_class_report_buf[0]
+     * (SET_REPORT data lands at cmd_buf+2, first byte = command) */
     switch (cmd_buf[2]) {
     case 0xFB:
         return handle_patch_info(cmd_buf);
