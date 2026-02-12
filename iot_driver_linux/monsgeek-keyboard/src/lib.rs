@@ -1389,30 +1389,35 @@ impl KeyboardInterface {
     /// touching flash. Call `stream_led_commit()` after sending all pages to
     /// update the LEDs.
     ///
+    /// Uses zero delay — the firmware handles 0xFC instantly (memcpy to frame
+    /// buffer), so the default 100ms flow-control delay is unnecessary and would
+    /// limit throughput to ~1.4 FPS.
+    ///
     /// # Arguments
     /// * `page` - Page index (0-6, each page = 18 keys)
     /// * `rgb_data` - RGB data (up to 54 bytes = 18 keys × 3 bytes)
     pub fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
+        // Firmware receives: [0xFC, page, 54B RGB] at cmd_buf+2, page at cmd_buf[3]
         let mut data = vec![0u8; 55]; // page + 54 RGB bytes
         data[0] = page;
         let len = rgb_data.len().min(54);
         data[1..1 + len].copy_from_slice(&rgb_data[..len]);
         self.transport
-            .send_command(0xFC, &data, ChecksumType::Bit8)?;
+            .send_command_with_delay(0xFC, &data, ChecksumType::None, 0)?;
         Ok(())
     }
 
     /// Commit streamed LED data — copies frame buffer to DMA buffer for display
     pub fn stream_led_commit(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(0xFC, &[0xFF], ChecksumType::Bit8)?;
+            .send_command_with_delay(0xFC, &[0xFF], ChecksumType::None, 0)?;
         Ok(())
     }
 
     /// Release LED streaming — signals end of streaming session
     pub fn stream_led_release(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(0xFC, &[0xFE], ChecksumType::Bit8)?;
+            .send_command_with_delay(0xFC, &[0xFE], ChecksumType::None, 0)?;
         Ok(())
     }
 
@@ -1426,14 +1431,17 @@ impl KeyboardInterface {
 
         match resp {
             Ok(resp) => {
-                // Check magic bytes at offsets 3-4 (after cmd_ready, cmd_ack, cmd_id)
-                if resp.len() < 8 || resp[3] != 0xCA || resp[4] != 0xFE {
+                // Response layout: resp[0]=cmd echo (0xFB), resp[1..2]=magic,
+                // resp[3]=ver, resp[4..5]=caps, resp[6..]=name.
+                // (GET_REPORT returns from lp_class_report_buf = cmd_buf+2,
+                //  handler writes magic at cmd_buf[3..4], so resp[1..2])
+                if resp.len() < 8 || resp[1] != 0xCA || resp[2] != 0xFE {
                     return Ok(None);
                 }
-                let version = resp[5];
-                let capabilities = u16::from_le_bytes([resp[6], resp[7]]);
-                let name_end = resp.len().min(16);
-                let name_bytes = &resp[8..name_end];
+                let version = resp[3];
+                let capabilities = u16::from_le_bytes([resp[4], resp[5]]);
+                let name_end = resp.len().min(14);
+                let name_bytes = &resp[6..name_end];
                 let name_len = name_bytes
                     .iter()
                     .position(|&b| b == 0)
