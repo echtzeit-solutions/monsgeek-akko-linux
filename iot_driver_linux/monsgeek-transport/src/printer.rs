@@ -481,6 +481,16 @@ impl Printer {
                             "(empty)".dim()
                         );
                     }
+                    ParsedResponse::PatchInfo { data } => {
+                        eprintln!(
+                            "{}{} {} {} {}",
+                            ts_prefix,
+                            ep_prefix,
+                            "RSP".green().bold(),
+                            "GET_PATCH_INFO".green(),
+                            format_sparse_hex(data)
+                        );
+                    }
                     ParsedResponse::Unknown { cmd, data: raw } => {
                         let cmd_name = cmd::name(*cmd);
                         eprintln!(

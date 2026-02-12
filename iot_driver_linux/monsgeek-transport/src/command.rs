@@ -1313,6 +1313,10 @@ pub enum ParsedResponse {
     MledVersion {
         version: u16,
     },
+    /// GET_PATCH_INFO (0xFB) response - patch name, version, capabilities
+    PatchInfo {
+        data: Vec<u8>,
+    },
     /// Empty/stale buffer - all zeros or starts with 0x00 with no meaningful data
     Empty,
     /// Response we don't have a parser for yet - key for protocol discovery
@@ -1348,6 +1352,8 @@ pub enum ParsedCommand {
     GetCalibration {
         data: Vec<u8>,
     },
+    /// GET_PATCH_INFO (0xFB) - custom firmware capabilities
+    GetPatchInfo,
     /// GET_MULTI_MAGNETISM query
     /// Format: [0xE5, subcmd, 0x01, page, 0, 0, 0, checksum]
     GetMultiMagnetism {
@@ -1541,6 +1547,9 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
         cmd::GET_CALIBRATION => ParsedResponse::Calibration {
             data: data[1..].to_vec(),
         },
+        cmd::GET_PATCH_INFO => ParsedResponse::PatchInfo {
+            data: data[1..].to_vec(),
+        },
         cmd::GET_MULTI_MAGNETISM => {
             let subcmd = data.get(1).copied().unwrap_or(0);
             let page = data.get(3).copied().unwrap_or(0);
@@ -1699,6 +1708,7 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
         cmd::GET_CALIBRATION => ParsedCommand::GetCalibration {
             data: data[1..].to_vec(),
         },
+        cmd::GET_PATCH_INFO => ParsedCommand::GetPatchInfo,
         cmd::GET_MULTI_MAGNETISM => {
             let subcmd = data.get(1).copied().unwrap_or(0);
             ParsedCommand::GetMultiMagnetism {

@@ -55,6 +55,8 @@ pub mod cmd {
     // Dongle-specific commands
     /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
     pub const BATTERY_REFRESH: u8 = 0xF7;
+    /// Patch info - custom firmware capabilities (battery HID, LED stream, etc.)
+    pub const GET_PATCH_INFO: u8 = 0xFB;
     /// Flush/NOP - used to flush dongle response buffer
     pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
 
@@ -107,6 +109,7 @@ pub mod cmd {
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
             GET_CALIBRATION => "GET_CALIBRATION",
             BATTERY_REFRESH => "BATTERY_REFRESH",
+            GET_PATCH_INFO => "GET_PATCH_INFO",
             DONGLE_FLUSH_NOP => "DONGLE_FLUSH_NOP",
             STATUS_SUCCESS => "STATUS_SUCCESS",
             _ => "UNKNOWN",
