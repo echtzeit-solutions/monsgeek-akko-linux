@@ -33,7 +33,7 @@
 
 #define LED_BUF_SIZE  0x7B0   /* 1968 bytes: 82 LEDs × 24 bytes WS2812 encoding */
 #define LED_COUNT     82
-#define MATRIX_LEN    96      /* 16 cols × 6 rows; host sends col*6+row */
+#define MATRIX_LEN    96      /* 16 cols × 6 rows; row-major (pos = row*16+col) */
 
 
 /* ── Battery HID report descriptor (appended to IF1) ─────────────────── */
@@ -335,31 +335,14 @@ static int handle_patch_info(volatile uint8_t *buf) {
  * On release, the saved mode is restored.
  *
  * Data layout: buf[3] = page, buf[4..57] = 18×RGB (54 bytes).
- * Host sends column-major indices (page*18 + i), where pos = col*6 + row.
+ * Host sends row-major indices (page*18 + i), where pos = row*16 + col.
+ * Images scale to 16×6 and map pixel (x,y) → pos = y*16+x directly.
  *
- * The host matrix (M1_V5_HE_LED_MATRIX) uses a compact column layout that
- * differs from the firmware's physical 16-column grid (which has gaps for
- * wide keys like Caps, Backspace, etc.).  Rather than converting between
- * coordinate systems, we use a direct host_pos → strip_idx lookup table
- * (cross-referenced from both tables at build time).  0xFF = no LED. */
-static const uint8_t host_pos_to_strip[96] = {
-    0x00, 0x1C, 0x1D, 0x39, 0x3A, 0x51,  /* col  0: Esc..LCtrl    */
-    0x01, 0x1B, 0x1E, 0x38, 0xFF, 0x50,  /* col  1: F1..LWin      */
-    0x02, 0x1A, 0x1F, 0x37, 0x3B, 0x4F,  /* col  2: F2..LAlt      */
-    0x03, 0x19, 0x20, 0x36, 0x3C, 0xFF,  /* col  3: F3..X         */
-    0x04, 0x18, 0x21, 0x35, 0x3D, 0xFF,  /* col  4: F4..C         */
-    0x05, 0x17, 0x22, 0x34, 0x3E, 0xFF,  /* col  5: F5..V         */
-    0x06, 0x16, 0x23, 0x33, 0x3F, 0x4E,  /* col  6: F6..Space     */
-    0x07, 0x15, 0x24, 0x32, 0x40, 0xFF,  /* col  7: F7..N         */
-    0x08, 0x14, 0x25, 0x31, 0x41, 0xFF,  /* col  8: F8..M         */
-    0x09, 0x13, 0x26, 0x30, 0x42, 0x4D,  /* col  9: F9..RAlt      */
-    0x0A, 0x12, 0x27, 0x2F, 0x43, 0x4C,  /* col 10: F10..Fn       */
-    0x0B, 0x11, 0x28, 0x2E, 0x44, 0x4B,  /* col 11: F11..RCtrl    */
-    0x0C, 0x10, 0x29, 0xFF, 0x45, 0x4A,  /* col 12: F12..Left     */
-    0x0D, 0x0F, 0x2A, 0x2D, 0x46, 0x49,  /* col 13: Del..Down     */
-    0xFF, 0x0E, 0x2B, 0x2C, 0x47, 0x48,  /* col 14: -..Right      */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* col 15: (media/empty) */
-};
+ * Uses static_led_pos_tbl from firmware ROM (0x08025031, via fw_symbols.ld).
+ * Row-major: static_led_pos_tbl[row*16+col] → WS2812 strip index (0–81).
+ * 0xFF = no LED (gap for wide keys / empty slots).  Gaps are part of
+ * the rectangular coordinate space — the host is aware and simply gets
+ * no visible output at those positions. */
 static uint8_t stream_active;
 static uint8_t saved_led_effect_mode;
 
@@ -396,10 +379,10 @@ static int handle_led_stream(volatile uint8_t *buf) {
         uint8_t start = page * 18;
         volatile uint8_t *frame = (volatile uint8_t *)&g_led_frame_buf;
 
-        /* Direct lookup: host position → physical strip index. */
+        /* Row-major position → physical strip index (0xFF = gap, skip). */
         for (int i = 0; i < 18 && (start + i) < MATRIX_LEN; i++) {
             uint32_t pos = start + i;
-            uint8_t strip_idx = host_pos_to_strip[pos];
+            uint8_t strip_idx = static_led_pos_tbl[pos];
             if (strip_idx >= LED_COUNT)
                 continue;
             uint8_t r = rgb[i * 3];

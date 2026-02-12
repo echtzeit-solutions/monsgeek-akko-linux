@@ -3,24 +3,27 @@
 //! These commands write RGB data directly to the WS2812 frame buffer via the
 //! patched firmware's 0xFC command, without any flash writes.
 //!
-//! **Coordinate convention**
-//! - Logical key (x, y): x = column 0..15, y = row 0..5 (row 0 = Esc..Del, row 1 = Backspace..`, …).
-//! - Userspace image: `img[y * width + x]` (row-major); pixel (x, y) = key (x, y).
-//! - Send order: we use **column-major** index `pos = col*6 + row` (same key → same pos).
-//! - GIF: we sample image at (col, row) and store at `leds[col*6 + row]`, then send `leds` as-is.
-//! - Firmware: receives RGB per position, maps `(row, col) = (pos%6, pos/6)` and uses
-//!   `static_led_pos_tbl[row*16+col]` for strip index.
+//! **Coordinate convention (row-major, physical layout)**
+//!
+//! The 16×6 grid matches the physical keyboard layout.  Each row is 16 columns
+//! wide — the widest row including gaps for wide keys (LShift, Space, etc.).
+//! Positions with no LED (gaps) are part of the coordinate space; the firmware
+//! simply skips them (strip index 0xFF).
+//!
+//! - Position index: `pos = row * 16 + col`  (row-major)
+//! - Image mapping:  `pixel(x, y) → leds[y * 16 + x]`  (trivial)
+//! - Sweep test:     iterates all 96 positions; gaps produce no visible LED
+//!   (the sweep "disappears" at gap positions, which is expected)
 
 use super::{open_keyboard, setup_interrupt_handler, CommandResult};
-use iot_driver::devices::M1_V5_HE_LED_MATRIX;
 use monsgeek_keyboard::SyncKeyboard;
 use monsgeek_transport::PrinterConfig;
 use std::sync::atomic::Ordering;
 
-/// Matrix dimensions (column-major: index = col * ROWS + row)
+/// Matrix dimensions (row-major: index = row * COLS + col)
 const COLS: usize = 16;
 const ROWS: usize = 6;
-/// Total matrix positions in the LED matrix
+/// Total matrix positions in the LED grid (including gaps)
 const MATRIX_LEN: usize = COLS * ROWS; // 96
 const LEDS_PER_PAGE: usize = 18;
 /// Number of pages needed to cover the 16×6 grid
@@ -71,8 +74,8 @@ fn open_with_patch_check(
 
 /// Send a full frame of RGB data to the keyboard.
 ///
-/// `leds` has `MATRIX_LEN` entries (index = col*6 + row).
-/// Packs into pages of 18 LEDs each and sends via stream_led_page + commit.
+/// `leds` has `MATRIX_LEN` entries (row-major: index = row*16 + col).
+/// Packs into pages of 18 entries each and sends via stream_led_page + commit.
 fn send_full_frame(
     kb: &SyncKeyboard,
     leds: &[(u8, u8, u8); MATRIX_LEN],
@@ -97,34 +100,19 @@ fn send_full_frame(
     Ok(())
 }
 
-/// Row-major sweep order: row 0 (Esc..Del), then row 1 (Backspace..`), etc.
-/// So (x, y) with x changing more frequently; position = col*6 + row with col=x, row=y.
-fn active_positions_row_major() -> Vec<usize> {
-    let mut out = Vec::with_capacity(MATRIX_LEN);
-    for row in 0..ROWS {
-        for col in 0..COLS {
-            let pos = col * ROWS + row;
-            if M1_V5_HE_LED_MATRIX[pos] != 0 {
-                out.push(pos);
-            }
-        }
-    }
-    out
-}
-
 /// Test LED streaming — lights one LED at a time, cycling through colors.
-/// Sweep order matches physical rows: row 0 left→right, row 1 left→right, etc.
+///
+/// Sweeps all 96 positions in row-major order (row 0 left→right, row 1, …).
+/// Gap positions (no physical LED) produce a dark frame — the sweep
+/// "disappears" momentarily, which is the expected spatial behaviour.
 pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandResult {
     let kb = open_with_patch_check(printer_config)?;
 
     let frame_duration = std::time::Duration::from_secs_f32(1.0 / fps);
     let running = setup_interrupt_handler();
 
-    let active_positions = active_positions_row_major();
     println!(
-        "Streaming test: {} active LEDs, {:.1} FPS (Ctrl+C to stop)",
-        active_positions.len(),
-        fps
+        "Streaming test: {MATRIX_LEN} positions ({COLS}×{ROWS}), {fps:.1} FPS (Ctrl+C to stop)"
     );
 
     for &(cr, cg, cb) in TEST_COLORS.iter().cycle() {
@@ -132,23 +120,21 @@ pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandRe
             break;
         }
 
-        for (count, &pos) in active_positions.iter().enumerate() {
+        for pos in 0..MATRIX_LEN {
             if !running.load(Ordering::SeqCst) {
                 break;
             }
 
-            // Build frame: only the target LED is lit
+            // Build frame: only the target position is lit (gaps → all dark)
             let page = pos / LEDS_PER_PAGE;
             let offset_in_page = pos % LEDS_PER_PAGE;
 
-            // Send only the affected page (all black except the target LED)
             let mut rgb_data = [0u8; LEDS_PER_PAGE * 3];
             rgb_data[offset_in_page * 3] = cr;
             rgb_data[offset_in_page * 3 + 1] = cg;
             rgb_data[offset_in_page * 3 + 2] = cb;
 
-            // Clear other pages that might still have a lit LED from previous frame
-            // Send all pages as black except the one with our LED
+            // Send all pages: target page has one lit LED, others all black
             for p in 0..PAGE_COUNT {
                 if p == page {
                     kb.stream_led_page(p as u8, &rgb_data)?;
@@ -158,20 +144,11 @@ pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandRe
             }
             kb.stream_led_commit()?;
 
-            let col = pos / ROWS;
-            let row = pos % ROWS;
-            let hid = M1_V5_HE_LED_MATRIX[pos];
+            let row = pos / COLS;
+            let col = pos % COLS;
             print!(
-                "\rLED {:3}/{} x={:2} y={} (pos={}, hid=0x{:02X}) color=({:3},{:3},{:3})",
-                count + 1,
-                active_positions.len(),
-                col,
-                row,
-                pos,
-                hid,
-                cr,
-                cg,
-                cb
+                "\rpos {:2} (row={}, col={:2}) color=({:3},{:3},{:3})  ",
+                pos, row, col, cr, cg, cb
             );
             std::io::Write::flush(&mut std::io::stdout()).ok();
 
@@ -235,16 +212,15 @@ pub fn stream_gif(
         };
 
         let mut leds = [(0u8, 0u8, 0u8); MATRIX_LEN];
-        for col in 0..COLS {
-            for row in 0..ROWS {
+        for row in 0..ROWS {
+            for col in 0..COLS {
                 let sx = ((col as f32 + 0.5) * scale_x) as usize;
                 let sy = ((row as f32 + 0.5) * scale_y) as usize;
                 let sx = sx.min(src_w - 1);
                 let sy = sy.min(src_h - 1);
                 let pixel = (sy * src_w + sx) * 4;
                 if pixel + 2 < rgba.len() {
-                    let idx = col * ROWS + row;
-                    leds[idx] = (rgba[pixel], rgba[pixel + 1], rgba[pixel + 2]);
+                    leds[row * COLS + col] = (rgba[pixel], rgba[pixel + 1], rgba[pixel + 2]);
                 }
             }
         }
