@@ -316,6 +316,35 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     volatile uint32_t *adc_ctr = (volatile uint32_t *)0x20005234;
     buf[36] = (uint8_t)(*adc_ctr & 0xFF);
     buf[37] = (uint8_t)((*adc_ctr >> 8) & 0xFF);
+
+    /* Main loop timer counter: g_kbd_state[0..1] — outer loop gates on >= 2 */
+    buf[38] = kbd[0x00];      /* timer_counter lo */
+    buf[39] = kbd[0x01];      /* timer_counter hi */
+    /* Charge status: g_kbd_state + 0x4D (0x200004A9) */
+    buf[40] = kbd[0x4D];      /* charge_status (0=none, 1=charging, 2=complete) */
+    /* Connection mode: g_kbd_state + 0x04 */
+    buf[41] = kbd[0x04];      /* connection_mode */
+
+    /* Averaged ADC value (2 words at 0x20000010, we read first = current average) */
+    volatile uint32_t *adc_avg = (volatile uint32_t *)0x20000010;
+    uint32_t avg = *adc_avg;
+    buf[42] = (uint8_t)(avg & 0xFF);
+    buf[43] = (uint8_t)((avg >> 8) & 0xFF);
+
+    /* Raw ADC sample 0 (at 0x20003410 + 0x878 = 0x20003C88) — 16-bit */
+    volatile uint16_t *adc_s0 = (volatile uint16_t *)0x20003C88;
+    buf[44] = (uint8_t)(*adc_s0 & 0xFF);
+    buf[45] = (uint8_t)((*adc_s0 >> 8) & 0xFF);
+
+    /* GPIOC IDR (charger detect pin 13) and GPIOB IDR (charge complete pin 10) */
+    volatile uint32_t *gpioc_idr = (volatile uint32_t *)0x40020810;
+    volatile uint32_t *gpiob_idr = (volatile uint32_t *)0x40020410;
+    uint32_t gc = *gpioc_idr;
+    uint32_t gb = *gpiob_idr;
+    buf[46] = (uint8_t)(gc & 0xFF);
+    buf[47] = (uint8_t)((gc >> 8) & 0xFF);
+    buf[48] = (uint8_t)(gb & 0xFF);
+    buf[49] = (uint8_t)((gb >> 8) & 0xFF);
 }
 
 static int handle_patch_info(volatile uint8_t *buf) {
