@@ -1,6 +1,6 @@
 //! Trigger-related command handlers.
 
-use super::{with_keyboard, CommandResult};
+use super::CommandResult;
 use iot_driver::profile::M1_V5_HE_KEY_NAMES;
 use iot_driver::protocol::magnetism;
 use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, SyncKeyboard};
@@ -11,15 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Run calibration (min + max) with per-key progress display
-pub fn calibrate() -> CommandResult {
-    let keyboard = match SyncKeyboard::open_any() {
-        Ok(kb) => kb,
-        Err(e) => {
-            eprintln!("No device found: {e}");
-            return Ok(());
-        }
-    };
-
+pub fn calibrate(keyboard: &SyncKeyboard) -> CommandResult {
     let key_count = keyboard.key_count() as usize;
 
     // Set up Ctrl+C handler
@@ -258,245 +250,232 @@ fn check_stdin_ready(_state: &StdinState) -> bool {
 fn restore_stdin(_state: &StdinState) {}
 
 /// Show current trigger settings
-pub fn triggers() -> CommandResult {
-    with_keyboard(|keyboard| {
-        let version = keyboard.get_version().unwrap_or_default();
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
-        println!(
-            "Trigger Settings (firmware {}, precision: {})",
-            version.format(),
-            precision.as_str()
-        );
-        println!();
+pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
+    let version = keyboard.get_version().unwrap_or_default();
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+    println!(
+        "Trigger Settings (firmware {}, precision: {})",
+        version.format(),
+        precision.as_str()
+    );
+    println!();
 
-        match keyboard.get_all_triggers() {
-            Ok(triggers) => {
-                let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-                    if idx * 2 + 1 < data.len() {
-                        u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-                    } else {
-                        0
-                    }
-                };
-
-                let first_press = decode_u16(&triggers.press_travel, 0);
-                let first_lift = decode_u16(&triggers.lift_travel, 0);
-                let first_rt_press = decode_u16(&triggers.rt_press, 0);
-                let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
-                let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
-
-                let num_keys = triggers
-                    .key_modes
-                    .len()
-                    .min(triggers.press_travel.len() / 2);
-
-                println!("First key settings (as sample):");
-                println!(
-                    "  Actuation:     {:.1}mm (raw: {})",
-                    first_press as f32 / factor,
-                    first_press
-                );
-                println!(
-                    "  Release:       {:.1}mm (raw: {})",
-                    first_lift as f32 / factor,
-                    first_lift
-                );
-                println!(
-                    "  RT Press:      {:.2}mm (raw: {})",
-                    first_rt_press as f32 / factor,
-                    first_rt_press
-                );
-                println!(
-                    "  RT Release:    {:.2}mm (raw: {})",
-                    first_rt_lift as f32 / factor,
-                    first_rt_lift
-                );
-                println!(
-                    "  Mode:          {} ({})",
-                    first_mode,
-                    magnetism::mode_name(first_mode)
-                );
-                println!();
-
-                let all_same_press =
-                    (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
-                let all_same_mode = triggers
-                    .key_modes
-                    .iter()
-                    .take(num_keys)
-                    .all(|&v| v == first_mode);
-
-                if all_same_press && all_same_mode {
-                    println!("All {num_keys} keys have identical settings");
+    match keyboard.get_all_triggers() {
+        Ok(triggers) => {
+            let decode_u16 = |data: &[u8], idx: usize| -> u16 {
+                if idx * 2 + 1 < data.len() {
+                    u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
                 } else {
-                    println!("Keys have varying settings ({num_keys} keys total)");
-                    println!("\nFirst 10 key values:");
-                    for i in 0..10.min(num_keys) {
-                        let press = decode_u16(&triggers.press_travel, i);
-                        let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
-                        println!(
-                            "  Key {:2}: {:.1}mm mode={}",
-                            i,
-                            press as f32 / factor,
-                            mode
-                        );
-                    }
+                    0
+                }
+            };
+
+            let first_press = decode_u16(&triggers.press_travel, 0);
+            let first_lift = decode_u16(&triggers.lift_travel, 0);
+            let first_rt_press = decode_u16(&triggers.rt_press, 0);
+            let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
+            let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
+
+            let num_keys = triggers
+                .key_modes
+                .len()
+                .min(triggers.press_travel.len() / 2);
+
+            println!("First key settings (as sample):");
+            println!(
+                "  Actuation:     {:.1}mm (raw: {})",
+                first_press as f32 / factor,
+                first_press
+            );
+            println!(
+                "  Release:       {:.1}mm (raw: {})",
+                first_lift as f32 / factor,
+                first_lift
+            );
+            println!(
+                "  RT Press:      {:.2}mm (raw: {})",
+                first_rt_press as f32 / factor,
+                first_rt_press
+            );
+            println!(
+                "  RT Release:    {:.2}mm (raw: {})",
+                first_rt_lift as f32 / factor,
+                first_rt_lift
+            );
+            println!(
+                "  Mode:          {} ({})",
+                first_mode,
+                magnetism::mode_name(first_mode)
+            );
+            println!();
+
+            let all_same_press =
+                (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
+            let all_same_mode = triggers
+                .key_modes
+                .iter()
+                .take(num_keys)
+                .all(|&v| v == first_mode);
+
+            if all_same_press && all_same_mode {
+                println!("All {num_keys} keys have identical settings");
+            } else {
+                println!("Keys have varying settings ({num_keys} keys total)");
+                println!("\nFirst 10 key values:");
+                for i in 0..10.min(num_keys) {
+                    let press = decode_u16(&triggers.press_travel, i);
+                    let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
+                    println!(
+                        "  Key {:2}: {:.1}mm mode={}",
+                        i,
+                        press as f32 / factor,
+                        mode
+                    );
                 }
             }
-            Err(e) => eprintln!("Failed to read trigger settings: {e}"),
         }
-        Ok(())
-    })
+        Err(e) => eprintln!("Failed to read trigger settings: {e}"),
+    }
+    Ok(())
 }
 
 /// Set actuation point for all keys
-pub fn set_actuation(mm: f32) -> CommandResult {
-    with_keyboard(|keyboard| {
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
-        let raw = (mm * factor) as u16;
-        match keyboard.set_actuation_all_u16(raw) {
-            Ok(_) => println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys"),
-            Err(e) => eprintln!("Failed to set actuation point: {e}"),
-        }
-        Ok(())
-    })
+pub fn set_actuation(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+    let raw = (mm * factor) as u16;
+    match keyboard.set_actuation_all_u16(raw) {
+        Ok(_) => println!("Actuation point set to {mm:.2}mm (raw: {raw}) for all keys"),
+        Err(e) => eprintln!("Failed to set actuation point: {e}"),
+    }
+    Ok(())
 }
 
 /// Enable/disable Rapid Trigger or set sensitivity
-pub fn set_rt(value: &str) -> CommandResult {
-    with_keyboard(|keyboard| {
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
+pub fn set_rt(keyboard: &SyncKeyboard, value: &str) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
 
-        match value.to_lowercase().as_str() {
-            "off" | "0" | "disable" => match keyboard.set_rapid_trigger_all(false) {
-                Ok(_) => println!("Rapid Trigger disabled for all keys"),
-                Err(e) => eprintln!("Failed to disable Rapid Trigger: {e}"),
-            },
-            "on" | "enable" => {
-                let sensitivity = (0.3 * factor) as u16;
-                let _ = keyboard.set_rapid_trigger_all(true);
-                let _ = keyboard.set_rt_press_all_u16(sensitivity);
-                let _ = keyboard.set_rt_lift_all_u16(sensitivity);
-                println!("Rapid Trigger enabled with 0.3mm sensitivity for all keys");
-            }
-            _ => {
-                let mm: f32 = value.parse().unwrap_or(0.3);
-                let sensitivity = (mm * factor) as u16;
-                let _ = keyboard.set_rapid_trigger_all(true);
-                let _ = keyboard.set_rt_press_all_u16(sensitivity);
-                let _ = keyboard.set_rt_lift_all_u16(sensitivity);
-                println!("Rapid Trigger enabled with {mm:.2}mm sensitivity for all keys");
-            }
+    match value.to_lowercase().as_str() {
+        "off" | "0" | "disable" => match keyboard.set_rapid_trigger_all(false) {
+            Ok(_) => println!("Rapid Trigger disabled for all keys"),
+            Err(e) => eprintln!("Failed to disable Rapid Trigger: {e}"),
+        },
+        "on" | "enable" => {
+            let sensitivity = (0.3 * factor) as u16;
+            let _ = keyboard.set_rapid_trigger_all(true);
+            let _ = keyboard.set_rt_press_all_u16(sensitivity);
+            let _ = keyboard.set_rt_lift_all_u16(sensitivity);
+            println!("Rapid Trigger enabled with 0.3mm sensitivity for all keys");
         }
-        Ok(())
-    })
+        _ => {
+            let mm: f32 = value.parse().unwrap_or(0.3);
+            let sensitivity = (mm * factor) as u16;
+            let _ = keyboard.set_rapid_trigger_all(true);
+            let _ = keyboard.set_rt_press_all_u16(sensitivity);
+            let _ = keyboard.set_rt_lift_all_u16(sensitivity);
+            println!("Rapid Trigger enabled with {mm:.2}mm sensitivity for all keys");
+        }
+    }
+    Ok(())
 }
 
 /// Set release point for all keys
-pub fn set_release(mm: f32) -> CommandResult {
-    with_keyboard(|keyboard| {
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
-        let raw = (mm * factor) as u16;
-        match keyboard.set_release_all_u16(raw) {
-            Ok(_) => println!("Release point set to {mm:.2}mm (raw: {raw}) for all keys"),
-            Err(e) => eprintln!("Failed to set release point: {e}"),
-        }
-        Ok(())
-    })
+pub fn set_release(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+    let raw = (mm * factor) as u16;
+    match keyboard.set_release_all_u16(raw) {
+        Ok(_) => println!("Release point set to {mm:.2}mm (raw: {raw}) for all keys"),
+        Err(e) => eprintln!("Failed to set release point: {e}"),
+    }
+    Ok(())
 }
 
 /// Set bottom deadzone for all keys
-pub fn set_bottom_deadzone(mm: f32) -> CommandResult {
-    with_keyboard(|keyboard| {
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
-        let raw = (mm * factor) as u16;
-        match keyboard.set_bottom_deadzone_all_u16(raw) {
-            Ok(_) => println!("Bottom deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
-            Err(e) => eprintln!("Failed to set bottom deadzone: {e}"),
-        }
-        Ok(())
-    })
+pub fn set_bottom_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+    let raw = (mm * factor) as u16;
+    match keyboard.set_bottom_deadzone_all_u16(raw) {
+        Ok(_) => println!("Bottom deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
+        Err(e) => eprintln!("Failed to set bottom deadzone: {e}"),
+    }
+    Ok(())
 }
 
 /// Set top deadzone for all keys
-pub fn set_top_deadzone(mm: f32) -> CommandResult {
-    with_keyboard(|keyboard| {
-        let precision = keyboard.get_precision().unwrap_or_default();
-        let factor = precision.factor() as f32;
-        let raw = (mm * factor) as u16;
-        match keyboard.set_top_deadzone_all_u16(raw) {
-            Ok(_) => println!("Top deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
-            Err(e) => eprintln!("Failed to set top deadzone: {e}"),
-        }
-        Ok(())
-    })
+pub fn set_top_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+    let raw = (mm * factor) as u16;
+    match keyboard.set_top_deadzone_all_u16(raw) {
+        Ok(_) => println!("Top deadzone set to {mm:.2}mm (raw: {raw}) for all keys"),
+        Err(e) => eprintln!("Failed to set top deadzone: {e}"),
+    }
+    Ok(())
 }
 
 /// Set trigger settings for a specific key
 pub fn set_key_trigger(
+    keyboard: &SyncKeyboard,
     key: u8,
     actuation: Option<f32>,
     release: Option<f32>,
     mode: Option<String>,
 ) -> CommandResult {
-    with_keyboard(|keyboard| {
-        // Get current settings first
-        let current = match keyboard.get_key_trigger(key) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to get current settings for key {key}: {e}");
-                return Ok(());
-            }
-        };
-
-        let precision = keyboard.get_precision().unwrap_or_default();
-        // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
-        let factor = 10.0f32;
-
-        // Build settings with modifications
-        let settings = KeyTriggerSettings {
-            key_index: key,
-            actuation: actuation
-                .map(|mm| (mm * factor) as u8)
-                .unwrap_or(current.actuation),
-            deactuation: release
-                .map(|mm| (mm * factor) as u8)
-                .unwrap_or(current.deactuation),
-            mode: mode
-                .as_ref()
-                .map(|m| match m.to_lowercase().as_str() {
-                    "normal" | "n" => KeyMode::Normal,
-                    "rt" | "rapid" | "rapidtrigger" => KeyMode::RapidTrigger,
-                    "dks" | "dynamic" => KeyMode::DynamicKeystroke,
-                    "snaptap" | "snap" | "st" => KeyMode::SnapTap,
-                    "modtap" | "mt" => KeyMode::ModTap,
-                    "toggle" | "tgl" => KeyMode::ToggleHold,
-                    _ => current.mode,
-                })
-                .unwrap_or(current.mode),
-        };
-
-        match keyboard.set_key_trigger(&settings) {
-            Ok(_) => {
-                println!("Key {key} trigger settings updated:");
-                println!(
-                    "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {:?}",
-                    settings.actuation as f32 / factor,
-                    settings.deactuation as f32 / factor,
-                    settings.mode
-                );
-                println!(
-                    "  (precision: {}, bulk commands use higher precision)",
-                    precision.as_str()
-                );
-            }
-            Err(e) => eprintln!("Failed to set key trigger: {e}"),
+    // Get current settings first
+    let current = match keyboard.get_key_trigger(key) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to get current settings for key {key}: {e}");
+            return Ok(());
         }
-        Ok(())
-    })
+    };
+
+    let precision = keyboard.get_precision().unwrap_or_default();
+    // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
+    let factor = 10.0f32;
+
+    // Build settings with modifications
+    let settings = KeyTriggerSettings {
+        key_index: key,
+        actuation: actuation
+            .map(|mm| (mm * factor) as u8)
+            .unwrap_or(current.actuation),
+        deactuation: release
+            .map(|mm| (mm * factor) as u8)
+            .unwrap_or(current.deactuation),
+        mode: mode
+            .as_ref()
+            .map(|m| match m.to_lowercase().as_str() {
+                "normal" | "n" => KeyMode::Normal,
+                "rt" | "rapid" | "rapidtrigger" => KeyMode::RapidTrigger,
+                "dks" | "dynamic" => KeyMode::DynamicKeystroke,
+                "snaptap" | "snap" | "st" => KeyMode::SnapTap,
+                "modtap" | "mt" => KeyMode::ModTap,
+                "toggle" | "tgl" => KeyMode::ToggleHold,
+                _ => current.mode,
+            })
+            .unwrap_or(current.mode),
+    };
+
+    match keyboard.set_key_trigger(&settings) {
+        Ok(_) => {
+            println!("Key {key} trigger settings updated:");
+            println!(
+                "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {:?}",
+                settings.actuation as f32 / factor,
+                settings.deactuation as f32 / factor,
+                settings.mode
+            );
+            println!(
+                "  (precision: {}, bulk commands use higher precision)",
+                precision.as_str()
+            );
+        }
+        Err(e) => eprintln!("Failed to set key trigger: {e}"),
+    }
+    Ok(())
 }

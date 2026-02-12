@@ -5,40 +5,6 @@ use iot_driver::firmware::FirmwareFile;
 use monsgeek_keyboard::SyncKeyboard;
 use std::path::PathBuf;
 
-/// Show firmware info for connected device
-pub fn info() -> CommandResult {
-    match SyncKeyboard::open_any() {
-        Ok(keyboard) => {
-            let device_id = keyboard.get_device_id().unwrap_or(0);
-            let version = keyboard.get_version().unwrap_or_default();
-            let version_str = version.format_dotted();
-
-            println!("Firmware Information");
-            println!("====================");
-            println!("Device:     {}", keyboard.device_name());
-            println!("Device ID:  {device_id} (0x{device_id:08X})");
-            println!("Version:    {} (raw: 0x{:04X})", version_str, version.raw);
-
-            // Check boot mode via firmware_update module
-            let is_boot =
-                iot_driver::protocol::firmware_update::is_boot_mode(keyboard.vid(), keyboard.pid());
-            println!("Boot Mode:  {}", if is_boot { "Yes" } else { "No" });
-
-            // API ID is same as device ID, with VID/PID fallback
-            let api_id = if device_id != 0 {
-                Some(device_id)
-            } else {
-                iot_driver::firmware_api::device_ids::from_vid_pid(keyboard.vid(), keyboard.pid())
-            };
-            if let Some(id) = api_id {
-                println!("API ID:     {id}");
-            }
-        }
-        Err(e) => eprintln!("No device found: {e}"),
-    }
-    Ok(())
-}
-
 /// Validate a firmware file
 pub fn validate(file: &PathBuf) -> CommandResult {
     println!("Validating firmware file: {}", file.display());

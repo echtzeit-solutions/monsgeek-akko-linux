@@ -1,16 +1,16 @@
 //! Debug command handlers.
 
-use super::{setup_interrupt_handler, with_keyboard, CommandResult};
+use super::{open_preferred_transport, setup_interrupt_handler, with_keyboard, CommandResult};
 use iot_driver::protocol::cmd;
 use monsgeek_keyboard::SyncKeyboard;
 use monsgeek_transport::protocol::cmd as transport_cmd;
-use monsgeek_transport::{list_devices_sync, ChecksumType, SyncTransport};
+use monsgeek_transport::{list_devices_sync, ChecksumType, PrinterConfig};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 /// Test the new transport abstraction layer
-pub fn test_transport() -> CommandResult {
+pub fn test_transport(printer_config: Option<PrinterConfig>) -> CommandResult {
     println!("Testing new transport abstraction layer");
     println!("=======================================\n");
 
@@ -33,9 +33,9 @@ pub fn test_transport() -> CommandResult {
         }
     }
 
-    // Open first device
+    // Open first device (with optional monitoring)
     println!("\nOpening first device...");
-    let transport = SyncTransport::open_any()?;
+    let transport = open_preferred_transport(printer_config.clone())?;
     let info = transport.device_info();
     println!(
         "  Opened: VID={:04X} PID={:04X} type={:?}",
@@ -84,7 +84,7 @@ pub fn test_transport() -> CommandResult {
 
     // Test keyboard interface (includes trigger settings)
     println!("\n--- Testing Keyboard Interface ---");
-    with_keyboard(|keyboard| {
+    with_keyboard(printer_config, |keyboard| {
         println!(
             "  Opened keyboard: {} keys, magnetism={}",
             keyboard.key_count(),
@@ -132,9 +132,12 @@ pub fn test_transport() -> CommandResult {
 }
 
 /// Monitor real-time key depth (magnetism) from keyboard
-pub fn depth(show_raw: bool, show_zero: bool, verbose: bool) -> CommandResult {
-    let keyboard = SyncKeyboard::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
-
+pub fn depth(
+    keyboard: &SyncKeyboard,
+    show_raw: bool,
+    show_zero: bool,
+    verbose: bool,
+) -> CommandResult {
     println!("Device: {}", keyboard.device_name());
 
     // Get precision from device

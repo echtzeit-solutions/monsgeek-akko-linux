@@ -26,20 +26,63 @@ pub mod utility;
 
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::settings::FirmwareVersion;
-use monsgeek_transport::{FlowControlTransport, PacketFilter, PrinterConfig, SyncTransport};
+use monsgeek_transport::{
+    DeviceDiscovery, FlowControlTransport, HidDiscovery, PacketFilter, PrinterConfig,
+    SyncTransport, Transport,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Result type for command handlers
 pub type CommandResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Open a keyboard, optionally with transport monitoring (--monitor).
+/// When printer_config is Some, the transport is wrapped so send/receive is printed.
+pub fn open_keyboard(
+    printer_config: Option<PrinterConfig>,
+) -> Result<monsgeek_keyboard::SyncKeyboard, Box<dyn std::error::Error>> {
+    let kb = match &printer_config {
+        Some(config) => {
+            let discovery = HidDiscovery::with_printer_config(config.clone());
+            let devices = discovery.list_devices()?;
+            if devices.is_empty() {
+                return Err(monsgeek_transport::TransportError::DeviceNotFound(
+                    "No supported device found".into(),
+                )
+                .into());
+            }
+            let preferred = devices
+                .iter()
+                .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
+                .or_else(|| {
+                    devices.iter().find(|d| {
+                        d.info.transport_type == monsgeek_transport::TransportType::HidDongle
+                    })
+                })
+                .unwrap_or(&devices[0]);
+            let transport = discovery.open_device(preferred)?;
+            let flow = Arc::new(FlowControlTransport::new(transport));
+            let info = flow.device_info();
+            let (key_count, has_magnetism) = match (info.vid, info.pid) {
+                (0x3151, 0x5030) => (monsgeek_keyboard::KEY_COUNT_M1_V5, true),
+                (0x3151, 0x5038) => (monsgeek_keyboard::KEY_COUNT_M1_V5, true),
+                _ => (monsgeek_keyboard::KEY_COUNT_M1_V5, true),
+            };
+            monsgeek_keyboard::SyncKeyboard::from_transport(flow, key_count, has_magnetism)
+        }
+        None => monsgeek_keyboard::SyncKeyboard::open_any()
+            .map_err::<Box<dyn std::error::Error>, _>(Into::into)?,
+    };
+    Ok(kb)
+}
+
 /// Open a keyboard and run a closure with it.
-/// Prints an error and returns Ok(()) if no device is found.
-pub fn with_keyboard<F>(f: F) -> CommandResult
+/// When printer_config is Some, uses monitoring transport so --monitor shows send/receive.
+pub fn with_keyboard<F>(printer_config: Option<PrinterConfig>, f: F) -> CommandResult
 where
     F: FnOnce(&monsgeek_keyboard::SyncKeyboard) -> CommandResult,
 {
-    match monsgeek_keyboard::SyncKeyboard::open_any() {
+    match open_keyboard(printer_config) {
         Ok(keyboard) => f(&keyboard),
         Err(e) => {
             eprintln!("No device found: {e}");

@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::query::debounce(printer_config)?;
         }
         Some(Commands::Rate) => {
-            commands::query::rate()?;
+            commands::with_keyboard(printer_config, commands::query::rate)?;
         }
         Some(Commands::Options) => {
             commands::query::options(printer_config)?;
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::query::features(printer_config)?;
         }
         Some(Commands::Sleep) => {
-            commands::query::sleep()?;
+            commands::with_keyboard(printer_config, commands::query::sleep)?;
         }
         Some(Commands::All) => {
             commands::query::all(printer_config)?;
@@ -86,13 +86,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Set Commands ===
         Some(Commands::SetProfile { profile }) => {
-            commands::set::set_profile(profile)?;
+            commands::with_keyboard(printer_config, |kb| commands::set::set_profile(kb, profile))?;
         }
         Some(Commands::SetDebounce { ms }) => {
-            commands::set::set_debounce(ms)?;
+            commands::with_keyboard(printer_config, |kb| commands::set::set_debounce(kb, ms))?;
         }
         Some(Commands::SetRate { rate }) => {
-            commands::set::set_rate(&rate)?;
+            commands::with_keyboard(printer_config, |kb| commands::set::set_rate(kb, &rate))?;
         }
         Some(Commands::SetLed {
             mode,
@@ -102,7 +102,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             g,
             b,
         }) => {
-            commands::set::set_led(&mode, brightness, speed, r, g, b)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::set::set_led(kb, &mode, brightness, speed, r, g, b)
+            })?;
         }
         Some(Commands::SetSleep {
             idle,
@@ -113,36 +115,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             deep_24g,
             uniform,
         }) => {
-            commands::set::set_sleep(idle, deep, idle_bt, idle_24g, deep_bt, deep_24g, uniform)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::set::set_sleep(
+                    kb, idle, deep, idle_bt, idle_24g, deep_bt, deep_24g, uniform,
+                )
+            })?;
         }
         Some(Commands::Reset) => {
-            commands::set::reset()?;
+            commands::with_keyboard(printer_config, commands::set::reset)?;
         }
         Some(Commands::SetColorAll { r, g, b, layer }) => {
-            commands::set::set_color_all(r, g, b, layer)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::set::set_color_all(kb, r, g, b, layer)
+            })?;
         }
 
         // === Trigger Commands ===
         Some(Commands::Calibrate) => {
-            commands::triggers::calibrate()?;
+            commands::with_keyboard(printer_config, commands::triggers::calibrate)?;
         }
         Some(Commands::Triggers) => {
-            commands::triggers::triggers()?;
+            commands::with_keyboard(printer_config, commands::triggers::triggers)?;
         }
         Some(Commands::SetActuation { mm }) => {
-            commands::triggers::set_actuation(mm)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::triggers::set_actuation(kb, mm)
+            })?;
         }
         Some(Commands::SetRt { value }) => {
-            commands::triggers::set_rt(&value)?;
+            commands::with_keyboard(printer_config, |kb| commands::triggers::set_rt(kb, &value))?;
         }
         Some(Commands::SetRelease { mm }) => {
-            commands::triggers::set_release(mm)?;
+            commands::with_keyboard(printer_config, |kb| commands::triggers::set_release(kb, mm))?;
         }
         Some(Commands::SetBottomDeadzone { mm }) => {
-            commands::triggers::set_bottom_deadzone(mm)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::triggers::set_bottom_deadzone(kb, mm)
+            })?;
         }
         Some(Commands::SetTopDeadzone { mm }) => {
-            commands::triggers::set_top_deadzone(mm)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::triggers::set_top_deadzone(kb, mm)
+            })?;
         }
         Some(Commands::SetKeyTrigger {
             key,
@@ -150,32 +164,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             release,
             mode,
         }) => {
-            commands::triggers::set_key_trigger(key, actuation, release, mode)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::triggers::set_key_trigger(kb, key, actuation, release, mode)
+            })?;
         }
 
         // === Keymap Commands ===
         Some(Commands::Remap { from, to, layer }) => {
-            commands::keymap::remap(&from, &to, layer)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::keymap::remap(kb, &from, &to, layer)
+            })?;
         }
         Some(Commands::ResetKey { key, layer }) => {
-            commands::keymap::reset_key(&key, layer)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::keymap::reset_key(kb, &key, layer)
+            })?;
         }
         Some(Commands::Swap { key1, key2, layer }) => {
-            commands::keymap::swap(&key1, &key2, layer)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::keymap::swap(kb, &key1, &key2, layer)
+            })?;
         }
         Some(Commands::RemapList { layer, all }) => {
-            commands::keymap::remap_list(layer, all)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::keymap::remap_list(kb, layer, all)
+            })?;
         }
         Some(Commands::FnLayout { sys }) => {
-            commands::keymap::fn_layout(&sys)?;
+            commands::with_keyboard(printer_config, |kb| commands::keymap::fn_layout(kb, &sys))?;
         }
         Some(Commands::Keymatrix { layer }) => {
-            commands::keymap::keymatrix(layer)?;
+            commands::with_keyboard(printer_config, |kb| commands::keymap::keymatrix(kb, layer))?;
         }
 
         // === Macro Commands ===
         Some(Commands::Macro { key }) => {
-            commands::macros::get_macro(&key)?;
+            commands::with_keyboard(printer_config, |kb| commands::macros::get_macro(kb, &key))?;
         }
         Some(Commands::SetMacro {
             key,
@@ -184,17 +208,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             repeat,
             seq,
         }) => {
-            commands::macros::set_macro(&key, &text, delay, repeat, seq)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::macros::set_macro(kb, &key, &text, delay, repeat, seq)
+            })?;
         }
         Some(Commands::ClearMacro { key }) => {
-            commands::macros::clear_macro(&key)?;
+            commands::with_keyboard(printer_config, |kb| commands::macros::clear_macro(kb, &key))?;
         }
         Some(Commands::AssignMacro {
             key,
             macro_index,
             r#fn,
         }) => {
-            commands::macros::assign_macro(&key, &macro_index, r#fn)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::macros::assign_macro(kb, &key, &macro_index, r#fn)
+            })?;
         }
 
         // === Animation Commands ===
@@ -211,13 +239,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::animations::gif_stream(&file, mode.into(), r#loop)?;
         }
         Some(Commands::StreamTest { fps }) => {
-            commands::led_stream::stream_test(fps)?;
+            commands::led_stream::stream_test(printer_config, fps)?;
         }
         Some(Commands::Stream { file, fps, r#loop }) => {
-            commands::led_stream::stream_gif(&file, fps, r#loop)?;
+            commands::led_stream::stream_gif(printer_config, &file, fps, r#loop)?;
         }
         Some(Commands::Mode { mode, layer }) => {
-            commands::animations::mode(&mode, layer)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::animations::mode(kb, &mode, layer)
+            })?;
         }
         Some(Commands::Modes) => {
             commands::animations::modes()?;
@@ -244,17 +274,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Debug Commands ===
         Some(Commands::Depth { raw, zero, verbose }) => {
-            commands::debug::depth(raw, zero, verbose)?;
+            commands::with_keyboard(printer_config, |kb| {
+                commands::debug::depth(kb, raw, zero, verbose)
+            })?;
         }
         Some(Commands::TestTransport) => {
-            commands::debug::test_transport()?;
+            commands::debug::test_transport(printer_config)?;
         }
 
         // === Firmware Commands ===
         Some(Commands::Firmware(fw_cmd)) => match fw_cmd {
-            FirmwareCommands::Info => {
-                commands::firmware::info()?;
-            }
             FirmwareCommands::Validate { file } => {
                 commands::firmware::validate(&file)?;
             }

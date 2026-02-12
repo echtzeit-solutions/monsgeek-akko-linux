@@ -556,10 +556,6 @@ pub enum PcapOutputFormat {
 /// Firmware commands
 #[derive(Subcommand)]
 pub enum FirmwareCommands {
-    /// Show current device firmware version
-    #[command(visible_alias = "i")]
-    Info,
-
     /// Validate a firmware file (parse, checksum, structure)
     #[command(visible_alias = "val")]
     Validate {

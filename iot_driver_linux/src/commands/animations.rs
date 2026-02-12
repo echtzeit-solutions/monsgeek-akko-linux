@@ -1,6 +1,6 @@
 //! Animation command handlers.
 
-use super::{setup_interrupt_handler, with_keyboard, CommandResult};
+use super::{setup_interrupt_handler, CommandResult};
 use iot_driver::gif::{generate_test_animation, load_gif, print_animation_info, MappingMode};
 use iot_driver::protocol::cmd::LedMode;
 use monsgeek_keyboard::SyncKeyboard;
@@ -94,7 +94,7 @@ pub fn gif_stream(file: &str, mode: MappingMode, loop_anim: bool) -> CommandResu
 }
 
 /// Set LED mode by name or number
-pub fn mode(mode: &str, layer: u8) -> CommandResult {
+pub fn mode(keyboard: &SyncKeyboard, mode: &str, layer: u8) -> CommandResult {
     let led_mode = match LedMode::parse(mode) {
         Some(m) => m,
         None => {
@@ -107,19 +107,17 @@ pub fn mode(mode: &str, layer: u8) -> CommandResult {
         }
     };
 
-    with_keyboard(|keyboard| {
-        println!(
-            "Setting LED mode to {} ({}) with layer {}...",
-            led_mode.name(),
-            led_mode.as_u8(),
-            layer
-        );
-        match keyboard.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer) {
-            Ok(_) => println!("Done."),
-            Err(e) => eprintln!("Failed to set LED mode: {e}"),
-        }
-        Ok(())
-    })
+    println!(
+        "Setting LED mode to {} ({}) with layer {}...",
+        led_mode.name(),
+        led_mode.as_u8(),
+        layer
+    );
+    match keyboard.set_led_with_option(led_mode.as_u8(), 4, 0, 128, 128, 128, false, layer) {
+        Ok(_) => println!("Done."),
+        Err(e) => eprintln!("Failed to set LED mode: {e}"),
+    }
+    Ok(())
 }
 
 /// List all available LED modes

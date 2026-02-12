@@ -1,6 +1,6 @@
 //! Query (read-only) command handlers.
 
-use super::{format_command_response, open_preferred_transport, with_keyboard, CommandResult};
+use super::{format_command_response, open_preferred_transport, CommandResult};
 use hidapi::HidApi;
 use iot_driver::hal;
 use iot_driver::protocol::{self, cmd};
@@ -9,49 +9,103 @@ use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{ChecksumType, PrinterConfig};
 use std::time::Duration;
 
-/// Get device info (firmware version, device ID)
+/// Get device info (firmware version, device ID, patch, boot mode, API ID)
 pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
     let transport = open_preferred_transport(printer_config)?;
-    let info = transport.device_info();
+    let dev = transport.device_info();
+
+    // Device identity
+    if let Some(ref name) = dev.product_name {
+        println!("Device:    {name}");
+    }
     println!(
-        "Device: VID={:04X} PID={:04X} type={:?}",
-        info.vid, info.pid, info.transport_type
+        "  VID/PID:  {:04X}:{:04X}  type={:?}",
+        dev.vid, dev.pid, dev.transport_type
     );
 
     let resp = transport.query_command(transport_cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
     let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]);
     let version = u16::from_le_bytes([resp[7], resp[8]]);
-    println!("Device ID: {device_id} (0x{device_id:08X})");
-    println!(
-        "Version:   {} (hex v{:X}, dec v{}.{:02})",
-        version,
-        version,
-        version / 100,
-        version % 100
-    );
 
-    // Probe for patched firmware
-    if let Ok(resp) = transport.query_raw(protocol::patch_info::CMD, &[], ChecksumType::Bit7) {
-        if resp.len() >= 8
-            && resp[3] == protocol::patch_info::MAGIC_HI
-            && resp[4] == protocol::patch_info::MAGIC_LO
-        {
-            let patch_ver = resp[5];
-            let caps = u16::from_le_bytes([resp[6], resp[7]]);
-            let name_end = resp.len().min(16);
-            let name_bytes = &resp[8..name_end];
-            let name_len = name_bytes
-                .iter()
-                .position(|&b| b == 0)
-                .unwrap_or(name_bytes.len());
-            let name = String::from_utf8_lossy(&name_bytes[..name_len]);
-            let cap_names = protocol::patch_info::capability_names(caps);
-            println!(
-                "Patch:     {} v{} [{}]",
-                name,
-                patch_ver,
-                cap_names.join(", ")
-            );
+    // Version is stored as major.minor in high/low byte (e.g. 0x0407 = v4.07)
+    let (major, minor) = (version >> 8, version & 0xFF);
+    println!("Firmware:  v{major}.{minor:02} (raw 0x{version:04X}, dec {version})");
+    println!("Device ID: {device_id} (0x{device_id:08X})");
+
+    // Boot mode (bootloader / firmware update mode)
+    let is_boot = iot_driver::protocol::firmware_update::is_boot_mode(dev.vid, dev.pid);
+    println!("Boot mode: {}", if is_boot { "Yes" } else { "No" });
+
+    // API ID (for firmware server; same as device ID or VID/PID fallback)
+    let api_id = if device_id != 0 {
+        Some(device_id)
+    } else {
+        iot_driver::firmware_api::device_ids::from_vid_pid(dev.vid, dev.pid)
+    };
+    if let Some(id) = api_id {
+        println!("API ID:    {id}");
+    }
+
+    // Patched firmware (battery HID, LED stream, etc.)
+    // Probe 0xFB: wired HID returns [cmd_echo, magic_hi, magic_lo, ...]; some paths may return [magic_hi, magic_lo, ...]
+    match transport.query_raw(protocol::patch_info::CMD, &[], ChecksumType::Bit7) {
+        Ok(resp) => {
+            let offsets = if resp.len() >= 6
+                && resp[0] == protocol::patch_info::MAGIC_HI
+                && resp[1] == protocol::patch_info::MAGIC_LO
+            {
+                Some((2, 3, 5)) // payload only
+            } else if resp.len() >= 7
+                && resp[1] == protocol::patch_info::MAGIC_HI
+                && resp[2] == protocol::patch_info::MAGIC_LO
+            {
+                Some((3, 4, 6)) // echo + payload (wired strips report ID only)
+            } else {
+                None
+            };
+            match offsets {
+                Some((ver_off, caps_off, name_off)) => {
+                    let patch_ver = resp[ver_off];
+                    let caps = u16::from_le_bytes([resp[caps_off], resp[caps_off + 1]]);
+                    let name_end = resp.len().min(name_off + 9);
+                    let name_bytes = &resp[name_off..name_end];
+                    let name_len = name_bytes
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(name_bytes.len());
+                    let name = String::from_utf8_lossy(&name_bytes[..name_len]);
+                    let cap_names = protocol::patch_info::capability_names(caps);
+                    if cap_names.is_empty() {
+                        println!("Patch:     {} v{} (no features enabled).", name, patch_ver);
+                    } else {
+                        println!(
+                            "Patch:     {} v{} [{}]",
+                            name,
+                            patch_ver,
+                            cap_names.join(", ")
+                        );
+                    }
+                }
+                None => {
+                    println!("Patch:     Stock firmware (no patch support).");
+                    // Show raw 0xFB response to investigate: patched FW returns 0xCA 0xFE magic;
+                    // stock may echo 0xFB and return other data (e.g. trigger subcmd 0xFB = TOP_DEADZONE).
+                    let hex_len = resp.len().min(16);
+                    println!(
+                        "           0xFB response ({} bytes): {}",
+                        resp.len(),
+                        resp[..hex_len]
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                }
+            }
+        }
+        Err(_) => {
+            println!("Patch:     Stock firmware (no patch support).");
+            println!("           0xFB response: none (timeout or error).");
         }
     }
 
@@ -93,19 +147,17 @@ pub fn debounce(printer_config: Option<PrinterConfig>) -> CommandResult {
 }
 
 /// Get polling rate
-pub fn rate() -> CommandResult {
+pub fn rate(keyboard: &monsgeek_keyboard::SyncKeyboard) -> CommandResult {
     use iot_driver::protocol::polling_rate;
 
-    with_keyboard(|keyboard| {
-        match keyboard.get_polling_rate() {
-            Ok(rate) => {
-                let hz = rate as u16;
-                println!("Polling rate: {hz} ({})", polling_rate::name(hz));
-            }
-            Err(e) => eprintln!("Failed to get polling rate: {e}"),
+    match keyboard.get_polling_rate() {
+        Ok(rate) => {
+            let hz = rate as u16;
+            println!("Polling rate: {hz} ({})", polling_rate::name(hz));
         }
-        Ok(())
-    })
+        Err(e) => eprintln!("Failed to get polling rate: {e}"),
+    }
+    Ok(())
 }
 
 /// Get keyboard options
@@ -125,38 +177,36 @@ pub fn features(printer_config: Option<PrinterConfig>) -> CommandResult {
 }
 
 /// Get sleep time settings
-pub fn sleep() -> CommandResult {
-    with_keyboard(|keyboard| {
-        match keyboard.get_sleep_time() {
-            Ok(settings) => {
-                println!("Sleep Time Settings:");
-                println!("  Bluetooth:");
-                println!(
-                    "    Idle:       {} ({})",
-                    settings.idle_bt,
-                    SleepTimeSettings::format_duration(settings.idle_bt)
-                );
-                println!(
-                    "    Deep Sleep: {} ({})",
-                    settings.deep_bt,
-                    SleepTimeSettings::format_duration(settings.deep_bt)
-                );
-                println!("  2.4GHz:");
-                println!(
-                    "    Idle:       {} ({})",
-                    settings.idle_24g,
-                    SleepTimeSettings::format_duration(settings.idle_24g)
-                );
-                println!(
-                    "    Deep Sleep: {} ({})",
-                    settings.deep_24g,
-                    SleepTimeSettings::format_duration(settings.deep_24g)
-                );
-            }
-            Err(e) => eprintln!("Failed to get sleep settings: {e}"),
+pub fn sleep(keyboard: &monsgeek_keyboard::SyncKeyboard) -> CommandResult {
+    match keyboard.get_sleep_time() {
+        Ok(settings) => {
+            println!("Sleep Time Settings:");
+            println!("  Bluetooth:");
+            println!(
+                "    Idle:       {} ({})",
+                settings.idle_bt,
+                SleepTimeSettings::format_duration(settings.idle_bt)
+            );
+            println!(
+                "    Deep Sleep: {} ({})",
+                settings.deep_bt,
+                SleepTimeSettings::format_duration(settings.deep_bt)
+            );
+            println!("  2.4GHz:");
+            println!(
+                "    Idle:       {} ({})",
+                settings.idle_24g,
+                SleepTimeSettings::format_duration(settings.idle_24g)
+            );
+            println!(
+                "    Deep Sleep: {} ({})",
+                settings.deep_24g,
+                SleepTimeSettings::format_duration(settings.deep_24g)
+            );
         }
-        Ok(())
-    })
+        Err(e) => eprintln!("Failed to get sleep settings: {e}"),
+    }
+    Ok(())
 }
 
 /// Show all device information

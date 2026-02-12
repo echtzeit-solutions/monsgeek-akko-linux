@@ -2,10 +2,19 @@
 //!
 //! These commands write RGB data directly to the WS2812 frame buffer via the
 //! patched firmware's 0xFC command, without any flash writes.
+//!
+//! **Coordinate convention**
+//! - Logical key (x, y): x = column 0..15, y = row 0..5 (row 0 = Esc..Del, row 1 = Backspace..`, …).
+//! - Userspace image: `img[y * width + x]` (row-major); pixel (x, y) = key (x, y).
+//! - Send order: we use **column-major** index `pos = col*6 + row` (same key → same pos).
+//! - GIF: we sample image at (col, row) and store at `leds[col*6 + row]`, then send `leds` as-is.
+//! - Firmware: receives RGB per position, maps `(row, col) = (pos%6, pos/6)` and uses
+//!   `static_led_pos_tbl[row*16+col]` for strip index.
 
-use super::{setup_interrupt_handler, CommandResult};
+use super::{open_keyboard, setup_interrupt_handler, CommandResult};
 use iot_driver::devices::M1_V5_HE_LED_MATRIX;
 use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_transport::PrinterConfig;
 use std::sync::atomic::Ordering;
 
 /// Matrix dimensions (column-major: index = col * ROWS + row)
@@ -29,8 +38,10 @@ const TEST_COLORS: [(u8, u8, u8); 7] = [
 ];
 
 /// Open keyboard and verify patch LED streaming is supported.
-fn open_with_patch_check() -> Result<SyncKeyboard, Box<dyn std::error::Error>> {
-    let kb = SyncKeyboard::open_any().map_err(|e| format!("No device found: {e}"))?;
+fn open_with_patch_check(
+    printer_config: Option<PrinterConfig>,
+) -> Result<SyncKeyboard, Box<dyn std::error::Error>> {
+    let kb = open_keyboard(printer_config).map_err(|e| format!("No device found: {e}"))?;
 
     let patch = kb
         .get_patch_info()
@@ -86,18 +97,30 @@ fn send_full_frame(
     Ok(())
 }
 
+/// Row-major sweep order: row 0 (Esc..Del), then row 1 (Backspace..`), etc.
+/// So (x, y) with x changing more frequently; position = col*6 + row with col=x, row=y.
+fn active_positions_row_major() -> Vec<usize> {
+    let mut out = Vec::with_capacity(MATRIX_LEN);
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let pos = col * ROWS + row;
+            if M1_V5_HE_LED_MATRIX[pos] != 0 {
+                out.push(pos);
+            }
+        }
+    }
+    out
+}
+
 /// Test LED streaming — lights one LED at a time, cycling through colors.
-pub fn stream_test(fps: f32) -> CommandResult {
-    let kb = open_with_patch_check()?;
+/// Sweep order matches physical rows: row 0 left→right, row 1 left→right, etc.
+pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandResult {
+    let kb = open_with_patch_check(printer_config)?;
 
     let frame_duration = std::time::Duration::from_secs_f32(1.0 / fps);
     let running = setup_interrupt_handler();
 
-    // Collect active LED positions (non-empty entries in the matrix)
-    let active_positions: Vec<usize> = (0..MATRIX_LEN)
-        .filter(|&i| M1_V5_HE_LED_MATRIX[i] != 0)
-        .collect();
-
+    let active_positions = active_positions_row_major();
     println!(
         "Streaming test: {} active LEDs, {:.1} FPS (Ctrl+C to stop)",
         active_positions.len(),
@@ -139,11 +162,12 @@ pub fn stream_test(fps: f32) -> CommandResult {
             let row = pos % ROWS;
             let hid = M1_V5_HE_LED_MATRIX[pos];
             print!(
-                "\rLED {:3}/{} (col={:2}, row={}, hid=0x{:02X}) color=({:3},{:3},{:3})",
+                "\rLED {:3}/{} x={:2} y={} (pos={}, hid=0x{:02X}) color=({:3},{:3},{:3})",
                 count + 1,
                 active_positions.len(),
                 col,
                 row,
+                pos,
                 hid,
                 cr,
                 cg,
@@ -162,8 +186,13 @@ pub fn stream_test(fps: f32) -> CommandResult {
 }
 
 /// Stream a GIF to keyboard LEDs via the 0xFC patch protocol.
-pub fn stream_gif(file: &str, fps: Option<f32>, loop_anim: bool) -> CommandResult {
-    let kb = open_with_patch_check()?;
+pub fn stream_gif(
+    printer_config: Option<PrinterConfig>,
+    file: &str,
+    fps: Option<f32>,
+    loop_anim: bool,
+) -> CommandResult {
+    let kb = open_with_patch_check(printer_config)?;
 
     // Decode GIF
     println!("Loading GIF: {file}");
