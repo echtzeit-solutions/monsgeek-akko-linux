@@ -92,7 +92,7 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
         true,
     );
 
-    let precision_factor = match keyboard.get_precision().await {
+    let precision_factor = match keyboard.get_precision() {
         Ok(precision) => {
             let factor = precision.factor();
             info!("Precision: {} (factor: {})", precision.as_str(), factor);
@@ -104,7 +104,7 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
         }
     };
 
-    if let Err(e) = keyboard.start_magnetism_report().await {
+    if let Err(e) = keyboard.start_magnetism_report() {
         warn!("Failed to start magnetism report: {}", e);
         return None;
     }
@@ -262,7 +262,7 @@ async fn run_headless(config: JoystickConfig, _config_path: PathBuf) -> Result<(
         }
 
         // Stop magnetism before reconnect
-        let _ = conn.keyboard.stop_magnetism_report().await;
+        let _ = conn.keyboard.stop_magnetism_report();
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

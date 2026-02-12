@@ -13,11 +13,10 @@ use monsgeek_transport::{ChecksumType, FlowControlTransport, HidDiscovery, Trans
 ///
 /// Mirrors the TUI's `connect()` flow:
 /// HidDiscovery → open_preferred → FlowControlTransport → KeyboardInterface
-async fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
+fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
     let discovery = HidDiscovery::new();
     let transport = discovery
         .open_preferred()
-        .await
         .expect("No keyboard found — plug in a supported device");
 
     let info = transport.device_info();
@@ -39,50 +38,50 @@ async fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore] // requires hardware
 async fn tui_first_tab_queries_resolve() {
-    let (_raw, kb) = open_keyboard().await;
+    let (_raw, kb) = open_keyboard();
     let kb = Arc::new(kb);
 
     // Same queries as tui.rs load_device_info(), each spawned as a
     // separate task — exactly how the TUI does it
     let h_device_id = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_device_id().await })
+        tokio::spawn(async move { kb.get_device_id() })
     };
     let h_version = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_version().await })
+        tokio::spawn(async move { kb.get_version() })
     };
     let h_profile = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_profile().await })
+        tokio::spawn(async move { kb.get_profile() })
     };
     let h_debounce = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_debounce().await })
+        tokio::spawn(async move { kb.get_debounce() })
     };
     let h_poll_rate = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_polling_rate().await })
+        tokio::spawn(async move { kb.get_polling_rate() })
     };
     let h_led = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_led_params().await })
+        tokio::spawn(async move { kb.get_led_params() })
     };
     let h_side_led = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_side_led_params().await })
+        tokio::spawn(async move { kb.get_side_led_params() })
     };
     let h_kb_opts = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_kb_options().await })
+        tokio::spawn(async move { kb.get_kb_options() })
     };
     let h_precision = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_precision().await })
+        tokio::spawn(async move { kb.get_precision() })
     };
     let h_sleep = {
         let kb = Arc::clone(&kb);
-        tokio::spawn(async move { kb.get_sleep_time().await })
+        tokio::spawn(async move { kb.get_sleep_time() })
     };
 
     let results = tokio::time::timeout(Duration::from_secs(5), async {
@@ -176,23 +175,18 @@ async fn tui_first_tab_queries_resolve() {
 ///
 /// The gRPC server's `read_response()` uses this pattern instead of
 /// FlowControlTransport. Verifies the raw path works for GET_USB_VERSION.
-#[tokio::test]
+#[test]
 #[ignore] // requires hardware
-async fn grpc_raw_transport_query() {
-    let (raw, _kb) = open_keyboard().await;
+fn grpc_raw_transport_query() {
+    let (raw, _kb) = open_keyboard();
 
     const GET_USB_VERSION: u8 = 0x8F;
 
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        raw.send_report(GET_USB_VERSION, &[], ChecksumType::Bit7)
-            .await?;
-        raw.send_flush().await?;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        raw.read_report().await
-    })
-    .await
-    .expect("gRPC raw query did not complete within 5 seconds")
-    .expect("Raw transport query failed");
+    raw.send_report(GET_USB_VERSION, &[], ChecksumType::Bit7)
+        .expect("send GET_USB_VERSION failed");
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(5));
+    let result = raw.read_report().expect("Raw transport query failed");
 
     assert!(!result.is_empty(), "response should not be empty");
     assert_eq!(
@@ -212,21 +206,20 @@ async fn grpc_raw_transport_query() {
 ///
 /// Sends GET_MACRO for page 0 of slot 0 and prints whatever comes back.
 /// This diagnoses whether the device responds at all.
-#[tokio::test]
+#[test]
 #[ignore] // requires hardware
-async fn macro_raw_probe() {
-    let (raw, _kb) = open_keyboard().await;
+fn macro_raw_probe() {
+    let (raw, _kb) = open_keyboard();
 
     const GET_MACRO: u8 = 0x8B;
 
     // First: verify device is alive with a known-good command
     eprintln!("--- Verifying device connectivity with GET_USB_VERSION ---");
     raw.send_report(0x8F, &[], ChecksumType::Bit7)
-        .await
         .expect("send GET_USB_VERSION failed");
-    raw.send_flush().await.ok();
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    match raw.read_report().await {
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(10));
+    match raw.read_report() {
         Ok(resp) => {
             eprintln!(
                 "  GET_USB_VERSION response: [{:02x?}] (len={})",
@@ -242,14 +235,13 @@ async fn macro_raw_probe() {
     eprintln!("\n--- Probing GET_MACRO (0x8B) for slot 0, page 0 ---");
     let data = [0u8, 0u8]; // macro_index=0, page=0
     raw.send_report(GET_MACRO, &data, ChecksumType::Bit7)
-        .await
         .expect("send GET_MACRO failed");
-    raw.send_flush().await.ok();
+    raw.send_flush().ok();
 
     // Try reading with increasing timeouts
     for delay in [10, 50, 200, 500] {
-        tokio::time::sleep(Duration::from_millis(delay)).await;
-        match raw.read_report().await {
+        std::thread::sleep(Duration::from_millis(delay));
+        match raw.read_report() {
             Ok(resp) => {
                 eprintln!("  GET_MACRO response after {delay}ms:");
                 eprintln!("    len={}, first_byte=0x{:02x}", resp.len(), resp[0]);
@@ -274,15 +266,15 @@ async fn macro_raw_probe() {
 /// Read an existing macro (slot 0) and verify the high-level API parses it.
 ///
 /// Slot 0 should have data from a previous set (either webapp or CLI).
-#[tokio::test]
+#[test]
 #[ignore] // requires hardware
-async fn macro_read_existing() {
-    let (_raw, kb) = open_keyboard().await;
+fn macro_read_existing() {
+    let (_raw, kb) = open_keyboard();
 
     eprintln!("--- Reading existing macro from slot 0 ---");
     for slot in 0..8u8 {
         eprint!("Slot {slot}: ");
-        match kb.get_macro(slot).await {
+        match kb.get_macro(slot) {
             Ok(data) => {
                 // Check if data is all 0xFF (uninitialized)
                 if data.iter().all(|&b| b == 0xFF) {
@@ -316,10 +308,10 @@ async fn macro_read_existing() {
 /// Test SET_MACRO round-trip at the raw transport level.
 ///
 /// Sends SET_MACRO for slot 7, waits, then reads it back with GET_MACRO.
-#[tokio::test]
+#[test]
 #[ignore] // requires hardware
-async fn macro_set_and_readback() {
-    let (raw, _kb) = open_keyboard().await;
+fn macro_set_and_readback() {
+    let (raw, _kb) = open_keyboard();
 
     eprintln!("--- SET_MACRO raw test for slot 7 ---");
 
@@ -346,17 +338,16 @@ async fn macro_set_and_readback() {
         &cmd_data[..cmd_data.len().min(16)]
     );
     raw.send_report(0x0B, &cmd_data, ChecksumType::Bit7)
-        .await
         .expect("send SET_MACRO failed");
-    raw.send_flush().await.ok();
+    raw.send_flush().ok();
 
     // Wait for device to process
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    std::thread::sleep(Duration::from_millis(200));
 
     // Try to read any response/ack
     eprintln!("  Checking for SET_MACRO ack...");
-    match tokio::time::timeout(Duration::from_millis(500), raw.read_report()).await {
-        Ok(Ok(resp)) => {
+    match raw.read_report() {
+        Ok(resp) => {
             eprintln!(
                 "  SET_MACRO response: first_byte=0x{:02x} len={}",
                 resp[0],
@@ -368,20 +359,18 @@ async fn macro_set_and_readback() {
             }
             eprintln!();
         }
-        Ok(Err(e)) => eprintln!("  Read error: {e}"),
-        Err(_) => eprintln!("  No ack (timeout) — fire-and-forget is normal"),
+        Err(_) => eprintln!("  No ack — fire-and-forget is normal"),
     }
 
     // Now read it back with GET_MACRO
     eprintln!("\n  Reading back slot 7 with GET_MACRO (0x8B)...");
     let query_data = [7u8, 0u8]; // slot 7, page 0
     raw.send_report(0x8B, &query_data, ChecksumType::Bit7)
-        .await
         .expect("send GET_MACRO failed");
-    raw.send_flush().await.ok();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(50));
 
-    match raw.read_report().await {
+    match raw.read_report() {
         Ok(resp) => {
             eprintln!(
                 "  GET_MACRO slot 7 response: first_byte=0x{:02x} len={}",
@@ -413,11 +402,10 @@ async fn macro_set_and_readback() {
     eprintln!("\n--- SET_MACRO overwrite test for slot 0 ---");
     // Read slot 0 first
     raw.send_report(0x8B, &[0u8, 0u8], ChecksumType::Bit7)
-        .await
         .expect("send GET_MACRO failed");
-    raw.send_flush().await.ok();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    match raw.read_report().await {
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(50));
+    match raw.read_report() {
         Ok(resp) => {
             eprint!("  Slot 0 before write: ");
             for b in resp.iter().take(16) {
@@ -445,21 +433,19 @@ async fn macro_set_and_readback() {
 
     eprintln!("  Sending SET_MACRO for slot 0...");
     raw.send_report(0x0B, &cmd_data_0, ChecksumType::Bit7)
-        .await
         .expect("send SET_MACRO failed");
-    raw.send_flush().await.ok();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(200));
 
     // Drain any ack
-    let _ = tokio::time::timeout(Duration::from_millis(200), raw.read_report()).await;
+    let _ = raw.read_report();
 
     // Read back slot 0
     raw.send_report(0x8B, &[0u8, 0u8], ChecksumType::Bit7)
-        .await
         .expect("send GET_MACRO failed");
-    raw.send_flush().await.ok();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    match raw.read_report().await {
+    raw.send_flush().ok();
+    std::thread::sleep(Duration::from_millis(50));
+    match raw.read_report() {
         Ok(resp) => {
             eprint!("  Slot 0 after write:  ");
             for b in resp.iter().take(16) {
