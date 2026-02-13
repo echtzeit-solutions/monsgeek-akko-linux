@@ -5,7 +5,7 @@ use iot_driver::gif::{generate_test_animation, load_gif, print_animation_info, M
 use iot_driver::protocol::cmd::LedMode;
 use monsgeek_keyboard::SyncKeyboard;
 
-/// Upload GIF animation to keyboard memory
+/// Upload GIF animation to keyboard flash (persistent, mode 25)
 pub fn gif(
     file: Option<&str>,
     mode: MappingMode,

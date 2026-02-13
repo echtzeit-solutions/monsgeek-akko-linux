@@ -353,7 +353,7 @@ pub enum Commands {
     },
 
     // === Animation Commands ===
-    /// Upload GIF animation to keyboard memory
+    /// Upload GIF animation to keyboard flash (persistent, mode 25)
     Gif {
         /// GIF file path, or --test for test animation
         #[arg(required_unless_present = "test")]
