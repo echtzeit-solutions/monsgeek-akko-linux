@@ -43,16 +43,38 @@ pub mod mods {
 mod config_type {
     pub const KEY: u8 = 0;
     pub const MOUSE: u8 = 1;
-    pub const MACRO: u8 = 9;
     pub const CONSUMER: u8 = 3;
+    pub const PROFILE_SWITCH: u8 = 8;
+    pub const MACRO: u8 = 9;
     pub const SPECIAL_FN: u8 = 10;
     pub const LED_CONTROL: u8 = 13;
+    pub const CONNECTION_MODE: u8 = 14;
+    pub const KNOB: u8 = 18;
     pub const GAMEPAD: u8 = 21;
 }
 
 /// Sub-function IDs for config_type SPECIAL_FN (10).
+///
+/// Firmware no-ops: sub 0, 4, 6, 7, 0xf-0x16.
 mod special_fn {
     pub const FN_KEY: u8 = 1;
+    pub const GAME_MODE: u8 = 2;
+    pub const WIN_LOCK: u8 = 3;
+    // sub 4: no-op
+    pub const OS_MODE: u8 = 5;
+    // sub 6, 7: no-op
+    pub const BT_PAIRING: u8 = 8;
+    /// Same as FN_LOCK but without bt_event_queue (silent, no BT notification).
+    pub const FN_TOGGLE: u8 = 9;
+    pub const WASD_SWAP: u8 = 0x0a;
+    pub const NKRO_TOGGLE: u8 = 0x0b;
+    /// Fn Lock — toggles flags1 bit 4 with BT notification.
+    pub const FN_LOCK: u8 = 0x0c;
+    pub const REPORT_MODE: u8 = 0x0d;
+    /// Toggles flags2 bit 2 — unknown function.
+    pub const FLAGS2_BIT2: u8 = 0x0e;
+    // sub 0xf-0x16: no-op
+    pub const RCTRL_MOD: u8 = 0x17;
 }
 
 /// What action a key performs when pressed.
@@ -85,8 +107,23 @@ pub enum KeyAction {
     Gamepad(u8),
     /// Fn layer modifier key (config_type=10, sub=1).
     Fn,
+    /// Special function key (config_type=10, sub != 1).
+    ///
+    /// Sub-function ID in `sub`, extra data in `b2`/`b3`.
+    SpecialFn { sub: u8, b2: u8, b3: u8 },
+    /// Profile switch (config_type=8).
+    ///
+    /// `action`: 1=next, 2=prev, 3=cycle, 4=switch to specific `index`.
+    ProfileSwitch { action: u8, index: u8 },
+    /// Connection mode switch (config_type=14).
+    ///
+    /// `b1`=0: mode select (`b2`: 0=BT1, 1=BT2, 2=BT3, 5=2.4G, 6=USB).
+    /// `b1`=1: pairing (`b2`: 0=2.4G pair, 1=BT pair).
+    ConnectionMode { b1: u8, b2: u8, b3: u8 },
     /// LED brightness/effect control (config_type=13).
     LedControl { data: [u8; 3] },
+    /// Knob/encoder action (config_type=18).
+    Knob { data: [u8; 3] },
     /// Unknown/unsupported config type (preserved as raw bytes).
     Unknown { config_type: u8, data: [u8; 3] },
 }
@@ -103,7 +140,13 @@ impl KeyAction {
             KeyAction::Macro { index, kind } => [config_type::MACRO, kind, index, 0],
             KeyAction::Gamepad(btn) => [config_type::GAMEPAD, 0, btn, 0],
             KeyAction::Fn => [config_type::SPECIAL_FN, special_fn::FN_KEY, 0, 0],
+            KeyAction::SpecialFn { sub, b2, b3 } => [config_type::SPECIAL_FN, sub, b2, b3],
+            KeyAction::ProfileSwitch { action, index } => {
+                [config_type::PROFILE_SWITCH, 0, action, index]
+            }
+            KeyAction::ConnectionMode { b1, b2, b3 } => [config_type::CONNECTION_MODE, b1, b2, b3],
             KeyAction::LedControl { data } => [config_type::LED_CONTROL, data[0], data[1], data[2]],
+            KeyAction::Knob { data } => [config_type::KNOB, data[0], data[1], data[2]],
             KeyAction::Unknown { config_type, data } => [config_type, data[0], data[1], data[2]],
         }
     }
@@ -143,8 +186,25 @@ impl KeyAction {
                 kind: bytes[1],
             },
             config_type::GAMEPAD => KeyAction::Gamepad(bytes[2]),
+            config_type::PROFILE_SWITCH => KeyAction::ProfileSwitch {
+                action: bytes[2],
+                index: bytes[3],
+            },
             config_type::SPECIAL_FN if bytes[1] == special_fn::FN_KEY => KeyAction::Fn,
+            config_type::SPECIAL_FN => KeyAction::SpecialFn {
+                sub: bytes[1],
+                b2: bytes[2],
+                b3: bytes[3],
+            },
             config_type::LED_CONTROL => KeyAction::LedControl {
+                data: [bytes[1], bytes[2], bytes[3]],
+            },
+            config_type::CONNECTION_MODE => KeyAction::ConnectionMode {
+                b1: bytes[1],
+                b2: bytes[2],
+                b3: bytes[3],
+            },
+            config_type::KNOB => KeyAction::Knob {
                 data: [bytes[1], bytes[2], bytes[3]],
             },
             ct => KeyAction::Unknown {
@@ -202,6 +262,7 @@ impl fmt::Display for KeyAction {
                     0x00EA => "Volume Down",
                     0x006F => "Brightness Up",
                     0x0070 => "Brightness Down",
+                    0x0183 => "Word Processor",
                     0x018A => "Mail",
                     0x0192 => "Calculator",
                     0x0194 => "My Computer",
@@ -224,12 +285,64 @@ impl fmt::Display for KeyAction {
             },
             KeyAction::Gamepad(btn) => write!(f, "Gamepad({btn})"),
             KeyAction::Fn => write!(f, "Fn"),
+            KeyAction::SpecialFn { sub, b2, b3 } => {
+                let name = match *sub {
+                    special_fn::GAME_MODE => "Game Mode",
+                    special_fn::WIN_LOCK => "Win Lock",
+                    special_fn::OS_MODE => match b2 {
+                        0 => "OS: Windows",
+                        1 => "OS: Mac",
+                        2 => "OS: iOS",
+                        3 => "OS: Cycle",
+                        _ => return write!(f, "OS Mode({b2})"),
+                    },
+                    special_fn::BT_PAIRING => "BT Pairing",
+                    special_fn::FN_TOGGLE => "Fn Toggle",
+                    special_fn::WASD_SWAP => "WASD Swap",
+                    special_fn::NKRO_TOGGLE => "NKRO Toggle",
+                    special_fn::FN_LOCK => "Fn Lock",
+                    special_fn::REPORT_MODE => "Report Mode",
+                    special_fn::FLAGS2_BIT2 => "SpecialFn(0x0e)",
+                    special_fn::RCTRL_MOD => "RCtrl Modifier",
+                    _ => return write!(f, "SpecialFn({sub},{b2},{b3})"),
+                };
+                write!(f, "{name}")
+            }
+            KeyAction::ProfileSwitch { action, index } => match action {
+                1 => write!(f, "Profile Next"),
+                2 => write!(f, "Profile Prev"),
+                3 => write!(f, "Profile Cycle"),
+                4 => write!(f, "Profile {}", index + 1),
+                _ => write!(f, "ProfileSwitch({action},{index})"),
+            },
+            KeyAction::ConnectionMode { b1, b2, .. } => {
+                if *b1 == 1 {
+                    match b2 {
+                        0 => write!(f, "Pair 2.4G"),
+                        1 => write!(f, "Pair BT"),
+                        _ => write!(f, "Pair({b2})"),
+                    }
+                } else {
+                    // b2 is 0-indexed BT slot; b2=3,4 are no-ops in firmware
+                    match b2 {
+                        0 => write!(f, "BT1"),
+                        1 => write!(f, "BT2"),
+                        2 => write!(f, "BT3"),
+                        5 => write!(f, "2.4GHz"),
+                        6 => write!(f, "USB"),
+                        _ => write!(f, "Connection({b2})"),
+                    }
+                }
+            }
             KeyAction::LedControl { data } => {
                 let name = match (data[0], data[1], data[2]) {
+                    (1, _, _) => "LED Mode Cycle",
                     (2, 1, 0) => "LED Brightness Up",
                     (2, 2, 0) => "LED Brightness Down",
                     (3, 1, 0) => "LED Speed Up",
                     (3, 2, 0) => "LED Speed Down",
+                    (5, _, _) => "LED Direction",
+                    (6, _, _) => "LED Layer Select",
                     _ => "",
                 };
                 if name.is_empty() {
@@ -237,6 +350,9 @@ impl fmt::Display for KeyAction {
                 } else {
                     write!(f, "{name}")
                 }
+            }
+            KeyAction::Knob { data } => {
+                write!(f, "Knob({},{},{})", data[0], data[1], data[2])
             }
             KeyAction::Unknown {
                 config_type,
@@ -648,18 +764,20 @@ mod tests {
     }
 
     #[test]
-    fn wire_fn_other_subfunctions_stay_unknown() {
-        // config_type=10 with sub != 1 should remain Unknown
-        let bytes = [10, 14, 0, 0]; // volume<->brightness
+    fn wire_special_fn_decoded() {
+        // config_type=10 with sub != 1 should decode as SpecialFn
+        let bytes = [10, 0x0a, 0, 0]; // WASD Swap
         let a = KeyAction::from_config_bytes(bytes);
-        assert!(matches!(
+        assert_eq!(
             a,
-            KeyAction::Unknown {
-                config_type: 10,
-                ..
+            KeyAction::SpecialFn {
+                sub: 0x0a,
+                b2: 0,
+                b3: 0
             }
-        ));
+        );
         assert_eq!(a.to_config_bytes(), bytes);
+        assert_eq!(a.to_string(), "WASD Swap");
     }
 
     #[test]
@@ -667,6 +785,118 @@ mod tests {
         let a = KeyAction::Gamepad(7);
         assert_eq!(a.to_config_bytes(), [21, 0, 7, 0]);
         assert_eq!(KeyAction::from_config_bytes(a.to_config_bytes()), a);
+    }
+
+    #[test]
+    fn wire_roundtrip_profile_switch() {
+        // Profile 3 (index 2)
+        let bytes = [8, 0, 4, 2];
+        let a = KeyAction::from_config_bytes(bytes);
+        assert_eq!(
+            a,
+            KeyAction::ProfileSwitch {
+                action: 4,
+                index: 2
+            }
+        );
+        assert_eq!(a.to_config_bytes(), bytes);
+        assert_eq!(a.to_string(), "Profile 3");
+    }
+
+    #[test]
+    fn wire_roundtrip_connection_mode() {
+        // BT1 (0-indexed slot 0)
+        let bytes = [14, 0, 0, 0];
+        let a = KeyAction::from_config_bytes(bytes);
+        assert_eq!(
+            a,
+            KeyAction::ConnectionMode {
+                b1: 0,
+                b2: 0,
+                b3: 0
+            }
+        );
+        assert_eq!(a.to_config_bytes(), bytes);
+        assert_eq!(a.to_string(), "BT1");
+
+        // BT2, BT3
+        assert_eq!(
+            KeyAction::from_config_bytes([14, 0, 1, 0]).to_string(),
+            "BT2"
+        );
+        assert_eq!(
+            KeyAction::from_config_bytes([14, 0, 2, 0]).to_string(),
+            "BT3"
+        );
+
+        // 2.4GHz
+        assert_eq!(
+            KeyAction::from_config_bytes([14, 0, 5, 0]).to_string(),
+            "2.4GHz"
+        );
+
+        // USB
+        assert_eq!(
+            KeyAction::from_config_bytes([14, 0, 6, 0]).to_string(),
+            "USB"
+        );
+    }
+
+    #[test]
+    fn wire_roundtrip_knob() {
+        let bytes = [18, 1, 2, 3];
+        let a = KeyAction::from_config_bytes(bytes);
+        assert_eq!(a, KeyAction::Knob { data: [1, 2, 3] });
+        assert_eq!(a.to_config_bytes(), bytes);
+    }
+
+    #[test]
+    fn display_special_fn_variants() {
+        assert_eq!(
+            KeyAction::SpecialFn {
+                sub: 2,
+                b2: 0,
+                b3: 0
+            }
+            .to_string(),
+            "Game Mode"
+        );
+        assert_eq!(
+            KeyAction::SpecialFn {
+                sub: 3,
+                b2: 0,
+                b3: 0
+            }
+            .to_string(),
+            "Win Lock"
+        );
+        assert_eq!(
+            KeyAction::SpecialFn {
+                sub: 8,
+                b2: 0,
+                b3: 0
+            }
+            .to_string(),
+            "BT Pairing"
+        );
+        assert_eq!(
+            KeyAction::SpecialFn {
+                sub: 0x0c,
+                b2: 0,
+                b3: 0
+            }
+            .to_string(),
+            "Fn Lock"
+        );
+        assert_eq!(
+            KeyAction::SpecialFn {
+                sub: 0x17,
+                b2: 0,
+                b3: 0
+            }
+            .to_string(),
+            "RCtrl Modifier"
+        );
     }
 
     #[test]
@@ -775,8 +1005,8 @@ mod tests {
     #[test]
     fn display_led_control_unknown() {
         assert_eq!(
-            KeyAction::LedControl { data: [5, 1, 0] }.to_string(),
-            "LedControl(5,1,0)"
+            KeyAction::LedControl { data: [99, 1, 0] }.to_string(),
+            "LedControl(99,1,0)"
         );
     }
 

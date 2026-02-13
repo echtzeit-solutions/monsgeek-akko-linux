@@ -235,7 +235,11 @@ impl BindingType {
             KeyAction::Gamepad(_) => Self::Gamepad,
             KeyAction::Fn => Self::Fn,
             KeyAction::LedControl { .. } => Self::LedControl,
-            KeyAction::Unknown { .. } => Self::Disabled,
+            KeyAction::SpecialFn { .. }
+            | KeyAction::ProfileSwitch { .. }
+            | KeyAction::ConnectionMode { .. }
+            | KeyAction::Knob { .. }
+            | KeyAction::Unknown { .. } => Self::Disabled,
         }
     }
 
