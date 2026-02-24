@@ -120,6 +120,95 @@ static struct {
 #define LOG_USB_CONNECT       0x04  /* 0B payload */
 #define LOG_EP0_XFER_START    0x05  /* 6B payload: buf_lo/hi, len, udev_lo/hi, 0 */
 
+/* ── SEGGER RTT (ring buffer in SRAM, read by BMP via SWD) ─────────── */
+
+#define RTT_BUF_SIZE 256
+
+/* RTT Up-Buffer descriptor */
+typedef struct {
+    const char *name;
+    uint8_t    *buf;
+    uint32_t    size;
+    volatile uint32_t wr_off;   /* firmware advances */
+    volatile uint32_t rd_off;   /* BMP advances via SWD */
+    uint32_t    flags;          /* 0 = skip if full (non-blocking) */
+} rtt_up_buf_t;
+
+/* RTT Control Block — BMP scans SRAM for the magic ID string */
+static struct {
+    char         id[16];        /* "SEGGER RTT\0\0\0\0\0\0" */
+    int32_t      max_up;        /* 1 */
+    int32_t      max_down;      /* 0 */
+    rtt_up_buf_t up[1];
+} rtt_cb;
+
+static uint8_t rtt_buf[RTT_BUF_SIZE];
+static const char rtt_channel_name[] = "monsmod";
+
+/* RTT tag definitions for battery monitor */
+#define RTT_TAG_ADC_AVG       0x01  /* u16: averaged battery ADC reading */
+#define RTT_TAG_BATT_RAW      0x02  /* u8:  battery_raw_level */
+#define RTT_TAG_BATT_LEVEL    0x03  /* u8:  battery_level (debounced %) */
+#define RTT_TAG_CHARGER       0x04  /* u8:  charger_connected flag */
+#define RTT_TAG_DEBOUNCE_CTR  0x05  /* u8:  battery_update_ctr */
+#define RTT_TAG_ADC_COUNTER   0x10  /* u32: magnetism engine ADC scan counter */
+
+static void rtt_init(void) {
+    /* Zero everything — PATCH_SRAM .bss is NOT zero-initialized */
+    uint8_t *p = (uint8_t *)&rtt_cb;
+    for (uint32_t i = 0; i < sizeof(rtt_cb); i++)
+        p[i] = 0;
+    for (uint32_t i = 0; i < RTT_BUF_SIZE; i++)
+        rtt_buf[i] = 0;
+
+    /* Set up channel 0 (up only) */
+    rtt_cb.up[0].name  = rtt_channel_name;
+    rtt_cb.up[0].buf   = rtt_buf;
+    rtt_cb.up[0].size  = RTT_BUF_SIZE;
+    rtt_cb.up[0].wr_off = 0;
+    rtt_cb.up[0].rd_off = 0;
+    rtt_cb.up[0].flags  = 0;  /* SEGGER_RTT_MODE_NO_BLOCK_SKIP */
+    rtt_cb.max_up   = 1;
+    rtt_cb.max_down = 0;
+
+    /* Write magic LAST — prevents BMP finding half-initialized CB.
+     * Use volatile to prevent reordering with struct init above. */
+    __asm__ volatile ("dsb" ::: "memory");
+    const char magic[] = "SEGGER RTT\0\0\0\0\0";
+    for (int i = 0; i < 16; i++)
+        ((volatile char *)rtt_cb.id)[i] = magic[i];
+}
+
+static void rtt_emit(uint8_t tag, uint32_t val) {
+    /* Write 5-byte record: [tag:u8] [value:u32 LE] non-blocking. */
+    uint32_t wr = rtt_cb.up[0].wr_off;
+    uint32_t rd = rtt_cb.up[0].rd_off;
+
+    /* Check available space (circular buffer) */
+    uint32_t avail;
+    if (wr >= rd)
+        avail = RTT_BUF_SIZE - 1 - wr + rd;
+    else
+        avail = rd - wr - 1;
+
+    if (avail < 5)
+        return;  /* drop if buffer full */
+
+    rtt_buf[wr] = tag;
+    wr = (wr + 1) % RTT_BUF_SIZE;
+    rtt_buf[wr] = (uint8_t)(val & 0xFF);
+    wr = (wr + 1) % RTT_BUF_SIZE;
+    rtt_buf[wr] = (uint8_t)((val >> 8) & 0xFF);
+    wr = (wr + 1) % RTT_BUF_SIZE;
+    rtt_buf[wr] = (uint8_t)((val >> 16) & 0xFF);
+    wr = (wr + 1) % RTT_BUF_SIZE;
+    rtt_buf[wr] = (uint8_t)((val >> 24) & 0xFF);
+    wr = (wr + 1) % RTT_BUF_SIZE;
+
+    /* Atomic u32 store — ISR-safe on Cortex-M4 */
+    rtt_cb.up[0].wr_off = wr;
+}
+
 static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
     /* Write [type] [payload...] into ring buffer */
     uint16_t total = 1 + len;
@@ -139,6 +228,28 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
         log_buf.count += total;
     else
         log_buf.count = LOG_BUF_SIZE;
+}
+
+/* ── Battery monitor "before" hook ─────────────────────────────────── */
+/* Called BEFORE battery_level_monitor runs. Emits RTT records with
+ * current battery ADC, level, charger state etc. for live observation.
+ * battery_level_monitor fires when adc_counter == 2000 (~every few seconds). */
+
+void battery_monitor_before_hook(void) {
+    volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+
+    /* Averaged battery ADC: 32-bit value at 0x20000010 */
+    volatile uint32_t *adc_avg = (volatile uint32_t *)0x20000010;
+    rtt_emit(RTT_TAG_ADC_AVG, *adc_avg & 0xFFFF);
+
+    rtt_emit(RTT_TAG_BATT_RAW, kbd->battery_raw_level);
+    rtt_emit(RTT_TAG_BATT_LEVEL, kbd->battery_level);
+    rtt_emit(RTT_TAG_CHARGER, kbd->charger_connected);
+    rtt_emit(RTT_TAG_DEBOUNCE_CTR, kbd->battery_update_ctr);
+
+    /* ADC scan counter: *(uint32_t *)(0x20004410 + 0xe24) = 0x20005234 */
+    volatile uint32_t *adc_ctr = (volatile uint32_t *)0x20005234;
+    rtt_emit(RTT_TAG_ADC_COUNTER, *adc_ctr);
 }
 
 /* Forward declaration for USB path (GET_REPORT IF2) and handle_patch_info. */
@@ -434,6 +545,9 @@ static int handle_led_stream(volatile uint8_t *buf) {
 
 int handle_usb_connect(void) {
     log_entry(LOG_USB_CONNECT, (const uint8_t *)0, 0);
+
+    /* Initialize RTT control block (re-initializes on each USB plug). */
+    rtt_init();
 
     /* Patch wDescriptorLength to EXTENDED_RDESC_LEN in all SRAM descriptor
      * copies.  Must happen BEFORE enumeration so the config descriptor

@@ -49,6 +49,13 @@ HOOKS = [
         mode="filter",
         displace=4,                # ldr.w r1,[r0,#0x804] — 4 bytes, safe
     ),
+    Hook(
+        name="battery_monitor",
+        target=0x0801695C,         # battery_level_monitor
+        handler="battery_monitor_before_hook",
+        mode="before",
+        displace=4,                # push {r4-r8,lr} — 4 bytes, safe
+    ),
     # LED streaming: no hook for rgb_led_animate or led_render_frame (both start with
     # PC-relative LDR; can't displace). We set led_effect_mode=0 when streaming so
     # rgb_led_animate returns immediately. Commit copies stream_frame_buf to frame+DMA.
