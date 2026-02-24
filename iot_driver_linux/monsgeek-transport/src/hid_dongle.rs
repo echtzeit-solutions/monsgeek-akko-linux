@@ -105,7 +105,7 @@ impl Transport for HidDongleTransport {
         let device = self.device.lock();
         let mut buf = vec![0u8; REPORT_SIZE];
         buf[0] = 0;
-        buf[1] = cmd::DONGLE_FLUSH_NOP;
+        buf[1] = cmd::GET_CACHED_RESPONSE;
         protocol::apply_checksum(&mut buf[1..], ChecksumType::Bit7);
         device.send_feature_report(&buf)?;
         Ok(())
@@ -153,16 +153,25 @@ impl Transport for HidDongleTransport {
     fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         let device = self.device.lock();
 
-        let buf = protocol::build_command(cmd::BATTERY_REFRESH, &[], ChecksumType::Bit7);
+        // Send GET_DONGLE_STATUS (0xF7) — handled locally by dongle, not forwarded
+        let buf = protocol::build_command(cmd::GET_DONGLE_STATUS, &[], ChecksumType::Bit7);
         device.send_feature_report(&buf)?;
 
+        // Read response on Report ID 0 (dongle IF2 only has Report ID 0)
         let mut buf = vec![0u8; REPORT_SIZE];
-        buf[0] = 0x05;
+        buf[0] = 0; // Report ID 0
         device.get_feature_report(&mut buf)?;
 
-        let level = buf[1];
-        let idle = buf.len() > 3 && buf[3] != 0;
-        let online = buf.len() > 4 && buf[4] != 0;
+        // F7 response layout (buf[0]=Report ID, buf[1..]=data):
+        //   buf[1] = has_response
+        //   buf[2] = kb_battery_info (0-100%)
+        //   buf[3] = 0 (reserved)
+        //   buf[4] = kb_charging
+        //   buf[5] = 1 (hardcoded)
+        //   buf[6] = rf_ready (0=waiting, 1=ready)
+        let level = buf[2];
+        let charging = buf[4] != 0;
+        let rf_ready = buf[6] != 0;
 
         if level > 100 {
             return Err(TransportError::Internal(format!(
@@ -170,7 +179,8 @@ impl Transport for HidDongleTransport {
             )));
         }
 
-        Ok((level, online, idle))
+        // Return (level, online=rf_ready, idle=charging) for Transport trait compat
+        Ok((level, rf_ready, charging))
     }
 }
 

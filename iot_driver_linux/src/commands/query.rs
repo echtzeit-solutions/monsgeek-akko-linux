@@ -364,7 +364,7 @@ fn read_vendor_battery(hidapi: &HidApi, show_debug: bool) -> Option<(u8, bool, b
 
         // Send F7 command to trigger battery refresh
         let f7_cmd =
-            protocol::build_command(cmd::BATTERY_REFRESH, &[], protocol::ChecksumType::Bit7);
+            protocol::build_command(cmd::GET_DONGLE_STATUS, &[], protocol::ChecksumType::Bit7);
         if let Err(e) = device.send_feature_report(&f7_cmd) {
             if show_debug {
                 eprintln!("F7 send failed: {e:?}");

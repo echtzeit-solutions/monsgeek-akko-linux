@@ -164,7 +164,6 @@ pub enum LedMode {
     MusicBars = 22,
     Train = 23,
     Fireworks = 24,
-    UserColor = 25,
 }
 
 impl LedMode {
@@ -195,7 +194,6 @@ impl LedMode {
             22 => Some(Self::MusicBars),
             23 => Some(Self::Train),
             24 => Some(Self::Fireworks),
-            25 => Some(Self::UserColor),
             _ => None,
         }
     }
@@ -705,15 +703,18 @@ impl HidResponse for DebounceResponse {
 }
 
 // =============================================================================
-// Battery (Dongle)
+// Dongle Status (0xF7)
 // =============================================================================
 
-/// BATTERY_REFRESH command (0xF7) - for wireless dongles
+/// GET_DONGLE_STATUS command (0xF7) - for wireless dongles
+///
+/// Handled locally by the dongle — NOT forwarded to keyboard.
+/// Returns a 9-byte status struct (see `DongleStatusResponse`).
 #[derive(Debug, Clone, Default)]
-pub struct BatteryRefresh;
+pub struct DongleStatusQuery;
 
-impl HidCommand for BatteryRefresh {
-    const CMD: u8 = cmd::BATTERY_REFRESH;
+impl HidCommand for DongleStatusQuery {
+    const CMD: u8 = cmd::GET_DONGLE_STATUS;
     const CHECKSUM: ChecksumType = ChecksumType::Bit7;
 
     fn to_data(&self) -> Vec<u8> {
@@ -721,38 +722,100 @@ impl HidCommand for BatteryRefresh {
     }
 }
 
-/// Battery response from dongle
+/// Dongle status response (9 bytes from GET_DONGLE_STATUS / 0xF7)
+///
+/// From dongle firmware RE (vendor_command_dispatch):
+/// ```text
+/// Byte 0: has_response      1 if cached_kb_response has unread data
+/// Byte 1: kb_battery_info   keyboard battery level (0-100%)
+/// Byte 2: 0                 reserved
+/// Byte 3: kb_charging       1 if keyboard is charging
+/// Byte 4: 1                 hardcoded (always valid marker)
+/// Byte 5: rf_ready          0=waiting for kb response, 1=idle/ready
+/// Byte 6: 1                 hardcoded (dongle alive marker)
+/// Byte 7: pairing_mode      1=in pairing mode
+/// Byte 8: pairing_status    1=paired
+/// ```
 #[derive(Debug, Clone)]
-pub struct BatteryResponse {
-    pub level: u8,    // 0-100%
-    pub online: bool, // Keyboard connected to dongle
-    pub idle: bool,   // Keyboard is idle (no recent activity)
+pub struct DongleStatusResponse {
+    /// Whether cached_kb_response has unread data
+    pub has_response: bool,
+    /// Keyboard battery level (0-100%)
+    pub kb_battery_level: u8,
+    /// Keyboard is charging
+    pub kb_charging: bool,
+    /// RF link ready (0=waiting for keyboard response, 1=idle/ready).
+    /// Forced to 1 when kb_charging is set.
+    pub rf_ready: bool,
+    /// Dongle is in pairing mode
+    pub pairing_mode: bool,
+    /// Dongle is paired with a keyboard
+    pub pairing_status: bool,
 }
 
-impl HidResponse for BatteryResponse {
-    const CMD_ECHO: u8 = 0x01; // Battery response has 0x01 as first byte, not command echo
-    const MIN_LEN: usize = 5;
-
-    fn from_data(data: &[u8]) -> Result<Self, ParseError> {
-        // Battery response format (65 bytes including Report ID):
-        // [0] = Report ID (0x00)
-        // [1] = battery level (0-100%)
-        // [2] = unknown (always 0x00)
-        // [3] = idle flag (1 = idle/sleeping, 0 = active/recently pressed)
-        // [4] = online flag (1 = connected)
-        // [5-6] = unknown (both 0x01)
-        // [7+] = padding (0x00)
-        let level = data[1];
+impl DongleStatusResponse {
+    /// Parse directly from feature report buffer (65 bytes with report ID at [0]).
+    ///
+    /// This is the preferred path for `get_battery_status()` since the F7 response
+    /// uses `has_response` as byte 0 (not a command echo), so the standard
+    /// `HidResponse::parse()` flow doesn't apply cleanly.
+    pub fn from_feature_report(buf: &[u8]) -> Result<Self, ParseError> {
+        // buf[0] = Report ID, buf[1..] = response data
+        if buf.len() < 10 {
+            return Err(ParseError::TooShort {
+                expected: 10,
+                got: buf.len(),
+            });
+        }
+        let level = buf[2]; // usb_response[1] = kb_battery_info
         if level > 100 {
             return Err(ParseError::InvalidValue {
-                field: "battery_level",
+                field: "kb_battery_level",
                 value: level,
             });
         }
         Ok(Self {
-            level,
-            online: data[4] != 0,
-            idle: data.len() > 3 && data[3] != 0,
+            has_response: buf[1] != 0,
+            kb_battery_level: level,
+            kb_charging: buf[4] != 0,
+            rf_ready: buf[6] != 0,
+            pairing_mode: buf[8] != 0,
+            pairing_status: buf[9] != 0,
+        })
+    }
+}
+
+impl HidResponse for DongleStatusResponse {
+    // Byte 0 of the response is `has_response` (0 or 1), not a command echo.
+    // We use 0x01 to match the common case (has_response=1 after a forwarded
+    // command), but callers should prefer `from_feature_report()` instead.
+    const CMD_ECHO: u8 = 0x01;
+    const MIN_LEN: usize = 9;
+
+    fn from_data(data: &[u8]) -> Result<Self, ParseError> {
+        // data[0] = has_response (already validated as CMD_ECHO)
+        // data[1] = kb_battery_info
+        // data[2] = 0 (reserved)
+        // data[3] = kb_charging
+        // data[4] = 1 (hardcoded)
+        // data[5] = rf_ready
+        // data[6] = 1 (hardcoded)
+        // data[7] = pairing_mode
+        // data[8] = pairing_status
+        let level = data[1];
+        if level > 100 {
+            return Err(ParseError::InvalidValue {
+                field: "kb_battery_level",
+                value: level,
+            });
+        }
+        Ok(Self {
+            has_response: data[0] != 0,
+            kb_battery_level: level,
+            kb_charging: data[3] != 0,
+            rf_ready: data[5] != 0,
+            pairing_mode: data[7] != 0,
+            pairing_status: data[8] != 0,
         })
     }
 }
@@ -1254,7 +1317,7 @@ pub enum ParsedResponse {
     PollingRate(PollingRateResponse),
     Debounce(DebounceResponse),
     SleepTime(SleepTimeResponse),
-    Battery(BatteryResponse),
+    DongleStatus(DongleStatusResponse),
     UsbVersion {
         device_id: u32,
         version: u16,
@@ -1420,8 +1483,8 @@ pub enum ParsedCommand {
         data: Vec<u8>,
     },
     // Dongle commands
-    BatteryRefresh,
-    DongleFlush,
+    GetDongleStatus,
+    GetCachedResponse,
     /// Command we don't have a parser for yet
     Unknown {
         cmd: u8,
@@ -1561,8 +1624,23 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
                 data: decode_magnetism_data(subcmd, raw_data),
             }
         }
-        // Battery response uses 0x01 as first byte, not standard command echo
-        // So we can't easily dispatch it here. Add more parsers as implemented.
+        // DongleStatus response uses has_response (0 or 1) as first byte, not
+        // a standard command echo. Dispatch it when byte 0 == 0x01 (has_response=1).
+        0x01 => {
+            if data.len() >= 9 {
+                DongleStatusResponse::from_data(data)
+                    .map(ParsedResponse::DongleStatus)
+                    .unwrap_or_else(|_| ParsedResponse::Unknown {
+                        cmd,
+                        data: data.to_vec(),
+                    })
+            } else {
+                ParsedResponse::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                }
+            }
+        }
         _ => ParsedResponse::Unknown {
             cmd,
             data: data.to_vec(),
@@ -1719,8 +1797,8 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
         }
 
         // Dongle commands
-        cmd::BATTERY_REFRESH => ParsedCommand::BatteryRefresh,
-        cmd::DONGLE_FLUSH_NOP => ParsedCommand::DongleFlush,
+        cmd::GET_DONGLE_STATUS => ParsedCommand::GetDongleStatus,
+        cmd::GET_CACHED_RESPONSE => ParsedCommand::GetCachedResponse,
 
         _ => ParsedCommand::Unknown {
             cmd,
@@ -1942,11 +2020,11 @@ mod tests {
         ));
         assert!(matches!(
             try_parse_command(&[0xf7]),
-            ParsedCommand::BatteryRefresh
+            ParsedCommand::GetDongleStatus
         ));
         assert!(matches!(
             try_parse_command(&[0xfc]),
-            ParsedCommand::DongleFlush
+            ParsedCommand::GetCachedResponse
         ));
     }
 

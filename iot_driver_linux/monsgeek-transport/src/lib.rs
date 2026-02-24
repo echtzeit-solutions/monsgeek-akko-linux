@@ -37,10 +37,10 @@ pub use command::{
     speed_to_wire,
     try_parse_command,
     try_parse_response,
-    // Battery
-    BatteryRefresh,
-    BatteryResponse,
     DebounceResponse,
+    // Dongle status
+    DongleStatusQuery,
+    DongleStatusResponse,
     HidCommand,
     HidResponse,
     LedMode,
@@ -123,7 +123,7 @@ pub trait Transport: Send + Sync {
     /// WARNING: On Linux wired, bare GET_FEATURE without prior SET_FEATURE hangs.
     fn read_report(&self) -> Result<Vec<u8>, TransportError>;
 
-    /// Push dongle response buffer (sends 0xFC).  No-op on wired/BLE.
+    /// Send GET_CACHED_RESPONSE (0xFC) to push dongle response buffer.  No-op on wired/BLE.
     fn send_flush(&self) -> Result<(), TransportError> {
         Ok(()) // default: no-op
     }

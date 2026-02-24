@@ -569,7 +569,7 @@ fn execute_query(
             let resp_cmd = resp.first().copied().unwrap_or(0);
 
             if raw_mode {
-                if resp_cmd != cmd::DONGLE_FLUSH_NOP {
+                if resp_cmd != cmd::GET_CACHED_RESPONSE {
                     let latency = start.elapsed();
                     state
                         .latency_tracker
@@ -600,7 +600,7 @@ fn execute_query(
                     poll_count
                 );
                 return Ok(resp);
-            } else if resp_cmd != 0 && resp_cmd != cmd::DONGLE_FLUSH_NOP {
+            } else if resp_cmd != 0 && resp_cmd != cmd::GET_CACHED_RESPONSE {
                 debug!("Caching out-of-order response for 0x{:02X}", resp_cmd);
                 state.cache.lock().add(resp_cmd, resp);
             }

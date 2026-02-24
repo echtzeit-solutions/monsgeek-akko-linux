@@ -54,17 +54,25 @@ pub mod cmd {
     /// Flash chip erase - DANGEROUS
     pub const SET_FLASHCHIPERASSE: u8 = 0xAC;
 
-    // Dongle-specific commands (undocumented, discovered via analysis)
-    /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
-    /// Response contains battery %, charging state, online status
-    pub const BATTERY_REFRESH: u8 = 0xF7;
-    /// Flush/NOP - undefined command used to flush dongle response buffer
-    /// Returns 0xFF (no data) but pushes out pending responses without overwriting them
-    /// Used after real commands to retrieve their responses from the delayed buffer
-    pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
-    /// FD command - appears in calibration captures, possibly factory data
-    pub const CMD_FD: u8 = 0xFD;
-    /// FE calibration - reads per-profile calibration values
+    // Dongle-specific commands (from dongle firmware RE)
+    /// Get dongle info: returns {0xF0, 1, 8, 0,0,0,0, fw_ver}
+    pub const GET_DONGLE_INFO: u8 = 0xF0;
+    /// Set control byte: stores data[0] → dongle_state.ctrl_byte
+    pub const SET_CTRL_BYTE: u8 = 0xF6;
+    /// Get dongle status (9 bytes): has_response, kb_battery_info, 0,
+    /// kb_charging, 1, rf_ready, 1, pairing_mode, pairing_status.
+    /// Handled locally by dongle — NOT forwarded to keyboard.
+    pub const GET_DONGLE_STATUS: u8 = 0xF7;
+    /// Enter pairing mode: requires 55AA55AA magic
+    pub const ENTER_PAIRING: u8 = 0xF8;
+    /// Pairing control: sends 3-byte SPI packet {cmd=1, data[0], data[1]}
+    pub const PAIRING_CMD: u8 = 0x7A;
+    /// Get cached keyboard response: copies 64B cached_kb_response into
+    /// USB feature report buffer, clears has_response. Used as flush.
+    pub const GET_CACHED_RESPONSE: u8 = 0xFC;
+    /// Get dongle ID: returns {0xAA, 0x55, 0x01, 0x00}
+    pub const GET_DONGLE_ID: u8 = 0xFD;
+    /// FE: GET_CALIBRATION on keyboard, SET_RESPONSE_SIZE on dongle (same byte)
     pub const GET_CALIBRATION: u8 = 0xFE;
 
     // GET commands (0x80 - 0xE6)
@@ -183,7 +191,6 @@ pub mod cmd {
         MusicBars = 22,
         Train = 23,
         Fireworks = 24,
-        UserColor = 25, // Dynamic per-key animation (GIF)
     }
 
     impl LedMode {
@@ -215,7 +222,6 @@ pub mod cmd {
                 22 => Some(Self::MusicBars),
                 23 => Some(Self::Train),
                 24 => Some(Self::Fireworks),
-                25 => Some(Self::UserColor),
                 _ => None,
             }
         }
@@ -254,7 +260,6 @@ pub mod cmd {
                 "musicbars" | "music2" | "bars" | "music" => Some(Self::MusicBars),
                 "train" => Some(Self::Train),
                 "fireworks" => Some(Self::Fireworks),
-                "usercolor" | "color" | "gif" | "animation" => Some(Self::UserColor),
                 _ => None,
             }
         }
@@ -286,7 +291,6 @@ pub mod cmd {
 
     // Keep constants for backward compatibility
     pub const LED_MODE_USER_PICTURE: u8 = LedMode::UserPicture as u8;
-    pub const LED_MODE_USER_COLOR: u8 = LedMode::UserColor as u8;
 
     pub fn name(cmd: u8) -> &'static str {
         match cmd {
@@ -354,10 +358,14 @@ pub mod cmd {
             GET_SKU => "GET_SKU",
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
-            // Dongle/calibration commands
-            BATTERY_REFRESH => "BATTERY_REFRESH",
-            DONGLE_FLUSH_NOP => "FLUSH",
-            CMD_FD => "CMD_FD",
+            // Dongle commands
+            GET_DONGLE_INFO => "GET_DONGLE_INFO",
+            SET_CTRL_BYTE => "SET_CTRL_BYTE",
+            GET_DONGLE_STATUS => "GET_DONGLE_STATUS",
+            ENTER_PAIRING => "ENTER_PAIRING",
+            PAIRING_CMD => "PAIRING_CMD",
+            GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
+            GET_DONGLE_ID => "GET_DONGLE_ID",
             GET_CALIBRATION => "GET_CALIBRATION",
             _ => "UNKNOWN",
         }

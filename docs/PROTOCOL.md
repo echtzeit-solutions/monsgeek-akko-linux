@@ -58,7 +58,7 @@ This document is the single source of truth for the MonsGeek/Akko keyboard HID p
 | Type | Battery Method | Event Channel | Command Latency |
 |------|---------------|---------------|-----------------|
 | USB Wired | GET_BATTERY (0x83) | Feature reports | ~1ms |
-| 2.4GHz Dongle | F7 command → EP2 | EP2 interrupts | ~220ms RF round-trip |
+| 2.4GHz Dongle | GET_DONGLE_STATUS (0xF7) → Feature Report | EP2 interrupts | ~220ms RF round-trip (forwarded cmds) |
 | Bluetooth LE | BLE Battery Service | GATT notifications | Variable |
 
 ---
@@ -130,57 +130,83 @@ Product ID:     0x5038 (M1 V5 HE dongle)
   - Key depth reports
 - **EP3 (0x83):** Vendor interface interrupt (polled on open, no unsolicited data).
 
+**Dongle-Local vs Forwarded Commands:**
+
+The dongle handles some commands locally (immediate response) and forwards the rest to the keyboard via SPI/RF:
+
+| Range | Handling | Examples |
+|-------|----------|---------|
+| 0xF0-0xFE | Dongle-local | GET_DONGLE_STATUS (F7), GET_CACHED_RESPONSE (FC), GET_DONGLE_INFO (F0) |
+| 0x7A | SPI pairing | 3-byte SPI packet `{cmd=1, data[0], data[1]}` |
+| 0x7F | Bootloader entry | Requires 55AA55AA magic, handled locally |
+| All others | SPI forward | Full 64-byte HID report forwarded as-is to keyboard |
+
 **Command Patterns:**
 
-*Pattern 1: Immediate Response (F7 Battery)*
+*Pattern 1: Dongle-Local Query (F7 Status)*
 ```
 SET_REPORT(id=0): f7 00 00 00 00 00 00 08 ...
-GET_REPORT(id=5): → response ready immediately (~20µs)
+GET_REPORT(id=0): → 9-byte dongle status (immediate, no RF)
 ```
 
-*Pattern 2: Flush-Based Response (8F Settings)*
+*Pattern 2: Keyboard Query via RF (8F Version)*
 ```
-SET_REPORT(id=0): 8f 00 00 00 00 00 00 70 ...
-SET_REPORT(id=0): fc 00 00 00 00 00 00 03 ...  (FC flush)
-GET_REPORT(id=0): → response ready
+SET_REPORT(id=0): 8f 00 00 00 00 00 00 70 ...     (forwarded via SPI)
+  ... keyboard processes, responds via RF 0x81 sub 6 ...
+SET_REPORT(id=0): fc 00 00 00 00 00 00 03 ...     (FC = GET_CACHED_RESPONSE)
+GET_REPORT(id=0): → cached keyboard response (64 bytes)
 ```
 
 *Pattern 3: Write-Only with ACK (0x11 Sleep)*
 ```
-SET_REPORT(id=0): 11 01 00 00 00 00 00 ed ...
-SET_REPORT(id=0): fc 00 00 00 00 00 00 03 ...  (FC flush)
+SET_REPORT(id=0): 11 01 00 00 00 00 00 ed ...     (forwarded via SPI)
+SET_REPORT(id=0): fc 00 00 00 00 00 00 03 ...     (FC = GET_CACHED_RESPONSE)
 ... ~220ms later via EP2 ...
 05 0f 01  (keyboard ACK)
 05 0f 00  (ACK complete)
 ```
 
-**Battery Query Protocol (F7):**
+> **Response buffering:** The dongle has a single 64-byte cache slot (`cached_kb_response`). There is no queue — a new RF response overwrites any unread previous one. The host should read with FC promptly after forwarding a command.
 
-The dongle does NOT automatically poll battery. Without sending F7:
-- GET_FEATURE returns stale/cached data
-- After device replug, GET_FEATURE returns zeros
+**GET_DONGLE_STATUS (0xF7):**
+
+F7 is handled entirely by the dongle — it does NOT send any RF packet to the keyboard. It returns a 9-byte status snapshot from the dongle's SRAM, populated by previously-received RF packets.
 
 ```python
-# Send F7 to refresh battery
+# Send F7 to query dongle status
 cmd = bytearray([0x00, 0xF7] + [0]*62)
 fcntl.ioctl(fd, HIDIOCSFEATURE(64), cmd)
 
-# Read battery (Report ID 5)
-buf = bytearray([0x05] + [0]*63)
+# Read response (Report ID 0, NOT 5!)
+buf = bytearray([0x00] + [0]*63)
 fcntl.ioctl(fd, HIDIOCGFEATURE(64), buf)
-battery = buf[1]  # 0-100%
+has_response = buf[1]   # 1 if cached keyboard response available
+battery_level = buf[2]  # 0-100%
+kb_charging = buf[4]    # 0/1
+rf_ready = buf[6]       # 0=waiting for kb, 1=idle/ready
 ```
 
-**Battery Response Format:**
+**GET_DONGLE_STATUS Response Format (9 bytes):**
 
 | Byte | Field | Values |
 |------|-------|--------|
-| 0 | Report ID | 0x00 (firmware quirk) |
-| 1 | Battery % | 1-100 |
-| 2 | Unknown | 0x00 |
-| 3 | Idle | 0=active, 1=sleeping |
-| 4 | Online | 0=disconnected, 1=connected |
-| 5-6 | Marker | 0x01, 0x01 |
+| 0 | has_response | 0/1 — cached keyboard response available |
+| 1 | kb_battery_info | 0-100% (from RF 0x82 byte 1) |
+| 2 | reserved | 0x00 |
+| 3 | kb_charging | 0/1 (from RF 0x83 sub 0) |
+| 4 | always_one | 0x01 (hardcoded) |
+| 5 | rf_ready | 0=waiting for keyboard response, 1=idle. Forced 1 when charging. |
+| 6 | dongle_alive | 0x01 (hardcoded) |
+| 7 | pairing_mode | 0/1 — currently in pairing mode |
+| 8 | pairing_status | 0/1 — paired with keyboard |
+
+> **Note:** Battery and charging fields are populated asynchronously by RF packets from the keyboard (0x82 and 0x83). They persist in dongle SRAM until overwritten — so after a power cycle they start at 0 until the keyboard sends an update.
+
+**GET_CACHED_RESPONSE (0xFC):**
+
+FC copies the 64-byte `cached_kb_response` buffer into the USB feature report and clears `has_response`. This is used as a "flush" to retrieve the keyboard's response to a previously-forwarded command.
+
+The cached response is populated by RF packet type 0x81 sub 6 (vendor command response from keyboard). Forwarding a new command also clears the cache.
 
 ### 2.3 Bluetooth LE
 
@@ -336,7 +362,7 @@ All GET commands in the 0x80-0xE6 range echo their command byte:
 | Command | Response Format | Notes |
 |---------|-----------------|-------|
 | GET_MULTI_MAGNETISM (0xE5) | `[data_byte_0, data_byte_1, ...]` | 64 bytes raw, no echo |
-| Battery (Report 0x05) | `[0x01, level, ...]` | Marker byte 0x01, not command echo |
+| GET_DONGLE_STATUS (0xF7) | `[has_resp, battery, 0, charging, 1, rf_ready, 1, pair_mode, pair_status]` | 9-byte dongle status, no echo |
 
 **GET_MULTI_MAGNETISM Details:**
 
@@ -350,14 +376,15 @@ Since there's no command echo, the host must track:
 2. Which page was requested
 3. Expected response size based on subcmd type
 
-**Battery Response (Dongle Only):**
+**GET_DONGLE_STATUS Response (Dongle Only):**
 
-Battery uses feature report 0x05, not a standard query. The response marker is 0x01:
+The dongle returns a 9-byte status struct, not a standard command echo. Byte 0 is `has_response` (0 or 1), which may look like a marker byte but is actually a boolean flag indicating whether a cached keyboard response is available.
+
 ```
-[0x01, level(0-100), 0x00, idle(0/1), online(0/1), 0x01, 0x01, ...]
+[has_response, kb_battery, 0x00, kb_charging, 0x01, rf_ready, 0x01, pairing_mode, pairing_status]
 ```
 
-This is NOT a command echo—0x01 is a fixed marker byte for battery data.
+See Section 2.2 for the full field breakdown.
 
 #### Implementation Note
 
@@ -454,14 +481,28 @@ Clear this context after receiving a response to avoid stale matches.
 | 0xAE | GET_MLED_VERSION | Matrix LED controller version (u16 LE) |
 | 0xD0 | GET_SKU | Factory SKU |
 
-#### Protocol Commands
+#### Dongle-Only Commands
+
+These are handled locally by the dongle and NOT forwarded to the keyboard:
 
 | Hex | Name | Description |
 |-----|------|-------------|
-| 0xF7 | BATTERY_REFRESH | Wake dongle, query battery |
-| 0xFC | FLUSH | Flush response buffer (no-op) |
-| 0xFD | CAL_INIT? | Calibration app init/sync - only seen in calibration capture, sent first, echoes back zeros |
-| 0xFE | GET_CALIBRATION | Raw sensor calibration values |
+| 0xF0 | GET_DONGLE_INFO | Returns `{0xF0, 1, 8, 0, 0, 0, 0, fw_ver}` |
+| 0xF6 | SET_CTRL_BYTE | Stores `data[0]` → dongle ctrl_byte |
+| 0xF7 | GET_DONGLE_STATUS | 9-byte status snapshot (battery, pairing, rf state) |
+| 0xF8 | ENTER_PAIRING | Requires 55AA55AA magic, enters RF pairing mode |
+| 0xFB | GET_RF_INFO | Returns `{rf_addr[4], fw_ver_minor, fw_ver_major}` |
+| 0xFC | GET_CACHED_RESPONSE | Copies 64B cached keyboard response to USB, clears has_response |
+| 0xFD | GET_DONGLE_ID | Returns `{0xAA, 0x55, 0x01, 0x00}` |
+| 0xFE | SET_RESPONSE_SIZE | One-shot SPI TX length override (on keyboard: GET_CALIBRATION) |
+| 0x7A | PAIRING_CMD | 3-byte SPI packet `{cmd=1, data[0], data[1]}` — pairing control |
+| 0x7F | ENTER_BOOTLOADER | Requires 55AA55AA magic (same as keyboard) |
+
+#### Keyboard Query Commands
+
+| Hex | Name | Description |
+|-----|------|-------------|
+| 0xFE | GET_CALIBRATION | Raw per-profile magnetism calibration values (on dongle: SET_RESPONSE_SIZE) |
 
 ### 4.3 Magnetism Sub-Commands (0x65 / 0xE5)
 
@@ -675,7 +716,7 @@ The SettingsAck event indicates when the keyboard is saving settings to flash:
 
 **Commands that do NOT trigger SettingsAck:**
 - SET_MAGNETISM_REPORT (0x1B) - monitor mode toggle
-- BATTERY_REFRESH (0xF7) - battery query
+- GET_DONGLE_STATUS (0xF7) - dongle status query
 - SET_AUDIO_VIZ (0x0D) - streaming data
 - SET_SCREEN_COLOR (0x0E) - streaming data
 
@@ -752,7 +793,7 @@ Followed by SettingsAck (0x0F 0x01, then 0x0F 0x00) when complete.
 
 ### 6.5 Battery Status (0x88)
 
-Via dongle EP2 after F7 command:
+Via dongle EP2, sent asynchronously by keyboard over RF (not triggered by F7):
 ```
 05 88 00 00 [level] [flags]
 ```
@@ -761,6 +802,8 @@ Via dongle EP2 after F7 command:
 |-------|-------------|
 | level | Battery percentage (0-100) |
 | flags | bit 0 = online, bit 1 = charging |
+
+> **Note:** This EP2 event is separate from the F7 dongle status query. F7 returns battery info from the dongle's SRAM cache (populated by RF 0x82/0x83 packets). The 0x88 EP2 event is a direct notification from the keyboard.
 
 ### 6.6 Vendor Input Report Table (Complete)
 
@@ -787,7 +830,7 @@ Via dongle EP2 after F7 command:
 | 0x1B | lo hi idx | KeyDepth | Key depth (when monitoring enabled) |
 | 0x1D | mode - - | MagneticModeChange | Per-key mode changed |
 | 0x2C | 00 - - | ScreenClearDone | Screen clear complete |
-| 0x88 | 00 00 lvl flags | BatteryStatus | After F7 query |
+| 0x88 | 00 00 lvl flags | BatteryStatus | Async from keyboard (not triggered by F7) |
 
 ### 6.2 Mouse Reports (Report ID 0x02)
 
@@ -1123,8 +1166,9 @@ byte offsets 1-48 with no index indirection.
 
 | Operation | Timing | Notes |
 |-----------|--------|-------|
-| F7 SET→GET | ~20µs | Immediate, no delay needed |
-| 8F SET→FC→GET | ~1ms | Flush provides sync |
+| F7 GET_DONGLE_STATUS | ~20µs | Dongle-local, no RF needed |
+| Dongle: cmd forward → FC read | ~5-220ms | Depends on keyboard response time |
+| Wired: SET→GET | ~1ms | Feature report round-trip |
 | RF round-trip (ACK) | ~220ms | Keyboard ACK via EP2 |
 | BT extra delay | +60ms send, +100ms read | Bluetooth timing |
 | Reset operation | 2000ms | After factory reset |

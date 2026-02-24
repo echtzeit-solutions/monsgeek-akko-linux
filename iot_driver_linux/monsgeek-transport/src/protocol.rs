@@ -52,13 +52,28 @@ pub mod cmd {
     pub const GET_FEATURE_LIST: u8 = 0xE6;
     pub const GET_CALIBRATION: u8 = 0xFE;
 
-    // Dongle-specific commands
-    /// Battery refresh - triggers dongle to query keyboard over 2.4GHz RF
-    pub const BATTERY_REFRESH: u8 = 0xF7;
+    // Dongle-specific commands (from dongle firmware RE)
+    /// Get dongle info: returns {0xF0, 1, 8, 0,0,0,0, fw_ver}
+    pub const GET_DONGLE_INFO: u8 = 0xF0;
+    /// Set control byte: stores data[0] → dongle_state.ctrl_byte
+    pub const SET_CTRL_BYTE: u8 = 0xF6;
+    /// Get dongle status (9-byte response): has_response, kb_battery_info, 0,
+    /// kb_charging, 1, rf_ready, 1, pairing_mode, pairing_status.
+    /// Handled locally by dongle — NOT forwarded to keyboard.
+    pub const GET_DONGLE_STATUS: u8 = 0xF7;
+    /// Enter pairing mode: requires 55AA55AA magic
+    pub const ENTER_PAIRING: u8 = 0xF8;
+    /// Pairing control: sends 3-byte SPI packet {cmd=1, data[0], data[1]}
+    pub const PAIRING_CMD: u8 = 0x7A;
     /// Patch info - custom firmware capabilities (battery HID, LED stream, etc.)
     pub const GET_PATCH_INFO: u8 = 0xFB;
-    /// Flush/NOP - used to flush dongle response buffer
-    pub const DONGLE_FLUSH_NOP: u8 = 0xFC;
+    /// Get cached keyboard response: copies 64B cached_kb_response into the
+    /// USB feature report buffer and clears has_response. Used as flush.
+    pub const GET_CACHED_RESPONSE: u8 = 0xFC;
+    /// Get dongle ID: returns {0xAA, 0x55, 0x01, 0x00}.
+    /// Note: same byte as GET_CALIBRATION (0xFE is GET_CALIBRATION on keyboard,
+    /// 0xFD is GET_DONGLE_ID on dongle, 0xFE is SET_RESPONSE_SIZE on dongle).
+    pub const GET_DONGLE_ID: u8 = 0xFD;
 
     // Response status
     pub const STATUS_SUCCESS: u8 = 0xAA;
@@ -108,9 +123,14 @@ pub mod cmd {
             GET_MULTI_MAGNETISM => "GET_MULTI_MAGNETISM",
             GET_FEATURE_LIST => "GET_FEATURE_LIST",
             GET_CALIBRATION => "GET_CALIBRATION",
-            BATTERY_REFRESH => "BATTERY_REFRESH",
+            GET_DONGLE_INFO => "GET_DONGLE_INFO",
+            SET_CTRL_BYTE => "SET_CTRL_BYTE",
+            GET_DONGLE_STATUS => "GET_DONGLE_STATUS",
+            ENTER_PAIRING => "ENTER_PAIRING",
+            PAIRING_CMD => "PAIRING_CMD",
             GET_PATCH_INFO => "GET_PATCH_INFO",
-            DONGLE_FLUSH_NOP => "DONGLE_FLUSH_NOP",
+            GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
+            GET_DONGLE_ID => "GET_DONGLE_ID",
             STATUS_SUCCESS => "STATUS_SUCCESS",
             _ => "UNKNOWN",
         }
