@@ -10,7 +10,7 @@ use tracing::info;
 
 // CLI definitions
 mod cli;
-use cli::{Cli, Commands, FirmwareCommands};
+use cli::{Cli, Commands, EffectCommands, FirmwareCommands};
 
 // Command handlers (split from main.rs)
 mod commands;
@@ -226,20 +226,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // === Animation Commands ===
-        Some(Commands::Gif {
+        Some(Commands::Userpic {
             file,
-            mode,
-            test,
-            frames,
-            delay,
+            slot,
+            output,
+            nearest,
         }) => {
-            commands::animations::gif(file.as_deref(), mode.into(), test, frames, delay)?;
+            commands::userpic::userpic(printer_config, file, slot, output, nearest)?;
         }
-        Some(Commands::StreamTest { fps }) => {
-            commands::led_stream::stream_test(printer_config, fps)?;
+        Some(Commands::StreamTest { fps, power_budget }) => {
+            commands::led_stream::stream_test(printer_config, fps, power_budget)?;
         }
-        Some(Commands::Stream { file, fps, r#loop }) => {
-            commands::led_stream::stream_gif(printer_config, &file, fps, r#loop)?;
+        Some(Commands::Stream {
+            file,
+            fps,
+            r#loop,
+            power_budget,
+        }) => {
+            commands::led_stream::stream_gif(printer_config, &file, fps, r#loop, power_budget)?;
         }
         Some(Commands::Mode { mode, layer }) => {
             commands::with_keyboard(printer_config, |kb| {
@@ -314,6 +318,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Joystick { config, headless }) => {
             commands::utility::joystick(config, headless)?;
+        }
+
+        // === Effect Commands ===
+        Some(Commands::Effect(fx_cmd)) => match fx_cmd {
+            EffectCommands::List => {
+                commands::effect::list()?;
+            }
+            EffectCommands::Show { name } => {
+                commands::effect::show(&name)?;
+            }
+            EffectCommands::Preview {
+                name,
+                keys,
+                vars,
+                fps,
+            } => {
+                commands::effect::preview(&name, &keys, &vars, fps)?;
+            }
+            EffectCommands::Play { name, keys, vars } => {
+                commands::effect::play(printer_config, &name, &keys, &vars)?;
+            }
+        },
+
+        // === Notification Commands ===
+        #[cfg(feature = "notify")]
+        Some(Commands::NotifyDaemon { fps, power_budget }) => {
+            commands::notify::daemon(printer_config, fps, power_budget).await?;
+        }
+        #[cfg(feature = "notify")]
+        Some(Commands::Notify {
+            key,
+            effect,
+            vars,
+            priority,
+            ttl,
+            source,
+        }) => {
+            commands::notify::notify(&key, &effect, &vars, priority, ttl, &source).await?;
+        }
+        #[cfg(feature = "notify")]
+        Some(Commands::NotifyAck {
+            id,
+            key,
+            source,
+            all,
+        }) => {
+            commands::notify::ack(id, key.as_deref(), source.as_deref(), all).await?;
+        }
+        #[cfg(feature = "notify")]
+        Some(Commands::NotifyList) => {
+            commands::notify::list().await?;
+        }
+        #[cfg(feature = "notify")]
+        Some(Commands::NotifyClear) => {
+            commands::notify::clear().await?;
         }
     }
 

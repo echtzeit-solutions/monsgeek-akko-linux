@@ -353,23 +353,19 @@ pub enum Commands {
     },
 
     // === Animation Commands ===
-    /// Upload GIF animation to keyboard flash (persistent, mode 25)
-    Gif {
-        /// GIF file path, or --test for test animation
-        #[arg(required_unless_present = "test")]
+    /// Upload or download a userpic image (mode 13, persistent per-key colors)
+    Userpic {
+        /// Image file to upload (PNG, JPG, etc.) — omit to download
         file: Option<String>,
-        /// Mapping mode
-        #[arg(value_enum, default_value = "scale")]
-        mode: MappingMode,
-        /// Generate test rainbow animation
+        /// Userpic slot (0-4)
+        #[arg(short, long, default_value = "0", value_parser = clap::value_parser!(u8).range(0..5))]
+        slot: u8,
+        /// Output file for download (default: userpic_<slot>.png)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Use nearest-neighbor scaling (sharp pixels, good for pixel art)
         #[arg(long)]
-        test: bool,
-        /// Number of frames for test animation
-        #[arg(long, default_value = "20")]
-        frames: usize,
-        /// Frame delay in ms for test animation
-        #[arg(long, default_value = "50")]
-        delay: u16,
+        nearest: bool,
     },
 
     /// Test LED streaming (one LED at a time, cycling colors)
@@ -377,6 +373,9 @@ pub enum Commands {
         /// Frames per second
         #[arg(long, default_value = "10")]
         fps: f32,
+        /// LED power budget in milliamps (0 = unlimited)
+        #[arg(long, default_value = "400")]
+        power_budget: u32,
     },
 
     /// Stream a GIF to keyboard LEDs via patch protocol (0xFC)
@@ -389,13 +388,16 @@ pub enum Commands {
         /// Loop animation continuously
         #[arg(long)]
         r#loop: bool,
+        /// LED power budget in milliamps (0 = unlimited)
+        #[arg(long, default_value = "400")]
+        power_budget: u32,
     },
 
     /// Set LED mode by name or number
     Mode {
-        /// Mode name (breathing, wave, rainbow, etc.) or number (0-25)
+        /// Mode name (breathing, wave, rainbow, etc.) or number (0-24)
         mode: String,
-        /// Layer to store per-key colors (for modes 13, 25)
+        /// Userpic slot for mode 13 (UserPicture)
         #[arg(short, long, default_value = "0")]
         layer: u8,
     },
@@ -486,29 +488,110 @@ pub enum Commands {
         #[arg(long)]
         headless: bool,
     },
+
+    // === Effect Commands ===
+    /// LED effect commands (list, show, preview, play)
+    #[command(subcommand, visible_alias = "fx")]
+    Effect(EffectCommands),
+
+    // === Notification Commands ===
+    /// Start the LED notification daemon (D-Bus server + render loop)
+    #[cfg(feature = "notify")]
+    #[command(visible_alias = "nd")]
+    NotifyDaemon {
+        /// Render frames per second (1-60)
+        #[arg(long, default_value = "30")]
+        fps: u32,
+        /// LED power budget in milliamps (0 = unlimited)
+        #[arg(long, default_value = "400")]
+        power_budget: u32,
+    },
+
+    /// Post a notification to the daemon (requires running notify-daemon)
+    #[cfg(feature = "notify")]
+    #[command(visible_alias = "n")]
+    Notify {
+        /// Target key: name (F1, Esc), position (0,5), or index (#42)
+        key: String,
+        /// Effect name (breathe, pulse, police, etc.)
+        effect: String,
+        /// Color/variable bindings: name=value (e.g. color=red, status=green)
+        #[arg(long = "var", short = 'V')]
+        vars: Vec<String>,
+        /// Priority (higher wins conflicts, default 0)
+        #[arg(long, default_value = "0")]
+        priority: i32,
+        /// Time-to-live in milliseconds (-1 = use effect default)
+        #[arg(long, default_value = "-1")]
+        ttl: i32,
+        /// Source identifier
+        #[arg(long, default_value = "custom")]
+        source: String,
+    },
+
+    /// Acknowledge/dismiss notification(s)
+    #[cfg(feature = "notify")]
+    NotifyAck {
+        /// Dismiss by notification ID
+        #[arg(long)]
+        id: Option<u64>,
+        /// Dismiss all on key
+        #[arg(long)]
+        key: Option<String>,
+        /// Dismiss all from source
+        #[arg(long)]
+        source: Option<String>,
+        /// Dismiss all notifications
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// List active notifications
+    #[cfg(feature = "notify")]
+    NotifyList,
+
+    /// Clear all notifications
+    #[cfg(feature = "notify")]
+    NotifyClear,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
-pub enum MappingMode {
-    /// Scale image to fit keyboard grid
-    Scale,
-    /// Tile/wrap smaller images
-    Tile,
-    /// Center image on keyboard
-    Center,
-    /// 1:1 pixel mapping
-    Direct,
-}
+/// Effect commands
+#[derive(Subcommand)]
+pub enum EffectCommands {
+    /// List all available effects
+    #[command(visible_alias = "ls")]
+    List,
 
-impl From<MappingMode> for iot_driver::gif::MappingMode {
-    fn from(m: MappingMode) -> Self {
-        match m {
-            MappingMode::Scale => iot_driver::gif::MappingMode::ScaleToFit,
-            MappingMode::Tile => iot_driver::gif::MappingMode::Tile,
-            MappingMode::Center => iot_driver::gif::MappingMode::Center,
-            MappingMode::Direct => iot_driver::gif::MappingMode::Direct,
-        }
-    }
+    /// Show details of an effect
+    Show {
+        /// Effect name
+        name: String,
+    },
+
+    /// Preview an effect in the terminal
+    Preview {
+        /// Effect name
+        name: String,
+        /// Target keys (e.g. F1 F2 Esc) — defaults to F1-F4
+        keys: Vec<String>,
+        /// Variable bindings: name=value
+        #[arg(long = "var", short = 'V')]
+        vars: Vec<String>,
+        /// Preview FPS (1-60)
+        #[arg(long, default_value = "15")]
+        fps: u32,
+    },
+
+    /// Play an effect on keyboard hardware
+    Play {
+        /// Effect name
+        name: String,
+        /// Target keys (at least one required)
+        keys: Vec<String>,
+        /// Variable bindings: name=value
+        #[arg(long = "var", short = 'V')]
+        vars: Vec<String>,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]

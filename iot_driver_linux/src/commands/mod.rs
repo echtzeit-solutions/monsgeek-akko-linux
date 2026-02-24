@@ -6,7 +6,8 @@
 //! - `triggers`: Trigger-related commands (calibrate, triggers, set-actuation, etc.)
 //! - `keymap`: Key remapping commands (remap, reset-key, swap, keymatrix)
 //! - `macros`: Macro commands (macro, set-macro, clear-macro)
-//! - `animations`: Animation commands (gif, gif-stream, mode, modes)
+//! - `animations`: Animation commands (mode, modes)
+//! - `userpic`: Userpic upload/download (mode 13 flash slots)
 //! - `reactive`: Reactive mode commands (audio, audio-test, audio-levels, screen)
 //! - `debug`: Debug commands (depth, test-transport)
 //! - `firmware`: Firmware subcommands
@@ -14,14 +15,18 @@
 
 pub mod animations;
 pub mod debug;
+pub mod effect;
 pub mod firmware;
 pub mod keymap;
 pub mod led_stream;
 pub mod macros;
+#[cfg(feature = "notify")]
+pub mod notify;
 pub mod query;
 pub mod reactive;
 pub mod set;
 pub mod triggers;
+pub mod userpic;
 pub mod utility;
 
 use iot_driver::protocol::{self, cmd};

@@ -6,10 +6,10 @@ pub mod bpf_loader;
 pub mod color;
 pub mod device_loader;
 pub mod devices;
+pub mod effect;
 pub mod firmware;
 pub mod firmware_api;
 pub mod flash;
-pub mod gif;
 pub mod hal;
 pub mod hid;
 pub mod key_action;
@@ -34,6 +34,8 @@ pub use power_supply::{
     BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration,
 };
 pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegistry};
+pub mod notify;
+
 pub use protocol::cmd;
 pub use protocol::magnetism;
 pub use protocol::music_viz;

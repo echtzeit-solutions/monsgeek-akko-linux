@@ -24,10 +24,40 @@ use std::sync::atomic::Ordering;
 const COLS: usize = 16;
 const ROWS: usize = 6;
 /// Total matrix positions in the LED grid (including gaps)
-const MATRIX_LEN: usize = COLS * ROWS; // 96
+pub const MATRIX_LEN: usize = COLS * ROWS; // 96
 const LEDS_PER_PAGE: usize = 18;
 /// Number of pages needed to cover the 16×6 grid
 const PAGE_COUNT: usize = MATRIX_LEN.div_ceil(LEDS_PER_PAGE); // 6
+
+/// Estimated current draw per WS2812 channel at full brightness (value=255).
+/// WS2812B datasheet: ~20mA typical per channel.
+const MA_PER_CHANNEL: f32 = 20.0;
+
+/// Scale LED values to stay within a power budget.
+///
+/// WS2812B model: each channel draws `MA_PER_CHANNEL` mA at value 255.
+/// Total per LED = `(R + G + B) / 255 × MA_PER_CHANNEL`.
+/// If total exceeds `budget_ma`, all values are uniformly scaled down.
+/// Returns `(estimated_ma_before_scaling, was_scaled)`.
+pub fn apply_power_budget(leds: &mut [(u8, u8, u8); MATRIX_LEN], budget_ma: u32) -> (f32, bool) {
+    let ma_per_unit = MA_PER_CHANNEL / 255.0;
+    let total_ma: f32 = leds
+        .iter()
+        .map(|&(r, g, b)| (r as f32 + g as f32 + b as f32) * ma_per_unit)
+        .sum();
+
+    if budget_ma > 0 && total_ma > budget_ma as f32 {
+        let scale = budget_ma as f32 / total_ma;
+        for led in leds.iter_mut() {
+            led.0 = (led.0 as f32 * scale) as u8;
+            led.1 = (led.1 as f32 * scale) as u8;
+            led.2 = (led.2 as f32 * scale) as u8;
+        }
+        (total_ma, true)
+    } else {
+        (total_ma, false)
+    }
+}
 
 /// Colors to cycle through in stream test
 const TEST_COLORS: [(u8, u8, u8); 7] = [
@@ -41,7 +71,7 @@ const TEST_COLORS: [(u8, u8, u8); 7] = [
 ];
 
 /// Open keyboard and verify patch LED streaming is supported.
-fn open_with_patch_check(
+pub fn open_with_patch_check(
     printer_config: Option<PrinterConfig>,
 ) -> Result<SyncKeyboard, Box<dyn std::error::Error>> {
     let kb = open_keyboard(printer_config).map_err(|e| format!("No device found: {e}"))?;
@@ -76,7 +106,7 @@ fn open_with_patch_check(
 ///
 /// `leds` has `MATRIX_LEN` entries (row-major: index = row*16 + col).
 /// Packs into pages of 18 entries each and sends via stream_led_page + commit.
-fn send_full_frame(
+pub fn send_full_frame(
     kb: &SyncKeyboard,
     leds: &[(u8, u8, u8); MATRIX_LEN],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -105,14 +135,23 @@ fn send_full_frame(
 /// Sweeps all 96 positions in row-major order (row 0 left→right, row 1, …).
 /// Gap positions (no physical LED) produce a dark frame — the sweep
 /// "disappears" momentarily, which is the expected spatial behaviour.
-pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandResult {
+pub fn stream_test(
+    printer_config: Option<PrinterConfig>,
+    fps: f32,
+    power_budget: u32,
+) -> CommandResult {
     let kb = open_with_patch_check(printer_config)?;
 
     let frame_duration = std::time::Duration::from_secs_f32(1.0 / fps);
     let running = setup_interrupt_handler();
 
+    let budget_str = if power_budget > 0 {
+        format!(", budget={power_budget}mA")
+    } else {
+        ", unlimited".to_string()
+    };
     println!(
-        "Streaming test: {MATRIX_LEN} positions ({COLS}×{ROWS}), {fps:.1} FPS (Ctrl+C to stop)"
+        "Streaming test: {MATRIX_LEN} positions ({COLS}×{ROWS}), {fps:.1} FPS{budget_str} (Ctrl+C to stop)"
     );
 
     for &(cr, cg, cb) in TEST_COLORS.iter().cycle() {
@@ -125,24 +164,11 @@ pub fn stream_test(printer_config: Option<PrinterConfig>, fps: f32) -> CommandRe
                 break;
             }
 
-            // Build frame: only the target position is lit (gaps → all dark)
-            let page = pos / LEDS_PER_PAGE;
-            let offset_in_page = pos % LEDS_PER_PAGE;
+            let mut leds = [(0u8, 0u8, 0u8); MATRIX_LEN];
+            leds[pos] = (cr, cg, cb);
+            apply_power_budget(&mut leds, power_budget);
 
-            let mut rgb_data = [0u8; LEDS_PER_PAGE * 3];
-            rgb_data[offset_in_page * 3] = cr;
-            rgb_data[offset_in_page * 3 + 1] = cg;
-            rgb_data[offset_in_page * 3 + 2] = cb;
-
-            // Send all pages: target page has one lit LED, others all black
-            for p in 0..PAGE_COUNT {
-                if p == page {
-                    kb.stream_led_page(p as u8, &rgb_data)?;
-                } else {
-                    kb.stream_led_page(p as u8, &[0u8; LEDS_PER_PAGE * 3])?;
-                }
-            }
-            kb.stream_led_commit()?;
+            send_full_frame(&kb, &leds)?;
 
             let row = pos / COLS;
             let col = pos % COLS;
@@ -168,6 +194,7 @@ pub fn stream_gif(
     file: &str,
     fps: Option<f32>,
     loop_anim: bool,
+    power_budget: u32,
 ) -> CommandResult {
     let kb = open_with_patch_check(printer_config)?;
 
@@ -243,7 +270,12 @@ pub fn stream_gif(
     );
 
     let running = setup_interrupt_handler();
-    println!("Streaming (Ctrl+C to stop)...");
+    let budget_str = if power_budget > 0 {
+        format!("budget={power_budget}mA")
+    } else {
+        "unlimited".to_string()
+    };
+    println!("Streaming ({budget_str}, Ctrl+C to stop)...");
 
     loop {
         for (idx, frame) in frames.iter().enumerate() {
@@ -251,9 +283,28 @@ pub fn stream_gif(
                 break;
             }
 
-            send_full_frame(&kb, &frame.leds)?;
+            let mut leds = frame.leds;
+            let (est_ma, scaled) = apply_power_budget(&mut leds, power_budget);
+            send_full_frame(&kb, &leds)?;
 
-            print!("\rFrame {:3}/{}", idx + 1, frames.len());
+            if scaled {
+                let pct = (power_budget as f32 / est_ma * 100.0) as u32;
+                print!(
+                    "\rFrame {:3}/{}  est. {:.0}mA \u{2192} scaled to {}mA ({}%)",
+                    idx + 1,
+                    frames.len(),
+                    est_ma,
+                    power_budget,
+                    pct
+                );
+            } else {
+                print!(
+                    "\rFrame {:3}/{}  est. {:.0}mA          ",
+                    idx + 1,
+                    frames.len(),
+                    est_ma
+                );
+            }
             std::io::Write::flush(&mut std::io::stdout()).ok();
 
             std::thread::sleep(std::time::Duration::from_millis(frame.delay_ms));

@@ -138,6 +138,16 @@ impl SyncKeyboard {
     delegate!(set_side_led_params(&params: &LedParams) -> Result<(), KeyboardError>);
     delegate!(set_all_keys_color(color: RgbColor, layer: u8) -> Result<(), KeyboardError>);
 
+    // === Userpic ===
+
+    pub fn upload_userpic(&self, slot: u8, data: &[u8]) -> Result<(), KeyboardError> {
+        self.inner.upload_userpic(slot, data)
+    }
+
+    pub fn download_userpic(&self, slot: u8) -> Result<Vec<u8>, KeyboardError> {
+        self.inner.download_userpic(slot)
+    }
+
     // === Settings ===
     delegate!(get_profile() -> Result<u8, KeyboardError>);
     delegate!(set_profile(profile: u8) -> Result<(), KeyboardError>);
@@ -238,17 +248,6 @@ impl SyncKeyboard {
 
     delegate!(stream_led_commit() -> Result<(), KeyboardError>);
     delegate!(stream_led_release() -> Result<(), KeyboardError>);
-
-    // === Animation Upload ===
-    delegate!(start_user_gif() -> Result<(), KeyboardError>);
-
-    pub fn upload_animation(
-        &self,
-        frames: &[Vec<(u8, u8, u8)>],
-        frame_delay_ms: u16,
-    ) -> Result<(), KeyboardError> {
-        self.inner.upload_animation(frames, frame_delay_ms)
-    }
 
     // === Calibration ===
     delegate!(calibrate_min(start: bool) -> Result<(), KeyboardError>);

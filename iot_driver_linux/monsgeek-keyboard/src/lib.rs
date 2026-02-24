@@ -386,35 +386,96 @@ impl KeyboardInterface {
 
     /// Set all keys to a single color (for per-key RGB mode)
     pub fn set_all_keys_color(&self, color: RgbColor, layer: u8) -> Result<(), KeyboardError> {
-        // Build the color data: MATRIX_SIZE * 3 bytes (RGB) = 378 bytes
-        // Sent in chunks with SET_USERPIC command
-        let mut colors = vec![0u8; MATRIX_SIZE_M1_V5 * 3];
-        for i in 0..MATRIX_SIZE_M1_V5 {
-            colors[i * 3] = color.r;
-            colors[i * 3 + 1] = color.g;
-            colors[i * 3 + 2] = color.b;
-        }
-
-        self.upload_per_key_colors(&colors, layer)
+        let colors = vec![(color.r, color.g, color.b); MATRIX_SIZE_M1_V5];
+        self.set_per_key_colors_to_layer(&colors, layer)
     }
 
-    /// Upload per-key RGB colors
-    pub fn upload_per_key_colors(&self, colors: &[u8], layer: u8) -> Result<(), KeyboardError> {
-        // Colors are sent in chunks of 54 bytes (18 keys * 3 RGB)
-        const CHUNK_SIZE: usize = 54;
-        let chunks: Vec<_> = colors.chunks(CHUNK_SIZE).collect();
+    // === Userpic (Flash-Based Per-Key Colors, Mode 13) ===
 
-        for (chunk_idx, chunk) in chunks.iter().enumerate() {
-            let mut data = vec![0u8; CHUNK_SIZE + 2];
-            data[0] = layer;
-            data[1] = chunk_idx as u8;
-            data[2..2 + chunk.len()].copy_from_slice(chunk);
+    /// Upload a userpic to a flash slot (0-4).
+    ///
+    /// `data` must be exactly 288 bytes in column-major format:
+    /// pixel (col, row) at offset `col * 18 + row * 3`.
+    /// Padded to 384 bytes with zeros for the flash slot.
+    ///
+    /// Uses the SET_USERPIC (0x0C) bulk protocol: 7 pages of 56/42 bytes.
+    pub fn upload_userpic(&self, slot: u8, data: &[u8]) -> Result<(), KeyboardError> {
+        if slot > 4 {
+            return Err(KeyboardError::InvalidParameter(
+                "Userpic slot must be 0-4".into(),
+            ));
+        }
+
+        // Pad data to full slot size (384 bytes)
+        let mut slot_data = vec![0u8; 384];
+        let len = data.len().min(384);
+        slot_data[..len].copy_from_slice(&data[..len]);
+
+        // Send 7 pages: pages 0-5 have 56 bytes, page 6 has 42 bytes
+        // Total: 6*56 + 42 = 378 bytes (covers 384 with some overlap handled by firmware)
+        const PAGE_SIZE: usize = 56;
+        const LAST_PAGE_SIZE: usize = 42;
+        const NUM_PAGES: usize = 7;
+
+        for page in 0..NUM_PAGES {
+            let data_size = if page == NUM_PAGES - 1 {
+                LAST_PAGE_SIZE
+            } else {
+                PAGE_SIZE
+            };
+            let is_last = page == NUM_PAGES - 1;
+
+            let start = page * PAGE_SIZE;
+            let end = (start + data_size).min(slot_data.len());
+
+            // Build payload: [slot, 0xFF, page, data_size, last_flag, 0, 0, ...rgb_data...]
+            let mut payload = vec![0u8; 7 + data_size];
+            payload[0] = slot;
+            payload[1] = 0xFF;
+            payload[2] = page as u8;
+            payload[3] = data_size as u8;
+            payload[4] = if is_last { 1 } else { 0 };
+            // payload[5] = 0; payload[6] = 0; // already zero
+            if end > start {
+                let chunk_len = end - start;
+                payload[7..7 + chunk_len].copy_from_slice(&slot_data[start..end]);
+            }
 
             self.transport
-                .send_command(cmd::SET_USERPIC, &data, ChecksumType::Bit8)?;
+                .send_command(cmd::SET_USERPIC, &payload, ChecksumType::Bit7)?;
+
+            // Small delay between pages
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
         Ok(())
+    }
+
+    /// Download a userpic from a flash slot (0-4).
+    ///
+    /// Returns 384 bytes in column-major format (6 blocks × 64 bytes).
+    /// Uses GET_USERPIC (0x8C) block read protocol.
+    pub fn download_userpic(&self, slot: u8) -> Result<Vec<u8>, KeyboardError> {
+        if slot > 4 {
+            return Err(KeyboardError::InvalidParameter(
+                "Userpic slot must be 0-4".into(),
+            ));
+        }
+
+        let mut data = Vec::with_capacity(384);
+
+        // Read 6 blocks of 64 bytes each
+        for block in 0..6u8 {
+            let query = [slot, 0xFF, block];
+            let resp = self
+                .transport
+                .query_raw(cmd::GET_USERPIC, &query, ChecksumType::Bit7)?;
+            data.extend_from_slice(&resp);
+        }
+
+        // Truncate to slot size
+        data.truncate(384);
+        Ok(data)
     }
 
     // === Magnetism / Hall Effect ===
@@ -814,123 +875,6 @@ impl KeyboardInterface {
         layer: u8,
     ) -> Result<(), KeyboardError> {
         self.set_per_key_colors_fast(colors, 1, layer)
-    }
-
-    // === Animation Upload ===
-
-    /// Initialize per-key RGB/animation mode (sends SET_USERGIF start command)
-    pub fn start_user_gif(&self) -> Result<(), KeyboardError> {
-        use monsgeek_transport::protocol::timing;
-
-        // Official driver: data[0..2] = 0, send with Bit7 checksum
-        let data = [0, 0, 0];
-        self.transport
-            .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)?;
-
-        // Official driver waits after start
-        std::thread::sleep(std::time::Duration::from_millis(
-            timing::ANIMATION_START_DELAY_MS,
-        ));
-
-        Ok(())
-    }
-
-    /// Upload a complete animation to the keyboard
-    ///
-    /// The keyboard stores up to 255 frames and plays them autonomously.
-    /// After upload, switches to UserColor mode to play the animation.
-    ///
-    /// # Arguments
-    /// * `frames` - Vector of frames, each containing (R, G, B) tuples per key
-    /// * `frame_delay_ms` - Delay between frames in milliseconds
-    pub fn upload_animation(
-        &self,
-        frames: &[Vec<(u8, u8, u8)>],
-        frame_delay_ms: u16,
-    ) -> Result<(), KeyboardError> {
-        if frames.is_empty() || frames.len() > 255 {
-            return Err(KeyboardError::InvalidParameter(
-                "Animation must have 1-255 frames".into(),
-            ));
-        }
-
-        let total_frames = frames.len() as u8;
-
-        // Step 1: Initialize upload
-        self.start_user_gif()?;
-
-        // Step 2: Upload each frame
-        for (frame_idx, frame_colors) in frames.iter().enumerate() {
-            self.upload_animation_frame(
-                frame_idx as u8,
-                total_frames,
-                frame_delay_ms,
-                frame_colors,
-            )?;
-        }
-
-        // Step 3: Switch to UserColor mode to play animation
-        // Use dazzle=true (option byte = 8) for animation playback
-        let mode = 25u8; // LightUserColor mode
-        self.set_led_with_option(mode, 4, 0, 0, 0, 0, true, 0)?;
-
-        // Small delay after mode switch
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        Ok(())
-    }
-
-    /// Upload a single frame of an animation
-    fn upload_animation_frame(
-        &self,
-        frame_idx: u8,
-        total_frames: u8,
-        frame_delay_ms: u16,
-        colors: &[(u8, u8, u8)],
-    ) -> Result<(), KeyboardError> {
-        use monsgeek_transport::protocol::rgb;
-
-        // Build RGB byte array
-        let mut rgb_data = vec![0u8; rgb::TOTAL_RGB_SIZE];
-        for (i, (r, g, b)) in colors.iter().enumerate() {
-            if i * 3 + 2 < rgb::TOTAL_RGB_SIZE {
-                rgb_data[i * 3] = *r;
-                rgb_data[i * 3 + 1] = *g;
-                rgb_data[i * 3 + 2] = *b;
-            }
-        }
-
-        // Send pages for this frame
-        // Header format: [frame_idx, page, 1, total_frames, delay_lo, delay_hi, 0]
-        for page in 0..rgb::NUM_PAGES {
-            let page_size = if page == rgb::NUM_PAGES - 1 {
-                rgb::LAST_PAGE_SIZE
-            } else {
-                rgb::PAGE_SIZE
-            };
-            let start = page * rgb::PAGE_SIZE;
-            let end = start + page_size;
-
-            // Build message data (after cmd byte)
-            let mut data = vec![
-                frame_idx,                            // current frame index
-                page as u8,                           // page number (0-6)
-                1,                                    // data flag (1 = frame data, 0 = start)
-                total_frames,                         // total number of frames
-                (frame_delay_ms & 0xFF) as u8,        // delay low byte
-                ((frame_delay_ms >> 8) & 0xFF) as u8, // delay high byte
-                0,                                    // padding
-            ];
-            data.extend_from_slice(&rgb_data[start..end.min(rgb_data.len())]);
-
-            self.transport
-                .send_command(cmd::SET_USERGIF, &data, ChecksumType::Bit7)?;
-
-            // Small delay between pages
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-
-        Ok(())
     }
 
     // === Calibration ===
