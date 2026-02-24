@@ -4,12 +4,13 @@ from __future__ import annotations
 import argparse
 import binascii
 import ctypes
+import json
 import os
 import select
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -77,6 +78,8 @@ COMMAND_NAMES: dict[int, str] = {
     0xE6: "GET_FEATURE_LIST",
     0xF7: "BATTERY_REFRESH",
     0xFC: "DONGLE_FLUSH_NOP",
+    0xF0: "GET_DONGLE_VERSION",
+    0xF8: "ENTER_DONGLE_BOOTLOADER",
     0xFE: "GET_CALIBRATION",
 }
 
@@ -96,12 +99,28 @@ REPORT_DESCRIPTOR_IF2 = bytes.fromhex(
     "06ff" "ff" "0902" "a101" "0902" "1580" "257f" "9540" "7508" "b102" "c0"
 )
 
-# Bootloader descriptor: usage_page 0xFF01, usage 0x01, 64-byte feature reports (no report ID)
-REPORT_DESCRIPTOR_BOOT = bytes.fromhex(
+# Keyboard bootloader descriptor: usage_page 0xFF01, usage 0x01, 64-byte feature reports (no report ID)
+REPORT_DESCRIPTOR_BOOT_KB = bytes.fromhex(
     "0601ff"    # Usage Page (Vendor 0xFF01)
     "0901"      # Usage (0x01)
     "a101"      # Collection (Application)
     "0902"      # Usage (0x02)
+    "1580"      # Logical Minimum (-128)
+    "257f"      # Logical Maximum (127)
+    "9540"      # Report Count (64)
+    "7508"      # Report Size (8)
+    "b102"      # Feature (Data, Var, Abs)
+    "c0"        # End Collection
+)
+
+# Dongle bootloader descriptor: matches real PID 0x5039 "USB DONGLE BOOT"
+# Same as KB but inner usage page is Consumer (0x0C) + usage 0x00
+REPORT_DESCRIPTOR_BOOT_DG = bytes.fromhex(
+    "0601ff"    # Usage Page (Vendor 0xFF01)
+    "0901"      # Usage (0x01)
+    "a101"      # Collection (Application)
+    "050c"      # Usage Page (Consumer)
+    "0900"      # Usage (0x00)
     "1580"      # Logical Minimum (-128)
     "257f"      # Logical Maximum (127)
     "9540"      # Report Count (64)
@@ -292,10 +311,11 @@ def build_create2(cfg: DeviceConfig, interface: int) -> UhidEvent:
     return ev
 
 
-def build_create2_boot(cfg: DeviceConfig) -> UhidEvent:
+def build_create2_boot(cfg: DeviceConfig, dongle: bool = False) -> UhidEvent:
     """Build a UHID_CREATE2 event for the bootloader/DFU device.
 
-    Single interface with usage_page=0xFF01 (bootloader), PID=0x502A.
+    Single interface with usage_page=0xFF01 (bootloader).
+    KB: PID=0x502A, dongle: PID from --boot-pid (default 0x502A).
     """
     ev = UhidEvent()
     ev.type = UHID_CREATE2
@@ -303,7 +323,7 @@ def build_create2_boot(cfg: DeviceConfig) -> UhidEvent:
     name = _to_cstr(cfg.name.encode("ascii", "ignore"), 128)
     phys = _to_cstr(b"uhid/akko/boot", 64)
     uniq = _to_cstr(b"dummy", 64)
-    rd = REPORT_DESCRIPTOR_BOOT
+    rd = REPORT_DESCRIPTOR_BOOT_DG if dongle else REPORT_DESCRIPTOR_BOOT_KB
 
     ctypes.memset(ctypes.byref(ev.u.create2), 0, ctypes.sizeof(UhidCreate2Req))
     ev.u.create2.name[: len(name)] = (ctypes.c_ubyte * len(name)).from_buffer_copy(name)
@@ -385,8 +405,9 @@ def build_default_response(cfg: DeviceConfig, last_cmd: int | None, rnum: int) -
 
     version_u16 = cfg.fw_version if cfg.fw_version is not None else ((cfg.fw_major << 8) | cfg.fw_minor)
 
-    if last_cmd == 0x8F:
-        # GET_USB_VERSION: device id (u32 LE) + version bytes
+    if last_cmd in (0x8F, 0xF0):
+        # GET_USB_VERSION (0x8F) or dongle version query (0xF0):
+        # device id (u32 LE) + version bytes — same response format
         resp[2] = cfg.device_id & 0xFF
         resp[3] = (cfg.device_id >> 8) & 0xFF
         resp[4] = (cfg.device_id >> 16) & 0xFF
@@ -474,6 +495,194 @@ def parse_transfer_header(payload: bytes) -> tuple[str, int, int] | None:
     return ("complete", 0, size)
 
 
+@dataclass
+class MultiDeviceInfo:
+    pid: int
+    vid: int
+    methods: list[str]
+    fd_if1: int = -1
+    fd_if2: int = -1
+
+
+def main_multi(args) -> int:
+    """Spawn UHID devices for many PIDs from support_config.json to see which ones
+    the updater recognizes."""
+    config_path = Path(args.from_config)
+    with config_path.open() as f:
+        cfg = json.load(f)
+
+    method_filter = None
+    if args.method_filter:
+        method_filter = set(m.strip().upper() for m in args.method_filter.split(","))
+
+    # Collect entries to create
+    entries: list[MultiDeviceInfo] = []
+    seen_pids: set[int] = set()
+    for entry in cfg.get("support", []):
+        if not args.all_devices and not entry.get("dongle_common"):
+            continue
+        pid_raw = entry.get("pid", 0)
+        pid = int(pid_raw, 16) if isinstance(pid_raw, str) else int(pid_raw)
+        vid_raw = entry.get("vid", "3151")
+        vid = int(vid_raw, 16) if isinstance(vid_raw, str) else int(vid_raw)
+        methods = entry.get("method", [])
+        if isinstance(methods, str):
+            methods = [methods]
+
+        if method_filter:
+            if not any(m.upper() in method_filter for m in methods):
+                continue
+
+        if pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+        entries.append(MultiDeviceInfo(pid=pid, vid=vid, methods=methods))
+
+    if not entries:
+        print("No matching entries found in config")
+        return 1
+
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "uhid_events.log"
+    log_fp = log_path.open("a", encoding="utf-8")
+
+    def out(line: str) -> None:
+        ts = time.strftime("%H:%M:%S")
+        full = f"[{ts}] {line}"
+        print(full)
+        log_fp.write(full + "\n")
+        log_fp.flush()
+
+    # Create UHID device pairs for each PID
+    fds: dict[int, tuple[str, MultiDeviceInfo]] = {}  # fd -> (tag, info)
+    uhid_path = args.uhid
+
+    out(f"Creating {len(entries)} UHID device pairs from {config_path.name}...")
+    for info in entries:
+        dummy_cfg = DeviceConfig(
+            name=f"Dummy 0x{info.pid:04X}",
+            vendor=info.vid,
+            product=info.pid,
+            version=0x0100,
+            device_id=0x00000b85,
+            fw_major=0x04,
+            fw_minor=0x07,
+            fw_version=int(args.fw_version, 0) if args.fw_version else 0x0903,
+            battery=87,
+            log_dir=log_dir,
+        )
+        try:
+            fd2 = os.open(uhid_path, os.O_RDWR | os.O_CLOEXEC)
+            os.write(fd2, bytes(build_create2(dummy_cfg, interface=2)))
+            info.fd_if2 = fd2
+            fds[fd2] = (f"0x{info.pid:04X}/IF2", info)
+
+            fd1 = os.open(uhid_path, os.O_RDWR | os.O_CLOEXEC)
+            os.write(fd1, bytes(build_create2(dummy_cfg, interface=1)))
+            info.fd_if1 = fd1
+            fds[fd1] = (f"0x{info.pid:04X}/IF1", info)
+
+            out(f"  PID=0x{info.pid:04X} VID=0x{info.vid:04X} methods={info.methods}")
+        except OSError as e:
+            out(f"  PID=0x{info.pid:04X} FAILED: {e}")
+
+    out(f"Created {len(entries)} device pairs ({len(fds)} FDs). Waiting for host...")
+    out(f"Logging to: {log_path}")
+
+    # Track which PIDs got commands
+    contacted: dict[int, list[str]] = {}  # pid -> [cmd_names]
+    last_cmd_per_fd: dict[int, int | None] = {}
+
+    running = True
+    def _stop(*_a):
+        nonlocal running
+        running = False
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    try:
+        while running:
+            rlist, _, _ = select.select(list(fds.keys()), [], [], 1.0)
+            if not rlist:
+                continue
+            for fd in rlist:
+                if fd not in fds:
+                    continue
+                tag, info = fds[fd]
+                data = os.read(fd, ctypes.sizeof(UhidEvent))
+                if not data:
+                    continue
+                ev = UhidEvent.from_buffer_copy(data)
+
+                if ev.type == UHID_START:
+                    out(f"[{tag}] UHID_START")
+                elif ev.type == UHID_OPEN:
+                    out(f"[{tag}] UHID_OPEN")
+                    if "IF1" in tag:
+                        try:
+                            payload = bytes([5]) + bytes(64)
+                            os.write(fd, bytes(build_input2_report(payload)))
+                        except OSError:
+                            pass
+                elif ev.type == UHID_CLOSE:
+                    out(f"[{tag}] UHID_CLOSE")
+                elif ev.type == UHID_SET_REPORT:
+                    size = ev.u.set_report.size
+                    payload = bytes(ev.u.set_report.data[:size])
+                    cmd = parse_cmd(payload)
+                    last_cmd_per_fd[fd] = cmd
+                    cname = cmd_name(cmd)
+                    out(f"[{tag}] SET_REPORT cmd={cname} size={size} data={_hex(payload)}")
+
+                    # Track contact
+                    if info.pid not in contacted:
+                        contacted[info.pid] = []
+                        out(f"  *** NEW CONTACT: PID=0x{info.pid:04X} methods={info.methods} ***")
+                    contacted[info.pid].append(cname)
+
+                    os.write(fd, bytes(build_set_report_reply(ev.u.set_report.id, err=0)))
+                elif ev.type == UHID_GET_REPORT:
+                    rnum = ev.u.get_report.rnum
+                    last_cmd = last_cmd_per_fd.get(fd)
+                    # Build a version response for any PID
+                    dummy_cfg = DeviceConfig(
+                        name="", vendor=info.vid, product=info.pid,
+                        version=0x0100, device_id=0x00000b85,
+                        fw_major=0x04, fw_minor=0x07,
+                        fw_version=int(args.fw_version, 0) if args.fw_version else 0x0903,
+                        battery=87, log_dir=log_dir,
+                    )
+                    resp = build_default_response(dummy_cfg, last_cmd, rnum)
+                    out(f"[{tag}] GET_REPORT rnum={rnum} cmd={cmd_name(last_cmd)} reply={_hex(resp)}")
+                    os.write(fd, bytes(build_get_report_reply(ev.u.get_report.id, resp, err=0)))
+                elif ev.type == UHID_STOP:
+                    out(f"[{tag}] UHID_STOP")
+                else:
+                    out(f"[{tag}] event type={ev.type}")
+    finally:
+        out("--- SCAN RESULTS ---")
+        if contacted:
+            for pid, cmds in sorted(contacted.items()):
+                info_match = next((e for e in entries if e.pid == pid), None)
+                methods = info_match.methods if info_match else []
+                out(f"  PID=0x{pid:04X} methods={methods} commands={cmds}")
+        else:
+            out("  No devices were contacted by the updater")
+        out("--------------------")
+
+        destroy = UhidEvent()
+        destroy.type = UHID_DESTROY
+        for fd_close in fds:
+            try:
+                os.write(fd_close, bytes(destroy))
+            except OSError:
+                pass
+            os.close(fd_close)
+        log_fp.close()
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Dummy MonsGeek/Akko UHID device")
     parser.add_argument("--name", default="MonsGeek Dummy Device", help="Device name")
@@ -495,7 +704,33 @@ def main() -> int:
         help="Directory for logs and reconstructed firmware",
     )
     parser.add_argument("--uhid", default="/dev/uhid", help="UHID device path")
+    parser.add_argument(
+        "--dongle", action="store_true",
+        help="Emulate dongle (uses dongle boot descriptor, 0xF8 enter-boot, name 'USB DONGLE BOOT')",
+    )
+    parser.add_argument(
+        "--boot-pid", default=None,
+        help="Boot PID override (hex, default: 0x502A)",
+    )
+    parser.add_argument(
+        "--from-config",
+        default=None,
+        metavar="PATH",
+        help="Read support_config.json and create UHID devices for all dongle entries",
+    )
+    parser.add_argument(
+        "--method-filter",
+        default=None,
+        help="Comma-separated method names to filter (e.g. KBDONGLE8K,DANGLE4K). Default: all dongle entries",
+    )
+    parser.add_argument(
+        "--all-devices", action="store_true",
+        help="With --from-config, also include non-dongle support entries",
+    )
     args = parser.parse_args()
+
+    if args.from_config:
+        return main_multi(args)
 
     cfg = DeviceConfig(
         name=args.name,
@@ -615,9 +850,11 @@ def main() -> int:
                         f"cmd={cmd_name(last_cmd)} size={size} data={_hex(payload)}"
                     )
 
-                    # Detect ENTER_BOOTLOADER (0x7F with 55AA55AA magic)
-                    # payload layout: [report_id=0x00, cmd=0x7F, 0x55, 0xAA, 0x55, 0xAA, ...]
-                    if last_cmd == 0x7F and size >= 6 and payload[2:6] == b'\x55\xaa\x55\xaa':
+                    # Detect ENTER_BOOTLOADER:
+                    #   0x7F with 55AA55AA magic (keyboard)
+                    #   0xF8 with 55AA55AA magic (dongle)
+                    # payload layout: [report_id=0x00, cmd, 0x55, 0xAA, 0x55, 0xAA, ...]
+                    if last_cmd in (0x7F, 0xF8) and size >= 6 and payload[2:6] == b'\x55\xaa\x55\xaa':
                         out("ENTER_BOOTLOADER detected (magic 55AA55AA) - simulating reboot to DFU...")
                         os.write(fd, bytes(build_set_report_reply(ev.u.set_report.id, err=0)))
                         # Destroy current devices
@@ -634,11 +871,13 @@ def main() -> int:
                         if1_fd = None
                         out("Devices destroyed, waiting 2s before DFU re-enumeration...")
                         time.sleep(2)
-                        # Recreate as bootloader/DFU devices (PID=0x502A, usage_page=0xFF01)
+                        # Recreate as bootloader/DFU device
+                        boot_pid = int(args.boot_pid, 16) if args.boot_pid else 0x502A
+                        boot_name = "USB DONGLE BOOT" if args.dongle else cfg.name + " (Bootloader)"
                         boot_cfg = DeviceConfig(
-                            name=cfg.name + " (Bootloader)",
+                            name=boot_name,
                             vendor=cfg.vendor,
-                            product=0x502A,  # Bootloader PID
+                            product=boot_pid,
                             version=cfg.version,
                             device_id=cfg.device_id,
                             fw_major=cfg.fw_major,
@@ -648,7 +887,7 @@ def main() -> int:
                             log_dir=cfg.log_dir,
                         )
                         fd_boot = os.open(args.uhid, os.O_RDWR | os.O_CLOEXEC)
-                        os.write(fd_boot, bytes(build_create2_boot(boot_cfg)))
+                        os.write(fd_boot, bytes(build_create2_boot(boot_cfg, dongle=args.dongle)))
                         fds[fd_boot] = "BOOT"
                         out(f"DFU device created: VID=0x{boot_cfg.vendor:04x} PID=0x{boot_cfg.product:04x} usage_page=0xFF01")
                         last_cmd = None
