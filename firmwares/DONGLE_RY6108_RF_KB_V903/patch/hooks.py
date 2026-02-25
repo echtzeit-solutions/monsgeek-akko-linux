@@ -33,6 +33,13 @@ HOOK_ELF = SCRIPT_DIR / "hook.elf"
 
 HOOKS = [
     Hook(
+        name="usb_init",
+        target=0x080069D8,         # usb_init — populate descriptors before enumeration
+        handler="handle_usb_init",
+        mode="before",
+        displace=4,                # push {r3,lr} + movs r1,#1 — 4 bytes, safe
+    ),
+    Hook(
         name="hid_class_setup",
         target=0x080071B4,         # hid_class_setup_handler
         handler="handle_hid_setup",

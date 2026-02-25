@@ -6,11 +6,12 @@
  * exposes them as a standard HID battery via IF1's report descriptor and
  * GET_REPORT interception.
  *
- * Single "filter" hook on hid_class_setup_handler(udev, setup_pkt).
- * On every call:
- *   1. Copies original IF1 rdesc (171B) + battery_rdesc (46B) into extended_rdesc
- *   2. Patches wDescriptorLength in all 4 SRAM locations
- *   3. If GET_REPORT Feature ID 7 on IF1: responds with battery report
+ * Two hooks:
+ *   1. "before" hook on usb_init — populates extended_rdesc + patches
+ *      wDescriptorLength before USB enumeration starts.
+ *   2. "filter" hook on hid_class_setup_handler — intercepts GET_REPORT
+ *      Feature ID 7 for battery data. Also re-runs patch_descriptors()
+ *      idempotently in case descriptors were re-initialized.
  *
  * Convention (filter mode):
  *   return 0     = passthrough to original firmware handler
@@ -89,6 +90,16 @@ static void patch_descriptors(void) {
     WDESCLEN_OS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
     WDESCLEN_STANDALONE[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
     WDESCLEN_STANDALONE[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+}
+
+/* ── USB init hook (descriptor patching before enumeration) ──────────── */
+/* "before" hook on usb_init: called before the original usb_init runs.
+ * At this point crt0 has already copied .data → SRAM, so g_if1_report_desc
+ * contains the original 171-byte IF1 descriptor. We populate extended_rdesc
+ * and patch wDescriptorLength so they're ready when the host enumerates. */
+
+void handle_usb_init(void) {
+    patch_descriptors();
 }
 
 /* ── HID class setup handler (battery reporting) ─────────────────────── */
