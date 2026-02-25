@@ -4,14 +4,16 @@
  * The dongle already caches the keyboard's battery level and charging status
  * from RF packets (dongle_state.kb_battery_info/kb_charging).  This patch
  * exposes them as a standard HID battery via IF1's report descriptor and
- * GET_REPORT interception.
+ * GET_REPORT interception, with proactive Input report push on changes.
  *
- * Two hooks:
+ * Three hooks:
  *   1. "before" hook on usb_init — populates extended_rdesc + patches
  *      wDescriptorLength before USB enumeration starts.
  *   2. "filter" hook on hid_class_setup_handler — intercepts GET_REPORT
- *      Feature ID 7 for battery data. Also re-runs patch_descriptors()
- *      idempotently in case descriptors were re-initialized.
+ *      Feature ID 7 for battery data.
+ *   3. "before" hook on rf_packet_dispatch — detects battery/charging
+ *      changes and pushes HID Input reports on EP2 interrupt endpoint.
+ *      Linux kernel's hidinput_update_battery() picks these up.
  *
  * Convention (filter mode):
  *   return 0     = passthrough to original firmware handler
@@ -157,4 +159,41 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
     }
 
     return 0;  /* passthrough to original handler */
+}
+
+/* ── RF packet dispatch hook (proactive battery notifications) ─────── */
+/* "before" hook on rf_packet_dispatch: runs every SPI cycle.
+ * Compares current battery/charging values against cached copies.
+ * If either changed, pushes a HID Input report on EP2 (interrupt IN).
+ * The Linux kernel's hidinput_update_battery() processes these
+ * automatically, updating power_supply without host polling.
+ *
+ * One SPI-cycle delay (µs) between the RF packet updating dongle_state
+ * and our detection — negligible for battery-level changes. */
+
+void handle_rf_dispatch(void) {
+    /* All statics are in .bss (zero-initialized).
+     * prev_inited starts as 0; first call always sends a report. */
+    static uint8_t prev_inited;
+    static uint8_t prev_battery;
+    static uint8_t prev_charging;
+
+    volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
+    uint8_t bat = ds->kb_battery_info;
+    uint8_t chg = ds->kb_charging;
+
+    if (!prev_inited || bat != prev_battery || chg != prev_charging) {
+        prev_inited = 1;
+        prev_battery = bat;
+        prev_charging = chg;
+
+        /* Push Input report on EP2 (interrupt IN endpoint 0x82).
+         * Use a separate static buffer to avoid races with keyboard
+         * HID reports that also use EP2. */
+        static uint8_t bat_input[4] __attribute__((aligned(4)));
+        bat_input[0] = 0x07;       /* Report ID 7 */
+        bat_input[1] = bat;
+        bat_input[2] = chg;
+        usb_otg_in_ep_xfer_start(g_usb_device, 0x82, bat_input, 3);
+    }
 }

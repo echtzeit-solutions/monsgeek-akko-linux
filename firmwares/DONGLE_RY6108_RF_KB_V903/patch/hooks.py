@@ -46,6 +46,13 @@ HOOKS = [
         mode="filter",
         displace=4,                # PUSH.W {r4-r10,lr} — 4 bytes, safe
     ),
+    Hook(
+        name="rf_packet_dispatch",
+        target=0x080059FC,         # rf_packet_dispatch — push battery changes to host
+        handler="handle_rf_dispatch",
+        mode="before",
+        displace=4,                # PUSH.W {r4-r8,lr} — 4 bytes, safe
+    ),
 ]
 
 

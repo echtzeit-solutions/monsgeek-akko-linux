@@ -13,7 +13,9 @@ typedef struct __attribute__((packed)) {
     uint8_t usb_response[64];       /* +0x01 */
     uint8_t vendor_cmd_pending;     /* +0x41 */
     uint8_t vendor_cmd_buf[64];     /* +0x42 */
-    uint8_t _pad_82[0x59];         /* +0x82 .. +0xDA */
+    uint8_t _pad_82[0x56];         /* +0x82 .. +0xD7 */
+    uint8_t rf_idle;                /* +0xD8 (idle status from keyboard) */
+    uint8_t _pad_d9[2];            /* +0xD9 .. +0xDA */
     uint8_t kb_battery_info;        /* +0xDB */
     uint8_t kb_charging;            /* +0xDC */
     uint8_t kb_connection_status;   /* +0xDD */
