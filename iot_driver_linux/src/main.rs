@@ -297,8 +297,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             FirmwareCommands::Download { device_id, output } => {
                 commands::firmware::download(device_id, &output)?;
             }
-            FirmwareCommands::Flash { file, device, yes } => {
-                commands::firmware::flash(&file, device.as_deref(), yes)?;
+            FirmwareCommands::Flash {
+                file,
+                device,
+                dongle,
+                yes,
+            } => {
+                commands::firmware::flash(&file, device.as_deref(), dongle, yes)?;
             }
         },
 

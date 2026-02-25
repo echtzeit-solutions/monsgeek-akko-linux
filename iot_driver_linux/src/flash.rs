@@ -110,6 +110,8 @@ pub struct FlashOptions {
     pub bootloader_timeout_ms: u64,
     /// Delay after sending ENTER_BOOTLOADER before scanning (ms).
     pub boot_entry_delay_ms: u64,
+    /// Which device to target (keyboard or dongle).
+    pub target: firmware_update::FlashTarget,
 }
 
 impl Default for FlashOptions {
@@ -118,6 +120,7 @@ impl Default for FlashOptions {
             device_path: None,
             bootloader_timeout_ms: 10_000,
             boot_entry_delay_ms: firmware_update::BOOT_ENTRY_DELAY_MS,
+            target: firmware_update::FlashTarget::Keyboard,
         }
     }
 }
@@ -131,22 +134,27 @@ enum FlashTarget {
 }
 
 /// Scan HID bus for a single flash target.
-fn find_flash_target(api: &HidApi, device_path: Option<&str>) -> Result<FlashTarget, FlashError> {
+fn find_flash_target(
+    api: &HidApi,
+    device_path: Option<&str>,
+    target: firmware_update::FlashTarget,
+) -> Result<FlashTarget, FlashError> {
+    let target_boot_pids = target.boot_vid_pids();
+
     let normal: Vec<_> = api
         .device_list()
         .filter(|d| {
             d.vendor_id() == firmware_update::VID
-                && d.product_id() == firmware_update::NORMAL_PID
+                && d.product_id() == target.normal_pid()
                 && d.usage_page() == firmware_update::NORMAL_USAGE_PAGE
-                && d.usage() == firmware_update::NORMAL_USAGE
+                && d.usage() == target.normal_usage()
         })
         .collect();
 
     let boot: Vec<_> = api
         .device_list()
         .filter(|d| {
-            d.vendor_id() == firmware_update::VID
-                && firmware_update::is_boot_mode(d.vendor_id(), d.product_id())
+            target_boot_pids.contains(&(d.vendor_id(), d.product_id()))
                 && d.usage_page() == firmware_update::BOOT_USAGE_PAGE
         })
         .collect();
@@ -169,15 +177,17 @@ fn find_flash_target(api: &HidApi, device_path: Option<&str>) -> Result<FlashTar
             }
         }
         return Err(FlashError::DeviceNotFound(format!(
-            "No matching device at path: {path}"
+            "No matching {} device at path: {path}",
+            target.name()
         )));
     }
 
     let total = normal.len() + boot.len();
     if total == 0 {
-        return Err(FlashError::DeviceNotFound(
-            "No MonsGeek keyboard or bootloader device found".to_string(),
-        ));
+        return Err(FlashError::DeviceNotFound(format!(
+            "No MonsGeek {} or bootloader device found",
+            target.name()
+        )));
     }
     if total > 1 {
         let mut paths = Vec::new();
@@ -212,9 +222,11 @@ fn find_flash_target(api: &HidApi, device_path: Option<&str>) -> Result<FlashTar
 fn poll_for_bootloader(
     timeout_ms: u64,
     progress: &mut dyn FlashProgress,
+    target: firmware_update::FlashTarget,
 ) -> Result<CString, FlashError> {
     let start = std::time::Instant::now();
     let poll_interval = std::time::Duration::from_millis(300);
+    let target_boot_pids = target.boot_vid_pids();
 
     loop {
         let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -230,8 +242,7 @@ fn poll_for_bootloader(
         // Re-create HidApi to get fresh device list
         if let Ok(api) = HidApi::new() {
             for d in api.device_list() {
-                if d.vendor_id() == firmware_update::VID
-                    && firmware_update::is_boot_mode(d.vendor_id(), d.product_id())
+                if target_boot_pids.contains(&(d.vendor_id(), d.product_id()))
                     && d.usage_page() == firmware_update::BOOT_USAGE_PAGE
                 {
                     // Small extra delay for device to stabilize
@@ -368,13 +379,14 @@ fn do_transfer(
     Ok(())
 }
 
-/// Flash firmware to a keyboard.
+/// Flash firmware to a device (keyboard or dongle).
 ///
 /// This is the main entry point. It handles:
-/// 1. Device discovery and autodetection
-/// 2. Entering bootloader mode (if needed)
-/// 3. Firmware transfer
-/// 4. Progress reporting
+/// 1. Chip ID validation (firmware must match target device)
+/// 2. Device discovery and autodetection
+/// 3. Entering bootloader mode (if needed)
+/// 4. Firmware transfer
+/// 5. Progress reporting
 ///
 /// Runs synchronously (blocking) — call from `spawn_blocking` if needed.
 pub fn flash_firmware(
@@ -387,10 +399,25 @@ pub fn flash_firmware(
         .validate()
         .map_err(|e| FlashError::FirmwareValidation(e.to_string()))?;
 
+    // Validate chip ID matches target device
+    let expected_chip_id = options.target.chip_id();
+    if firmware.data.len() >= expected_chip_id.len() {
+        let actual_chip_id = &firmware.data[..expected_chip_id.len()];
+        if actual_chip_id != expected_chip_id {
+            return Err(FlashError::FirmwareValidation(format!(
+                "Chip ID mismatch: firmware has {:?}, expected {:?} for {}. \
+                 Wrong firmware file for this device?",
+                String::from_utf8_lossy(actual_chip_id).trim_end_matches('\0'),
+                String::from_utf8_lossy(expected_chip_id).trim_end_matches('\0'),
+                options.target.name(),
+            )));
+        }
+    }
+
     // Scan for devices
     progress.on_phase(&FlashPhase::Scanning);
     let api = HidApi::new()?;
-    let target = find_flash_target(&api, options.device_path.as_deref())?;
+    let target = find_flash_target(&api, options.device_path.as_deref(), options.target)?;
 
     // Drop the HidApi — we'll re-create as needed (required after device re-enumeration)
     drop(api);
@@ -409,7 +436,8 @@ pub fn flash_firmware(
             std::thread::sleep(std::time::Duration::from_millis(
                 options.boot_entry_delay_ms,
             ));
-            let boot_path = poll_for_bootloader(options.bootloader_timeout_ms, progress)?;
+            let boot_path =
+                poll_for_bootloader(options.bootloader_timeout_ms, progress, options.target)?;
 
             progress.on_phase(&FlashPhase::BootloaderFound);
             boot_path

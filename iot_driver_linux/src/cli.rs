@@ -665,7 +665,7 @@ pub enum FirmwareCommands {
         output: PathBuf,
     },
 
-    /// Flash firmware to keyboard (DANGEROUS - overwrites firmware!)
+    /// Flash firmware to device (DANGEROUS - overwrites firmware!)
     #[command(visible_alias = "fl")]
     Flash {
         /// Path to firmware file (.bin or .zip)
@@ -674,6 +674,10 @@ pub enum FirmwareCommands {
         /// HID device path (required when multiple devices found)
         #[arg(long)]
         device: Option<String>,
+
+        /// Flash dongle firmware instead of keyboard firmware
+        #[arg(long)]
+        dongle: bool,
 
         /// Skip confirmation prompt
         #[arg(short, long)]

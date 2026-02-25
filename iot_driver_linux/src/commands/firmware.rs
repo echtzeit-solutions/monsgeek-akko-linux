@@ -262,9 +262,16 @@ impl iot_driver::flash::FlashProgress for CliFlashProgress {
     }
 }
 
-/// Flash firmware to a connected keyboard.
-pub fn flash(file: &PathBuf, device: Option<&str>, yes: bool) -> CommandResult {
+/// Flash firmware to a connected device (keyboard or dongle).
+pub fn flash(file: &PathBuf, device: Option<&str>, dongle: bool, yes: bool) -> CommandResult {
     use iot_driver::flash::{flash_firmware, FlashOptions};
+    use iot_driver::protocol::firmware_update::FlashTarget;
+
+    let target = if dongle {
+        FlashTarget::Dongle
+    } else {
+        FlashTarget::Keyboard
+    };
 
     // 1. Load + validate firmware
     let fw = match FirmwareFile::load(file) {
@@ -281,16 +288,17 @@ pub fn flash(file: &PathBuf, device: Option<&str>, yes: bool) -> CommandResult {
     }
 
     // 2. Print summary + safety warning
-    println!("Firmware Flash");
-    println!("===============");
+    let device_name = target.name();
+    println!("Firmware Flash ({device_name})");
+    println!("==============={}", "=".repeat(device_name.len() + 3));
     println!("File:       {}", fw.filename);
     println!("Type:       {}", fw.firmware_type);
     println!("Size:       {} bytes ({} KB)", fw.size, fw.size / 1024);
     println!("Checksum:   0x{:08X}", fw.checksum);
     println!("Chunks:     {} (64 bytes each)", fw.chunk_count);
     println!();
-    println!("WARNING: This will overwrite the keyboard firmware!");
-    println!("The keyboard will be unusable if the process is interrupted.");
+    println!("WARNING: This will overwrite the {device_name} firmware!");
+    println!("The {device_name} will be unusable if the process is interrupted.");
     println!("Make sure you have a DFU recovery method available.");
 
     // 3. Confirmation
@@ -314,6 +322,7 @@ pub fn flash(file: &PathBuf, device: Option<&str>, yes: bool) -> CommandResult {
     let mut progress = CliFlashProgress::new();
     let options = FlashOptions {
         device_path: device.map(String::from),
+        target,
         ..Default::default()
     };
 

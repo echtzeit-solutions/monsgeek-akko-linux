@@ -23,11 +23,12 @@ cargo build --release --features firmware-api
 
 ## Supported Devices
 
-| Connection | VID:PID |
-|---|---|
-| USB wired | `3151:5030` |
-| 2.4 GHz dongle | `3151:5038` |
-| Bluetooth | `3151:5027` |
+| Device | VID:PID | Bootloader |
+|---|---|---|
+| Keyboard (USB wired) | `3151:5030` | `3151:502A` |
+| Keyboard (2.4 GHz via dongle) | `3151:5038` | — |
+| Keyboard (Bluetooth) | `3151:5027` | — |
+| 2.4 GHz Dongle | `3151:5038` | `3151:5039` |
 
 ## Quick Start
 
@@ -193,21 +194,27 @@ iot_driver firmware check
 # Download latest firmware
 iot_driver firmware download --output firmware.zip
 
-# Flash firmware (interactive confirmation)
+# Flash keyboard firmware (interactive confirmation)
 iot_driver firmware flash firmware.bin
 
 # Flash without confirmation prompt
 iot_driver firmware flash firmware.bin --yes
+
+# Flash dongle firmware
+iot_driver firmware flash --dongle dongle_app_only.bin --yes
 ```
 
 The flash process:
 1. Validates the firmware file (size, checksum, chip ID header)
-2. Sends the ISP prepare command (0xC5)
-3. Triggers bootloader entry (0x7F + magic) — **this erases the firmware area**
-4. Waits for re-enumeration as bootloader device (PID 0x502A)
-5. Transfers firmware in 64-byte chunks with running checksum
-6. Sends transfer complete with checksum verification
-7. Device reboots to normal mode
+2. Verifies chip ID matches target device (`AT32F405 8KMKB` for keyboard, `AT32F405 8K-DGKB` for dongle)
+3. Sends the ISP prepare command (0xC5)
+4. Triggers bootloader entry (0x7F + magic) — **this erases the firmware area**
+5. Waits for re-enumeration as bootloader device (PID 0x502A for keyboard, 0x5039 for dongle)
+6. Transfers firmware in 64-byte chunks with running checksum
+7. Sends transfer complete with checksum verification
+8. Device reboots to normal mode
+
+The `--dongle` flag targets the 2.4 GHz wireless dongle instead of the keyboard. The chip ID check prevents accidentally flashing the wrong firmware to the wrong device.
 
 ### Utility Commands
 
@@ -264,9 +271,26 @@ cargo run --release -- firmware flash ../firmwares/2949-v407/firmware_patched.bi
 
 The patched firmware occupies ~1.2 KB of the 10 KB patch zone (0x08025800-0x08027FFF). It hooks into the firmware's vendor command dispatch and HID class handler without modifying the original code — only literal pool entries and length caps are patched at build time.
 
+### Dongle Patch
+
+The dongle patch exposes the keyboard's battery level over the dongle's USB HID interface, so `power_supply` works when connected wirelessly via 2.4 GHz. It lives in `firmwares/DONGLE_RY6108_RF_KB_V903/patch/`.
+
+```bash
+cd firmwares/DONGLE_RY6108_RF_KB_V903/patch
+make              # Build hook.bin
+make patch        # Apply to dongle firmware
+
+# Flash to dongle
+cd iot_driver_linux
+cargo run --release -- firmware flash --dongle \
+  ../firmwares/DONGLE_RY6108_RF_KB_V903/dfu_dumps/dongle_patched_256k.bin
+```
+
 ### Recovery
 
-If the keyboard is stuck in bootloader mode (PID 0x502A) after a failed flash, re-flash the stock or patched firmware using the same `firmware flash` command. If the bootloader itself is unresponsive, bridge the BOOT0 pad to 3.3V and use `dfu-util` with the AT32 ROM DFU bootloader (VID:PID `2e3c:df11`).
+If the keyboard is stuck in bootloader mode (PID 0x502A) after a failed flash, re-flash the stock or patched firmware using the same `firmware flash` command. For the dongle (PID 0x5039), use `firmware flash --dongle`.
+
+If the bootloader itself is unresponsive, bridge the BOOT0 pad to 3.3V and use `dfu-util` with the AT32 ROM DFU bootloader (VID:PID `2e3c:df11`).
 
 ## Architecture
 

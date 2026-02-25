@@ -947,29 +947,99 @@ pub mod firmware_update {
     /// Our keyboard's bootloader PID (VID stays 0x3151)
     pub const BOOT_PID_M1_V5: u16 = 0x502A;
 
+    /// Dongle bootloader PID (VID stays 0x3151)
+    pub const BOOT_PID_DONGLE: u16 = 0x5039;
+
     /// Bootloader usage page
     pub const BOOT_USAGE_PAGE: u16 = 0xFF01;
 
     /// Normal-mode vendor usage page
     pub const NORMAL_USAGE_PAGE: u16 = 0xFFFF;
 
-    /// Normal-mode PID
+    /// Keyboard normal-mode PID
     pub const NORMAL_PID: u16 = 0x5030;
+
+    /// Dongle normal-mode PID
+    pub const DONGLE_NORMAL_PID: u16 = 0x5038;
 
     /// Normal-mode vendor config usage (IF2)
     pub const NORMAL_USAGE: u16 = 0x02;
 
+    /// Dongle vendor usage (IF2, usage_page=0xFFFF, usage=0x01)
+    pub const DONGLE_NORMAL_USAGE: u16 = 0x01;
+
     /// Common VID for MonsGeek M1 V5
     pub const VID: u16 = 0x3151;
 
-    /// Boot mode VID/PIDs - device uses these when in bootloader mode
-    pub const BOOT_VID_PIDS: [(u16, u16); 5] = [
+    /// Keyboard boot mode VID/PIDs
+    pub const KB_BOOT_VID_PIDS: [(u16, u16); 3] = [
         (0x3151, 0x502A), // MonsGeek M1 V5 TMR bootloader
+        (0x3141, 0x504A), // USB boot mode 1 (generic RY)
+        (0x3141, 0x404A), // USB boot mode 2 (generic RY)
+    ];
+
+    /// Dongle boot mode VID/PIDs
+    pub const DONGLE_BOOT_VID_PIDS: [(u16, u16); 1] = [
+        (0x3151, 0x5039), // MonsGeek dongle bootloader
+    ];
+
+    /// Boot mode VID/PIDs - all devices (keyboard + dongle + RF)
+    pub const BOOT_VID_PIDS: [(u16, u16); 6] = [
+        (0x3151, 0x502A), // MonsGeek M1 V5 TMR bootloader
+        (0x3151, 0x5039), // MonsGeek dongle bootloader
         (0x3141, 0x504A), // USB boot mode 1 (generic RY)
         (0x3141, 0x404A), // USB boot mode 2 (generic RY)
         (0x046A, 0x012E), // RF boot mode 1
         (0x046A, 0x0130), // RF boot mode 2
     ];
+
+    /// Chip ID strings for safety validation (first 16 bytes at 0x08005000)
+    pub const CHIP_ID_KEYBOARD: &[u8] = b"AT32F405 8KMKB  ";
+    pub const CHIP_ID_DONGLE: &[u8] = b"AT32F405 8K-DGKB";
+
+    /// Which device we're targeting for flash operations.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum FlashTarget {
+        Keyboard,
+        Dongle,
+    }
+
+    impl FlashTarget {
+        pub fn normal_pid(self) -> u16 {
+            match self {
+                Self::Keyboard => NORMAL_PID,
+                Self::Dongle => DONGLE_NORMAL_PID,
+            }
+        }
+
+        pub fn normal_usage(self) -> u16 {
+            match self {
+                Self::Keyboard => NORMAL_USAGE,
+                Self::Dongle => DONGLE_NORMAL_USAGE,
+            }
+        }
+
+        pub fn boot_vid_pids(self) -> &'static [(u16, u16)] {
+            match self {
+                Self::Keyboard => &KB_BOOT_VID_PIDS,
+                Self::Dongle => &DONGLE_BOOT_VID_PIDS,
+            }
+        }
+
+        pub fn chip_id(self) -> &'static [u8] {
+            match self {
+                Self::Keyboard => CHIP_ID_KEYBOARD,
+                Self::Dongle => CHIP_ID_DONGLE,
+            }
+        }
+
+        pub fn name(self) -> &'static str {
+            match self {
+                Self::Keyboard => "keyboard",
+                Self::Dongle => "dongle",
+            }
+        }
+    }
 
     /// Firmware data chunk size
     pub const CHUNK_SIZE: usize = 64;
