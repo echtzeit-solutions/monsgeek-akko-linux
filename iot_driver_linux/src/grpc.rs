@@ -16,7 +16,10 @@ use tokio_udev::{EventType, MonitorBuilder};
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
+use crate::commands::led_stream::{apply_power_budget, send_full_frame, MATRIX_LEN};
+use iot_driver::effect::{self, EffectLibrary};
 use iot_driver::hal::HidInterface;
+use monsgeek_keyboard::SyncKeyboard;
 use monsgeek_transport::{
     ChecksumType, DeviceDiscovery, HidDiscovery, PrinterConfig, TimestampedEvent, Transport,
     TransportType, VendorEvent,
@@ -186,6 +189,12 @@ pub struct DriverService {
     hotplug_running: Arc<std::sync::Mutex<bool>>,
     /// In-memory key-value store for webapp DB RPCs
     db: Arc<AsyncMutex<HashMap<DbKey, Vec<u8>>>>,
+    /// Lazily-opened keyboard for LED streaming RPCs
+    led_kb: Arc<AsyncMutex<Option<SyncKeyboard>>>,
+    /// Running effect render tasks (effect_id -> JoinHandle)
+    led_effects: Arc<AsyncMutex<HashMap<u64, tokio::task::JoinHandle<()>>>>,
+    /// Next effect ID counter
+    led_next_id: Arc<AsyncMutex<u64>>,
 }
 
 impl DriverService {
@@ -210,6 +219,9 @@ impl DriverService {
             vendor_subscribers: Arc::new(AtomicUsize::new(0)),
             hotplug_running: Arc::new(std::sync::Mutex::new(false)),
             db: Arc::new(AsyncMutex::new(HashMap::new())),
+            led_kb: Arc::new(AsyncMutex::new(None)),
+            led_effects: Arc::new(AsyncMutex::new(HashMap::new())),
+            led_next_id: Arc::new(AsyncMutex::new(1)),
         })
     }
 
@@ -762,6 +774,45 @@ impl DriverService {
         Err(Status::not_found("Device not found"))
     }
 
+    /// Open keyboard for LED streaming, caching it for reuse.
+    /// Returns error if no patched device found.
+    async fn ensure_led_kb(&self) -> Result<(), Status> {
+        let mut guard = self.led_kb.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let kb = SyncKeyboard::open_any()
+            .map_err(|e| Status::unavailable(format!("No keyboard found: {e}")))?;
+
+        let patch = kb
+            .get_patch_info()
+            .map_err(|e| Status::internal(format!("Failed to query patch info: {e}")))?;
+
+        match patch {
+            Some(ref p) if p.has_led_stream() => {
+                info!(
+                    "LED KB opened: {} v{} (caps=0x{:04X})",
+                    p.name, p.version, p.capabilities
+                );
+            }
+            Some(ref p) => {
+                return Err(Status::failed_precondition(format!(
+                    "Patch '{}' found but LED streaming not supported (caps=0x{:04X})",
+                    p.name, p.capabilities
+                )));
+            }
+            None => {
+                return Err(Status::failed_precondition(
+                    "Stock firmware — LED streaming requires patched firmware",
+                ));
+            }
+        }
+
+        *guard = Some(kb);
+        Ok(())
+    }
+
     /// Send command immediately to the device
     ///
     /// The webapp handles its own flow control (retries, echo matching,
@@ -1140,5 +1191,222 @@ impl DriverGrpc for DriverService {
         Ok(Response::new(WeatherRes {
             res: "{}".to_string(),
         }))
+    }
+
+    async fn list_effects(&self, _request: Request<Empty>) -> Result<Response<EffectList>, Status> {
+        let lib = EffectLibrary::load_default()
+            .map_err(|e| Status::internal(format!("Failed to load effects: {e}")))?;
+
+        let effects = lib
+            .effects
+            .iter()
+            .map(|(name, def)| EffectInfo {
+                name: name.clone(),
+                description: def.description.clone().unwrap_or_default(),
+                priority: def.priority,
+                ttl_ms: def.ttl_ms.unwrap_or(-1),
+                required_vars: effect::required_variables(def),
+                keyframe_count: def.keyframes.len() as u32,
+                mode: def.mode.clone().unwrap_or_default(),
+            })
+            .collect();
+
+        Ok(Response::new(EffectList { effects }))
+    }
+
+    async fn send_led_frame(
+        &self,
+        request: Request<LedFrame>,
+    ) -> Result<Response<ResSend>, Status> {
+        let frame = request.into_inner();
+
+        if frame.rgb.len() != MATRIX_LEN * 3 {
+            return Ok(Response::new(ResSend {
+                err: format!(
+                    "rgb must be {} bytes (96×3), got {}",
+                    MATRIX_LEN * 3,
+                    frame.rgb.len()
+                ),
+            }));
+        }
+
+        self.ensure_led_kb().await?;
+
+        let mut leds = [(0u8, 0u8, 0u8); MATRIX_LEN];
+        for (i, led) in leds.iter_mut().enumerate() {
+            *led = (frame.rgb[i * 3], frame.rgb[i * 3 + 1], frame.rgb[i * 3 + 2]);
+        }
+
+        if frame.power_budget > 0 {
+            apply_power_budget(&mut leds, frame.power_budget);
+        }
+
+        let guard = self.led_kb.lock().await;
+        let kb = guard.as_ref().unwrap();
+
+        if let Err(e) = send_full_frame(kb, &leds) {
+            return Ok(Response::new(ResSend {
+                err: format!("LED send error: {e}"),
+            }));
+        }
+
+        Ok(Response::new(ResSend { err: String::new() }))
+    }
+
+    async fn play_effect(
+        &self,
+        request: Request<PlayEffectRequest>,
+    ) -> Result<Response<PlayEffectResponse>, Status> {
+        let req = request.into_inner();
+
+        let lib = EffectLibrary::load_default()
+            .map_err(|e| Status::internal(format!("Failed to load effects: {e}")))?;
+
+        let def = match lib.get(&req.effect) {
+            Some(d) => d.clone(),
+            None => {
+                return Ok(Response::new(PlayEffectResponse {
+                    err: format!("unknown effect: {}", req.effect),
+                    effect_id: 0,
+                }));
+            }
+        };
+
+        let vars: std::collections::BTreeMap<String, String> = req.vars.into_iter().collect();
+
+        let resolved = match effect::resolve(&def, &vars) {
+            Ok(r) => r,
+            Err(e) => {
+                let required = effect::required_variables(&def);
+                return Ok(Response::new(PlayEffectResponse {
+                    err: format!("{e} (required variables: {})", required.join(", ")),
+                    effect_id: 0,
+                }));
+            }
+        };
+
+        let keys: Vec<usize> = req.keys.iter().map(|&k| k as usize).collect();
+        if keys.is_empty() {
+            return Ok(Response::new(PlayEffectResponse {
+                err: "specify at least one key index".to_string(),
+                effect_id: 0,
+            }));
+        }
+
+        self.ensure_led_kb().await?;
+
+        let effect_id = {
+            let mut id = self.led_next_id.lock().await;
+            let eid = *id;
+            *id += 1;
+            eid
+        };
+
+        let power_budget = if req.power_budget == 0 {
+            400
+        } else {
+            req.power_budget
+        };
+
+        let led_kb = Arc::clone(&self.led_kb);
+        let led_effects = Arc::clone(&self.led_effects);
+        let eid = effect_id;
+
+        let handle = tokio::task::spawn_blocking(move || {
+            let start = std::time::Instant::now();
+            let frame_dur = std::time::Duration::from_millis(33); // ~30 FPS
+
+            loop {
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                // Check TTL
+                if let Some(ttl) = def.ttl_ms {
+                    if ttl > 0 && elapsed_ms > ttl as f64 {
+                        break;
+                    }
+                }
+
+                let rgb = resolved.evaluate(elapsed_ms);
+
+                let mut leds = [(0u8, 0u8, 0u8); MATRIX_LEN];
+                for &idx in &keys {
+                    if idx < MATRIX_LEN {
+                        leds[idx] = (rgb.r, rgb.g, rgb.b);
+                    }
+                }
+
+                apply_power_budget(&mut leds, power_budget);
+
+                // Send frame
+                let guard = led_kb.blocking_lock();
+                if let Some(ref kb) = *guard {
+                    if send_full_frame(kb, &leds).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+                drop(guard);
+
+                std::thread::sleep(frame_dur);
+            }
+
+            // Release LEDs and remove from map
+            {
+                let guard = led_kb.blocking_lock();
+                if let Some(ref kb) = *guard {
+                    kb.stream_led_release().ok();
+                }
+            }
+            {
+                let mut effects = led_effects.blocking_lock();
+                effects.remove(&eid);
+            }
+        });
+
+        {
+            let mut effects = self.led_effects.lock().await;
+            effects.insert(effect_id, handle);
+        }
+
+        info!("Started effect '{}' as id={}", req.effect, effect_id);
+
+        Ok(Response::new(PlayEffectResponse {
+            err: String::new(),
+            effect_id,
+        }))
+    }
+
+    async fn stop_effect(
+        &self,
+        request: Request<StopEffectRequest>,
+    ) -> Result<Response<ResSend>, Status> {
+        let req = request.into_inner();
+        let mut effects = self.led_effects.lock().await;
+
+        if req.effect_id == 0 {
+            // Stop all
+            let count = effects.len();
+            for (_, handle) in effects.drain() {
+                handle.abort();
+            }
+            info!("Stopped all {} running effects", count);
+        } else if let Some(handle) = effects.remove(&req.effect_id) {
+            handle.abort();
+            info!("Stopped effect id={}", req.effect_id);
+        } else {
+            return Ok(Response::new(ResSend {
+                err: format!("no running effect with id={}", req.effect_id),
+            }));
+        }
+        drop(effects);
+
+        // Release LEDs
+        let guard = self.led_kb.lock().await;
+        if let Some(ref kb) = *guard {
+            kb.stream_led_release().ok();
+        }
+
+        Ok(Response::new(ResSend { err: String::new() }))
     }
 }

@@ -42,6 +42,12 @@ service DriverGrpc {
     // LED control
     rpc setLightType(SetLight) returns (Empty);
 
+    // LED streaming (patched firmware 0xFC protocol)
+    rpc sendLedFrame(LedFrame) returns (ResSend);
+    rpc playEffect(PlayEffectRequest) returns (PlayEffectResponse);
+    rpc stopEffect(StopEffectRequest) returns (ResSend);
+    rpc listEffects(Empty) returns (EffectList);
+
     // Vendor events
     rpc watchVender(Empty) returns (stream VenderMsg);  // Note: typo matches original Windows driver
 
@@ -253,4 +259,41 @@ message WeatherReq {
 
 message WeatherRes {
     string res = 1;
+}
+
+// LED streaming — frame-level
+message LedFrame {
+    bytes rgb = 1;           // 96×3 = 288 bytes, row-major RGB
+    uint32 power_budget = 2; // milliamps, 0 = unlimited
+}
+
+// LED streaming — effect-level
+message PlayEffectRequest {
+    string effect = 1;
+    repeated uint32 keys = 2;
+    map<string, string> vars = 3;
+    uint32 power_budget = 4;        // 0 = default 400
+}
+
+message PlayEffectResponse {
+    string err = 1;
+    uint64 effect_id = 2;
+}
+
+message StopEffectRequest {
+    uint64 effect_id = 1;           // 0 = stop all
+}
+
+message EffectInfo {
+    string name = 1;
+    string description = 2;
+    int32 priority = 3;
+    int32 ttl_ms = 4;
+    repeated string required_vars = 5;
+    uint32 keyframe_count = 6;
+    string mode = 7;
+}
+
+message EffectList {
+    repeated EffectInfo effects = 1;
 }
