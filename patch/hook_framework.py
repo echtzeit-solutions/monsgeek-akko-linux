@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Firmware hook framework for MonsGeek M1 V5 (AT32F405, Cortex-M4 Thumb-2).
+Firmware hook framework for AT32F405 (Cortex-M4 Thumb-2) targets.
 
 Automates the generation of function hooks:
   - Reads displaced instruction bytes from firmware
@@ -9,14 +9,19 @@ Automates the generation of function hooks:
   - Manages patch zone allocation for multiple hooks
   - Applies B.W trampolines to the firmware binary
 
+Parameterized for reuse across different firmware targets (keyboard, dongle, etc.).
+
 Usage:
     from hook_framework import HookEngine, Hook
 
-    engine = HookEngine("../firmware_reconstructed.bin")
+    engine = HookEngine("../firmware.bin",
+                        file_base=0x08005000,
+                        patch_zone_start=0x08025800,
+                        patch_zone_end=0x08027FFF)
     engine.add_hook(Hook(
         name="my_hook",
         target=0x0801474C,
-        handler="my_handler",  # label in user's .S file
+        handler="my_handler",
     ))
     engine.generate("hooks_gen.S")
     engine.patch("../firmware_patched.bin")
@@ -29,25 +34,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-
-
-# ── Flash layout ──────────────────────────────────────────────────────────────
-
-FLASH_BASE = 0x08005000          # Firmware file → flash address offset
-FILE_BASE = 0x08005000           # file_offset = flash_addr - FILE_BASE
-PATCH_ZONE_START = 0x08025800    # First usable address in patch zone
-PATCH_ZONE_END = 0x08027FFF      # Last usable byte
-PATCH_ZONE_SIZE = PATCH_ZONE_END - PATCH_ZONE_START + 1
-
-
-def flash_to_offset(addr: int) -> int:
-    """Convert real flash address to firmware file offset."""
-    return addr - FILE_BASE
-
-
-def offset_to_flash(off: int) -> int:
-    """Convert firmware file offset to real flash address."""
-    return off + FILE_BASE
 
 
 # ── Thumb-2 instruction analysis ─────────────────────────────────────────────
@@ -100,7 +86,6 @@ def check_pc_relative(insn: dict) -> Optional[str]:
         # 16-bit instructions
         top5 = (hw1 >> 11) & 0x1F
         top8 = (hw1 >> 8) & 0xFF
-        top7 = (hw1 >> 9) & 0x7F
 
         # LDR Rt, [PC, #imm] (01001 xxx xxxxxxxx)
         if top5 == 0b01001:
@@ -125,7 +110,6 @@ def check_pc_relative(insn: dict) -> Optional[str]:
     else:
         # 32-bit instructions
         hw2 = insn['hw2']
-        op1 = (hw1 >> 11) & 0x3  # bits [12:11] after the 111 prefix
 
         # B.W / BL / BLX (11110 S xxxxxxxxxx  1x xxx xxxxxxxxxxx)
         if (hw1 & 0xF800) == 0xF000 and (hw2 & 0x8000) == 0x8000:
@@ -133,7 +117,6 @@ def check_pc_relative(insn: dict) -> Optional[str]:
             if link:
                 return "BL (32-bit branch with link)"
             else:
-                j1 = (hw2 >> 13) & 1
                 blx = not ((hw2 >> 12) & 1)
                 if blx:
                     return "BLX (32-bit branch with link and exchange)"
@@ -251,21 +234,44 @@ class Hook:
 class HookEngine:
     """
     Manages multiple firmware hooks: validation, assembly generation, and patching.
+
+    Args:
+        firmware_path:    Path to the firmware binary.
+        file_base:        Flash address corresponding to file offset 0.
+        patch_zone_start: First usable flash address in the patch zone.
+        patch_zone_end:   Last usable byte address in the patch zone.
     """
 
-    def __init__(self, firmware_path: str | Path):
+    def __init__(self, firmware_path: str | Path, *,
+                 file_base: int = 0x08005000,
+                 patch_zone_start: int = 0x08025800,
+                 patch_zone_end: int = 0x08027FFF):
         self.firmware_path = Path(firmware_path)
         self.fw = bytearray(self.firmware_path.read_bytes())
         self.hooks: list[Hook] = []
-        self._alloc_ptr = PATCH_ZONE_START
+
+        self.file_base = file_base
+        self.patch_zone_start = patch_zone_start
+        self.patch_zone_end = patch_zone_end
+        self.patch_zone_size = patch_zone_end - patch_zone_start + 1
+
+        self._alloc_ptr = patch_zone_start
         print(f"Loaded firmware: {len(self.fw)} bytes (0x{len(self.fw):X})")
-        print(f"Patch zone: 0x{PATCH_ZONE_START:08X}–0x{PATCH_ZONE_END:08X} "
-              f"({PATCH_ZONE_SIZE} bytes)")
+        print(f"Patch zone: 0x{patch_zone_start:08X}–0x{patch_zone_end:08X} "
+              f"({self.patch_zone_size} bytes)")
+
+    def flash_to_offset(self, addr: int) -> int:
+        """Convert real flash address to firmware file offset."""
+        return addr - self.file_base
+
+    def offset_to_flash(self, off: int) -> int:
+        """Convert firmware file offset to real flash address."""
+        return off + self.file_base
 
     def add_hook(self, hook: Hook) -> None:
         """Add a hook and validate the displaced instructions."""
         # Read displaced bytes from firmware
-        off = flash_to_offset(hook.target)
+        off = self.flash_to_offset(hook.target)
         if off < 0 or off + hook.displace > len(self.fw):
             raise ValueError(f"Hook '{hook.name}': target 0x{hook.target:08X} "
                              f"outside firmware range")
@@ -291,14 +297,11 @@ class HookEngine:
             raise ValueError(msg)
 
         # Estimate stub size for allocation
-        # Displaced insns + handler call + jump-back + literal pool
         if hook.mode == "replace":
-            hook._stub_size = 8  # just B to handler + align
+            hook._stub_size = 8
         elif hook.mode == "before":
-            # displaced + bl handler + jump-back ldr+bx + literal pool
             hook._stub_size = hook.displace + 4 + 8 + 8
         else:  # filter
-            # displaced + push + bl handler + cmp + pop + beq + return + jump-back + litpool
             hook._stub_size = hook.displace + 32 + 16
         # Round up to 4-byte alignment
         hook._stub_size = (hook._stub_size + 3) & ~3
@@ -306,11 +309,11 @@ class HookEngine:
         # Allocate in patch zone
         hook._stub_addr = self._alloc_ptr
         self._alloc_ptr += hook._stub_size
-        if self._alloc_ptr > PATCH_ZONE_END + 1:
+        if self._alloc_ptr > self.patch_zone_end + 1:
             raise ValueError(
                 f"Hook '{hook.name}': patch zone exhausted "
-                f"(need 0x{self._alloc_ptr - PATCH_ZONE_START:X} bytes, "
-                f"have {PATCH_ZONE_SIZE})")
+                f"(need 0x{self._alloc_ptr - self.patch_zone_start:X} bytes, "
+                f"have {self.patch_zone_size})")
 
         self.hooks.append(hook)
 
@@ -373,7 +376,6 @@ class HookEngine:
         ]
 
         if hook.mode == "replace":
-            # Simple redirect — just branch to handler
             lines += [
                 f"    b.w {hook.handler}",
                 f"",
@@ -383,7 +385,6 @@ class HookEngine:
             return lines
 
         if hook.mode == "before":
-            # Run handler, then execute displaced insns, then jump-back
             lines += [
                 f"    /* Save lr so handler can use bl freely */",
                 f"    push {{lr}}",
@@ -404,13 +405,6 @@ class HookEngine:
             return lines
 
         # mode == "filter" (default)
-        # 1. Call handler FIRST (before displaced instructions!)
-        # 2. If handler returns 0: execute displaced insns + jump-back
-        # 3. If handler returns non-zero: bx lr (original function never ran)
-        #
-        # This ordering is critical: displaced instructions may include
-        # stack-modifying operations (e.g., push {r4-r10,lr}) that would
-        # corrupt the stack if the handler wants to intercept and return early.
         lines += [
             f"    /* 1. Call filter handler (preserving all regs) */",
             f"    push {{r0-r3, r12, lr}}",
@@ -449,7 +443,7 @@ class HookEngine:
         patched = bytearray(self.fw)
 
         # Pad firmware to patch zone start
-        patch_zone_file_off = flash_to_offset(PATCH_ZONE_START)
+        patch_zone_file_off = self.flash_to_offset(self.patch_zone_start)
         if len(patched) < patch_zone_file_off:
             patched.extend(b'\xff' * (patch_zone_file_off - len(patched)))
 
@@ -462,11 +456,11 @@ class HookEngine:
                 patched.extend(b'\xff' * (end_off - len(patched)))
             patched[patch_zone_file_off:patch_zone_file_off + len(hook_bin)] = hook_bin
             print(f"Spliced hook binary: {len(hook_bin)} bytes at "
-                  f"0x{PATCH_ZONE_START:08X}")
+                  f"0x{self.patch_zone_start:08X}")
 
         # Write B.W trampolines for each hook
         for hook in self.hooks:
-            off = flash_to_offset(hook.target)
+            off = self.flash_to_offset(hook.target)
             bw = encode_thumb2_bw(hook.target, hook._stub_addr)
 
             # Verify original bytes are still intact (not already patched)
@@ -485,11 +479,11 @@ class HookEngine:
 
     def summary(self) -> str:
         """Print a summary of all hooks and patch zone usage."""
-        used = self._alloc_ptr - PATCH_ZONE_START
+        used = self._alloc_ptr - self.patch_zone_start
         lines = [
             f"",
-            f"Patch zone usage: {used} / {PATCH_ZONE_SIZE} bytes "
-            f"({used * 100 // PATCH_ZONE_SIZE}%)",
+            f"Patch zone usage: {used} / {self.patch_zone_size} bytes "
+            f"({used * 100 // self.patch_zone_size}%)",
             f"Hooks ({len(self.hooks)}):",
         ]
         for h in self.hooks:

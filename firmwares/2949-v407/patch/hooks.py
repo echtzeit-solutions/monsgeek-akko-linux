@@ -14,9 +14,14 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
-from hook_framework import HookEngine, Hook, flash_to_offset
+
+# Shared hook framework at repo root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "patch"))
+from hook_framework import HookEngine, Hook
 
 SCRIPT_DIR = Path(__file__).parent
+FILE_BASE = 0x08005000  # keyboard firmware file → flash address offset
+
 FIRMWARE_IN = SCRIPT_DIR / ".." / "firmware_reconstructed.bin"
 FIRMWARE_OUT = SCRIPT_DIR / ".." / "firmware_patched.bin"
 HOOKS_ASM = SCRIPT_DIR / "hooks_gen.S"
@@ -145,7 +150,7 @@ def apply_binary_patches(fw: bytearray, symbols: dict[str, int]) -> None:
     ]
 
     for flash_addr, old, new, desc in patches:
-        off = flash_to_offset(flash_addr)
+        off = flash_addr - FILE_BASE
         if fw[off] != old:
             print(f"WARNING: byte at 0x{flash_addr:08X} is 0x{fw[off]:02X}, "
                   f"expected 0x{old:02X}. Already patched?", file=sys.stderr)
@@ -155,7 +160,7 @@ def apply_binary_patches(fw: bytearray, symbols: dict[str, int]) -> None:
 
     # Patch literal pool: IF1 report descriptor pointer → extended_rdesc
     litpool_addr = 0x0801485C
-    litpool_off = flash_to_offset(litpool_addr)
+    litpool_off = litpool_addr - FILE_BASE
     old_ptr = struct.unpack_from('<I', fw, litpool_off)[0]
     if old_ptr != 0x20000318:
         print(f"WARNING: literal pool at 0x{litpool_addr:08X} is 0x{old_ptr:08X}, "

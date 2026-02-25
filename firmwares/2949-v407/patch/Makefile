@@ -5,8 +5,9 @@ LD      := $(PREFIX)ld
 OBJCOPY := $(PREFIX)objcopy
 OBJDUMP := $(PREFIX)objdump
 
+SHARED  := ../../../patch
 CFLAGS  := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
-           -Os -nostdlib -ffreestanding -Wall
+           -Os -nostdlib -ffreestanding -Wall -I$(SHARED)
 ASFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
            -nostdlib -ffreestanding
 
@@ -30,7 +31,7 @@ HOOK_OBJS := hooks_gen.o handlers.o handlers_c.o
 all: hook.bin
 
 # Generate stubs from hook definitions
-hooks_gen.S: hooks.py hook_framework.py $(FIRMWARE)
+hooks_gen.S: hooks.py $(SHARED)/hook_framework.py $(FIRMWARE)
 	python3 hooks.py generate
 
 %.o: %.S
