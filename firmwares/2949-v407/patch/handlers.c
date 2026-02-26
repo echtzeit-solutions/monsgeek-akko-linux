@@ -19,15 +19,21 @@
 /* IF1 Report Descriptor length (from Ghidra RE of hid_class_setup_handler) */
 #define IF1_RDESC_LEN  171
 
-/* IF1 HID Descriptor wDescriptorLength field: bytes 7-8 of the 9-byte descriptor */
-#define IF1_HDESC_WLEN ((volatile uint8_t *)((uint8_t *)&g_if1_hid_desc + 7))
+/* wDescriptorLength field within USB descriptors (Ghidra-sourced symbols).
+ * Config descriptors: IF1 HID descriptor starts at offset +43, wDescLen at +7 within = +50 total.
+ * Standalone IF1 HID desc: wDescLen at +7 from g_if1_hid_desc. */
+extern volatile uint8_t g_cfg_desc_fs[];   /* FS config descriptor @ SRAM */
+extern volatile uint8_t g_cfg_desc_hs[];   /* HS config descriptor @ SRAM */
+extern volatile uint8_t g_cfg_desc_os[];   /* OS config descriptor @ SRAM */
+extern volatile uint8_t g_if1_hid_desc[];  /* standalone IF1 HID descriptor @ SRAM */
 
-/* IF1 HID descriptor wDescriptorLength within each config descriptor copy.
- * Config descriptor layout: offset 50-51 = IF1 HID desc bytes 7-8. */
-#define CFG_IF1_WLEN_OFF  50
-#define CFG_FS_IF1_WLEN  ((volatile uint8_t *)((uint8_t *)&g_cfg_desc_fs + CFG_IF1_WLEN_OFF))
-#define CFG_HS_IF1_WLEN  ((volatile uint8_t *)((uint8_t *)&g_cfg_desc_hs + CFG_IF1_WLEN_OFF))
-#define CFG_OS_IF1_WLEN  ((volatile uint8_t *)((uint8_t *)&g_cfg_desc_os + CFG_IF1_WLEN_OFF))
+#define IF1_WDESCLEN_OFF    50  /* offset of IF1 wDescriptorLength within config desc */
+#define HID_WDESCLEN_OFF     7  /* offset of wDescriptorLength within HID descriptor */
+
+#define WDESCLEN_FS         (&g_cfg_desc_fs[IF1_WDESCLEN_OFF])
+#define WDESCLEN_HS         (&g_cfg_desc_hs[IF1_WDESCLEN_OFF])
+#define WDESCLEN_OS         (&g_cfg_desc_os[IF1_WDESCLEN_OFF])
+#define WDESCLEN_STANDALONE (&g_if1_hid_desc[HID_WDESCLEN_OFF])
 
 /* ── LED buffers (from fw_symbols.ld) ────────────────────────────────── */
 
@@ -134,15 +140,17 @@ typedef struct {
     uint32_t    flags;          /* 0 = skip if full (non-blocking) */
 } rtt_up_buf_t;
 
-/* RTT Control Block — BMP scans SRAM for the magic ID string */
-static struct {
+/* RTT Control Block — pinned at PATCH_SRAM origin (0x20009800) via .rtt section.
+ * BMP finds it without scanning: monitor rtt ram 0x20009800 0x20009C00 */
+typedef struct {
     char         id[16];        /* "SEGGER RTT\0\0\0\0\0\0" */
     int32_t      max_up;        /* 1 */
     int32_t      max_down;      /* 0 */
     rtt_up_buf_t up[1];
-} rtt_cb;
+} rtt_cb_t;
 
-static uint8_t rtt_buf[RTT_BUF_SIZE];
+static rtt_cb_t  __attribute__((section(".rtt"),used)) rtt_cb;
+static uint8_t   __attribute__((section(".rtt"),used)) rtt_buf[RTT_BUF_SIZE];
 static const char rtt_channel_name[] = "monsmod";
 
 /* RTT tag definitions for battery monitor */
@@ -292,14 +300,14 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
     /* Patch wDescriptorLength in all SRAM descriptor copies (idempotent).
      * Must run on EVERY hid_class_setup call — not just IF1 — so that config
      * descriptor copies are patched before the next USB re-enumeration. */
-    IF1_HDESC_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    IF1_HDESC_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_FS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_FS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_HS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_HS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_OS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_OS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_STANDALONE[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_STANDALONE[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_FS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_FS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_HS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_HS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_OS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_OS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
 
     /* Only intercept GET_REPORT for IF1 battery Feature report.
      * All other requests (GET_DESCRIPTOR, SET_IDLE, etc.) pass through to
@@ -552,14 +560,14 @@ int handle_usb_connect(void) {
     /* Patch wDescriptorLength to EXTENDED_RDESC_LEN in all SRAM descriptor
      * copies.  Must happen BEFORE enumeration so the config descriptor
      * advertises the extended report descriptor size (171 + 46 battery). */
-    IF1_HDESC_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    IF1_HDESC_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_FS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_FS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_HS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_HS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
-    CFG_OS_IF1_WLEN[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
-    CFG_OS_IF1_WLEN[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_STANDALONE[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_STANDALONE[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_FS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_FS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_HS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_HS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
+    WDESCLEN_OS[0] = (uint8_t)(EXTENDED_RDESC_LEN & 0xFF);
+    WDESCLEN_OS[1] = (uint8_t)(EXTENDED_RDESC_LEN >> 8);
 
     /* Pre-populate extended_rdesc buffer so it's ready if GET_DESCRIPTOR
      * arrives before any hid_setup call. */

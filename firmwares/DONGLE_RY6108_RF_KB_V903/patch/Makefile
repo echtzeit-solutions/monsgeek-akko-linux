@@ -6,8 +6,12 @@ OBJCOPY := $(PREFIX)objcopy
 OBJDUMP := $(PREFIX)objdump
 
 SHARED  := ../../../patch
+SDK     := $(SHARED)/at32f405_sdk
 CFLAGS  := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
-           -Os -nostdlib -ffreestanding -Wall -I$(SHARED)
+           -Os -nostdlib -ffreestanding -Wall \
+           -I$(SHARED) \
+           -I$(SDK)/cmsis -I$(SDK)/drivers -I$(SDK)/usbotg_library \
+           -DAT32F405KBU7_4 -DUSE_STDPERIPH_DRIVER -DUSE_OTG_DEVICE_MODE
 ASFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
            -nostdlib -ffreestanding
 

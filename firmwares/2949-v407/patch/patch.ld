@@ -3,7 +3,7 @@
  * Aligned to 2048-byte sector boundary (AT32F405 erase granularity). */
 MEMORY {
     PATCH (rx)      : ORIGIN = 0x08025800, LENGTH = 10240
-    PATCH_SRAM (rw) : ORIGIN = 0x20009800, LENGTH = 3072   /* +2KB for stream_frame_buf (0x7B0) */
+    PATCH_SRAM (rw) : ORIGIN = 0x20009800, LENGTH = 1024
 }
 SECTIONS {
     .text : {
