@@ -465,7 +465,7 @@ fn simulated_fn_layer_with_consumer_and_led() {
     data[8..12].copy_from_slice(&[3, 0, 0xCD, 0]);
     // Position 3: LED Brightness Up [13, 2, 1, 0]
     data[12..16].copy_from_slice(&[13, 2, 1, 0]);
-    // Position 4: Unknown type 14 [14, 1, 0, 0]
+    // Position 4: ConnectionMode (type 14) [14, 1, 0, 0]
     data[16..20].copy_from_slice(&[14, 1, 0, 0]);
     // Position 5: Fn key [10, 1, 0, 0] — should NOT be detected as remap
     data[20..24].copy_from_slice(&[10, 1, 0, 0]);
@@ -485,7 +485,7 @@ fn simulated_fn_layer_with_consumer_and_led() {
         entries.push((i, action));
     }
 
-    // 5 non-zero entries: Consumer x2, LedControl, Unknown(14), Fn
+    // 5 non-zero entries: Consumer x2, LedControl, ConnectionMode, Fn
     assert_eq!(entries.len(), 5);
     assert_eq!(entries[0].1, KeyAction::Consumer(0x00E9));
     assert_eq!(entries[0].1.to_string(), "Volume Up");
@@ -495,9 +495,10 @@ fn simulated_fn_layer_with_consumer_and_led() {
     assert_eq!(entries[2].1.to_string(), "LED Brightness Up");
     assert!(matches!(
         entries[3].1,
-        KeyAction::Unknown {
-            config_type: 14,
-            ..
+        KeyAction::ConnectionMode {
+            b1: 1,
+            b2: 0,
+            b3: 0
         }
     ));
     assert_eq!(entries[4].1, KeyAction::Fn);
