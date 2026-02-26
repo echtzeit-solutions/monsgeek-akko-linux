@@ -369,14 +369,120 @@ def _topo_sort_structs(structs: list[StructType]) -> list[StructType]:
     return [by_name[n] for n in result]
 
 
-def emit_structs_and_enums(db: SymbolDB, emit) -> None:
-    """Emit struct and enum typedefs (shared between both header modes)."""
+def _natural_align(offset: int, type_str: str) -> int:
+    """Compute natural alignment padding for a C type on ARM Cortex-M4."""
+    # Determine alignment from type name
+    align = 1
+    base = re.sub(r"\[.*\]$", "", type_str).strip().rstrip(" *")
+    if base in ("uint32_t", "int32_t", "uint", "int", "unsigned int", "float"):
+        align = 4
+    elif base in ("uint16_t", "int16_t", "short", "unsigned short", "ushort"):
+        align = 2
+    elif base in ("uint64_t", "int64_t", "double"):
+        align = 8
+    # Pointer types
+    if type_str.endswith("*"):
+        align = 4
+    return (offset + align - 1) & ~(align - 1)
+
+
+def emit_structs_and_enums(db: SymbolDB, emit) -> set[str]:
+    """Emit struct and enum typedefs (shared between both header modes).
+
+    Uses natural alignment (no __attribute__((packed))).  Gaps between fields
+    are emitted as explicit _pad arrays only when they exceed what natural
+    alignment would insert.  A _Static_assert(sizeof) guard is emitted for
+    each struct to catch layout mismatches at compile time.
+    """
     if db.structs:
         emit("")
         emit("/* " + "\u2500" * 2 + " Data types (structs) " + "\u2500" * 49 + " */")
+
+        # Build set of emittable structs: only those whose field types are all
+        # resolvable as basic C types or other emittable structs.  This filters
+        # out SDK register types imported via ImportSDKHeaders (bitfield sub-
+        # structs, union wrappers, and parent structs referencing them).
+        basic_types = {
+            "uint8_t", "int8_t", "uint16_t", "int16_t", "uint32_t", "int32_t",
+            "uint64_t", "int64_t", "float", "double", "char", "bool", "void",
+            # Ghidra type names (mapped by ghidra_type_to_c)
+            "byte", "ubyte", "sbyte", "uchar", "short", "ushort", "word",
+            "int", "uint", "dword", "long", "ulong", "longlong", "ulonglong",
+            "undefined", "undefined1", "undefined2", "undefined4", "undefined8",
+            "pointer",
+        }
+        struct_by_name = {s.name: s for s in db.structs}
+
+        def _field_base_type(fld: dict) -> str:
+            t = fld.get("type", "")
+            # Strip array suffix, pointer, bitfield width
+            t = re.sub(r"\[.*\]$", "", t).strip().rstrip(" *")
+            return t
+
+        def _has_bitfields(s) -> bool:
+            return any(":" in fld.get("type", "") for fld in s.fields)
+
+        # Iteratively resolve: a struct is emittable if all its field types
+        # are basic, pointer, or reference another emittable struct.
+        emittable: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for s in db.structs:
+                if s.name in emittable or _has_bitfields(s):
+                    continue
+                all_ok = True
+                for fld in s.fields:
+                    base = _field_base_type(fld)
+                    if base in basic_types or base in emittable:
+                        continue
+                    # Pointer to unknown type is fine (emitted as void*)
+                    if fld.get("type", "").rstrip().endswith("*"):
+                        continue
+                    all_ok = False
+                    break
+                if all_ok:
+                    emittable.add(s.name)
+                    changed = True
+
+        def _needs_packed(s) -> bool:
+            """Check if natural alignment would change the struct layout.
+
+            Gaps between fields don't require packed — they're filled with
+            explicit _pad arrays (uint8_t[], 1-byte alignment).  Only flag
+            packed if a field's natural alignment would push it past its
+            declared offset, or if tail padding differs.
+            """
+            max_align = 1
+            for fld in s.fields:
+                foffset = fld.get("offset", 0)
+                fsize = fld.get("size", 1)
+                ctype, _ = format_struct_field(fld)
+                # Check: would alignment of THIS field overshoot its offset?
+                aligned = _natural_align(foffset, ctype)
+                if aligned != foffset:
+                    return True  # field not at its natural alignment
+                # Track max alignment for tail padding check
+                a = 4 if (any(k in ctype for k in ("32", "int *", "void *"))
+                          or ctype.endswith("*")) else \
+                    2 if "16" in ctype else \
+                    8 if "64" in ctype else 1
+                max_align = max(max_align, a)
+            # Check tail padding
+            last_end = s.fields[-1]["offset"] + s.fields[-1]["size"] if s.fields else 0
+            natural_size = (last_end + max_align - 1) & ~(max_align - 1)
+            return natural_size != s.size
+
         for s in _topo_sort_structs(db.structs):
+            if s.name not in emittable:
+                continue
+            packed = _needs_packed(s)
             emit("")
-            emit(f"typedef struct __attribute__((packed)) {{")
+            if packed:
+                emit(f"typedef struct __attribute__((packed)) {{")
+            else:
+                emit(f"typedef struct {{")
+            cursor = 0
             for fld in s.fields:
                 fname = fld.get("name", "")
                 fsize = fld.get("size", 1)
@@ -384,19 +490,64 @@ def emit_structs_and_enums(db: SymbolDB, emit) -> None:
                 if not fname:
                     fname = f"_offset_{foffset:#x}"
                 ctype, arr = format_struct_field(fld)
+                # Replace unresolvable pointer types with void*
+                base = re.sub(r"\[.*\]$", "", fld.get("type", "")).strip()
+                if base.endswith(" *"):
+                    inner = base[:-2].strip()
+                    inner_lower = inner.lower()
+                    if (inner not in emittable and inner not in basic_types
+                            and inner_lower not in basic_types
+                            and not re.match(r"^u?int\d+_t$", inner)):
+                        ctype = "void *"
+                if packed:
+                    # All gaps need explicit padding
+                    if foffset > cursor:
+                        gap = foffset - cursor
+                        emit(f"    uint8_t _pad_{cursor:#04x}[{gap}];  /* offset {cursor:#x}, {gap}B */")
+                else:
+                    # Only emit pads for gaps exceeding natural alignment
+                    aligned_cursor = _natural_align(cursor, ctype)
+                    if foffset > cursor:
+                        excess = foffset - aligned_cursor
+                        if excess > 0:
+                            emit(f"    uint8_t _pad_{cursor:#04x}[{foffset - cursor}];  /* offset {cursor:#x}, {foffset - cursor}B */")
                 emit(f"    {ctype} {fname}{arr};  /* offset {foffset:#x}, {fsize}B */")
+                cursor = foffset + fsize
+            # Pad to declared struct size if needed
+            if s.size > cursor:
+                gap = s.size - cursor
+                emit(f"    uint8_t _pad_{cursor:#04x}[{gap}];  /* offset {cursor:#x}, {gap}B */")
             emit(f"}} {s.name};  /* {s.size} bytes */")
+            emit(f"_Static_assert(sizeof({s.name}) == {s.size}, "
+                 f"\"{s.name} size mismatch\");")
 
     if db.enums:
-        emit("")
-        emit("/* " + "\u2500" * 2 + " Data types (enums) " + "\u2500" * 51 + " */")
-        for e in sorted(db.enums, key=lambda e: e.name):
+        # Only emit enums that are NOT SDK types (from ImportSDKHeaders).
+        # SDK enums are already provided by the -I include paths.
+        custom_enums = [e for e in db.enums
+                        if not e.name.startswith("define_")
+                        and not e.name.startswith("enum_")
+                        and e.name != "IRQn"]
+        if custom_enums:
             emit("")
-            emit(f"typedef enum {{")
-            for i, m in enumerate(sorted(e.members, key=lambda m: m["value"])):
-                comma = "," if i < len(e.members) - 1 else ""
-                emit(f"    {m['name']} = {m['value']:#x}{comma}")
-            emit(f"}} {e.name};")
+            emit("/* " + "\u2500" * 2 + " Data types (enums) " + "\u2500" * 51 + " */")
+            for e in sorted(custom_enums, key=lambda e: e.name):
+                emit("")
+                emit(f"typedef enum {{")
+                for i, m in enumerate(sorted(e.members, key=lambda m: m["value"])):
+                    comma = "," if i < len(e.members) - 1 else ""
+                    emit(f"    {m['name']} = {m['value']:#x}{comma}")
+                emit(f"}} {e.name};")
+
+    # Return the set of type names actually emitted
+    emitted = set(emittable) if db.structs else set()
+    if db.enums:
+        custom_enums = [e for e in db.enums
+                        if not e.name.startswith("define_")
+                        and not e.name.startswith("enum_")
+                        and e.name != "IRQn"]
+        emitted |= {e.name for e in custom_enums}
+    return emitted
 
 
 # --- Macro header generation (for SRAM shellcode) ---
@@ -627,11 +778,16 @@ def generate_extern_header(db: SymbolDB, header_name: str) -> str:
              f"{b.size:>7d}B  {b.perms:3s}  {'init' if b.initialized else 'uninit'} */")
 
     # --- Structs/enums first, so types are available for extern declarations ---
-    emit_structs_and_enums(db, emit)
+    emitted_types = emit_structs_and_enums(db, emit)
 
-    # Struct type names that are defined in this header (available for use)
-    defined_types = ({s.name for s in db.structs} | {e.name for e in db.enums}
-                     | set(GHIDRA_TO_C.values()) | {"bool"})
+    # Type names available for extern declarations (emitted + basic C types)
+    defined_types = emitted_types | set(GHIDRA_TO_C.values()) | {"bool"}
+
+    # Collect SDK enum member names to avoid label conflicts with SDK headers
+    sdk_enum_names: set[str] = set()
+    for e in db.enums:
+        for m in e.members:
+            sdk_enum_names.add(m["name"])
 
     def extern_safe_type(ctype: str) -> str:
         """Fall back to uint8_t for struct types that aren't defined."""
@@ -640,8 +796,11 @@ def generate_extern_header(db: SymbolDB, header_name: str) -> str:
             return ctype
         return "uint8_t"
 
+    # Skip labels whose names conflict with SDK header defines/enums
+    skip_names = func_names | sdk_enum_names
+
     # --- Flash config regions ---
-    flash_out = [l for l in cl.flash if l.name not in func_names]
+    flash_out = [l for l in cl.flash if l.name not in skip_names]
     if flash_out:
         emit("")
         emit("/* " + "\u2500" * 2 + " Flash regions " + "\u2500" * 55 + " */")
@@ -649,7 +808,7 @@ def generate_extern_header(db: SymbolDB, header_name: str) -> str:
             emit(f"extern volatile uint8_t {label.name}[];")
 
     # --- ROM data ---
-    rom_out = [l for l in cl.rom_data if l.name not in func_names]
+    rom_out = [l for l in cl.rom_data if l.name not in skip_names]
     if rom_out:
         emit("")
         emit("/* " + "\u2500" * 2 + " ROM data (firmware flash) " + "\u2500" * 44 + " */")
@@ -660,7 +819,7 @@ def generate_extern_header(db: SymbolDB, header_name: str) -> str:
             emit(f"extern const {ctype} {label.name}[];")
 
     # --- RAM globals ---
-    ram_out = [l for l in cl.ram if l.name not in func_names]
+    ram_out = [l for l in cl.ram if l.name not in skip_names]
     if ram_out:
         emit("")
         emit("/* " + "\u2500" * 2 + " RAM globals " + "\u2500" * 57 + " */")
@@ -674,7 +833,7 @@ def generate_extern_header(db: SymbolDB, header_name: str) -> str:
                 emit(f"extern volatile {ctype} {label.name}[];")
 
     # --- MMIO registers ---
-    periph_out = [l for l in cl.periph if l.name not in func_names]
+    periph_out = [l for l in cl.periph if l.name not in skip_names]
     if periph_out:
         emit("")
         emit("/* " + "\u2500" * 2 + " MMIO registers " + "\u2500" * 54 + " */")
