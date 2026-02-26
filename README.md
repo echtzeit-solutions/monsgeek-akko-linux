@@ -364,6 +364,17 @@ The TUI requires a proper terminal. It won't work in background mode or without 
 2. Check firewall isn't blocking port 3814
 3. Verify with: `curl -v http://127.0.0.1:3814`
 
+## Hardware Documentation
+
+See [docs/HARDWARE.md](docs/HARDWARE.md) for detailed hardware documentation, including:
+
+- MCU specifications (AT32F405, PAN1080, dongle)
+- Flash memory map and bootloader behavior
+- Debug interfaces (SWD pinouts for keyboard and dongle)
+- Battery ADC quirks and measurements
+- ROM DFU recovery procedure
+- Flash Access Protection (FAP) safety notes
+
 ## Protocol Documentation
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the complete HID protocol specification, including:
