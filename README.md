@@ -206,7 +206,7 @@ The BPF program pins to `/sys/fs/bpf/akko` and persists until unloaded.
 
 **Known limitations:**
 
-- **Charging status not available**: The keyboard's HID protocol does not expose charging status to the host. The power supply will always show "Discharging" regardless of whether the keyboard is plugged in. The firmware has charging detection internally (for the LED indicator) but this information is not sent via USB. Only battery percentage is available.
+- **Charging status not available**: The stock HID protocol does not expose charging status. The power supply will always show "Discharging". Only battery percentage is available. For charging status support, see the [firmware patch](docs/FIRMWARE_PATCH.md) which adds native HID battery with charge detection.
 
 **Automatic loading with udev/systemd:**
 
@@ -363,6 +363,16 @@ The TUI requires a proper terminal. It won't work in background mode or without 
 1. Ensure server is running: `iot_driver serve`
 2. Check firewall isn't blocking port 3814
 3. Verify with: `curl -v http://127.0.0.1:3814`
+
+## Firmware Patches
+
+See [docs/FIRMWARE_PATCH.md](docs/FIRMWARE_PATCH.md) for the custom firmware patches that add:
+
+- **Battery over USB HID** — Native power_supply integration (no BPF needed), with charging status
+- **LED streaming** — Per-key RGB control for GIF animations at ~30fps
+- **Patch discovery** — 0xFB vendor command for capability detection
+
+Patches are available for both the keyboard and the 2.4GHz wireless dongle. Stock firmware features are fully preserved. The doc also covers the [eBPF alternative](docs/FIRMWARE_PATCH.md#comparison-firmware-patch-vs-ebpf) for battery without flashing.
 
 ## Hardware Documentation
 
