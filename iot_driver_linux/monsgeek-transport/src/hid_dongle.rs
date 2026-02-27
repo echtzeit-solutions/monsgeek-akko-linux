@@ -17,7 +17,9 @@ use tracing::debug;
 use crate::error::TransportError;
 use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
 use crate::protocol::{self, cmd, REPORT_SIZE};
-use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
+use crate::types::{
+    ChecksumType, DongleStatus, TimestampedEvent, TransportDeviceInfo, VendorEvent,
+};
 use crate::Transport;
 
 /// Broadcast channel capacity for vendor events
@@ -151,6 +153,13 @@ impl Transport for HidDongleTransport {
     }
 
     fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
+        let status = self
+            .query_dongle_status()?
+            .ok_or_else(|| TransportError::Internal("No dongle status".into()))?;
+        Ok((status.battery_level, status.rf_ready, status.charging))
+    }
+
+    fn query_dongle_status(&self) -> Result<Option<DongleStatus>, TransportError> {
         let device = self.device.lock();
 
         // Send GET_DONGLE_STATUS (0xF7) — handled locally by dongle, not forwarded
@@ -170,17 +179,18 @@ impl Transport for HidDongleTransport {
         //   buf[5] = 1 (hardcoded)
         //   buf[6] = rf_ready (0=waiting, 1=ready)
         let level = buf[2];
-        let charging = buf[4] != 0;
-        let rf_ready = buf[6] != 0;
-
         if level > 100 {
             return Err(TransportError::Internal(format!(
                 "Invalid battery level: {level}"
             )));
         }
 
-        // Return (level, online=rf_ready, idle=charging) for Transport trait compat
-        Ok((level, rf_ready, charging))
+        Ok(Some(DongleStatus {
+            has_response: buf[1] != 0,
+            rf_ready: buf[6] != 0,
+            battery_level: level,
+            charging: buf[4] != 0,
+        }))
     }
 }
 

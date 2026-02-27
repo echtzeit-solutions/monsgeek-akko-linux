@@ -87,8 +87,8 @@ pub use printer::{
 };
 pub use protocol::{KeyRef, Layer};
 pub use types::{
-    ChecksumType, DiscoveredDevice, DiscoveryEvent, TimestampedEvent, TransportDeviceInfo,
-    TransportType, VendorEvent,
+    ChecksumType, DiscoveredDevice, DiscoveryEvent, DongleStatus, TimestampedEvent,
+    TransportDeviceInfo, TransportType, VendorEvent,
 };
 
 pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice};
@@ -145,6 +145,11 @@ pub trait Transport: Send + Sync {
 
     /// Get battery status
     fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError>;
+
+    /// Query dongle status (F7). Returns None on non-dongle transports.
+    fn query_dongle_status(&self) -> Result<Option<DongleStatus>, TransportError> {
+        Ok(None)
+    }
 
     /// Subscribe to vendor events via broadcast channel
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {

@@ -201,6 +201,22 @@ impl TransportDeviceInfo {
     }
 }
 
+/// Dongle status from GET_DONGLE_STATUS (0xF7)
+///
+/// Lightweight view of the dongle's current state, used by the flow-control
+/// polling loop to decide when to read the actual keyboard response.
+#[derive(Debug, Clone)]
+pub struct DongleStatus {
+    /// Whether the dongle has a cached keyboard response ready to read
+    pub has_response: bool,
+    /// RF link idle (true) or waiting for keyboard (false)
+    pub rf_ready: bool,
+    /// Keyboard battery level (0-100%)
+    pub battery_level: u8,
+    /// Keyboard is charging
+    pub charging: bool,
+}
+
 /// Discovered device that can be opened
 #[derive(Debug, Clone)]
 pub struct DiscoveredDevice {

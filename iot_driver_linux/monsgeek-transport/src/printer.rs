@@ -898,6 +898,13 @@ impl Transport for Printer {
             .get_battery_status()
     }
 
+    fn query_dongle_status(&self) -> Result<Option<crate::types::DongleStatus>, TransportError> {
+        self.inner
+            .as_ref()
+            .ok_or(TransportError::Disconnected)?
+            .query_dongle_status()
+    }
+
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
         self.inner.as_ref()?.subscribe_events()
     }

@@ -71,35 +71,75 @@ const TEST_COLORS: [(u8, u8, u8); 7] = [
 ];
 
 /// Open keyboard and verify patch LED streaming is supported.
+///
+/// Retries `get_patch_info()` up to 3 times for dongle connections where
+/// the keyboard may be asleep and needs a wake-up cycle.
 pub fn open_with_patch_check(
     printer_config: Option<PrinterConfig>,
 ) -> Result<SyncKeyboard, Box<dyn std::error::Error>> {
     let kb = open_keyboard(printer_config).map_err(|e| format!("No device found: {e}"))?;
 
-    let patch = kb
-        .get_patch_info()
-        .map_err(|e| format!("Failed to query patch info: {e}"))?;
+    let max_attempts = if kb.is_wireless() { 3 } else { 1 };
+    let mut last_err = None;
 
-    match patch {
-        Some(ref p) if p.has_led_stream() => {
-            println!(
-                "Patch: {} v{} (caps=0x{:04X})",
-                p.name, p.version, p.capabilities
-            );
-        }
-        Some(ref p) => {
-            return Err(format!(
-                "Patch '{}' found but LED streaming not supported (caps=0x{:04X})",
-                p.name, p.capabilities
-            )
-            .into());
-        }
-        None => {
-            return Err("Stock firmware — LED streaming requires patched firmware".into());
+    for attempt in 0..max_attempts {
+        match kb.get_patch_info() {
+            Ok(patch) => {
+                match patch {
+                    Some(ref p) if p.has_led_stream() => {
+                        println!(
+                            "Patch: {} v{} (caps=0x{:04X})",
+                            p.name, p.version, p.capabilities
+                        );
+                        return Ok(kb);
+                    }
+                    Some(ref p) => {
+                        return Err(format!(
+                            "Patch '{}' found but LED streaming not supported (caps=0x{:04X})",
+                            p.name, p.capabilities
+                        )
+                        .into());
+                    }
+                    None => {
+                        // Stock firmware response — on dongle this might mean keyboard
+                        // is still waking up and response was empty/stale
+                        if attempt + 1 < max_attempts {
+                            eprintln!(
+                                "Patch info empty (attempt {}/{}), retrying (keyboard may be waking)...",
+                                attempt + 1,
+                                max_attempts
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            continue;
+                        }
+                        return Err(
+                            "Stock firmware — LED streaming requires patched firmware".into()
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                if attempt + 1 < max_attempts {
+                    eprintln!(
+                        "Patch info query failed (attempt {}/{}): {e}, retrying...",
+                        attempt + 1,
+                        max_attempts
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    last_err = Some(e);
+                    continue;
+                }
+                return Err(format!("Failed to query patch info: {e}").into());
+            }
         }
     }
 
-    Ok(kb)
+    // Should not reach here, but just in case
+    Err(format!(
+        "Failed to query patch info after {max_attempts} attempts: {}",
+        last_err.map_or("unknown".to_string(), |e| e.to_string())
+    )
+    .into())
 }
 
 /// Send a full frame of RGB data to the keyboard.

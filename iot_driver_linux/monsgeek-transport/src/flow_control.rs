@@ -424,6 +424,10 @@ impl Transport for FlowControlTransport {
     fn get_battery_status(&self) -> Result<(u8, bool, bool), TransportError> {
         self.inner.get_battery_status()
     }
+
+    fn query_dongle_status(&self) -> Result<Option<crate::types::DongleStatus>, TransportError> {
+        self.inner.query_dongle_status()
+    }
 }
 
 // ============================================================================
@@ -549,7 +553,7 @@ fn execute_query(
         Duration::from_millis(dongle_timing::QUERY_TIMEOUT_MS)
     };
 
-    // Send command
+    // Send command (forwarded to keyboard via SPI/RF by dongle)
     debug!("Dongle sending command 0x{:02X}", cmd_byte);
     inner.send_report(cmd_byte, data, checksum)?;
 
@@ -557,52 +561,80 @@ fn execute_query(
     let initial_wait = state.latency_tracker.lock().estimate_initial_wait();
     std::thread::sleep(initial_wait);
 
-    // Polling loop
+    // Poll using F7 (GET_DONGLE_STATUS) to check has_response before reading
     let mut poll_count = 0u32;
     while start.elapsed() < timeout {
         poll_count += 1;
 
-        // Flush + read
-        inner.send_flush()?;
+        // Ask dongle if keyboard response is ready
+        match inner.query_dongle_status() {
+            Ok(Some(status)) if status.has_response => {
+                // Response is ready — flush + read it
+                inner.send_flush()?;
 
-        if let Ok(resp) = inner.read_report() {
-            let resp_cmd = resp.first().copied().unwrap_or(0);
+                if let Ok(resp) = inner.read_report() {
+                    let resp_cmd = resp.first().copied().unwrap_or(0);
 
-            if raw_mode {
-                if resp_cmd != cmd::GET_CACHED_RESPONSE {
-                    let latency = start.elapsed();
-                    state
-                        .latency_tracker
-                        .lock()
-                        .record(latency.as_micros() as u64);
-                    state.consecutive_timeouts.store(0, Ordering::Relaxed);
-                    state.wake_mode.store(false, Ordering::Relaxed);
-                    debug!(
-                        "Dongle raw response 0x{:02X} in {:.2}ms ({} polls)",
-                        resp_cmd,
-                        latency.as_secs_f64() * 1000.0,
-                        poll_count
-                    );
-                    return Ok(resp);
+                    if raw_mode && resp_cmd != cmd::GET_CACHED_RESPONSE {
+                        let latency = start.elapsed();
+                        state
+                            .latency_tracker
+                            .lock()
+                            .record(latency.as_micros() as u64);
+                        state.consecutive_timeouts.store(0, Ordering::Relaxed);
+                        state.wake_mode.store(false, Ordering::Relaxed);
+                        debug!(
+                            "Dongle raw response 0x{:02X} in {:.2}ms ({} polls)",
+                            resp_cmd,
+                            latency.as_secs_f64() * 1000.0,
+                            poll_count
+                        );
+                        return Ok(resp);
+                    } else if resp_cmd == cmd_byte {
+                        let latency = start.elapsed();
+                        state
+                            .latency_tracker
+                            .lock()
+                            .record(latency.as_micros() as u64);
+                        state.consecutive_timeouts.store(0, Ordering::Relaxed);
+                        state.wake_mode.store(false, Ordering::Relaxed);
+                        debug!(
+                            "Dongle response 0x{:02X} in {:.2}ms ({} polls)",
+                            cmd_byte,
+                            latency.as_secs_f64() * 1000.0,
+                            poll_count
+                        );
+                        return Ok(resp);
+                    } else if resp_cmd != 0 && resp_cmd != cmd::GET_CACHED_RESPONSE {
+                        debug!("Caching out-of-order response for 0x{:02X}", resp_cmd);
+                        state.cache.lock().add(resp_cmd, resp);
+                    }
                 }
-            } else if resp_cmd == cmd_byte {
-                let latency = start.elapsed();
-                state
-                    .latency_tracker
-                    .lock()
-                    .record(latency.as_micros() as u64);
-                state.consecutive_timeouts.store(0, Ordering::Relaxed);
-                state.wake_mode.store(false, Ordering::Relaxed);
-                debug!(
-                    "Dongle response 0x{:02X} in {:.2}ms ({} polls)",
-                    cmd_byte,
-                    latency.as_secs_f64() * 1000.0,
-                    poll_count
-                );
-                return Ok(resp);
-            } else if resp_cmd != 0 && resp_cmd != cmd::GET_CACHED_RESPONSE {
-                debug!("Caching out-of-order response for 0x{:02X}", resp_cmd);
-                state.cache.lock().add(resp_cmd, resp);
+            }
+            Ok(_) => {
+                // No response yet — sleep and retry
+            }
+            Err(e) => {
+                debug!("F7 status query failed: {e}, falling back to flush+read");
+                // Fallback: try the old flush+read approach once
+                inner.send_flush()?;
+                if let Ok(resp) = inner.read_report() {
+                    let resp_cmd = resp.first().copied().unwrap_or(0);
+                    if (raw_mode && resp_cmd != cmd::GET_CACHED_RESPONSE)
+                        || (!raw_mode && resp_cmd == cmd_byte)
+                    {
+                        let latency = start.elapsed();
+                        state
+                            .latency_tracker
+                            .lock()
+                            .record(latency.as_micros() as u64);
+                        state.consecutive_timeouts.store(0, Ordering::Relaxed);
+                        state.wake_mode.store(false, Ordering::Relaxed);
+                        return Ok(resp);
+                    } else if resp_cmd != 0 && resp_cmd != cmd::GET_CACHED_RESPONSE {
+                        state.cache.lock().add(resp_cmd, resp);
+                    }
+                }
             }
         }
 

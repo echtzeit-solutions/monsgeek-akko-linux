@@ -1341,64 +1341,60 @@ impl KeyboardInterface {
     /// * `page` - Page index (0-6, each page = 18 keys)
     /// * `rgb_data` - RGB data (up to 54 bytes = 18 keys × 3 bytes)
     pub fn stream_led_page(&self, page: u8, rgb_data: &[u8]) -> Result<(), KeyboardError> {
-        // Firmware receives: [0xE8, page, 54B RGB] at cmd_buf+2, page at cmd_buf[3]
         let mut data = vec![0u8; 55]; // page + 54 RGB bytes
         data[0] = page;
         let len = rgb_data.len().min(54);
         data[1..1 + len].copy_from_slice(&rgb_data[..len]);
         self.transport
-            .send_command_with_delay(0xE8, &data, ChecksumType::None, 0)?;
+            .send_command_with_delay(cmd::LED_STREAM, &data, ChecksumType::None, 0)?;
         Ok(())
     }
 
     /// Commit streamed LED data — copies frame buffer to DMA buffer for display
     pub fn stream_led_commit(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command_with_delay(0xE8, &[0xFF], ChecksumType::None, 0)?;
+            .send_command_with_delay(cmd::LED_STREAM, &[0xFF], ChecksumType::None, 0)?;
         Ok(())
     }
 
     /// Release LED streaming — signals end of streaming session
     pub fn stream_led_release(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command_with_delay(0xE8, &[0xFE], ChecksumType::None, 0)?;
+            .send_command_with_delay(cmd::LED_STREAM, &[0xFE], ChecksumType::None, 0)?;
         Ok(())
     }
 
     /// Query patch info from modded firmware
     ///
     /// Returns `Some(PatchInfo)` if the keyboard is running patched firmware,
-    /// `None` if it's running stock firmware (command 0xE7 not recognized or
-    /// response doesn't contain the expected magic bytes).
+    /// `None` if it's running stock firmware (response doesn't contain the
+    /// expected magic bytes).
     pub fn get_patch_info(&self) -> Result<Option<PatchInfo>, KeyboardError> {
-        let resp = self.transport.query_raw(0xE7, &[], ChecksumType::Bit7);
+        let resp = self
+            .transport
+            .query_raw(cmd::GET_PATCH_INFO, &[], ChecksumType::Bit7)?;
 
-        match resp {
-            Ok(resp) => {
-                // Response layout: resp[0]=cmd echo (0xE7), resp[1..2]=magic,
-                // resp[3]=ver, resp[4..5]=caps, resp[6..]=name.
-                // (GET_REPORT returns from lp_class_report_buf = cmd_buf+2,
-                //  handler writes magic at cmd_buf[3..4], so resp[1..2])
-                if resp.len() < 8 || resp[1] != 0xCA || resp[2] != 0xFE {
-                    return Ok(None);
-                }
-                let version = resp[3];
-                let capabilities = u16::from_le_bytes([resp[4], resp[5]]);
-                let name_end = resp.len().min(14);
-                let name_bytes = &resp[6..name_end];
-                let name_len = name_bytes
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(name_bytes.len());
-                let name = String::from_utf8_lossy(&name_bytes[..name_len]).to_string();
-                Ok(Some(PatchInfo {
-                    version,
-                    capabilities,
-                    name,
-                }))
-            }
-            Err(_) => Ok(None),
+        // Response layout: resp[0]=cmd echo (0xE7), resp[1..2]=magic,
+        // resp[3]=ver, resp[4..5]=caps, resp[6..]=name.
+        // (GET_REPORT returns from lp_class_report_buf = cmd_buf+2,
+        //  handler writes magic at cmd_buf[3..4], so resp[1..2])
+        if resp.len() < 8 || resp[1] != 0xCA || resp[2] != 0xFE {
+            return Ok(None);
         }
+        let version = resp[3];
+        let capabilities = u16::from_le_bytes([resp[4], resp[5]]);
+        let name_end = resp.len().min(14);
+        let name_bytes = &resp[6..name_end];
+        let name_len = name_bytes
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(name_bytes.len());
+        let name = String::from_utf8_lossy(&name_bytes[..name_len]).to_string();
+        Ok(Some(PatchInfo {
+            version,
+            capabilities,
+            name,
+        }))
     }
 
     /// Subscribe to timestamped vendor events via broadcast channel
