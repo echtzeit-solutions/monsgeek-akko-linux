@@ -116,10 +116,17 @@ pub fn open_preferred_transport(
         .into());
     }
 
-    // Prefer Bluetooth for vendor protocol testing (then dongle, then wired)
+    // Prefer wired USB (direct, most reliable), then Bluetooth, then dongle.
+    // Dongle is always present even when keyboard is in wired mode, so it should
+    // be the lowest priority to avoid picking it when a direct path exists.
     let preferred = devices
         .iter()
-        .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
+        .find(|d| d.info.transport_type == monsgeek_transport::TransportType::HidWired)
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|d| d.info.transport_type == monsgeek_transport::TransportType::Bluetooth)
+        })
         .or_else(|| {
             devices
                 .iter()
