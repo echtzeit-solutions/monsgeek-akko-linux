@@ -68,6 +68,9 @@ pub mod cmd {
     /// Patch info - custom firmware capabilities (battery HID, LED stream, etc.)
     /// Note: Was 0xFB, but that collides with dongle-local GET_RF_INFO.
     pub const GET_PATCH_INFO: u8 = 0xE7;
+    /// LED streaming - write RGB data to WS2812 frame buffer via patch.
+    /// Sub-commands: page 0-6 = data, 0xFF = commit, 0xFE = release.
+    pub const LED_STREAM: u8 = 0xE8;
     /// Get cached keyboard response: copies 64B cached_kb_response into the
     /// USB feature report buffer and clears has_response. Used as flush.
     pub const GET_CACHED_RESPONSE: u8 = 0xFC;
@@ -130,6 +133,7 @@ pub mod cmd {
             ENTER_PAIRING => "ENTER_PAIRING",
             PAIRING_CMD => "PAIRING_CMD",
             GET_PATCH_INFO => "GET_PATCH_INFO",
+            LED_STREAM => "LED_STREAM",
             GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
             GET_DONGLE_ID => "GET_DONGLE_ID",
             STATUS_SUCCESS => "STATUS_SUCCESS",

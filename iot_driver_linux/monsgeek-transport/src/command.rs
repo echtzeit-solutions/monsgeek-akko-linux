@@ -1417,6 +1417,11 @@ pub enum ParsedCommand {
     },
     /// GET_PATCH_INFO (0xE7) - custom firmware capabilities
     GetPatchInfo,
+    /// LED_STREAM (0xE8) - per-key RGB streaming to frame buffer
+    LedStream {
+        /// 0-6 = page, 0xFF = commit, 0xFE = release
+        subcmd: u8,
+    },
     /// GET_MULTI_MAGNETISM query
     /// Format: [0xE5, subcmd, 0x01, page, 0, 0, 0, checksum]
     GetMultiMagnetism {
@@ -1787,6 +1792,9 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
             data: data[1..].to_vec(),
         },
         cmd::GET_PATCH_INFO => ParsedCommand::GetPatchInfo,
+        cmd::LED_STREAM => ParsedCommand::LedStream {
+            subcmd: data.get(1).copied().unwrap_or(0),
+        },
         cmd::GET_MULTI_MAGNETISM => {
             let subcmd = data.get(1).copied().unwrap_or(0);
             ParsedCommand::GetMultiMagnetism {
