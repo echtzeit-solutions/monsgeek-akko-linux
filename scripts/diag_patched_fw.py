@@ -290,8 +290,8 @@ def check_vendor_commands(interfaces):
         return
     print(f"  [{OK}] {len(resp)} bytes: {resp[:16].hex()}")
 
-    # Test A2: 0xFD DEBUG_LOG (early, before other commands that might break EP0)
-    print(f"\n  [A2] 0xFD DEBUG_LOG (early read)...")
+    # Test A2: 0xE9 DEBUG_LOG (early, before other commands that might break EP0)
+    print(f"\n  [A2] 0xE9 DEBUG_LOG (early read)...")
     try:
         ring_data = bytearray()
         log_count = 0
@@ -300,8 +300,8 @@ def check_vendor_commands(interfaces):
 
         for page in range(10):
             buf = bytearray(65)
-            buf[0] = 0x00; buf[1] = 0xFD; buf[3] = page
-            buf[8] = (0xFF - (0xFD & 0xFF)) & 0xFF
+            buf[0] = 0x00; buf[1] = 0xE9; buf[3] = page
+            buf[8] = (0xFF - (0xE9 & 0xFF)) & 0xFF
             dev.send_feature_report(bytes(buf))
             time.sleep(0.03)
             resp_log, err_log = hid_op_with_timeout(lambda: dev.get_feature_report(0, 65))
@@ -397,11 +397,11 @@ def check_vendor_commands(interfaces):
     except Exception as e:
         print(f"  [{FAIL}] {e}")
 
-    # Test C: 0xFB PATCH_INFO
-    print(f"\n  [C] 0xFB PATCH_INFO...")
+    # Test C: 0xE7 PATCH_INFO
+    print(f"\n  [C] 0xE7 PATCH_INFO...")
     buf = bytearray(65)
-    buf[0] = 0x00; buf[1] = 0xFB
-    buf[8] = (0xFF - (0xFB & 0xFF)) & 0xFF
+    buf[0] = 0x00; buf[1] = 0xE7
+    buf[8] = (0xFF - (0xE7 & 0xFF)) & 0xFF
     try:
         dev.send_feature_report(bytes(buf))
         time.sleep(0.05)
@@ -452,8 +452,8 @@ def check_vendor_commands(interfaces):
     except Exception as e:
         print(f"  [{FAIL}] {e}")
 
-    # Test D: 0xFD DEBUG_LOG
-    print(f"\n  [D] 0xFD DEBUG_LOG...")
+    # Test D: 0xE9 DEBUG_LOG
+    print(f"\n  [D] 0xE9 DEBUG_LOG...")
     try:
         # Read all 10 pages (covers 560 bytes, more than 512 ring)
         ring_data = bytearray()
@@ -463,8 +463,8 @@ def check_vendor_commands(interfaces):
 
         for page in range(10):
             buf = bytearray(65)
-            buf[0] = 0x00; buf[1] = 0xFD; buf[3] = page
-            buf[8] = (0xFF - (0xFD & 0xFF)) & 0xFF
+            buf[0] = 0x00; buf[1] = 0xE9; buf[3] = page
+            buf[8] = (0xFF - (0xE9 & 0xFF)) & 0xFF
             dev.send_feature_report(bytes(buf))
             time.sleep(0.03)
             resp, err = hid_op_with_timeout(lambda: dev.get_feature_report(0, 65))

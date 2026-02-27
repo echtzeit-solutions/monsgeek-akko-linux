@@ -96,7 +96,7 @@ static const uint8_t battery_rdesc[] = {
  * Placed in .bss → PATCH_SRAM (0x20009800+). */
 uint8_t extended_rdesc[EXTENDED_RDESC_LEN];
 
-/* ── Diagnostics (readable via 0xFB patch info) ──────────────────────── */
+/* ── Diagnostics (readable via 0xE7 patch info) ──────────────────────── */
 static struct {
     uint32_t hid_setup_calls;       /* total calls to handle_hid_setup */
     uint32_t hid_setup_intercepts;  /* times we returned 1 (intercepted) */
@@ -109,7 +109,7 @@ static struct {
     uint8_t  last_result;           /* 0=passthrough, 1=intercepted */
 } diag;
 
-/* ── Debug ring buffer (readable via 0xFD) ───────────────────────────── */
+/* ── Debug ring buffer (readable via 0xE9) ───────────────────────────── */
 
 #define LOG_BUF_SIZE 512
 
@@ -379,7 +379,7 @@ static void encode_ws2812_byte(volatile uint8_t *p, uint8_t val) {
     p[7] = (val & 0x01) ? 0xF0 : 0xC0;
 }
 
-/* ── Patch discovery (0xFB) ──────────────────────────────────────────────
+/* ── Patch discovery (0xE7) ──────────────────────────────────────────────
  * Response layout in g_vendor_cmd_buffer (buf = cmd_buf):
  *   buf[3..4] = magic 0xCA 0xFE    → host sees resp[1..2]
  *   buf[5]    = patch version       → resp[3]
@@ -472,7 +472,7 @@ static int handle_patch_info(volatile uint8_t *buf) {
     return 1;
 }
 
-/* ── LED streaming (0xFC) ──────────────────────────────────────────────
+/* ── LED streaming (0xE8) ──────────────────────────────────────────────
  *
  * Page 0-6:  Write 18 keys × RGB directly to g_led_frame_buf (WS2812 encoded)
  * Page 0xFF: Commit — copy g_led_frame_buf → g_led_dma_buf for immediate display
@@ -578,7 +578,7 @@ int handle_usb_connect(void) {
     return 0;   /* passthrough */
 }
 
-/* ── Debug log read (0xFD) ─────────────────────────────────────────────
+/* ── Debug log read (0xE9) ─────────────────────────────────────────────
  *
  * Reads pages from the ring buffer.
  *   buf[3] = page number (0-9)
@@ -639,9 +639,9 @@ int handle_vendor_cmd(void) {
     if (cmd_buf[0] == 0)
         return 0;
 
-    /* Log vendor command entry (skip 0xFD to avoid contaminating the log
+    /* Log vendor command entry (skip 0xE9 to avoid contaminating the log
      * when reading it — each log read would otherwise add 3 bytes) */
-    if (cmd_buf[2] != 0xFD) {
+    if (cmd_buf[2] != 0xE9) {
         uint8_t log_payload[2] = { cmd_buf[0], cmd_buf[2] };
         log_entry(LOG_VENDOR_CMD_ENTRY, log_payload, 2);
     }
@@ -649,11 +649,11 @@ int handle_vendor_cmd(void) {
     /* Command byte is at cmd_buf[2] = lp_class_report_buf[0]
      * (SET_REPORT data lands at cmd_buf+2, first byte = command) */
     switch (cmd_buf[2]) {
-    case 0xFB:
+    case 0xE7:
         return handle_patch_info(cmd_buf);
-    case 0xFC:
+    case 0xE8:
         return handle_led_stream(cmd_buf);
-    case 0xFD:
+    case 0xE9:
         return handle_log_read(cmd_buf);
     default:
         return 0;   /* passthrough to original firmware */

@@ -899,20 +899,24 @@ pub mod hid {
     }
 }
 
-/// Firmware patch discovery protocol (command 0xFB)
+/// Firmware patch discovery protocol (command 0xE7)
 ///
 /// Used to detect whether the keyboard is running patched firmware and
 /// what capabilities are available.
+///
+/// Note: Originally used 0xFB, but that collides with the dongle's
+/// GET_RF_INFO command (handled locally, never forwarded to keyboard).
+/// Changed to 0xE7 which is in the forwarded range.
 pub mod patch_info {
     /// Patch info query command
-    pub const CMD: u8 = 0xFB;
+    pub const CMD: u8 = 0xE7;
     /// Magic high byte in response
     pub const MAGIC_HI: u8 = 0xCA;
     /// Magic low byte in response
     pub const MAGIC_LO: u8 = 0xFE;
     /// Capability: HID battery reporting
     pub const CAP_BATTERY: u16 = 1 << 0;
-    /// Capability: LED streaming (0xFC)
+    /// Capability: LED streaming (0xE8)
     pub const CAP_LED_STREAM: u16 = 1 << 1;
 
     pub fn capability_names(caps: u16) -> Vec<&'static str> {

@@ -58,7 +58,7 @@ LED streaming temporarily overrides the current LED effect. The built-in effect 
 
 ### Patch detection
 
-The driver auto-detects patched firmware via the 0xFB discovery command:
+The driver auto-detects patched firmware via the 0xE7 discovery command:
 
 ```bash
 # Shows patch name, version, and capabilities
@@ -209,7 +209,7 @@ Hook modes:
 
 | Hook | Target | Mode | Purpose |
 |------|--------|------|---------|
-| `vendor_dispatch` | `vendor_command_dispatch` (0x08013304) | filter | Intercepts 0xFB/0xFC/0xFD vendor commands |
+| `vendor_dispatch` | `vendor_command_dispatch` (0x08013304) | filter | Intercepts 0xE7/0xE8/0xE9 vendor commands |
 | `hid_class_setup` | `hid_class_setup_handler` (0x0801474C) | filter | Intercepts GET_REPORT for battery Feature report (ID 7) |
 | `usb_connect` | `usb_otg_device_connect` (0x08018690) | filter | Patches descriptors before USB enumeration |
 | `battery_monitor` | `battery_level_monitor` (0x0801695C) | before | Emits RTT telemetry for ADC/battery debugging |
@@ -250,17 +250,17 @@ Hook modes:
 - Setup packet is a separate parameter (r1), not embedded in udev struct
 - Uses OTGHS (not OTGFS1), `g_usb_device` at 0x20000484 (no +4 offset)
 - Battery data comes from `dongle_state.kb_battery_info` (+0xDB) and `.kb_charging` (+0xDC), cached from RF packets
-- No vendor command dispatch — 0xFB queries relay through to the keyboard
+- No vendor command dispatch — 0xE7 queries relay through to the keyboard
 
 ### Vendor command protocol (keyboard only)
 
 | Command | Name | Direction | Description |
 |---------|------|-----------|-------------|
-| 0xFB | PATCH_INFO | GET | Returns magic 0xCAFE, version, capabilities, name "MONSMOD", diagnostics |
-| 0xFC | LED_STREAM | SET | Per-key RGB: page 0–6 = 18 keys each, 0xFF = commit, 0xFE = release |
-| 0xFD | DEBUG_LOG | GET | Ring buffer read: page 0–9, 56 bytes/page, 512 byte total |
+| 0xE7 | PATCH_INFO | GET | Returns magic 0xCAFE, version, capabilities, name "MONSMOD", diagnostics |
+| 0xE8 | LED_STREAM | SET | Per-key RGB: page 0–6 = 18 keys each, 0xFF = commit, 0xFE = release |
+| 0xE9 | DEBUG_LOG | GET | Ring buffer read: page 0–9, 56 bytes/page, 512 byte total |
 
-**0xFB response layout** (in GET_REPORT Feature response):
+**0xE7 response layout** (in GET_REPORT Feature response):
 
 | Offset | Field | Description |
 |--------|-------|-------------|

@@ -504,6 +504,23 @@ These are handled locally by the dongle and NOT forwarded to the keyboard:
 |-----|------|-------------|
 | 0xFE | GET_CALIBRATION | Raw per-profile magnetism calibration values (on dongle: SET_RESPONSE_SIZE) |
 
+#### Patch Commands (custom firmware only)
+
+These commands are added by the [firmware patch](FIRMWARE_PATCH.md) and are only recognized
+by patched keyboard firmware. They use bytes in the 0xE0–0xEF range which the dongle forwards
+to the keyboard via SPI (not handled locally), so they work over both wired USB and 2.4GHz dongle.
+
+| Hex | Name | Direction | Description |
+|-----|------|-----------|-------------|
+| 0xE7 | PATCH_INFO | GET | Returns magic 0xCAFE, patch version, capability bitmask, name, diagnostics |
+| 0xE8 | LED_STREAM | SET | Per-key RGB streaming: page 0–6 = 18 keys, 0xFF = commit, 0xFE = release |
+| 0xE9 | DEBUG_LOG | GET | Ring buffer read: page 0–9, 56 bytes/page |
+
+**Why 0xE7–0xE9?** The previous command bytes (0xFB/0xFC/0xFD) collided with dongle-local
+commands GET_RF_INFO, GET_CACHED_RESPONSE, and GET_DONGLE_ID respectively. The dongle
+intercepts those locally and never forwards them to the keyboard, making patch detection
+impossible over the wireless path.
+
 ### 4.3 Magnetism Sub-Commands (0x65 / 0xE5)
 
 Used with SET/GET_MULTI_MAGNETISM for per-key hall effect settings:

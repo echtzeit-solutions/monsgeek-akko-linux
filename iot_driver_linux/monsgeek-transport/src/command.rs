@@ -1376,7 +1376,7 @@ pub enum ParsedResponse {
     MledVersion {
         version: u16,
     },
-    /// GET_PATCH_INFO (0xFB) response - patch name, version, capabilities
+    /// GET_PATCH_INFO (0xE7) response - patch name, version, capabilities
     PatchInfo {
         data: Vec<u8>,
     },
@@ -1415,7 +1415,7 @@ pub enum ParsedCommand {
     GetCalibration {
         data: Vec<u8>,
     },
-    /// GET_PATCH_INFO (0xFB) - custom firmware capabilities
+    /// GET_PATCH_INFO (0xE7) - custom firmware capabilities
     GetPatchInfo,
     /// GET_MULTI_MAGNETISM query
     /// Format: [0xE5, subcmd, 0x01, page, 0, 0, 0, checksum]

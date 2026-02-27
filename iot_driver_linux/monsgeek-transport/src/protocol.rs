@@ -66,7 +66,8 @@ pub mod cmd {
     /// Pairing control: sends 3-byte SPI packet {cmd=1, data[0], data[1]}
     pub const PAIRING_CMD: u8 = 0x7A;
     /// Patch info - custom firmware capabilities (battery HID, LED stream, etc.)
-    pub const GET_PATCH_INFO: u8 = 0xFB;
+    /// Note: Was 0xFB, but that collides with dongle-local GET_RF_INFO.
+    pub const GET_PATCH_INFO: u8 = 0xE7;
     /// Get cached keyboard response: copies 64B cached_kb_response into the
     /// USB feature report buffer and clears has_response. Used as flush.
     pub const GET_CACHED_RESPONSE: u8 = 0xFC;

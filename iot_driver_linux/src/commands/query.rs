@@ -47,7 +47,7 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
     }
 
     // Patched firmware (battery HID, LED stream, etc.)
-    // Probe 0xFB: wired HID returns [cmd_echo, magic_hi, magic_lo, ...]; some paths may return [magic_hi, magic_lo, ...]
+    // Probe 0xE7: wired HID returns [cmd_echo, magic_hi, magic_lo, ...]; some paths may return [magic_hi, magic_lo, ...]
     match transport.query_raw(protocol::patch_info::CMD, &[], ChecksumType::Bit7) {
         Ok(resp) => {
             let offsets = if resp.len() >= 6
@@ -88,11 +88,11 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
                 }
                 None => {
                     println!("Patch:     Stock firmware (no patch support).");
-                    // Show raw 0xFB response to investigate: patched FW returns 0xCA 0xFE magic;
-                    // stock may echo 0xFB and return other data (e.g. trigger subcmd 0xFB = TOP_DEADZONE).
+                    // Show raw 0xE7 response to investigate: patched FW returns 0xCA 0xFE magic;
+                    // stock may echo the command and return other data.
                     let hex_len = resp.len().min(16);
                     println!(
-                        "           0xFB response ({} bytes): {}",
+                        "           0xE7 response ({} bytes): {}",
                         resp.len(),
                         resp[..hex_len]
                             .iter()
@@ -105,7 +105,7 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
         }
         Err(_) => {
             println!("Patch:     Stock firmware (no patch support).");
-            println!("           0xFB response: none (timeout or error).");
+            println!("           0xE7 response: none (timeout or error).");
         }
     }
 
