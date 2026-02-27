@@ -90,14 +90,17 @@ pub fn show(name: &str) -> CommandResult {
         println!("\nNo keyframes (solid effect)");
     } else {
         println!("\nKeyframes:");
-        println!("  {:<8} {:<8} {:<12} Color", "Time", "Value", "Easing");
-        println!("  {}", "-".repeat(44));
-        let duration = def.keyframes.last().map(|kf| kf.t).unwrap_or(0.0);
+        println!("  {:<12} {:<8} {:<12} Color", "Time", "Value", "Easing");
+        println!("  {}", "-".repeat(48));
         for kf in &def.keyframes {
             let color = kf.color.as_deref().unwrap_or("-");
-            println!("  {:<8.0} {:<8.2} {:<12} {}", kf.t, kf.v, kf.easing, color);
+            let time = match (&kf.t, &kf.d) {
+                (Some(t), _) => format!("t={t}"),
+                (_, Some(d)) => format!("d={d}"),
+                _ => "?".to_string(),
+            };
+            println!("  {:<12} {:<8.2} {:<12} {}", time, kf.v, kf.easing, color);
         }
-        println!("\nDuration: {duration:.0}ms");
     }
 
     Ok(())

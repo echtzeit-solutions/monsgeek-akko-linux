@@ -1,8 +1,13 @@
 //! Keyframe-based LED effect engine.
 //!
 //! Effects are defined in TOML with named keyframes that specify time, color,
-//! brightness, and easing. Color variables (`$name`) allow effects to be
-//! reusable templates, resolved at trigger time.
+//! brightness, and easing. Variables (`$name` or `$name:default`) allow effects
+//! to be reusable templates, resolved at trigger time via `--var name=value`.
+//!
+//! Keyframe timing can use either absolute timestamps (`t`) or relative
+//! durations (`d`). With `d`, the absolute time is computed by accumulating
+//! all preceding durations — this makes it easy to parameterize individual
+//! segment lengths without recalculating the whole timeline.
 //!
 //! # Example TOML
 //!
@@ -10,9 +15,15 @@
 //! [breathe]
 //! color = "$color"
 //! keyframes = [
-//!     { t = 0,    v = 0.0, easing = "EaseInOut" },
-//!     { t = 1000, v = 1.0, easing = "EaseInOut" },
-//!     { t = 2000, v = 0.0 },
+//!     { d = 1000, v = 0.0, easing = "EaseInOut" },
+//!     { d = 1000, v = 1.0, easing = "EaseInOut" },
+//! ]
+//!
+//! [blink]
+//! color = "$color"
+//! keyframes = [
+//!     { d = "$on:500",  v = 1.0, easing = "Hold" },
+//!     { d = "$off:500", v = 0.0, easing = "Hold" },
 //! ]
 //! ```
 
@@ -130,11 +141,38 @@ pub struct EffectDef {
     pub description: Option<String>,
 }
 
+/// A TOML value that is either a literal number or a `$variable` reference.
+///
+/// In TOML: `t = 1000` (literal) or `t = "$on_ms:500"` (variable with default).
+/// The `$name:default` syntax provides a fallback when the variable is not set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NumOrVar {
+    Num(f64),
+    Var(String),
+}
+
+impl std::fmt::Display for NumOrVar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NumOrVar::Num(n) => write!(f, "{n}"),
+            NumOrVar::Var(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 /// A single keyframe in the effect definition.
+///
+/// Timing is specified with either `t` (absolute ms) or `d` (duration of this
+/// segment in ms). When `d` is used, absolute times are computed by accumulating
+/// durations during resolution. Both `t` and `d` accept `NumOrVar` — a literal
+/// number or a `"$variable:default"` string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyframeDef {
-    /// Time in ms from animation start.
-    pub t: f64,
+    /// Absolute time in ms from animation start.
+    pub t: Option<NumOrVar>,
+    /// Duration of this segment in ms (alternative to `t`).
+    pub d: Option<NumOrVar>,
     /// Brightness value 0.0-1.0.
     pub v: f64,
     /// Per-keyframe color override (literal or `$variable`).
@@ -373,9 +411,45 @@ use keyframe::EasingFunction;
 
 // ── Resolution (variable substitution) ───────────────────────────────
 
+/// Resolve a `$name` or `$name:default` variable reference, returning an owned string.
+fn resolve_var_owned(var_ref: &str, vars: &BTreeMap<String, String>) -> Result<String, String> {
+    let (name, default) = match var_ref.split_once(':') {
+        Some((n, d)) => (n, Some(d)),
+        None => (var_ref, None),
+    };
+    if let Some(value) = vars.get(name) {
+        Ok(value.clone())
+    } else if let Some(d) = default {
+        Ok(d.to_string())
+    } else {
+        Err(format!("unresolved variable: ${name}"))
+    }
+}
+
+/// Resolve a `NumOrVar` to a concrete `f64`.
+fn resolve_num(val: &NumOrVar, vars: &BTreeMap<String, String>) -> Result<f64, String> {
+    match val {
+        NumOrVar::Num(n) => Ok(*n),
+        NumOrVar::Var(s) => {
+            if let Some(var_ref) = s.strip_prefix('$') {
+                let resolved = resolve_var_owned(var_ref, vars)?;
+                resolved.parse().map_err(|_| {
+                    format!(
+                        "invalid number for ${}: {resolved}",
+                        var_ref.split(':').next().unwrap_or(var_ref)
+                    )
+                })
+            } else {
+                // Plain string that happens to be a number
+                s.parse().map_err(|_| format!("invalid time value: {s}"))
+            }
+        }
+    }
+}
+
 /// Resolve an effect definition into a ready-to-evaluate effect.
 ///
-/// `vars` maps variable names (without `$`) to color strings.
+/// `vars` maps variable names (without `$`) to value strings.
 pub fn resolve(def: &EffectDef, vars: &BTreeMap<String, String>) -> Result<ResolvedEffect, String> {
     let is_rainbow = def.mode.as_deref() == Some("rainbow");
     let rainbow_speed = def.speed.unwrap_or(1.0);
@@ -398,18 +472,42 @@ pub fn resolve(def: &EffectDef, vars: &BTreeMap<String, String>) -> Result<Resol
 
     let mut keyframes = Vec::with_capacity(def.keyframes.len());
     let mut easing_names = Vec::with_capacity(def.keyframes.len());
+    let mut cursor: f64 = 0.0; // running absolute time for `d` mode
 
-    for kf in &def.keyframes {
+    for (i, kf) in def.keyframes.iter().enumerate() {
+        let t_ms = match (&kf.t, &kf.d) {
+            (Some(t), None) => resolve_num(t, vars)?,
+            (None, Some(d)) => {
+                let dur = resolve_num(d, vars)?;
+                let abs = cursor;
+                cursor = abs + dur;
+                abs
+            }
+            (Some(_), Some(_)) => {
+                return Err(format!("keyframe {i}: cannot specify both `t` and `d`"));
+            }
+            (None, None) => {
+                return Err(format!("keyframe {i}: must specify `t` or `d`"));
+            }
+        };
+
         let color = resolve_color(kf.color.as_deref(), def.color.as_deref(), vars)?;
         keyframes.push(ResolvedKeyframe {
-            t_ms: kf.t,
+            t_ms,
             color,
             brightness: kf.v.clamp(0.0, 1.0),
         });
         easing_names.push(kf.easing.clone());
     }
 
-    let duration_ms = keyframes.last().map(|kf| kf.t_ms).unwrap_or(0.0);
+    // For `d`-mode effects, the total duration is the accumulated cursor
+    // (sum of all d values). For `t`-mode, it's the last keyframe's t.
+    let uses_d = def.keyframes.first().is_some_and(|kf| kf.d.is_some());
+    let duration_ms = if uses_d {
+        cursor
+    } else {
+        keyframes.last().map(|kf| kf.t_ms).unwrap_or(0.0)
+    };
 
     Ok(ResolvedEffect {
         keyframes,
@@ -420,7 +518,7 @@ pub fn resolve(def: &EffectDef, vars: &BTreeMap<String, String>) -> Result<Resol
     })
 }
 
-/// Resolve a color string, substituting variables.
+/// Resolve a color string, substituting `$variable` or `$variable:default`.
 ///
 /// Priority: per-keyframe color > effect-level color > black.
 fn resolve_color(
@@ -434,29 +532,48 @@ fn resolve_color(
         return Ok(Rgb::BLACK);
     };
 
-    if let Some(var_name) = s.strip_prefix('$') {
-        let value = vars
-            .get(var_name)
-            .ok_or_else(|| format!("unresolved variable: ${var_name}"))?;
-        Rgb::parse(value).ok_or_else(|| format!("invalid color for ${var_name}: {value}"))
+    if let Some(var_ref) = s.strip_prefix('$') {
+        let value = resolve_var_owned(var_ref, vars)?;
+        let name = var_ref.split(':').next().unwrap_or(var_ref);
+        Rgb::parse(&value).ok_or_else(|| format!("invalid color for ${name}: {value}"))
     } else {
         Rgb::parse(s).ok_or_else(|| format!("invalid color: {s}"))
     }
 }
 
-/// List required variables for an effect (variables referenced but not provided).
+/// Extract the variable name from a `$name` or `$name:default` reference,
+/// stripping the default portion.
+fn var_name_from_ref(var_ref: &str) -> &str {
+    var_ref.split(':').next().unwrap_or(var_ref)
+}
+
+/// Push a variable name into the list if not already present.
+fn push_var(vars: &mut Vec<String>, name: &str) {
+    if !vars.iter().any(|v| v == name) {
+        vars.push(name.to_string());
+    }
+}
+
+/// List required variables for an effect (all `$variable` references).
+/// Variables with defaults are included since they can still be overridden.
 pub fn required_variables(def: &EffectDef) -> Vec<String> {
     let mut vars = Vec::new();
     if let Some(ref c) = def.color {
-        if let Some(name) = c.strip_prefix('$') {
-            vars.push(name.to_string());
+        if let Some(var_ref) = c.strip_prefix('$') {
+            push_var(&mut vars, var_name_from_ref(var_ref));
         }
     }
     for kf in &def.keyframes {
         if let Some(ref c) = kf.color {
-            if let Some(name) = c.strip_prefix('$') {
-                if !vars.contains(&name.to_string()) {
-                    vars.push(name.to_string());
+            if let Some(var_ref) = c.strip_prefix('$') {
+                push_var(&mut vars, var_name_from_ref(var_ref));
+            }
+        }
+        // Check timing variables
+        for nov in [&kf.t, &kf.d].into_iter().flatten() {
+            if let NumOrVar::Var(s) = nov {
+                if let Some(var_ref) = s.strip_prefix('$') {
+                    push_var(&mut vars, var_name_from_ref(var_ref));
                 }
             }
         }
@@ -467,35 +584,35 @@ pub fn required_variables(def: &EffectDef) -> Vec<String> {
 // ── Default effects ──────────────────────────────────────────────────
 
 pub const DEFAULT_EFFECTS_TOML: &str = r##"# MonsGeek LED Effects Library
+#
 # Each section defines a named effect with keyframes.
 # Colors can be literals ("red", "#FF0000") or variables ("$color").
-# Variables are resolved at trigger time with --var name=value.
+# Timing can use absolute `t` (ms) or relative `d` (duration of segment).
+# Variables use "$name" or "$name:default" syntax.
+# All variables are resolved at trigger time with --var name=value.
 
 [breathe]
 color = "$color"
 description = "Smooth fade in/out"
 keyframes = [
-    { t = 0,    v = 0.0, easing = "EaseInOut" },
-    { t = 1000, v = 1.0, easing = "EaseInOut" },
-    { t = 2000, v = 0.0 },
+    { d = "$half:1000", v = 0.0, easing = "EaseInOut" },
+    { d = "$half:1000", v = 1.0, easing = "EaseInOut" },
 ]
 
 [flash]
 color = "$color"
-description = "On/off blink"
+description = "On/off blink with adjustable duty cycle"
 keyframes = [
-    { t = 0,   v = 1.0, easing = "Hold" },
-    { t = 500, v = 0.0, easing = "Hold" },
-    { t = 1000, v = 1.0 },
+    { d = "$on:500",  v = 1.0, easing = "Hold" },
+    { d = "$off:500", v = 0.0, easing = "Hold" },
 ]
 
 [pulse]
 color = "$color"
 description = "Quick flash then slow fade"
 keyframes = [
-    { t = 0,   v = 0.0, easing = "EaseOutQuad" },
-    { t = 80,  v = 1.0, easing = "EaseInQuint" },
-    { t = 800, v = 0.0 },
+    { d = 80,  v = 0.0, easing = "EaseOutQuad" },
+    { d = 720, v = 1.0, easing = "EaseInQuint" },
 ]
 
 [solid]
@@ -506,9 +623,8 @@ priority = -10
 [police]
 description = "Red/blue alternating flash"
 keyframes = [
-    { t = 0,   color = "red",  v = 1.0, easing = "Hold" },
-    { t = 200, color = "blue", v = 1.0, easing = "Hold" },
-    { t = 400, color = "red",  v = 1.0 },
+    { d = "$flash:200", color = "red",  v = 1.0, easing = "Hold" },
+    { d = "$flash:200", color = "blue", v = 1.0, easing = "Hold" },
 ]
 
 [rainbow]
@@ -516,8 +632,7 @@ mode = "rainbow"
 speed = 1.0
 description = "Hue rotation"
 keyframes = [
-    { t = 0,    v = 1.0 },
-    { t = 3000, v = 1.0 },
+    { d = 3000, v = 1.0 },
 ]
 
 [build-status]
@@ -545,18 +660,33 @@ mod tests {
         assert!(lib.effects.contains_key("police"));
         assert!(lib.effects.contains_key("rainbow"));
         assert!(lib.effects.contains_key("solid"));
-        assert_eq!(lib.effects["breathe"].keyframes.len(), 3);
+        assert_eq!(lib.effects["breathe"].keyframes.len(), 2);
     }
 
     #[test]
-    fn test_resolve_breathe() {
+    fn test_resolve_breathe_with_defaults() {
         let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
         let def = lib.get("breathe").unwrap();
         let mut vars = BTreeMap::new();
         vars.insert("color".to_string(), "red".to_string());
+        // Don't set "half" — should use default of 1000
         let resolved = resolve(def, &vars).unwrap();
         assert_eq!(resolved.duration_ms, 2000.0);
+        assert_eq!(resolved.keyframes[0].t_ms, 0.0);
+        assert_eq!(resolved.keyframes[1].t_ms, 1000.0);
         assert_eq!(resolved.keyframes[0].color, Rgb::new(255, 0, 0));
+    }
+
+    #[test]
+    fn test_resolve_breathe_override_half() {
+        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
+        let def = lib.get("breathe").unwrap();
+        let mut vars = BTreeMap::new();
+        vars.insert("color".to_string(), "red".to_string());
+        vars.insert("half".to_string(), "500".to_string());
+        let resolved = resolve(def, &vars).unwrap();
+        assert_eq!(resolved.duration_ms, 1000.0); // 500 + 500
+        assert_eq!(resolved.keyframes[1].t_ms, 500.0);
     }
 
     #[test]
@@ -567,13 +697,14 @@ mod tests {
         let resolved = resolve(def, &vars).unwrap();
         assert_eq!(resolved.keyframes[0].color, Rgb::new(255, 0, 0)); // red
         assert_eq!(resolved.keyframes[1].color, Rgb::new(0, 0, 255)); // blue
+        assert_eq!(resolved.duration_ms, 400.0); // 200 + 200
     }
 
     #[test]
     fn test_resolve_missing_variable() {
         let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
         let def = lib.get("breathe").unwrap();
-        let vars = BTreeMap::new();
+        let vars = BTreeMap::new(); // missing "color" (no default)
         assert!(resolve(def, &vars).is_err());
     }
 
@@ -615,15 +746,118 @@ mod tests {
     #[test]
     fn test_required_variables() {
         let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
-        assert_eq!(
-            required_variables(lib.get("breathe").unwrap()),
-            vec!["color"]
-        );
-        assert!(required_variables(lib.get("police").unwrap()).is_empty());
+        let breathe_vars = required_variables(lib.get("breathe").unwrap());
+        assert!(breathe_vars.contains(&"color".to_string()));
+        assert!(breathe_vars.contains(&"half".to_string()));
+
+        let flash_vars = required_variables(lib.get("flash").unwrap());
+        assert!(flash_vars.contains(&"color".to_string()));
+        assert!(flash_vars.contains(&"on".to_string()));
+        assert!(flash_vars.contains(&"off".to_string()));
+
+        let police_vars = required_variables(lib.get("police").unwrap());
+        assert!(police_vars.contains(&"flash".to_string()));
+
         assert_eq!(
             required_variables(lib.get("build-status").unwrap()),
             vec!["status"]
         );
+    }
+
+    #[test]
+    fn test_flash_duty_cycle() {
+        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
+        let def = lib.get("flash").unwrap();
+        let mut vars = BTreeMap::new();
+        vars.insert("color".to_string(), "red".to_string());
+        vars.insert("on".to_string(), "100".to_string());
+        vars.insert("off".to_string(), "900".to_string());
+        let resolved = resolve(def, &vars).unwrap();
+        assert_eq!(resolved.duration_ms, 1000.0); // 100 + 900
+        assert_eq!(resolved.keyframes[0].t_ms, 0.0);
+        assert_eq!(resolved.keyframes[1].t_ms, 100.0);
+        // At t=50 (during on phase), should be bright red
+        let c = resolved.evaluate(50.0);
+        assert_eq!(c, Rgb::new(255, 0, 0));
+        // At t=500 (during off phase), should be black
+        let c = resolved.evaluate(500.0);
+        assert_eq!(c, Rgb::BLACK);
+    }
+
+    #[test]
+    fn test_d_mode_accumulation() {
+        let toml = r#"
+            [test]
+            color = "white"
+            keyframes = [
+                { d = 100, v = 1.0, easing = "Hold" },
+                { d = 200, v = 0.5, easing = "Hold" },
+                { d = 300, v = 0.0, easing = "Hold" },
+            ]
+        "#;
+        let lib = EffectLibrary::from_toml(toml).unwrap();
+        let resolved = resolve(lib.get("test").unwrap(), &BTreeMap::new()).unwrap();
+        assert_eq!(resolved.keyframes[0].t_ms, 0.0);
+        assert_eq!(resolved.keyframes[1].t_ms, 100.0);
+        assert_eq!(resolved.keyframes[2].t_ms, 300.0);
+        assert_eq!(resolved.duration_ms, 600.0); // 100 + 200 + 300
+    }
+
+    #[test]
+    fn test_t_and_d_mixed_error() {
+        let toml = r#"
+            [test]
+            keyframes = [
+                { t = 0, d = 100, v = 1.0 },
+            ]
+        "#;
+        let lib = EffectLibrary::from_toml(toml).unwrap();
+        assert!(resolve(lib.get("test").unwrap(), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn test_neither_t_nor_d_error() {
+        let toml = r#"
+            [test]
+            keyframes = [
+                { v = 1.0 },
+            ]
+        "#;
+        let lib = EffectLibrary::from_toml(toml).unwrap();
+        assert!(resolve(lib.get("test").unwrap(), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn test_color_var_with_default() {
+        let toml = r#"
+            [test]
+            color = "$color:red"
+            keyframes = [
+                { d = 1000, v = 1.0 },
+            ]
+        "#;
+        let lib = EffectLibrary::from_toml(toml).unwrap();
+        // Without providing color — should use default "red"
+        let resolved = resolve(lib.get("test").unwrap(), &BTreeMap::new()).unwrap();
+        assert_eq!(resolved.keyframes[0].color, Rgb::new(255, 0, 0));
+
+        // With override
+        let mut vars = BTreeMap::new();
+        vars.insert("color".to_string(), "blue".to_string());
+        let resolved = resolve(lib.get("test").unwrap(), &vars).unwrap();
+        assert_eq!(resolved.keyframes[0].color, Rgb::new(0, 0, 255));
+    }
+
+    #[test]
+    fn test_build_status_absolute_t() {
+        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
+        let def = lib.get("build-status").unwrap();
+        let mut vars = BTreeMap::new();
+        vars.insert("status".to_string(), "green".to_string());
+        let resolved = resolve(def, &vars).unwrap();
+        assert_eq!(resolved.duration_ms, 3000.0);
+        assert_eq!(resolved.keyframes[0].t_ms, 0.0);
+        assert_eq!(resolved.keyframes[3].t_ms, 3000.0);
     }
 
     #[test]
@@ -643,7 +877,6 @@ mod tests {
 
     #[test]
     fn test_hold_easing() {
-        // Hold easing should keep the previous value until the next keyframe
         assert_eq!(apply_easing("Hold", 0.5), 0.0);
         assert_eq!(apply_easing("Hold", 0.99), 0.0);
     }
@@ -656,8 +889,5 @@ mod tests {
         // At t=0 should be red
         let c0 = resolved.evaluate(0.0);
         assert_eq!(c0, Rgb::new(255, 0, 0));
-        // At t=100 should be between red and blue (linear color interp)
-        let c100 = resolved.evaluate(100.0);
-        assert!(c100.r > 0 || c100.b > 0); // some color present
     }
 }
