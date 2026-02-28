@@ -58,6 +58,12 @@ BINARY_PATCHES = [
     BinaryPatch(0x080073C8, struct.pack('<I', 0x200001EC), b'',
                 "IF1 rdesc pointer → extended_rdesc",
                 symbol='extended_rdesc'),
+    # rf_tx_handler speed gate: CMP r0,#3 + BNE skips all EP2 sends when
+    # not Full Speed. Dongle runs at High Speed (speed==0), so EP2 is dead.
+    # NOP both instructions to always send on EP2.
+    BinaryPatch(0x08006A34, b'\x03\x28\x7c\xd1',
+                b'\x00\xbf\x00\xbf',
+                "rf_tx_handler: NOP Full-Speed-only gate (CMP+BNE → 2×NOP)"),
 ]
 
 project = PatchProject(

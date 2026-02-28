@@ -72,11 +72,18 @@ BINARY_PATCHES = [
     BinaryPatch(0x0801485C, struct.pack('<I', 0x20000318), b'',
                 "IF1 rdesc pointer → extended_rdesc",
                 symbol='extended_rdesc'),
-    # Depth monitoring: allow 2.4GHz dongle (was BT-only gate)
-    # send_depth_monitor_report @ 0x08012804 checks connection type at +0x26:
-    #   CMP r0, #1 (BT only) → CMP r0, #0 (any wireless: BT=1 or 2.4G=2)
-    BinaryPatch(0x08012836, b'\x01', b'\x00',
-                "depth monitor: CMP #1 (BT-only) → CMP #0 (any wireless)"),
+    # Depth monitoring: remove 8KHz-over-wireless gate in send_depth_monitor_report
+    # Original: CMP r0,#6; IT EQ; POP.EQ — bails if 8KHz and not USB Full Speed
+    # Patched: 4× NOP — allows depth reporting at any polling rate
+    BinaryPatch(0x0801282A, b'\x06\x28\x08\xbf\xbd\xe8\xf0\x81',
+                b'\x00\xbf\x00\xbf\x00\xbf\x00\xbf',
+                "depth monitor: NOP 8KHz gate (CMP+IT+POP → 4×NOP)"),
+    # Depth monitoring: remove BT-only gate in send_depth_monitor_report
+    # Original: CMP r0,#1; IT NE; POP.W NE {r4-r8,pc} — bails if not BT
+    # Patched: 4× NOP — allows depth reporting in all modes (BT, 2.4G, USB)
+    BinaryPatch(0x08012836, b'\x01\x28\x18\xbf\xbd\xe8\xf0\x81',
+                b'\x00\xbf\x00\xbf\x00\xbf\x00\xbf',
+                "depth monitor: NOP BT-only gate (CMP+IT+POP → 4×NOP)"),
 ]
 
 project = PatchProject(
