@@ -167,6 +167,48 @@ an immediate mass erase of the application region.
 keyboard over the 2.4 GHz link and are not processed locally. The dongle caches
 battery level and charging state from incoming RF packets (Feature Report ID 5).
 
+**Dongle-local commands** (handled by the dongle MCU, NOT forwarded to keyboard):
+
+| Command | Code | Description |
+|---------|------|-------------|
+| GET_DONGLE_INFO | 0xF0 | Returns `{0xF0, protocol_ver, max_pkt_size, 0,0,0,0, fw_ver}` |
+| SET_CTRL_BYTE | 0xF6 | Stores a control byte in dongle state |
+| GET_DONGLE_STATUS | 0xF7 | 9-byte status: has_response, battery, charging, rf_ready, pairing_mode/status |
+| ENTER_PAIRING | 0xF8 | RF chip programming mode (requires 55AA55AA magic) |
+| PAIRING_CMD | 0x7A | 3-byte SPI packet dispatch `{cmd=1, data[0], data[1]}` |
+| GET_RF_INFO | 0xFB | RF address (4 bytes) + RF firmware version |
+| GET_CACHED_RESPONSE | 0xFC | Read 64B cached keyboard response, clears has_response flag |
+| GET_DONGLE_ID | 0xFD | Returns `{0xAA, 0x55, 0x01, 0x00}` |
+| SET_RESPONSE_SIZE | 0xFE | One-shot override for next SPI TX packet length |
+| ENTER_BOOTLOADER | 0x7F | Main MCU DFU entry (requires 55AA55AA magic, triggers mass erase) |
+
+**PAN1082 RF firmware update** (via dongle as USB-to-SPI bridge):
+
+The 0xF8 "ENTER_PAIRING" command is misleadingly named. It does NOT pair the
+keyboard to the dongle. It puts the dongle into a **SPI bridge mode** for
+programming the PAN1082 wireless transceiver firmware. The official driver only
+invokes this during `rfUpgrade()`, never for user-facing pairing.
+
+Sequence (from official driver `boot_rf` + `rfUpgrade`):
+
+1. Query 0xF7 — check if RF link is ready (`response[7]==1 && response[8]==1`)
+2. If not ready, send 0xF8 + 55AA55AA → dongle sets `pairing_mode=1`, sends
+   SPI command 2 ("enter programming mode") to PAN1082
+3. Wait 3s, then poll 0xF7 up to 10x until `pairing_mode==1 && pairing_status==1`
+4. Send 0xBA 0xC0 (FW_TRANSFER_START) with chunk count + size
+5. Stream firmware data in 64-byte chunks (starting at PAN1082 offset 0x10000)
+6. Send 0xBA 0xC2 (FW_TRANSFER_COMPLETE) with checksum
+7. Poll 0xF7 until `pairing_mode==0 && pairing_status==0` (PAN1082 rebooted)
+
+While in pairing mode, the dongle only forwards 0x8F, 0xBA 0xC0, 0xBA 0xC2,
+0xBA 0xFF, and 0xF7 via SPI. All other commands are blocked. Normal keyboard
+operation is suspended until pairing mode exits (USB disconnect or transfer
+complete).
+
+The `spi_rf_pairing_handler` in the dongle main loop handles the actual SPI
+data transfer: sends SPI command 4 ("start transfer"), loops SPI TX/RX for up
+to 10 seconds, then sends SPI command 5 ("end transfer") on completion.
+
 ## AT32F405 Flash Memory Map
 
 Applies to both the keyboard (256 KB) and dongle (256 KB). The keyboard uses
