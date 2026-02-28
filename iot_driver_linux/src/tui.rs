@@ -90,6 +90,8 @@ struct App {
     depth_cursor: usize,                      // Cursor for key selection
     max_observed_depth: f32,                  // Max depth observed during session (for bar scaling)
     depth_last_update: Vec<Instant>,          // Last update time per key (for stale detection)
+    // Patch info (custom firmware capabilities)
+    patch_info: Option<PatchInfoData>,
     // Dongle info (for 2.4GHz dongle)
     dongle_info: Option<monsgeek_transport::DongleInfo>,
     rf_info: Option<monsgeek_transport::RfInfo>,
@@ -121,6 +123,8 @@ struct App {
     scroll_state: ScrollViewState,
     // Trigger edit modal
     trigger_edit_modal: Option<TriggerEditModal>,
+    // Device Info tab: tags for each list item (updated during render)
+    info_tags: Vec<InfoTag>,
 }
 
 /// Which color is being edited with hex input
@@ -129,6 +133,53 @@ enum HexColorTarget {
     #[default]
     MainLed,
     SideLed,
+}
+
+/// Tag identifying what each row in the Device Info list controls
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum InfoTag {
+    #[default]
+    ReadOnly,
+    Separator,
+    FirmwareCheck,
+    Profile,
+    Debounce,
+    PollingRate,
+    LedMode,
+    LedBrightness,
+    LedSpeed,
+    LedRed,
+    LedGreen,
+    LedBlue,
+    LedColorHex,
+    LedDazzle,
+    SideMode,
+    SideBrightness,
+    SideSpeed,
+    SideRed,
+    SideGreen,
+    SideBlue,
+    SideColorHex,
+    SideDazzle,
+    FnLayer,
+    WasdSwap,
+    AntiMistouch,
+    RtStability,
+    SleepIdleBt,
+    SleepIdle24g,
+    SleepDeepBt,
+    SleepDeep24g,
+}
+
+/// Parsed patch info for display
+#[derive(Debug, Clone)]
+struct PatchInfoData {
+    /// Patch name (e.g. "MONSMOD")
+    name: String,
+    /// Patch version
+    version: u8,
+    /// Capability names (e.g. ["battery", "led_stream"])
+    capabilities: Vec<&'static str>,
 }
 
 /// Macro slot data
@@ -1041,6 +1092,26 @@ const SPEED_SPINNER: SpinnerConfig = SpinnerConfig {
     unit: "",
 };
 
+/// Spinner config for debounce (0-25, step 1, coarse 5)
+const DEBOUNCE_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 25.0,
+    step: 1.0,
+    step_coarse: 5.0,
+    decimals: 0,
+    unit: "",
+};
+
+/// Spinner config for profile (0-3)
+const PROFILE_SPINNER: SpinnerConfig = SpinnerConfig {
+    min: 0.0,
+    max: 3.0,
+    step: 1.0,
+    step_coarse: 1.0,
+    decimals: 0,
+    unit: "",
+};
+
 /// Spinner config for Fn layer (0-3)
 const FN_LAYER_SPINNER: SpinnerConfig = SpinnerConfig {
     min: 0.0,
@@ -1329,6 +1400,7 @@ struct LoadingStates {
     kb_options_info: LoadState, // fn_layer + wasd_swap for info display
     precision: LoadState,
     sleep_time: LoadState,
+    patch_info: LoadState,
     firmware_check: LoadState, // server firmware version check
     // Other tabs
     triggers: LoadState, // tab 3
@@ -1351,6 +1423,7 @@ enum AsyncResult {
     KbOptions(Result<KbOptions, String>),
     Precision(Result<Precision, String>),
     SleepTime(Result<SleepTimeSettings, String>),
+    PatchInfo(Result<PatchInfoData, String>),
     FirmwareCheck(FirmwareCheckResult),
     // Other tab results
     Triggers(Result<TriggerSettings, String>),
@@ -1375,10 +1448,9 @@ const DEPTH_HISTORY_LEN: usize = 100;
 enum KeyContext {
     Global,   // Available everywhere
     Info,     // Device Info tab (0)
-    Led,      // LED Settings tab (1)
-    Depth,    // Key Depth tab (2)
-    Triggers, // Trigger Settings tab (3)
-    Remaps,   // Remaps tab (5)
+    Depth,    // Key Depth tab (1)
+    Triggers, // Trigger Settings tab (2)
+    Remaps,   // Remaps tab (4)
 }
 
 /// A single keybinding definition
@@ -1458,20 +1530,14 @@ const TUI_KEYBINDS: &[Keybind] = &[
     },
     // Info tab
     Keybind {
-        keys: "u",
-        description: "Check for firmware updates",
-        context: KeyContext::Info,
-    },
-    // LED tab
-    Keybind {
         keys: "p",
-        description: "Apply LED settings",
-        context: KeyContext::Led,
+        description: "Apply per-key LED color",
+        context: KeyContext::Info,
     },
     Keybind {
         keys: "Shift+←/→",
-        description: "Adjust by ±10",
-        context: KeyContext::Led,
+        description: "Coarse adjust (±10 for RGB)",
+        context: KeyContext::Info,
     },
     // Depth tab
     Keybind {
@@ -1626,6 +1692,8 @@ impl App {
             depth_cursor: 0,
             max_observed_depth: 0.1, // Will grow as keys are pressed
             depth_last_update: Vec::new(),
+            // Patch info
+            patch_info: None,
             // Dongle info
             dongle_info: None,
             rf_info: None,
@@ -1656,6 +1724,8 @@ impl App {
             scroll_state: ScrollViewState::new(),
             // Trigger edit modal
             trigger_edit_modal: None,
+            // Device Info list tags
+            info_tags: Vec::new(),
         };
         (app, result_rx)
     }
@@ -1778,6 +1848,7 @@ impl App {
         self.loading.kb_options_info = LoadState::Loading;
         self.loading.precision = LoadState::Loading;
         self.loading.sleep_time = LoadState::Loading;
+        self.loading.patch_info = LoadState::Loading;
 
         // Spawn background tasks for each query
         let tx = self.result_tx.clone();
@@ -1875,6 +1946,61 @@ impl App {
             tokio::spawn(async move {
                 let result = kb.get_sleep_time().map_err(|e| e.to_string());
                 let _ = tx.send(AsyncResult::SleepTime(result));
+            });
+        }
+
+        // Patch info (0xE7)
+        {
+            let kb = keyboard.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                use crate::protocol::patch_info;
+                use monsgeek_transport::ChecksumType;
+
+                let result =
+                    match kb
+                        .transport()
+                        .query_raw(patch_info::CMD, &[], ChecksumType::Bit7)
+                    {
+                        Ok(resp) => {
+                            let offsets = if resp.len() >= 6
+                                && resp[0] == patch_info::MAGIC_HI
+                                && resp[1] == patch_info::MAGIC_LO
+                            {
+                                Some((2, 3, 5))
+                            } else if resp.len() >= 7
+                                && resp[1] == patch_info::MAGIC_HI
+                                && resp[2] == patch_info::MAGIC_LO
+                            {
+                                Some((3, 4, 6))
+                            } else {
+                                None
+                            };
+                            match offsets {
+                                Some((ver_off, caps_off, name_off)) => {
+                                    let version = resp[ver_off];
+                                    let caps =
+                                        u16::from_le_bytes([resp[caps_off], resp[caps_off + 1]]);
+                                    let name_end = resp.len().min(name_off + 9);
+                                    let name_bytes = &resp[name_off..name_end];
+                                    let name_len = name_bytes
+                                        .iter()
+                                        .position(|&b| b == 0)
+                                        .unwrap_or(name_bytes.len());
+                                    let name = String::from_utf8_lossy(&name_bytes[..name_len])
+                                        .to_string();
+                                    Ok(PatchInfoData {
+                                        name,
+                                        version,
+                                        capabilities: patch_info::capability_names(caps),
+                                    })
+                                }
+                                None => Err("stock firmware".to_string()),
+                            }
+                        }
+                        Err(e) => Err(e.to_string()),
+                    };
+                let _ = tx.send(AsyncResult::PatchInfo(result));
             });
         }
     }
@@ -2008,6 +2134,39 @@ impl App {
                 self.info.led_b,
                 self.info.led_dazzle,
             );
+        }
+    }
+
+    fn set_debounce(&mut self, ms: u8) {
+        let ms = ms.min(25);
+        if let Some(ref keyboard) = self.keyboard {
+            if keyboard.set_debounce(ms).is_ok() {
+                self.info.debounce = ms;
+                self.status_msg = format!("Debounce: {ms} ms");
+            } else {
+                self.status_msg = "Failed to set debounce".to_string();
+            }
+        }
+    }
+
+    fn cycle_polling_rate(&mut self, delta: i32) {
+        use crate::protocol::polling_rate;
+        let rates = polling_rate::RATES;
+        let current_idx = rates
+            .iter()
+            .position(|&r| r == self.info.polling_rate)
+            .unwrap_or(3); // default to 1000Hz
+        let new_idx = (current_idx as i32 + delta).clamp(0, rates.len() as i32 - 1) as usize;
+        let new_hz = rates[new_idx];
+        if let Some(rate_enum) = monsgeek_keyboard::PollingRate::from_hz(new_hz) {
+            if let Some(ref keyboard) = self.keyboard {
+                if keyboard.set_polling_rate(rate_enum).is_ok() {
+                    self.info.polling_rate = new_hz;
+                    self.status_msg = format!("Polling rate: {}", polling_rate::name(new_hz));
+                } else {
+                    self.status_msg = "Failed to set polling rate".to_string();
+                }
+            }
         }
     }
 
@@ -2592,6 +2751,13 @@ impl App {
             }
             AsyncResult::SleepTime(Err(_)) => {
                 self.loading.sleep_time = LoadState::Error;
+            }
+            AsyncResult::PatchInfo(Ok(data)) => {
+                self.patch_info = Some(data);
+                self.loading.patch_info = LoadState::Loaded;
+            }
+            AsyncResult::PatchInfo(Err(_)) => {
+                self.loading.patch_info = LoadState::Error;
             }
             AsyncResult::FirmwareCheck(result) => {
                 self.firmware_check = Some(result.clone());
@@ -3188,6 +3354,8 @@ pub async fn run() -> io::Result<()> {
         if !is_idle {
             // Load device info (TUI starts on tab 0) - spawns background tasks
             app.load_device_info();
+            // Also load full options (needed for editable options on tab 0)
+            app.load_options();
         }
     }
 
@@ -3211,7 +3379,7 @@ pub async fn run() -> io::Result<()> {
                     }
 
                     // Handle binding editor focus (replaces old macro modal + remap editor)
-                    if app.tab == 5 && app.remap_focus == RemapFocus::Editor {
+                    if app.tab == 3 && app.remap_focus == RemapFocus::Editor {
                         match key.code {
                             KeyCode::Esc => {
                                 app.remap_focus = RemapFocus::List;
@@ -3377,35 +3545,31 @@ pub async fn run() -> io::Result<()> {
                         }
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Tab => {
-                            app.tab = (app.tab + 1) % 6;
+                            app.tab = (app.tab + 1) % 4;
                             app.selected = 0;
                             app.trigger_scroll = 0;
                             app.scroll_state = ScrollViewState::new();
                             // Auto-load when entering tabs
-                            if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                            if app.tab == 2 && app.loading.triggers == LoadState::NotLoaded {
                                 app.load_triggers();
-                            } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
-                                app.load_options();
-                            } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                            } else if app.tab == 3 && app.loading.remaps == LoadState::NotLoaded {
                                 app.load_remaps();
                             }
                         }
                         KeyCode::BackTab => {
-                            app.tab = if app.tab == 0 { 5 } else { app.tab - 1 };
+                            app.tab = if app.tab == 0 { 3 } else { app.tab - 1 };
                             app.selected = 0;
                             app.trigger_scroll = 0;
                             app.scroll_state = ScrollViewState::new();
                             // Auto-load when entering tabs
-                            if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                            if app.tab == 2 && app.loading.triggers == LoadState::NotLoaded {
                                 app.load_triggers();
-                            } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
-                                app.load_options();
-                            } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                            } else if app.tab == 3 && app.loading.remaps == LoadState::NotLoaded {
                                 app.load_remaps();
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
-                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                            if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
                                 let row_starts = [0, 15, 30, 43, 56];
                                 if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
                                     if row > 0 {
@@ -3415,7 +3579,7 @@ pub async fn run() -> io::Result<()> {
                                         app.depth_cursor = prev_row_start + col.min(prev_row_size - 1);
                                     }
                                 }
-                            } else if app.tab == 3 {
+                            } else if app.tab == 2 {
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_up();
                                 } else {
@@ -3428,7 +3592,7 @@ pub async fn run() -> io::Result<()> {
                                         }
                                     }
                                 }
-                            } else if app.tab == 5 {
+                            } else if app.tab == 3 {
                                 if app.remap_selected > 0 {
                                     app.remap_selected -= 1;
                                     app.sync_binding_editor();
@@ -3438,7 +3602,7 @@ pub async fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                            if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
                                 let row_starts = [0, 15, 30, 43, 56, 66];
                                 if let Some(row) = row_starts.iter().rposition(|&s| s <= app.depth_cursor) {
                                     if row < 4 {
@@ -3448,7 +3612,7 @@ pub async fn run() -> io::Result<()> {
                                         app.depth_cursor = next_row_start + col.min(next_row_size - 1);
                                     }
                                 }
-                            } else if app.tab == 3 {
+                            } else if app.tab == 2 {
                                 if app.trigger_view_mode == TriggerViewMode::Layout {
                                     app.layout_key_down();
                                 } else {
@@ -3465,7 +3629,7 @@ pub async fn run() -> io::Result<()> {
                                         }
                                     }
                                 }
-                            } else if app.tab == 5 {
+                            } else if app.tab == 3 {
                                 let max = app.filtered_remaps().len().saturating_sub(1);
                                 if app.remap_selected < max {
                                     app.remap_selected += 1;
@@ -3476,58 +3640,52 @@ pub async fn run() -> io::Result<()> {
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-                            if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                            if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
-                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                            } else if app.tab == 2 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_left();
-                            } else if app.tab == 1 {
+                            } else if app.tab == 0 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
-                                match app.selected {
-                                    0 => app.set_led_mode(app.info.led_mode.saturating_sub(1)),
-                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)),
-                                    2 => {
+                                match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
+                                    InfoTag::Profile => app.set_profile(PROFILE_SPINNER.decrement_u8(app.info.profile, coarse)),
+                                    InfoTag::Debounce => app.set_debounce(DEBOUNCE_SPINNER.decrement_u8(app.info.debounce, coarse)),
+                                    InfoTag::PollingRate => app.cycle_polling_rate(1), // higher index = lower rate
+                                    InfoTag::LedMode => app.set_led_mode(app.info.led_mode.saturating_sub(1)),
+                                    InfoTag::LedBrightness => app.set_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.led_brightness, coarse)),
+                                    InfoTag::LedSpeed => {
                                         let current = speed_to_wire(app.info.led_speed);
                                         app.set_speed(SPEED_SPINNER.decrement_u8(current, coarse));
                                     }
-                                    3 => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
-                                    4 => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
-                                    5 => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
-                                    7 => app.toggle_dazzle(),
-                                    // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight => app.set_side_mode(app.info.side_mode.saturating_sub(1)),
-                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)),
-                                    11 if app.has_sidelight => {
+                                    InfoTag::LedRed => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
+                                    InfoTag::LedGreen => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
+                                    InfoTag::LedBlue => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
+                                    InfoTag::LedDazzle => app.toggle_dazzle(),
+                                    InfoTag::SideMode => app.set_side_mode(app.info.side_mode.saturating_sub(1)),
+                                    InfoTag::SideBrightness => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)),
+                                    InfoTag::SideSpeed => {
                                         let current = speed_to_wire(app.info.side_speed);
                                         app.set_side_speed(SPEED_SPINNER.decrement_u8(current, coarse));
                                     }
-                                    12 if app.has_sidelight => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
-                                    13 if app.has_sidelight => { let g = RGB_SPINNER.decrement_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
-                                    14 if app.has_sidelight => { let b = RGB_SPINNER.decrement_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
-                                    16 if app.has_sidelight => app.toggle_side_dazzle(),
+                                    InfoTag::SideRed => { let r = RGB_SPINNER.decrement_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
+                                    InfoTag::SideGreen => { let g = RGB_SPINNER.decrement_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
+                                    InfoTag::SideBlue => { let b = RGB_SPINNER.decrement_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
+                                    InfoTag::SideDazzle => app.toggle_side_dazzle(),
+                                    InfoTag::FnLayer => { if let Some(ref opts) = app.options.clone() { app.set_fn_layer(FN_LAYER_SPINNER.decrement_u8(opts.fn_layer, coarse)); } }
+                                    InfoTag::WasdSwap => app.toggle_wasd_swap(),
+                                    InfoTag::AntiMistouch => app.toggle_anti_mistouch(),
+                                    InfoTag::RtStability => { if let Some(ref opts) = app.options.clone() { app.set_rt_stability(RT_STABILITY_SPINNER.decrement_u8(opts.rt_stability, coarse)); } }
+                                    InfoTag::SleepIdleBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, -step); }
+                                    InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step); }
+                                    InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step); }
+                                    InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
                                     _ => {}
-                                }
-                            } else if app.tab == 4 {
-                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
-                                if let Some(ref opts) = app.options.clone() {
-                                    match app.selected {
-                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.decrement_u8(opts.fn_layer, coarse)),
-                                        1 => app.toggle_wasd_swap(),
-                                        2 => app.toggle_anti_mistouch(),
-                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.decrement_u8(opts.rt_stability, coarse)),
-                                        // Sleep time sliders
-                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, -step); }
-                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step); }
-                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step); }
-                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
-                                        _ => {}
-                                    }
                                 }
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-                            if app.tab == 5 {
+                            if app.tab == 3 {
                                 // Enter editor from list
                                 let filtered = app.filtered_remaps();
                                 if !filtered.is_empty() {
@@ -3546,54 +3704,48 @@ pub async fn run() -> io::Result<()> {
                                         );
                                     }
                                 }
-                            } else if app.tab == 2 && app.depth_view_mode == DepthViewMode::BarChart {
+                            } else if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
                                 let max_key = app.key_depths.len().min(66).saturating_sub(1);
                                 if app.depth_cursor < max_key {
                                     app.depth_cursor += 1;
                                 }
-                            } else if app.tab == 3 && app.trigger_view_mode == TriggerViewMode::Layout {
+                            } else if app.tab == 2 && app.trigger_view_mode == TriggerViewMode::Layout {
                                 app.layout_key_right();
-                            } else if app.tab == 1 {
+                            } else if app.tab == 0 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
-                                match app.selected {
-                                    0 => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)),
-                                    1 => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)),
-                                    2 => {
+                                match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
+                                    InfoTag::Profile => app.set_profile(PROFILE_SPINNER.increment_u8(app.info.profile, coarse)),
+                                    InfoTag::Debounce => app.set_debounce(DEBOUNCE_SPINNER.increment_u8(app.info.debounce, coarse)),
+                                    InfoTag::PollingRate => app.cycle_polling_rate(-1), // lower index = higher rate
+                                    InfoTag::LedMode => app.set_led_mode((app.info.led_mode + 1).min(cmd::LED_MODE_MAX)),
+                                    InfoTag::LedBrightness => app.set_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.led_brightness, coarse)),
+                                    InfoTag::LedSpeed => {
                                         let current = speed_to_wire(app.info.led_speed);
                                         app.set_speed(SPEED_SPINNER.increment_u8(current, coarse));
                                     }
-                                    3 => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
-                                    4 => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
-                                    5 => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
-                                    7 => app.toggle_dazzle(),
-                                    // Side LED controls (only if device has sidelight)
-                                    9 if app.has_sidelight => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)),
-                                    10 if app.has_sidelight => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)),
-                                    11 if app.has_sidelight => {
+                                    InfoTag::LedRed => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
+                                    InfoTag::LedGreen => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
+                                    InfoTag::LedBlue => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
+                                    InfoTag::LedDazzle => app.toggle_dazzle(),
+                                    InfoTag::SideMode => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)),
+                                    InfoTag::SideBrightness => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)),
+                                    InfoTag::SideSpeed => {
                                         let current = speed_to_wire(app.info.side_speed);
                                         app.set_side_speed(SPEED_SPINNER.increment_u8(current, coarse));
                                     }
-                                    12 if app.has_sidelight => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
-                                    13 if app.has_sidelight => { let g = RGB_SPINNER.increment_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
-                                    14 if app.has_sidelight => { let b = RGB_SPINNER.increment_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
-                                    16 if app.has_sidelight => app.toggle_side_dazzle(),
+                                    InfoTag::SideRed => { let r = RGB_SPINNER.increment_u8(app.info.side_r, coarse); app.set_side_color(r, app.info.side_g, app.info.side_b); }
+                                    InfoTag::SideGreen => { let g = RGB_SPINNER.increment_u8(app.info.side_g, coarse); app.set_side_color(app.info.side_r, g, app.info.side_b); }
+                                    InfoTag::SideBlue => { let b = RGB_SPINNER.increment_u8(app.info.side_b, coarse); app.set_side_color(app.info.side_r, app.info.side_g, b); }
+                                    InfoTag::SideDazzle => app.toggle_side_dazzle(),
+                                    InfoTag::FnLayer => { if let Some(ref opts) = app.options.clone() { app.set_fn_layer(FN_LAYER_SPINNER.increment_u8(opts.fn_layer, coarse)); } }
+                                    InfoTag::WasdSwap => app.toggle_wasd_swap(),
+                                    InfoTag::AntiMistouch => app.toggle_anti_mistouch(),
+                                    InfoTag::RtStability => { if let Some(ref opts) = app.options.clone() { app.set_rt_stability(RT_STABILITY_SPINNER.increment_u8(opts.rt_stability, coarse)); } }
+                                    InfoTag::SleepIdleBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, step); }
+                                    InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step); }
+                                    InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step); }
+                                    InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
                                     _ => {}
-                                }
-                            } else if app.tab == 4 {
-                                let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
-                                if let Some(ref opts) = app.options.clone() {
-                                    match app.selected {
-                                        0 => app.set_fn_layer(FN_LAYER_SPINNER.increment_u8(opts.fn_layer, coarse)),
-                                        1 => app.toggle_wasd_swap(),
-                                        2 => app.toggle_anti_mistouch(),
-                                        3 => app.set_rt_stability(RT_STABILITY_SPINNER.increment_u8(opts.rt_stability, coarse)),
-                                        // Sleep time sliders
-                                        4 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::IdleBt, step); }
-                                        5 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step); }
-                                        6 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step); }
-                                        7 => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
-                                        _ => {}
-                                    }
                                 }
                             }
                         }
@@ -3608,35 +3760,46 @@ pub async fn run() -> io::Result<()> {
                             } else {
                                 app.status_msg = "Refreshing...".to_string();
                                 app.load_device_info();
-                                if app.tab == 3 { app.load_triggers(); }
-                                else if app.tab == 4 { app.load_options(); }
-                                else if app.tab == 5 { app.load_remaps(); }
+                                app.load_options(); // Options are on tab 0
+                                if app.tab == 2 { app.load_triggers(); }
+                                else if app.tab == 3 { app.load_remaps(); }
                             }
                         }
-                        KeyCode::Char('u') if app.tab == 0 => {
-                            app.check_firmware();
-                        }
-                        KeyCode::Enter if app.tab == 1 => {
-                            if app.selected == 6 {
-                                app.start_hex_input(HexColorTarget::MainLed);
-                            } else if app.selected == 15 && app.has_sidelight {
-                                app.start_hex_input(HexColorTarget::SideLed);
+                        KeyCode::Enter if app.tab == 0 => {
+                            match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
+                                InfoTag::FirmwareCheck => app.check_firmware(),
+                                InfoTag::LedColorHex => app.start_hex_input(HexColorTarget::MainLed),
+                                InfoTag::SideColorHex => app.start_hex_input(HexColorTarget::SideLed),
+                                _ => {}
                             }
                         }
-                        KeyCode::Char('#') if app.tab == 1 => {
-                            if app.selected >= 3 && app.selected <= 6 {
-                                app.start_hex_input(HexColorTarget::MainLed);
-                            } else if app.has_sidelight && app.selected >= 12 && app.selected <= 15 {
-                                app.start_hex_input(HexColorTarget::SideLed);
+                        KeyCode::Char('#') if app.tab == 0 => {
+                            match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
+                                InfoTag::LedRed | InfoTag::LedGreen | InfoTag::LedBlue | InfoTag::LedColorHex => {
+                                    app.start_hex_input(HexColorTarget::MainLed);
+                                }
+                                InfoTag::SideRed | InfoTag::SideGreen | InfoTag::SideBlue | InfoTag::SideColorHex => {
+                                    app.start_hex_input(HexColorTarget::SideLed);
+                                }
+                                _ => {}
                             }
                         }
-                        KeyCode::Char(c) if app.tab == 1 && (app.selected == 6 || (app.selected == 15 && app.has_sidelight)) && c.is_ascii_hexdigit() => {
-                            let target = if app.selected == 6 { HexColorTarget::MainLed } else { HexColorTarget::SideLed };
-                            app.start_hex_input(target);
-                            app.hex_input.clear();
-                            app.hex_input.push(c.to_ascii_uppercase());
+                        KeyCode::Char(c) if app.tab == 0 && c.is_ascii_hexdigit() => {
+                            match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
+                                InfoTag::LedColorHex => {
+                                    app.start_hex_input(HexColorTarget::MainLed);
+                                    app.hex_input.clear();
+                                    app.hex_input.push(c.to_ascii_uppercase());
+                                }
+                                InfoTag::SideColorHex => {
+                                    app.start_hex_input(HexColorTarget::SideLed);
+                                    app.hex_input.clear();
+                                    app.hex_input.push(c.to_ascii_uppercase());
+                                }
+                                _ => {}
+                            }
                         }
-                        KeyCode::Enter if app.tab == 5 => {
+                        KeyCode::Enter if app.tab == 3 => {
                             // Enter editor from list
                             let filtered = app.filtered_remaps();
                             if !filtered.is_empty() {
@@ -3656,14 +3819,14 @@ pub async fn run() -> io::Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char('d') if app.tab == 5 => {
+                        KeyCode::Char('d') if app.tab == 3 => {
                             let filtered = app.filtered_remaps();
                             if let Some(&remap_idx) = filtered.get(app.remap_selected) {
                                 let remap = &app.remaps[remap_idx];
                                 app.reset_remap(remap.index, remap.layer);
                             }
                         }
-                        KeyCode::Char('f') if app.tab == 5 => {
+                        KeyCode::Char('f') if app.tab == 3 => {
                             app.remap_layer_view = app.remap_layer_view.cycle();
                             app.remap_selected = 0;
                             app.sync_binding_editor();
@@ -3691,43 +3854,43 @@ pub async fn run() -> io::Result<()> {
                         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(2),
                         KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(3),
                         KeyCode::PageUp => {
-                            if app.tab == 3 {
+                            if app.tab == 2 {
                                 app.trigger_scroll = app.trigger_scroll.saturating_sub(15);
                             }
                         }
                         KeyCode::PageDown => {
-                            if app.tab == 3 {
+                            if app.tab == 2 {
                                 let max_scroll = app.triggers.as_ref()
                                     .map(|t| t.key_modes.len().saturating_sub(15))
                                     .unwrap_or(0);
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
                             }
                         }
-                        KeyCode::Char('n') if app.tab == 3 => app.set_key_mode(magnetism::MODE_NORMAL),
-                        KeyCode::Char('N') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_NORMAL),
-                        KeyCode::Char('t') if app.tab == 3 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER),
-                        KeyCode::Char('T') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER),
-                        KeyCode::Char('d') if app.tab == 3 => app.set_key_mode(magnetism::MODE_DKS),
-                        KeyCode::Char('D') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_DKS),
-                        KeyCode::Char('s') if app.tab == 3 => app.set_key_mode(magnetism::MODE_SNAPTAP),
-                        KeyCode::Char('S') if app.tab == 3 => app.set_all_key_modes(magnetism::MODE_SNAPTAP),
-                        KeyCode::Char('p') if app.tab == 1 => app.apply_per_key_color(),
-                        KeyCode::Char('v') if app.tab == 2 => app.toggle_depth_view(),
-                        KeyCode::Char('v') if app.tab == 3 => app.toggle_trigger_view(),
-                        KeyCode::Enter if app.tab == 3 => {
+                        KeyCode::Char('n') if app.tab == 2 => app.set_key_mode(magnetism::MODE_NORMAL),
+                        KeyCode::Char('N') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_NORMAL),
+                        KeyCode::Char('t') if app.tab == 2 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER),
+                        KeyCode::Char('T') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER),
+                        KeyCode::Char('d') if app.tab == 2 => app.set_key_mode(magnetism::MODE_DKS),
+                        KeyCode::Char('D') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_DKS),
+                        KeyCode::Char('s') if app.tab == 2 => app.set_key_mode(magnetism::MODE_SNAPTAP),
+                        KeyCode::Char('S') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_SNAPTAP),
+                        KeyCode::Char('p') if app.tab == 0 => app.apply_per_key_color(),
+                        KeyCode::Char('v') if app.tab == 1 => app.toggle_depth_view(),
+                        KeyCode::Char('v') if app.tab == 2 => app.toggle_trigger_view(),
+                        KeyCode::Enter if app.tab == 2 => {
                             // Open trigger edit modal for selected key (both views)
                             app.open_trigger_edit_key(app.trigger_selected_key);
                         }
-                        KeyCode::Char('e') if app.tab == 3 => {
+                        KeyCode::Char('e') if app.tab == 2 => {
                             // 'e' also opens edit modal for selected key
                             app.open_trigger_edit_key(app.trigger_selected_key);
                         }
-                        KeyCode::Char('g') if app.tab == 3 => {
+                        KeyCode::Char('g') if app.tab == 2 => {
                             // 'g' opens global edit modal
                             app.open_trigger_edit_global();
                         }
-                        KeyCode::Char('x') if app.tab == 2 => app.clear_depth_data(),
-                        KeyCode::Char(' ') if app.tab == 2 => {
+                        KeyCode::Char('x') if app.tab == 1 => app.clear_depth_data(),
+                        KeyCode::Char(' ') if app.tab == 1 => {
                             if app.depth_view_mode == DepthViewMode::BarChart {
                                 app.toggle_key_selection(app.depth_cursor);
                                 let label = get_key_label(app.depth_cursor);
@@ -3752,7 +3915,7 @@ pub async fn run() -> io::Result<()> {
                         if tab_bar.contains(pos) {
                             // Calculate which tab was clicked
                             // Tabs render with border (1 char), then " Tab1 │ Tab2 │ ..."
-                            let tab_names = ["Device Info", "LED Settings", "Key Depth", "Triggers", "Options", "Remaps"];
+                            let tab_names = ["Device Info", "Key Depth", "Triggers", "Remaps"];
                             let inner_x = mouse.column.saturating_sub(tab_bar.x + 1); // Account for border
                             let mut tab_pos = 1u16; // Initial padding
                             for (i, name) in tab_names.iter().enumerate() {
@@ -3764,11 +3927,9 @@ pub async fn run() -> io::Result<()> {
                                     app.trigger_scroll = 0;
                                     app.scroll_state = ScrollViewState::new();
                                     // Auto-load when entering tabs
-                                    if app.tab == 3 && app.loading.triggers == LoadState::NotLoaded {
+                                    if app.tab == 2 && app.loading.triggers == LoadState::NotLoaded {
                                         app.load_triggers();
-                                    } else if app.tab == 4 && app.loading.options == LoadState::NotLoaded {
-                                        app.load_options();
-                                    } else if app.tab == 5 && app.loading.remaps == LoadState::NotLoaded {
+                                    } else if app.tab == 3 && app.loading.remaps == LoadState::NotLoaded {
                                         app.load_remaps();
                                     }
                                     if old_tab != app.tab {
@@ -3785,19 +3946,13 @@ pub async fn run() -> io::Result<()> {
                             // Row within content area (accounting for any border)
                             let content_row = (mouse.row.saturating_sub(content.y + 1)) as usize;
                             match app.tab {
-                                1 => {
-                                    // LED Settings - items in the list
-                                    if content_row < 17 {
+                                0 => {
+                                    // Device Info - items in the list
+                                    if content_row < app.info_tags.len() {
                                         app.selected = content_row;
                                     }
                                 }
-                                4 => {
-                                    // Options tab - 5 items (0-4)
-                                    if content_row < 5 {
-                                        app.selected = content_row;
-                                    }
-                                }
-                                5 => {
+                                3 => {
                                     // Remaps tab - select remap entry
                                     let filtered = app.filtered_remaps();
                                     if content_row < filtered.len() {
@@ -3961,26 +4116,19 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(title, chunks[0]);
 
     // Tabs
-    let tabs = Tabs::new(vec![
-        "Device Info",
-        "LED Settings",
-        "Key Depth",
-        "Triggers",
-        "Options",
-        "Remaps",
-    ])
-    .select(app.tab)
-    .style(Style::default().fg(Color::White))
-    .highlight_style(
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Tabs [Tab/Shift+Tab]"),
-    );
+    let tabs = Tabs::new(vec!["Device Info", "Key Depth", "Triggers", "Remaps"])
+        .select(app.tab)
+        .style(Style::default().fg(Color::White))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Tabs [Tab/Shift+Tab]"),
+        );
     f.render_widget(tabs, chunks[1]);
 
     // Store areas for mouse hit testing (using interior mutability)
@@ -3990,11 +4138,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Content based on tab
     match app.tab {
         0 => render_device_info(f, app, chunks[2]),
-        1 => render_led_settings(f, app, chunks[2]),
-        2 => render_depth_monitor(f, app, chunks[2]),
-        3 => render_trigger_settings(f, app, chunks[2]),
-        4 => render_options(f, app, chunks[2]),
-        5 => render_remaps(f, app, chunks[2]),
+        1 => render_depth_monitor(f, app, chunks[2]),
+        2 => render_trigger_settings(f, app, chunks[2]),
+        3 => render_remaps(f, app, chunks[2]),
         _ => {}
     }
 
@@ -4111,7 +4257,6 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
             let section_name = match current_context {
                 KeyContext::Global => "Global",
                 KeyContext::Info => "Info Tab",
-                KeyContext::Led => "LED Tab",
                 KeyContext::Depth => "Depth Tab",
                 KeyContext::Triggers => "Triggers Tab",
                 KeyContext::Remaps => "Remaps Tab",
@@ -4470,9 +4615,27 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
         }
     };
 
-    let mut text = vec![
-        // Device name and key count are from device definition, not async loaded
-        Line::from(vec![
+    // Helper to create editable value span with < > spinners
+    let editable_span = |state: LoadState, value: String, color: Color| -> Span<'static> {
+        match state {
+            LoadState::Loaded => Span::styled(format!("< {value} >"), Style::default().fg(color)),
+            _ => value_span(state, value, color),
+        }
+    };
+
+    // Helper to create RGB bar visualization
+    let rgb_bar = |val: u8| -> String {
+        let bars = (val as usize * 16 / 255).min(16);
+        format!("{:3} {}", val, "█".repeat(bars))
+    };
+
+    // Build items with tags
+    let mut items: Vec<(InfoTag, ListItem)> = Vec::new();
+
+    // Read-only device info
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
             Span::raw("Device:         "),
             Span::styled(
                 app.device_name.clone(),
@@ -4480,37 +4643,76 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-        ]),
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
             Span::raw("Key Count:      "),
             Span::styled(
                 format!("{}", app.key_count),
                 Style::default().fg(Color::Green),
             ),
-        ]),
-        // USB version info (device_id + version)
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
             Span::raw("Device ID:      "),
             value_span(
                 loading.usb_version,
                 format!("{} (0x{:04X})", info.device_id, info.device_id),
                 Color::Yellow,
             ),
-        ]),
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
             Span::raw("Firmware:       "),
             value_span(
                 loading.usb_version,
                 format!("v{:X}", info.version),
                 Color::Yellow,
             ),
-        ]),
-        // Firmware update check
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
+            Span::raw("Patch:          "),
+            match loading.patch_info {
+                LoadState::NotLoaded | LoadState::Loading => {
+                    Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow))
+                }
+                LoadState::Loaded => {
+                    if let Some(ref pi) = app.patch_info {
+                        let caps = if pi.capabilities.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", pi.capabilities.join(", "))
+                        };
+                        Span::styled(
+                            format!("{} v{}{}", pi.name, pi.version, caps),
+                            Style::default().fg(Color::LightCyan),
+                        )
+                    } else {
+                        Span::styled("None".to_string(), Style::default().fg(Color::DarkGray))
+                    }
+                }
+                LoadState::Error => {
+                    Span::styled("None".to_string(), Style::default().fg(Color::DarkGray))
+                }
+            },
+        ])),
+    ));
+    items.push((
+        InfoTag::FirmwareCheck,
+        ListItem::new(Line::from(vec![
             Span::raw("Update:         "),
             match loading.firmware_check {
                 LoadState::NotLoaded => Span::styled(
-                    "[u] Check".to_string(),
+                    "[Enter] Check".to_string(),
                     Style::default().fg(Color::DarkGray),
                 ),
                 LoadState::Loading => {
@@ -4530,29 +4732,46 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 LoadState::Error => Span::styled("!".to_string(), Style::default().fg(Color::Red)),
             },
-        ]),
-        // Profile
-        Line::from(vec![
+        ])),
+    ));
+
+    // Settings separator
+    items.push((
+        InfoTag::Separator,
+        ListItem::new(Line::from(Span::styled(
+            "─── Settings ───",
+            Style::default().fg(Color::DarkGray),
+        ))),
+    ));
+
+    // Editable settings
+    items.push((
+        InfoTag::Profile,
+        ListItem::new(Line::from(vec![
             Span::raw("Profile:        "),
-            value_span(
+            editable_span(
                 loading.profile,
                 format!("{} (1-4)", info.profile + 1),
                 Color::Cyan,
             ),
-        ]),
-        // Debounce
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::Debounce,
+        ListItem::new(Line::from(vec![
             Span::raw("Debounce:       "),
-            value_span(
+            editable_span(
                 loading.debounce,
                 format!("{} ms", info.debounce),
                 Color::Cyan,
             ),
-        ]),
-        // Polling rate
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::PollingRate,
+        ListItem::new(Line::from(vec![
             Span::raw("Polling Rate:   "),
-            value_span(
+            editable_span(
                 loading.polling_rate,
                 if info.polling_rate > 0 {
                     crate::protocol::polling_rate::name(info.polling_rate)
@@ -4561,224 +4780,247 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                 },
                 Color::Cyan,
             ),
-        ]),
-        // KB options (fn_layer, wasd_swap)
-        Line::from(vec![
-            Span::raw("Fn Layer:       "),
-            value_span(
-                loading.kb_options_info,
-                format!("{}", info.fn_layer),
-                Color::Cyan,
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("WASD Swap:      "),
-            value_span(
-                loading.kb_options_info,
-                if info.wasd_swap { "Yes" } else { "No" }.to_string(),
-                Color::Cyan,
-            ),
-        ]),
-        // Precision
-        Line::from(vec![
+        ])),
+    ));
+    items.push((
+        InfoTag::ReadOnly,
+        ListItem::new(Line::from(vec![
             Span::raw("Precision:      "),
             value_span(
                 loading.precision,
                 app.precision.as_str().to_string(),
                 Color::Green,
             ),
-        ]),
-        // Sleep time
-        Line::from(vec![
-            Span::raw("Sleep:          "),
-            value_span(
-                loading.sleep_time,
-                format!(
-                    "{} sec ({} min)",
-                    info.sleep_seconds,
-                    info.sleep_seconds / 60
-                ),
-                Color::Cyan,
-            ),
-        ]),
-    ];
+        ])),
+    ));
 
-    // Dongle info section (only shown when connected via dongle)
-    if app.is_wireless {
-        if let Some(ref di) = app.dongle_info {
-            text.push(Line::from(""));
-            text.push(Line::from(Span::styled(
-                "Dongle",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            text.push(Line::from(vec![
-                Span::raw("Dongle FW:      "),
+    // Options section (fn layer, wasd, anti-mistouch, RT stability, sleep times, OS mode)
+    if let Some(ref opts) = app.options {
+        items.push((
+            InfoTag::FnLayer,
+            ListItem::new(Line::from(vec![
+                Span::raw("Fn Layer:       "),
                 Span::styled(
-                    format!("v{}", di.firmware_version),
-                    Style::default().fg(Color::Yellow),
+                    format!("< {} >", opts.fn_layer),
+                    Style::default().fg(Color::Cyan),
                 ),
-            ]));
-        }
-        if let Some(ref rf) = app.rf_info {
-            text.push(Line::from(vec![
-                Span::raw("RF Address:     "),
+            ])),
+        ));
+        items.push((
+            InfoTag::WasdSwap,
+            ListItem::new(Line::from(vec![
+                Span::raw("WASD Swap:      "),
                 Span::styled(
-                    format!(
-                        "{:02X}:{:02X}:{:02X}:{:02X}",
-                        rf.rf_address[0], rf.rf_address[1], rf.rf_address[2], rf.rf_address[3]
-                    ),
-                    Style::default().fg(Color::Yellow),
+                    if opts.wasd_swap { "< ON >" } else { "< OFF >" },
+                    Style::default().fg(if opts.wasd_swap {
+                        Color::Green
+                    } else {
+                        Color::Gray
+                    }),
                 ),
-            ]));
-            text.push(Line::from(vec![
-                Span::raw("RF FW Version:  "),
+            ])),
+        ));
+        items.push((
+            InfoTag::AntiMistouch,
+            ListItem::new(Line::from(vec![
+                Span::raw("Anti-Mistouch:  "),
                 Span::styled(
-                    format!(
-                        "v{}.{}",
-                        rf.firmware_version_major, rf.firmware_version_minor
-                    ),
-                    Style::default().fg(Color::Yellow),
+                    if opts.anti_mistouch {
+                        "< ON >"
+                    } else {
+                        "< OFF >"
+                    },
+                    Style::default().fg(if opts.anti_mistouch {
+                        Color::Green
+                    } else {
+                        Color::Gray
+                    }),
                 ),
-            ]));
-        }
+            ])),
+        ));
+        items.push((
+            InfoTag::RtStability,
+            ListItem::new(Line::from(vec![
+                Span::raw("RT Stability:   "),
+                Span::styled(
+                    format!("< {}ms >", opts.rt_stability),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SleepIdleBt,
+            ListItem::new(Line::from(vec![
+                Span::raw("BT Idle:        "),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_bt)),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SleepIdle24g,
+            ListItem::new(Line::from(vec![
+                Span::raw("2.4G Idle:      "),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_24g)),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SleepDeepBt,
+            ListItem::new(Line::from(vec![
+                Span::raw("BT Deep Sleep:  "),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_bt)),
+                    Style::default().fg(Color::Green),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SleepDeep24g,
+            ListItem::new(Line::from(vec![
+                Span::raw("2.4G Deep Sleep:"),
+                Span::styled(
+                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_24g)),
+                    Style::default().fg(Color::Green),
+                ),
+            ])),
+        ));
+        let os_mode_str = match opts.os_mode {
+            0 => "Windows",
+            1 => "macOS",
+            2 => "Linux",
+            _ => "Unknown",
+        };
+        items.push((
+            InfoTag::ReadOnly,
+            ListItem::new(Line::from(vec![
+                Span::raw("OS Mode:        "),
+                Span::styled(os_mode_str, Style::default().fg(Color::Magenta)),
+            ])),
+        ));
+    } else if loading.options == LoadState::Loading {
+        items.push((
+            InfoTag::ReadOnly,
+            ListItem::new(Line::from(vec![
+                Span::raw("Options:        "),
+                Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow)),
+            ])),
+        ));
+    } else if loading.options == LoadState::Error {
+        items.push((
+            InfoTag::ReadOnly,
+            ListItem::new(Line::from(vec![
+                Span::raw("Options:        "),
+                Span::styled("!", Style::default().fg(Color::Red)),
+            ])),
+        ));
     }
 
-    text.push(Line::from(""));
-    // LED params
-    text.push(Line::from(vec![
-        Span::raw("LED Mode:       "),
-        value_span(
-            loading.led_params,
-            format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
-            Color::Magenta,
-        ),
-    ]));
-    text.push(Line::from(vec![
-        Span::raw("LED Color:      "),
-        if loading.led_params == LoadState::Loaded {
-            Span::styled(
-                format!(
-                    "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
-                    info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
-                ),
-                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
-            )
-        } else {
-            value_span(loading.led_params, String::new(), Color::Magenta)
-        },
-    ]));
-    text.push(Line::from(vec![
-        Span::raw("Brightness:     "),
-        value_span(
-            loading.led_params,
-            format!("{}/4", info.led_brightness),
-            Color::Magenta,
-        ),
-    ]));
-    text.push(Line::from(vec![
-        Span::raw("Speed:          "),
-        value_span(
-            loading.led_params,
-            format!("{}/4", speed_to_wire(info.led_speed)),
-            Color::Magenta,
-        ),
-    ]));
+    // LED separator
+    items.push((
+        InfoTag::Separator,
+        ListItem::new(Line::from(Span::styled(
+            "─── LED ───",
+            Style::default().fg(Color::DarkGray),
+        ))),
+    ));
 
-    // Render the block border first
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Device Information [r to refresh]");
-    let inner_area = block.inner(area);
-    f.render_widget(block, area);
-
-    // Create paragraph without block (rendered separately)
-    let content_height = text.len() as u16;
-    let para = Paragraph::new(text);
-
-    // Use ScrollView for narrow terminals
-    let content_size = Size::new(inner_area.width, content_height);
-    let mut scroll_view =
-        ScrollView::new(content_size).horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
-    scroll_view.render_widget(para, Rect::new(0, 0, inner_area.width, content_height));
-    f.render_stateful_widget(scroll_view, inner_area, &mut app.scroll_state);
-}
-
-fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
-    let info = &app.info;
-    let speed = speed_to_wire(info.led_speed);
-
-    // Helper to create RGB bar visualization
-    let rgb_bar = |val: u8| -> String {
-        let bars = (val as usize * 16 / 255).min(16);
-        format!("{:3} {}", val, "█".repeat(bars))
-    };
-
-    // Build main LED settings items
-    let mut items: Vec<ListItem> = vec![
+    // LED settings (editable)
+    items.push((
+        InfoTag::LedMode,
         ListItem::new(Line::from(vec![
-            Span::raw("Mode:       "),
-            Span::styled(
-                format!(
-                    "< {} ({}) >",
-                    info.led_mode,
-                    cmd::led_mode_name(info.led_mode)
-                ),
-                Style::default().fg(Color::Yellow),
+            Span::raw("Mode:           "),
+            editable_span(
+                loading.led_params,
+                format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
+                Color::Yellow,
             ),
         ])),
+    ));
+    items.push((
+        InfoTag::LedBrightness,
         ListItem::new(Line::from(vec![
-            Span::raw("Brightness: "),
-            Span::styled(
+            Span::raw("Brightness:     "),
+            editable_span(
+                loading.led_params,
                 format!(
-                    "< {}/4 >  {}",
+                    "{}/4  {}",
                     info.led_brightness,
                     "█".repeat(info.led_brightness as usize)
                 ),
-                Style::default().fg(Color::Yellow),
+                Color::Yellow,
             ),
         ])),
+    ));
+    let speed = speed_to_wire(info.led_speed);
+    items.push((
+        InfoTag::LedSpeed,
         ListItem::new(Line::from(vec![
-            Span::raw("Speed:      "),
-            Span::styled(
-                format!("< {}/4 >  {}", speed, "█".repeat(speed as usize)),
-                Style::default().fg(Color::Yellow),
+            Span::raw("Speed:          "),
+            editable_span(
+                loading.led_params,
+                format!("{}/4  {}", speed, "█".repeat(speed as usize)),
+                Color::Yellow,
             ),
         ])),
+    ));
+    items.push((
+        InfoTag::LedRed,
         ListItem::new(Line::from(vec![
-            Span::raw("Red:        "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.led_r)),
-                Style::default().fg(Color::Red),
-            ),
+            Span::raw("Red:            "),
+            if loading.led_params == LoadState::Loaded {
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.led_r)),
+                    Style::default().fg(Color::Red),
+                )
+            } else {
+                value_span(loading.led_params, String::new(), Color::Red)
+            },
         ])),
+    ));
+    items.push((
+        InfoTag::LedGreen,
         ListItem::new(Line::from(vec![
-            Span::raw("Green:      "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.led_g)),
-                Style::default().fg(Color::Green),
-            ),
+            Span::raw("Green:          "),
+            if loading.led_params == LoadState::Loaded {
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.led_g)),
+                    Style::default().fg(Color::Green),
+                )
+            } else {
+                value_span(loading.led_params, String::new(), Color::Green)
+            },
         ])),
+    ));
+    items.push((
+        InfoTag::LedBlue,
         ListItem::new(Line::from(vec![
-            Span::raw("Blue:       "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.led_b)),
-                Style::default().fg(Color::Blue),
-            ),
+            Span::raw("Blue:           "),
+            if loading.led_params == LoadState::Loaded {
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.led_b)),
+                    Style::default().fg(Color::Blue),
+                )
+            } else {
+                value_span(loading.led_params, String::new(), Color::Blue)
+            },
         ])),
+    ));
+    items.push((
+        InfoTag::LedColorHex,
         ListItem::new(Line::from(vec![
-            Span::raw("Color:      "),
+            Span::raw("Color:          "),
             if app.hex_editing && app.hex_target == HexColorTarget::MainLed {
-                // Show editable textbox
                 Span::styled(
                     format!("████████ [#{}_]", app.hex_input),
                     Style::default()
                         .fg(Color::Rgb(info.led_r, info.led_g, info.led_b))
                         .add_modifier(Modifier::BOLD),
                 )
-            } else {
-                // Show static preview
+            } else if loading.led_params == LoadState::Loaded {
                 Span::styled(
                     format!(
                         "████████ [#{:02X}{:02X}{:02X}]",
@@ -4786,11 +5028,16 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                     ),
                     Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
                 )
+            } else {
+                value_span(loading.led_params, String::new(), Color::Magenta)
             },
             Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
         ])),
+    ));
+    items.push((
+        InfoTag::LedDazzle,
         ListItem::new(Line::from(vec![
-            Span::raw("Dazzle:     "),
+            Span::raw("Dazzle:         "),
             Span::styled(
                 if info.led_dazzle {
                     "< ON (rainbow) >"
@@ -4804,112 +5051,193 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
                 }),
             ),
         ])),
-    ];
+    ));
 
-    // Side LED section - only show if device has sidelight
+    // Side LED section
     if app.has_sidelight {
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "─── Side LEDs (Side Lights) ───",
-            Style::default().fg(Color::DarkGray),
-        )])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Mode:       "),
-            Span::styled(
-                format!(
-                    "< {} ({}) >",
-                    info.side_mode,
-                    cmd::led_mode_name(info.side_mode)
-                ),
-                Style::default().fg(Color::Cyan),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Brightness: "),
-            Span::styled(
-                format!(
-                    "< {}/4 >  {}",
-                    info.side_brightness,
-                    "█".repeat(info.side_brightness as usize)
-                ),
-                Style::default().fg(Color::Cyan),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Speed:      "),
-            Span::styled(
-                format!(
-                    "< {}/4 >  {}",
-                    speed_to_wire(info.side_speed),
-                    "█".repeat((speed_to_wire(info.side_speed)) as usize)
-                ),
-                Style::default().fg(Color::Cyan),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Red:        "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.side_r)),
-                Style::default().fg(Color::Red),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Green:      "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.side_g)),
-                Style::default().fg(Color::Green),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Blue:       "),
-            Span::styled(
-                format!("< {} >", rgb_bar(info.side_b)),
-                Style::default().fg(Color::Blue),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Color:      "),
-            if app.hex_editing && app.hex_target == HexColorTarget::SideLed {
-                // Show editable textbox
-                Span::styled(
-                    format!("████████ [#{}_]", app.hex_input),
-                    Style::default()
-                        .fg(Color::Rgb(info.side_r, info.side_g, info.side_b))
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                // Show static preview
+        items.push((
+            InfoTag::Separator,
+            ListItem::new(Line::from(Span::styled(
+                "─── Side LED ───",
+                Style::default().fg(Color::DarkGray),
+            ))),
+        ));
+        items.push((
+            InfoTag::SideMode,
+            ListItem::new(Line::from(vec![
+                Span::raw("Mode:           "),
                 Span::styled(
                     format!(
-                        "████████ [#{:02X}{:02X}{:02X}]",
-                        info.side_r, info.side_g, info.side_b
+                        "< {} ({}) >",
+                        info.side_mode,
+                        cmd::led_mode_name(info.side_mode)
                     ),
-                    Style::default().fg(Color::Rgb(info.side_r, info.side_g, info.side_b)),
-                )
-            },
-            Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw("Dazzle:     "),
-            Span::styled(
-                if info.side_dazzle {
-                    "< ON (rainbow) >"
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideBrightness,
+            ListItem::new(Line::from(vec![
+                Span::raw("Brightness:     "),
+                Span::styled(
+                    format!(
+                        "< {}/4 >  {}",
+                        info.side_brightness,
+                        "█".repeat(info.side_brightness as usize)
+                    ),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideSpeed,
+            ListItem::new(Line::from(vec![
+                Span::raw("Speed:          "),
+                Span::styled(
+                    format!(
+                        "< {}/4 >  {}",
+                        speed_to_wire(info.side_speed),
+                        "█".repeat(speed_to_wire(info.side_speed) as usize)
+                    ),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideRed,
+            ListItem::new(Line::from(vec![
+                Span::raw("Red:            "),
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.side_r)),
+                    Style::default().fg(Color::Red),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideGreen,
+            ListItem::new(Line::from(vec![
+                Span::raw("Green:          "),
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.side_g)),
+                    Style::default().fg(Color::Green),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideBlue,
+            ListItem::new(Line::from(vec![
+                Span::raw("Blue:           "),
+                Span::styled(
+                    format!("< {} >", rgb_bar(info.side_b)),
+                    Style::default().fg(Color::Blue),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideColorHex,
+            ListItem::new(Line::from(vec![
+                Span::raw("Color:          "),
+                if app.hex_editing && app.hex_target == HexColorTarget::SideLed {
+                    Span::styled(
+                        format!("████████ [#{}_]", app.hex_input),
+                        Style::default()
+                            .fg(Color::Rgb(info.side_r, info.side_g, info.side_b))
+                            .add_modifier(Modifier::BOLD),
+                    )
                 } else {
-                    "< OFF >"
+                    Span::styled(
+                        format!(
+                            "████████ [#{:02X}{:02X}{:02X}]",
+                            info.side_r, info.side_g, info.side_b
+                        ),
+                        Style::default().fg(Color::Rgb(info.side_r, info.side_g, info.side_b)),
+                    )
                 },
-                Style::default().fg(if info.side_dazzle {
-                    Color::Magenta
-                } else {
-                    Color::Gray
-                }),
-            ),
-        ])));
+                Span::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
+            ])),
+        ));
+        items.push((
+            InfoTag::SideDazzle,
+            ListItem::new(Line::from(vec![
+                Span::raw("Dazzle:         "),
+                Span::styled(
+                    if info.side_dazzle {
+                        "< ON (rainbow) >"
+                    } else {
+                        "< OFF >"
+                    },
+                    Style::default().fg(if info.side_dazzle {
+                        Color::Magenta
+                    } else {
+                        Color::Gray
+                    }),
+                ),
+            ])),
+        ));
     }
 
-    let list = List::new(items)
+    // Dongle info section
+    if app.is_wireless {
+        items.push((
+            InfoTag::Separator,
+            ListItem::new(Line::from(Span::styled(
+                "─── Dongle ───",
+                Style::default().fg(Color::DarkGray),
+            ))),
+        ));
+        if let Some(ref di) = app.dongle_info {
+            items.push((
+                InfoTag::ReadOnly,
+                ListItem::new(Line::from(vec![
+                    Span::raw("Dongle FW:      "),
+                    Span::styled(
+                        format!("v{}", di.firmware_version),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])),
+            ));
+        }
+        if let Some(ref rf) = app.rf_info {
+            items.push((
+                InfoTag::ReadOnly,
+                ListItem::new(Line::from(vec![
+                    Span::raw("RF Address:     "),
+                    Span::styled(
+                        format!(
+                            "{:02X}:{:02X}:{:02X}:{:02X}",
+                            rf.rf_address[0], rf.rf_address[1], rf.rf_address[2], rf.rf_address[3]
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])),
+            ));
+            items.push((
+                InfoTag::ReadOnly,
+                ListItem::new(Line::from(vec![
+                    Span::raw("RF FW Version:  "),
+                    Span::styled(
+                        format!(
+                            "v{}.{}",
+                            rf.firmware_version_major, rf.firmware_version_minor
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])),
+            ));
+        }
+    }
+
+    // Store tags and build list items
+    app.info_tags = items.iter().map(|(tag, _)| *tag).collect();
+    let list_items: Vec<ListItem> = items.into_iter().map(|(_, item)| item).collect();
+    let max_idx = list_items.len().saturating_sub(1);
+
+    let list = List::new(list_items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("LED Settings [←/→ adjust, ↑/↓ select, p=per-key mode]"),
+                .title("Device Info [r: refresh, u: check update, ←/→: adjust]"),
         )
         .highlight_style(
             Style::default()
@@ -4919,7 +5247,7 @@ fn render_led_settings(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    state.select(Some(app.selected.min(16)));
+    state.select(Some(app.selected.min(max_idx)));
     f.render_stateful_widget(list, area, &mut state);
 }
 
@@ -5649,174 +5977,6 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
                 .title("Selected Key Details"),
         );
         f.render_widget(help, chunks[1]);
-    }
-}
-
-fn render_options(f: &mut Frame, app: &mut App, area: Rect) {
-    if let Some(ref opts) = app.options {
-        let os_mode_str = match opts.os_mode {
-            0 => "Windows",
-            1 => "macOS",
-            2 => "Linux",
-            _ => "Unknown",
-        };
-
-        let items: Vec<ListItem> = vec![
-            ListItem::new(Line::from(vec![
-                Span::raw("Fn Layer:       "),
-                Span::styled(
-                    format!("< {} >", opts.fn_layer),
-                    Style::default().fg(Color::Yellow),
-                ),
-                Span::styled("  (0-3)", Style::default().fg(Color::DarkGray)),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("WASD Swap:      "),
-                Span::styled(
-                    if opts.wasd_swap { "< ON >" } else { "< OFF >" },
-                    Style::default().fg(if opts.wasd_swap {
-                        Color::Green
-                    } else {
-                        Color::Gray
-                    }),
-                ),
-                Span::styled(
-                    "  (swap WASD/Arrow keys)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("Anti-Mistouch:  "),
-                Span::styled(
-                    if opts.anti_mistouch {
-                        "< ON >"
-                    } else {
-                        "< OFF >"
-                    },
-                    Style::default().fg(if opts.anti_mistouch {
-                        Color::Green
-                    } else {
-                        Color::Gray
-                    }),
-                ),
-                Span::styled(
-                    "  (prevent accidental key presses)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("RT Stability:   "),
-                Span::styled(
-                    format!("< {}ms >", opts.rt_stability),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::styled(
-                    "  (0-125ms, delay for stability)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            // Sleep time settings (4 sliders)
-            ListItem::new(Line::from(vec![
-                Span::raw("BT Idle:        "),
-                Span::styled(
-                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_bt)),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::styled(
-                    "  (Bluetooth idle timeout)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("2.4G Idle:      "),
-                Span::styled(
-                    format!("< {} >", SleepTimeSettings::format_duration(opts.idle_24g)),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::styled(
-                    "  (2.4GHz idle timeout)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("BT Deep Sleep:  "),
-                Span::styled(
-                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_bt)),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled(
-                    "  (must be ≥ BT idle)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from(vec![
-                Span::raw("2.4G Deep Sleep:"),
-                Span::styled(
-                    format!("< {} >", SleepTimeSettings::format_duration(opts.deep_24g)),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled(
-                    "  (must be ≥ 2.4G idle)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])),
-            ListItem::new(Line::from("")),
-            ListItem::new(Line::from(vec![Span::styled(
-                "Read-Only Info:",
-                Style::default().add_modifier(Modifier::BOLD),
-            )])),
-            ListItem::new(Line::from(vec![
-                Span::raw("OS Mode:        "),
-                Span::styled(os_mode_str, Style::default().fg(Color::Magenta)),
-            ])),
-        ];
-
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Keyboard Options [←/→ adjust, ↑/↓ select, Enter to toggle]"),
-            )
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("> ");
-
-        let mut state = ListState::default();
-        state.select(Some(app.selected.min(7))); // 8 items: FN, WASD, AntiMis, RT, 4x sleep
-        f.render_stateful_widget(list, area, &mut state);
-    } else if app.loading.options == LoadState::Loading {
-        // Show loading spinner
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Keyboard Options");
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        let throbber = Throbber::default()
-            .label("Loading options...")
-            .throbber_style(Style::default().fg(Color::Yellow));
-        f.render_stateful_widget(throbber, inner, &mut app.throbber_state.clone());
-    } else {
-        let msg = if app.loading.options == LoadState::Error {
-            "Failed to load options"
-        } else {
-            "No options loaded"
-        };
-        let help = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(Span::styled(msg, Style::default().fg(Color::Red))),
-            Line::from(""),
-            Line::from("Press 'r' to load keyboard options from device"),
-        ])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Keyboard Options"),
-        );
-        f.render_widget(help, area);
     }
 }
 
