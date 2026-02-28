@@ -32,8 +32,7 @@ pub mod utility;
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::settings::FirmwareVersion;
 use monsgeek_transport::{
-    DeviceDiscovery, FlowControlTransport, HidDiscovery, PacketFilter, PrinterConfig,
-    SyncTransport, Transport,
+    DeviceDiscovery, FlowControlTransport, HidDiscovery, PacketFilter, PrinterConfig, Transport,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,7 +44,7 @@ pub type CommandResult = Result<(), Box<dyn std::error::Error>>;
 /// When printer_config is Some, the transport is wrapped so send/receive is printed.
 pub fn open_keyboard(
     printer_config: Option<PrinterConfig>,
-) -> Result<monsgeek_keyboard::SyncKeyboard, Box<dyn std::error::Error>> {
+) -> Result<monsgeek_keyboard::KeyboardInterface, Box<dyn std::error::Error>> {
     let kb = match &printer_config {
         Some(config) => {
             let discovery = HidDiscovery::with_printer_config(config.clone());
@@ -73,9 +72,9 @@ pub fn open_keyboard(
                 (0x3151, 0x5038) => (monsgeek_keyboard::KEY_COUNT_M1_V5, true),
                 _ => (monsgeek_keyboard::KEY_COUNT_M1_V5, true),
             };
-            monsgeek_keyboard::SyncKeyboard::from_transport(flow, key_count, has_magnetism)
+            monsgeek_keyboard::KeyboardInterface::new(flow, key_count, has_magnetism)
         }
-        None => monsgeek_keyboard::SyncKeyboard::open_any()
+        None => monsgeek_keyboard::KeyboardInterface::open_any()
             .map_err::<Box<dyn std::error::Error>, _>(Into::into)?,
     };
     Ok(kb)
@@ -85,7 +84,7 @@ pub fn open_keyboard(
 /// When printer_config is Some, uses monitoring transport so --monitor shows send/receive.
 pub fn with_keyboard<F>(printer_config: Option<PrinterConfig>, f: F) -> CommandResult
 where
-    F: FnOnce(&monsgeek_keyboard::SyncKeyboard) -> CommandResult,
+    F: FnOnce(&monsgeek_keyboard::KeyboardInterface) -> CommandResult,
 {
     match open_keyboard(printer_config) {
         Ok(keyboard) => f(&keyboard),
@@ -100,7 +99,7 @@ where
 /// If `printer_config` is Some, the transport is automatically wrapped with Printer for monitoring.
 pub fn open_preferred_transport(
     printer_config: Option<PrinterConfig>,
-) -> Result<SyncTransport, Box<dyn std::error::Error>> {
+) -> Result<Arc<FlowControlTransport>, Box<dyn std::error::Error>> {
     use monsgeek_transport::{DeviceDiscovery, HidDiscovery};
 
     let discovery = match printer_config {
@@ -135,8 +134,7 @@ pub fn open_preferred_transport(
         .unwrap_or(&devices[0]);
 
     let transport = discovery.open_device(preferred)?;
-    let flow = Arc::new(FlowControlTransport::new(transport));
-    Ok(SyncTransport::new(flow))
+    Ok(Arc::new(FlowControlTransport::new(transport)))
 }
 
 /// Format and print a command response from the transport layer

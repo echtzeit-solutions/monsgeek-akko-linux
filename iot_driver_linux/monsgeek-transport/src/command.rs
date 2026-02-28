@@ -155,10 +155,10 @@ pub enum LedMode {
     UserPicture = 13,
     Laser = 14,
     CircleWave = 15,
-    Rainbow = 16,
-    RainDown = 17,
-    Meteor = 18,
-    ReactiveOff = 19,
+    Starry = 16,
+    Aurora = 17,
+    FlashAway = 18,
+    Layered = 19,
     MusicPatterns = 20,
     ScreenSync = 21,
     MusicBars = 22,
@@ -185,16 +185,47 @@ impl LedMode {
             13 => Some(Self::UserPicture),
             14 => Some(Self::Laser),
             15 => Some(Self::CircleWave),
-            16 => Some(Self::Rainbow),
-            17 => Some(Self::RainDown),
-            18 => Some(Self::Meteor),
-            19 => Some(Self::ReactiveOff),
+            16 => Some(Self::Starry),
+            17 => Some(Self::Aurora),
+            18 => Some(Self::FlashAway),
+            19 => Some(Self::Layered),
             20 => Some(Self::MusicPatterns),
             21 => Some(Self::ScreenSync),
             22 => Some(Self::MusicBars),
             23 => Some(Self::Train),
             24 => Some(Self::Fireworks),
             _ => None,
+        }
+    }
+
+    /// Display name for this LED mode
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Constant => "Constant",
+            Self::Breathing => "Breathing",
+            Self::Neon => "Neon",
+            Self::Wave => "Wave",
+            Self::Ripple => "Ripple",
+            Self::Raindrop => "Raindrop",
+            Self::Snake => "Snake",
+            Self::Reactive => "Reactive",
+            Self::Converge => "Converge",
+            Self::SineWave => "Sine Wave",
+            Self::Kaleidoscope => "Kaleidoscope",
+            Self::LineWave => "Line Wave",
+            Self::UserPicture => "User Picture",
+            Self::Laser => "Laser",
+            Self::CircleWave => "Circle Wave",
+            Self::Starry => "Starry",
+            Self::Aurora => "Aurora",
+            Self::FlashAway => "Flash Away",
+            Self::Layered => "Layered",
+            Self::MusicPatterns => "Music Patterns",
+            Self::ScreenSync => "Screen Sync",
+            Self::MusicBars => "Music Bars",
+            Self::Train => "Train",
+            Self::Fireworks => "Fireworks",
         }
     }
 }
@@ -210,6 +241,32 @@ pub struct Rgb {
 impl Rgb {
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
+    }
+
+    /// Create color from HSV values (h: 0-360, s: 0-1, v: 0-1)
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
+        let h = h % 360.0;
+        let s = s.clamp(0.0, 1.0);
+        let v = v.clamp(0.0, 1.0);
+
+        let c = v * s;
+        let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+        let m = v - c;
+
+        let (r, g, b) = match (h / 60.0) as i32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+
+        Self {
+            r: ((r + m) * 255.0) as u8,
+            g: ((g + m) * 255.0) as u8,
+            b: ((b + m) * 255.0) as u8,
+        }
     }
 
     pub const BLACK: Self = Self::new(0, 0, 0);

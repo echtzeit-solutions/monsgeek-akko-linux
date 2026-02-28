@@ -5,25 +5,18 @@
 //! adaptive timing, response caching, serialization) lives in
 //! `FlowControlTransport`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
 use tracing::debug;
 
 use crate::error::TransportError;
-use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
+use crate::event_parser::{parse_usb_event, EventReaderConfig, EventSubsystem};
 use crate::protocol::{self, cmd, REPORT_SIZE};
 use crate::types::{
     ChecksumType, DongleStatus, TimestampedEvent, TransportDeviceInfo, VendorEvent,
 };
 use crate::Transport;
-
-/// Broadcast channel capacity for vendor events
-const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// HID transport for 2.4GHz wireless dongle connection
 ///
@@ -35,10 +28,8 @@ pub struct HidDongleTransport {
     device: Mutex<HidDevice>,
     /// Device information
     info: TransportDeviceInfo,
-    /// Broadcast sender for timestamped vendor events (if input device available)
-    event_tx: Option<broadcast::Sender<TimestampedEvent>>,
-    /// Shutdown flag for event reader thread
-    event_shutdown: Arc<AtomicBool>,
+    /// Shared event subsystem (reader thread, broadcast, shutdown)
+    events: EventSubsystem,
 }
 
 impl HidDongleTransport {
@@ -48,36 +39,13 @@ impl HidDongleTransport {
         input_device: Option<HidDevice>,
         info: TransportDeviceInfo,
     ) -> Self {
-        // Spawn event reader thread if input device available
-        let event_shutdown = Arc::new(AtomicBool::new(false));
-        let event_tx = if let Some(input) = input_device {
-            let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-            let tx_clone = tx.clone();
-            let shutdown_clone = event_shutdown.clone();
-
-            std::thread::Builder::new()
-                .name("dongle-event-reader".into())
-                .spawn(move || {
-                    run_event_reader_loop(
-                        input,
-                        tx_clone,
-                        shutdown_clone,
-                        parse_usb_event,
-                        EventReaderConfig::dongle(),
-                    );
-                })
-                .expect("Failed to spawn dongle event reader thread");
-
-            Some(tx)
-        } else {
-            None
-        };
+        let events =
+            EventSubsystem::new(input_device, parse_usb_event, EventReaderConfig::dongle());
 
         Self {
             device: Mutex::new(feature_device),
             info,
-            event_tx,
-            event_shutdown,
+            events,
         }
     }
 }
@@ -114,29 +82,11 @@ impl Transport for HidDongleTransport {
     }
 
     fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        if let Some(ref tx) = self.event_tx {
-            let mut rx = tx.subscribe();
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-            loop {
-                match rx.try_recv() {
-                    Ok(timestamped) => return Ok(Some(timestamped.event)),
-                    Err(broadcast::error::TryRecvError::Empty) => {
-                        if Instant::now() >= deadline {
-                            return Ok(None);
-                        }
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
-                }
-            }
-        } else {
-            Ok(None)
-        }
+        self.events.read_event(timeout_ms)
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
-        self.event_tx.as_ref().map(|tx| tx.subscribe())
+        self.events.subscribe()
     }
 
     fn device_info(&self) -> &TransportDeviceInfo {
@@ -196,7 +146,6 @@ impl Transport for HidDongleTransport {
 
 impl Drop for HidDongleTransport {
     fn drop(&mut self) {
-        self.event_shutdown.store(true, Ordering::SeqCst);
         debug!("HidDongleTransport dropped, signaling event reader shutdown");
     }
 }

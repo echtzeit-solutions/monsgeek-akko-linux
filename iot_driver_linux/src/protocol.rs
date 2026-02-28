@@ -372,66 +372,9 @@ pub mod cmd {
     }
 }
 
-/// Checksum types used by the protocol
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ChecksumType {
-    Bit7, // Checksum at byte 7 (most common)
-    Bit8, // Checksum at byte 8 (for LED commands)
-    None,
-}
-
-/// Calculate checksum for HID message
-pub fn calculate_checksum(data: &[u8], checksum_type: ChecksumType) -> u8 {
-    match checksum_type {
-        ChecksumType::Bit7 => {
-            let sum: u32 = data.iter().take(7).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        ChecksumType::Bit8 => {
-            let sum: u32 = data.iter().take(8).map(|&b| b as u32).sum();
-            (255 - (sum & 0xFF)) as u8
-        }
-        ChecksumType::None => 0,
-    }
-}
-
-/// Apply checksum to message buffer
-pub fn apply_checksum(data: &mut [u8], checksum_type: ChecksumType) {
-    match checksum_type {
-        ChecksumType::Bit7 => {
-            if data.len() >= 8 {
-                data[7] = calculate_checksum(data, checksum_type);
-            }
-        }
-        ChecksumType::Bit8 => {
-            if data.len() >= 9 {
-                data[8] = calculate_checksum(data, checksum_type);
-            }
-        }
-        ChecksumType::None => {}
-    }
-}
-
-/// Build a complete HID command buffer (65 bytes with report ID)
-///
-/// # Arguments
-/// * `cmd` - Command byte (e.g., `cmd::GET_USB_VERSION`)
-/// * `data` - Additional data bytes after command (can be empty)
-/// * `checksum_type` - Checksum type to apply
-///
-/// # Returns
-/// 65-byte buffer: [report_id=0, cmd, data..., checksum, zeros...]
-pub fn build_command(cmd: u8, data: &[u8], checksum_type: ChecksumType) -> Vec<u8> {
-    let mut buf = vec![0u8; REPORT_SIZE];
-    buf[0] = 0; // Report ID
-    buf[1] = cmd;
-    let len = std::cmp::min(data.len(), REPORT_SIZE - 2);
-    if len > 0 {
-        buf[2..2 + len].copy_from_slice(&data[..len]);
-    }
-    apply_checksum(&mut buf[1..], checksum_type);
-    buf
-}
+// Re-export checksum/command utilities from transport crate
+pub use monsgeek_transport::protocol::{apply_checksum, build_command, calculate_checksum};
+pub use monsgeek_transport::types::ChecksumType;
 
 // Device constants (VID, PID, USAGE, etc.) are now in hal::constants
 // Use hal::VENDOR_ID, hal::PRODUCT_ID_*, etc.
@@ -894,6 +837,46 @@ pub mod hid {
             "nonusbs" | "intlbs" => Some(0x64),
             "ent" => Some(0x28),
             "intlro" => Some(0x87),
+            _ => None,
+        }
+    }
+
+    /// Convert HID keycode to ASCII character.
+    ///
+    /// Handles A-Z, 0-9, common punctuation, Enter/Tab/Space.
+    /// Returns the shifted variant when `shift` is true.
+    pub fn keycode_to_char(keycode: u8, shift: bool) -> Option<char> {
+        match keycode {
+            0x04..=0x1D => {
+                let base = (keycode - 0x04 + b'a') as char;
+                Some(if shift {
+                    base.to_ascii_uppercase()
+                } else {
+                    base
+                })
+            }
+            0x1E..=0x26 => {
+                if shift {
+                    Some(b"!@#$%^&*("[(keycode - 0x1E) as usize] as char)
+                } else {
+                    Some((b'1' + keycode - 0x1E) as char)
+                }
+            }
+            0x27 => Some(if shift { ')' } else { '0' }),
+            0x28 => Some('\n'), // Enter
+            0x2B => Some('\t'), // Tab
+            0x2C => Some(' '),  // Space
+            0x2D => Some(if shift { '_' } else { '-' }),
+            0x2E => Some(if shift { '+' } else { '=' }),
+            0x2F => Some(if shift { '{' } else { '[' }),
+            0x30 => Some(if shift { '}' } else { ']' }),
+            0x31 => Some(if shift { '|' } else { '\\' }),
+            0x33 => Some(if shift { ':' } else { ';' }),
+            0x34 => Some(if shift { '"' } else { '\'' }),
+            0x35 => Some(if shift { '~' } else { '`' }),
+            0x36 => Some(if shift { '<' } else { ',' }),
+            0x37 => Some(if shift { '>' } else { '.' }),
+            0x38 => Some(if shift { '?' } else { '/' }),
             _ => None,
         }
     }

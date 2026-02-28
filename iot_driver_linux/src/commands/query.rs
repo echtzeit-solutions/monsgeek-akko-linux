@@ -6,7 +6,7 @@ use iot_driver::hal;
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::SleepTimeSettings;
 use monsgeek_transport::protocol::cmd as transport_cmd;
-use monsgeek_transport::{ChecksumType, PrinterConfig};
+use monsgeek_transport::{ChecksumType, PrinterConfig, Transport};
 use std::time::Duration;
 
 /// Get device info (firmware version, device ID, patch, boot mode, API ID)
@@ -147,7 +147,7 @@ pub fn debounce(printer_config: Option<PrinterConfig>) -> CommandResult {
 }
 
 /// Get polling rate
-pub fn rate(keyboard: &monsgeek_keyboard::SyncKeyboard) -> CommandResult {
+pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
     use iot_driver::protocol::polling_rate;
 
     match keyboard.get_polling_rate() {
@@ -177,7 +177,7 @@ pub fn features(printer_config: Option<PrinterConfig>) -> CommandResult {
 }
 
 /// Get sleep time settings
-pub fn sleep(keyboard: &monsgeek_keyboard::SyncKeyboard) -> CommandResult {
+pub fn sleep(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
     match keyboard.get_sleep_time() {
         Ok(settings) => {
             println!("Sleep Time Settings:");

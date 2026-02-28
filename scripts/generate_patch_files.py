@@ -993,7 +993,7 @@ def generate_linker_script(db: SymbolDB) -> str | None:
     # PATCH_SRAM: scratch SRAM above all known firmware globals.
     # Firmware SRAM usage ends around 0x20009046; we start at 0x20009800 for safety.
     sram_origin = 0x20009800
-    sram_length = 1024
+    sram_length = 4096
 
     emit("MEMORY {")
     emit(f"    PATCH (rx)      : ORIGIN = {patch_origin:#010x}, LENGTH = {patch_length}")

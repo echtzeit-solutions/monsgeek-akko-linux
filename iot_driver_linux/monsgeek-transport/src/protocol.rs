@@ -503,8 +503,7 @@ pub mod precision {
 
 /// Device identification constants
 pub mod device {
-    /// MonsGeek/Akko vendor ID
-    pub const VENDOR_ID: u16 = 0x3151;
+    pub use crate::device_registry::VENDOR_ID;
 
     /// M1 V5 HE wired keyboard
     pub const PID_M1_V5_WIRED: u16 = 0x5030;
@@ -525,15 +524,7 @@ pub mod device {
     /// Input interface number
     pub const INTERFACE_INPUT: i32 = 1;
 
-    /// Check if a PID indicates a wireless dongle
-    pub fn is_dongle_pid(pid: u16) -> bool {
-        pid == PID_M1_V5_DONGLE
-    }
-
-    /// Check if a PID indicates a Bluetooth device
-    pub fn is_bluetooth_pid(pid: u16) -> bool {
-        pid == PID_M1_V5_BLUETOOTH
-    }
+    pub use crate::device_registry::{is_bluetooth_pid, is_dongle_pid};
 }
 
 /// Calculate checksum for HID message

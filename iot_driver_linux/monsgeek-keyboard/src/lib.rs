@@ -20,7 +20,7 @@ pub use settings::{
     BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
     SleepTimeSettings,
 };
-pub use sync::{list_keyboards, SyncKeyboard};
+pub use sync::list_keyboards;
 
 /// Information about firmware patches applied to the keyboard
 #[derive(Debug, Clone)]
@@ -59,11 +59,11 @@ use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
     DebounceResponse, GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData,
-    LedParamsResponse as TransportLedParamsResponse, PollingRate as TransportPollingRate,
-    PollingRateResponse, ProfileResponse, QueryDebounce, QueryLedParams, QueryPollingRate,
-    QueryProfile, QuerySleepTime, SetDebounce, SetFnData, SetKeyMagnetismModeData,
-    SetKeyMatrixData, SetMacroCommand, SetMagnetismReport, SetMultiMagnetismCommand,
-    SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime, SleepTimeResponse,
+    LedParamsResponse as TransportLedParamsResponse, PollingRateResponse, ProfileResponse,
+    QueryDebounce, QueryLedParams, QueryPollingRate, QueryProfile, QuerySleepTime, SetDebounce,
+    SetFnData, SetKeyMagnetismModeData, SetKeyMatrixData, SetMacroCommand, SetMagnetismReport,
+    SetMultiMagnetismCommand, SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime,
+    SleepTimeResponse,
 };
 use zerocopy::IntoBytes;
 
@@ -90,6 +90,34 @@ impl KeyboardInterface {
             key_count,
             has_magnetism,
         }
+    }
+
+    /// Open any supported device (auto-detecting wired vs dongle)
+    pub fn open_any() -> Result<Self, KeyboardError> {
+        let devices = monsgeek_transport::list_devices_sync()?;
+
+        if devices.is_empty() {
+            return Err(KeyboardError::NotFound("No supported device found".into()));
+        }
+
+        Self::open_device(&devices[0])
+    }
+
+    /// Open a specific discovered device
+    pub fn open_device(
+        device: &monsgeek_transport::DiscoveredDevice,
+    ) -> Result<Self, KeyboardError> {
+        let transport = monsgeek_transport::open_device_sync(device)?;
+        let info = transport.device_info();
+
+        // Look up device info - default to M1 V5 HE key count with magnetism
+        let (key_count, has_magnetism) = match (info.vid, info.pid) {
+            (0x3151, 0x5030) => (KEY_COUNT_M1_V5, true), // M1 V5 HE wired
+            (0x3151, 0x5038) => (KEY_COUNT_M1_V5, true), // M1 V5 HE dongle
+            _ => (KEY_COUNT_M1_V5, true),                // Default
+        };
+
+        Ok(Self::new(transport, key_count, has_magnetism))
     }
 
     /// Get the underlying transport
@@ -211,17 +239,12 @@ impl KeyboardInterface {
     /// Get polling rate
     pub fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
         let resp: PollingRateResponse = self.transport.query(&QueryPollingRate::default())?;
-        // Convert transport PollingRate to keyboard PollingRate
-        PollingRate::from_hz(resp.rate.to_hz())
-            .ok_or_else(|| KeyboardError::UnexpectedResponse("Unknown polling rate".into()))
+        Ok(resp.rate)
     }
 
     /// Set polling rate
     pub fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
-        // Convert keyboard PollingRate to transport PollingRate
-        let transport_rate = TransportPollingRate::from_hz(rate as u16)
-            .ok_or_else(|| KeyboardError::InvalidParameter("Invalid polling rate".into()))?;
-        self.transport.send(&SetPollingRate::new(transport_rate))?;
+        self.transport.send(&SetPollingRate::new(rate))?;
         Ok(())
     }
 
@@ -633,6 +656,8 @@ impl KeyboardInterface {
         // Key modes use 1 byte per key
         let modes = self.get_magnetism(mag_cmd::KEY_MODE, pages_u8)?;
 
+        let kc = self.key_count as usize;
+
         // Travel values use 2 bytes per key (16-bit little-endian)
         let press = self.get_magnetism(mag_cmd::PRESS_TRAVEL, pages_u16)?;
         let lift = self.get_magnetism(mag_cmd::LIFT_TRAVEL, pages_u16)?;
@@ -648,14 +673,14 @@ impl KeyboardInterface {
             .unwrap_or_default();
 
         Ok(TriggerSettings {
-            key_count: self.key_count as usize,
-            press_travel: press,
-            lift_travel: lift,
-            rt_press,
-            rt_lift,
+            key_count: kc,
+            press_travel: TriggerSettings::decode_u16_values(&press, kc),
+            lift_travel: TriggerSettings::decode_u16_values(&lift, kc),
+            rt_press: TriggerSettings::decode_u16_values(&rt_press, kc),
+            rt_lift: TriggerSettings::decode_u16_values(&rt_lift, kc),
             key_modes: modes,
-            bottom_deadzone: bottom_dz,
-            top_deadzone: top_dz,
+            bottom_deadzone: TriggerSettings::decode_u16_values(&bottom_dz, kc),
+            top_deadzone: TriggerSettings::decode_u16_values(&top_dz, kc),
         })
     }
 

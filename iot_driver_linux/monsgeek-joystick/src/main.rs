@@ -27,7 +27,9 @@ use monsgeek_joystick::tui::app::{App, AppMode, JoystickStatus, KeyboardStatus};
 use monsgeek_joystick::tui::render;
 
 use monsgeek_keyboard::KeyboardInterface;
-use monsgeek_transport::{list_devices_sync, open_device_sync, TimestampedEvent, VendorEvent};
+use monsgeek_transport::{
+    list_devices_sync, open_device_sync, TimestampedEvent, Transport, VendorEvent,
+};
 
 #[derive(Parser)]
 #[command(name = "monsgeek-joystick")]
@@ -86,11 +88,7 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
         info.pid
     );
 
-    let keyboard = KeyboardInterface::new(
-        transport.inner().clone(),
-        monsgeek_keyboard::KEY_COUNT_M1_V5,
-        true,
-    );
+    let keyboard = KeyboardInterface::new(transport, monsgeek_keyboard::KEY_COUNT_M1_V5, true);
 
     let precision_factor = match keyboard.get_precision() {
         Ok(precision) => {

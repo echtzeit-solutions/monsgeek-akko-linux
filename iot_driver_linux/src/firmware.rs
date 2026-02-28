@@ -86,6 +86,21 @@ impl std::fmt::Display for FirmwareType {
 }
 
 impl FirmwareFile {
+    /// Construct a FirmwareFile from raw data, computing size/checksum/chunk_count.
+    pub fn from_data(data: Vec<u8>, filename: String, firmware_type: FirmwareType) -> Self {
+        let size = data.len();
+        let checksum = firmware_update::calculate_checksum(&data);
+        let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
+        Self {
+            data,
+            size,
+            checksum,
+            chunk_count,
+            filename,
+            firmware_type,
+        }
+    }
+
     /// Load a firmware file from disk
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, FirmwareError> {
         let path = path.as_ref();
@@ -106,21 +121,10 @@ impl FirmwareFile {
             return Self::load_zip(path, filename);
         }
 
-        let size = data.len();
-        let checksum = firmware_update::calculate_checksum(&data);
-        let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
-
         // Detect firmware type based on size/content
         let firmware_type = Self::detect_type(&data, &filename);
 
-        Ok(Self {
-            data,
-            size,
-            checksum,
-            chunk_count,
-            filename,
-            firmware_type,
-        })
+        Ok(Self::from_data(data, filename, firmware_type))
     }
 
     /// Load firmware from a ZIP archive
@@ -135,19 +139,7 @@ impl FirmwareFile {
             if let Ok(mut entry) = archive.by_name(name) {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
-
-                let size = data.len();
-                let checksum = firmware_update::calculate_checksum(&data);
-                let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
-
-                return Ok(Self {
-                    data,
-                    size,
-                    checksum,
-                    chunk_count,
-                    filename,
-                    firmware_type: FirmwareType::Combined,
-                });
+                return Ok(Self::from_data(data, filename, FirmwareType::Combined));
             }
         }
 
@@ -158,19 +150,7 @@ impl FirmwareFile {
             if name.ends_with(".bin") {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
-
-                let size = data.len();
-                let checksum = firmware_update::calculate_checksum(&data);
-                let chunk_count = size.div_ceil(firmware_update::CHUNK_SIZE);
-
-                return Ok(Self {
-                    data,
-                    size,
-                    checksum,
-                    chunk_count,
-                    filename,
-                    firmware_type: FirmwareType::Combined,
-                });
+                return Ok(Self::from_data(data, filename, FirmwareType::Combined));
             }
         }
 

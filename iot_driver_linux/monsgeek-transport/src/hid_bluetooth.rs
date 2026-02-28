@@ -45,8 +45,6 @@
 //! - Battery status via BLE Battery Service (bluetoothctl or D-Bus)
 
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hidapi::HidDevice;
@@ -55,13 +53,10 @@ use tokio::sync::broadcast;
 use tracing::{debug, trace};
 
 use crate::error::TransportError;
-use crate::event_parser::{parse_ble_event, run_event_reader_loop, EventReaderConfig};
+use crate::event_parser::{parse_ble_event, EventReaderConfig, EventSubsystem};
 use crate::protocol::{self, ble};
 use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
-
-/// Broadcast channel capacity for vendor events
-const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// HID transport for Bluetooth Low Energy connection
 ///
@@ -81,10 +76,8 @@ pub struct HidBluetoothTransport {
     vendor_device: Mutex<HidDevice>,
     /// Device information
     info: TransportDeviceInfo,
-    /// Broadcast sender for timestamped vendor events
-    event_tx: Option<broadcast::Sender<TimestampedEvent>>,
-    /// Shutdown flag for event reader thread
-    shutdown: Arc<AtomicBool>,
+    /// Shared event subsystem (reader thread, broadcast, shutdown)
+    events: EventSubsystem,
 }
 
 impl HidBluetoothTransport {
@@ -99,37 +92,16 @@ impl HidBluetoothTransport {
         input_device: Option<HidDevice>,
         info: TransportDeviceInfo,
     ) -> Self {
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let event_tx = if let Some(input) = input_device {
-            // Create broadcast channel for events
-            let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-            let tx_clone = tx.clone();
-            let shutdown_clone = shutdown.clone();
-
-            // Spawn dedicated event reader thread
-            std::thread::Builder::new()
-                .name("bt-event-reader".into())
-                .spawn(move || {
-                    run_event_reader_loop(
-                        input,
-                        tx_clone,
-                        shutdown_clone,
-                        parse_ble_event,
-                        EventReaderConfig::bluetooth(),
-                    );
-                })
-                .expect("Failed to spawn Bluetooth event reader thread");
-
-            Some(tx)
-        } else {
-            None
-        };
+        let events = EventSubsystem::new(
+            input_device,
+            parse_ble_event,
+            EventReaderConfig::bluetooth(),
+        );
 
         Self {
             vendor_device: Mutex::new(vendor_device),
             info,
-            event_tx,
-            shutdown,
+            events,
         }
     }
 }
@@ -176,29 +148,11 @@ impl Transport for HidBluetoothTransport {
     // send_flush: uses default no-op
 
     fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        if let Some(ref tx) = self.event_tx {
-            let mut rx = tx.subscribe();
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-            loop {
-                match rx.try_recv() {
-                    Ok(timestamped) => return Ok(Some(timestamped.event)),
-                    Err(broadcast::error::TryRecvError::Empty) => {
-                        if Instant::now() >= deadline {
-                            return Ok(None);
-                        }
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
-                }
-            }
-        } else {
-            Ok(None)
-        }
+        self.events.read_event(timeout_ms)
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
-        self.event_tx.as_ref().map(|tx| tx.subscribe())
+        self.events.subscribe()
     }
 
     fn device_info(&self) -> &TransportDeviceInfo {
@@ -236,7 +190,6 @@ impl Transport for HidBluetoothTransport {
 
 impl Drop for HidBluetoothTransport {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
         debug!("HidBluetoothTransport dropped, signaling event reader shutdown");
     }
 }

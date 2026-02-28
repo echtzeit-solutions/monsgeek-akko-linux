@@ -501,23 +501,12 @@ fn fmt_key(code: u8) -> &'static str {
 
 /// Format a modifier bitmask as `Ctrl+Shift+...` prefix.
 fn fmt_mods(mod_bits: u8) -> String {
-    let mod_names: &[(u8, &str)] = &[
-        (mods::LCTRL, "Ctrl"),
-        (mods::LSHIFT, "Shift"),
-        (mods::LALT, "Alt"),
-        (mods::LGUI, "GUI"),
-        (mods::RCTRL, "RCtrl"),
-        (mods::RSHIFT, "RShift"),
-        (mods::RALT, "RAlt"),
-        (mods::RGUI, "RGUI"),
-    ];
-    let mut parts = Vec::new();
-    for &(bit, name) in mod_names {
-        if mod_bits & bit != 0 {
-            parts.push(name);
-        }
-    }
-    parts.join("+")
+    mods::DISPLAY_NAMES
+        .iter()
+        .filter(|&&(bit, _)| mod_bits & bit != 0)
+        .map(|&(_, name)| name)
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 impl fmt::Display for MacroStep {

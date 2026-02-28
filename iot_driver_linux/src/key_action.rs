@@ -37,6 +37,18 @@ pub mod mods {
     pub const RSHIFT: u8 = 0x20;
     pub const RALT: u8 = 0x40;
     pub const RGUI: u8 = 0x80;
+
+    /// Modifier bitmask → display name mapping, shared by Display impls.
+    pub const DISPLAY_NAMES: &[(u8, &str)] = &[
+        (LCTRL, "Ctrl"),
+        (LSHIFT, "Shift"),
+        (LALT, "Alt"),
+        (LGUI, "GUI"),
+        (RCTRL, "RCtrl"),
+        (RSHIFT, "RShift"),
+        (RALT, "RAlt"),
+        (RGUI, "RGUI"),
+    ];
 }
 
 /// Protocol config_type constants for the 4-byte key config.
@@ -229,18 +241,8 @@ impl fmt::Display for KeyAction {
             KeyAction::Disabled => write!(f, "Disabled"),
             KeyAction::Key(code) => write!(f, "{}", hid::key_name(*code)),
             KeyAction::Combo { mods, key } => {
-                let mod_names: &[(u8, &str)] = &[
-                    (mods::LCTRL, "Ctrl"),
-                    (mods::LSHIFT, "Shift"),
-                    (mods::LALT, "Alt"),
-                    (mods::LGUI, "GUI"),
-                    (mods::RCTRL, "RCtrl"),
-                    (mods::RSHIFT, "RShift"),
-                    (mods::RALT, "RAlt"),
-                    (mods::RGUI, "RGUI"),
-                ];
                 let mut first = true;
-                for &(bit, name) in mod_names {
+                for &(bit, name) in mods::DISPLAY_NAMES {
                     if mods & bit != 0 {
                         if !first {
                             write!(f, "+")?;

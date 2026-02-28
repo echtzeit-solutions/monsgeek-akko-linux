@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::protocol::cmd;
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 
 /// Number of frequency bands to analyze
 const NUM_BANDS: usize = 8;
@@ -221,7 +221,13 @@ impl Default for AudioConfig {
     }
 }
 
-use crate::color::hsv_to_rgb;
+use monsgeek_keyboard::led::RgbColor;
+
+/// Convert HSV to (r, g, b) tuple via RgbColor::from_hsv.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let c = RgbColor::from_hsv(h, s, v);
+    (c.r, c.g, c.b)
+}
 
 /// Map frequency bands to per-key RGB colors
 fn bands_to_colors(
@@ -380,7 +386,7 @@ pub fn list_audio_devices() -> Vec<String> {
 /// Run audio reactive mode (blocking)
 /// This starts audio capture in a background thread and runs the RGB update loop
 pub fn run_audio_reactive(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     config: AudioConfig,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -408,7 +414,7 @@ pub fn run_audio_reactive(
 
 /// RGB rendering loop - reads from AudioState and sends colors to keyboard
 pub fn run_rgb_loop(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     audio_state: &Arc<AudioState>,
     config: &AudioConfig,
     running: Arc<AtomicBool>,
@@ -520,7 +526,10 @@ fn get_pulseaudio_monitor() -> Result<String, String> {
 }
 
 /// Run a simple rainbow animation to test RGB without audio
-pub fn run_rainbow_test(keyboard: &SyncKeyboard, running: Arc<AtomicBool>) -> Result<(), String> {
+pub fn run_rainbow_test(
+    keyboard: &KeyboardInterface,
+    running: Arc<AtomicBool>,
+) -> Result<(), String> {
     println!("Starting rainbow test mode...");
 
     // Set LED mode to per-key colors (LightUserPicture with layer 0)

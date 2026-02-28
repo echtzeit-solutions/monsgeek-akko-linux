@@ -22,5 +22,3 @@ tokio-udev = { version = "0.9", optional = true }
 [features]
 default = ["hotplug"]
 hotplug = ["tokio-udev"]
-bluetooth = []  # Future: btleplug
-webrtc = []     # Future: webrtc-rs

@@ -4,14 +4,14 @@ use super::CommandResult;
 use iot_driver::key_action::KeyAction;
 use iot_driver::keymap::{self, KeyRef, Layer};
 use iot_driver::protocol::hid;
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 use monsgeek_transport::protocol::matrix;
 
 /// Remap a key.
 ///
 /// `from` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`, `"42"`.
 /// When a layer prefix is present, it takes precedence over the `--layer` flag.
-pub fn remap(keyboard: &SyncKeyboard, from: &str, to: &str, layer: u8) -> CommandResult {
+pub fn remap(keyboard: &KeyboardInterface, from: &str, to: &str, layer: u8) -> CommandResult {
     let key_ref: KeyRef = match from.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -53,7 +53,7 @@ pub fn remap(keyboard: &SyncKeyboard, from: &str, to: &str, layer: u8) -> Comman
 /// Reset a key to default.
 ///
 /// `key` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`.
-pub fn reset_key(keyboard: &SyncKeyboard, key: &str, layer: u8) -> CommandResult {
+pub fn reset_key(keyboard: &KeyboardInterface, key: &str, layer: u8) -> CommandResult {
     let key_ref: KeyRef = match key.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -83,7 +83,7 @@ pub fn reset_key(keyboard: &SyncKeyboard, key: &str, layer: u8) -> CommandResult
 }
 
 /// Swap two keys
-pub fn swap(keyboard: &SyncKeyboard, key1: &str, key2: &str, layer: u8) -> CommandResult {
+pub fn swap(keyboard: &KeyboardInterface, key1: &str, key2: &str, layer: u8) -> CommandResult {
     let kr_a: KeyRef = match key1.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -132,7 +132,7 @@ pub fn swap(keyboard: &SyncKeyboard, key1: &str, key2: &str, layer: u8) -> Comma
 
 /// CLI handler: list key remappings.
 pub fn remap_list(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     layer_filter: Option<u8>,
     show_all: bool,
 ) -> CommandResult {
@@ -190,7 +190,7 @@ pub fn remap_list(
 }
 
 /// Show the Fn layer key bindings (media keys, LED controls, etc.)
-pub fn fn_layout(keyboard: &SyncKeyboard, sys: &str) -> CommandResult {
+pub fn fn_layout(keyboard: &KeyboardInterface, sys: &str) -> CommandResult {
     let sys_code: u8 = match sys {
         "mac" => 1,
         _ => 0,
@@ -222,7 +222,7 @@ pub fn fn_layout(keyboard: &SyncKeyboard, sys: &str) -> CommandResult {
 }
 
 /// Show key matrix mappings
-pub fn keymatrix(keyboard: &SyncKeyboard, layer: u8) -> CommandResult {
+pub fn keymatrix(keyboard: &KeyboardInterface, layer: u8) -> CommandResult {
     println!("Reading key matrix for layer {layer}...");
     match keyboard.get_keymatrix(layer, 8) {
         Ok(data) => {

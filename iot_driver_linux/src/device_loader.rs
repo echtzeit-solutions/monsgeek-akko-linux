@@ -104,13 +104,18 @@ impl JsonDeviceDefinition {
     pub fn key_name(&self, index: usize) -> Option<&'static str> {
         let matrix = self.led_matrix.as_ref()?;
         let hid_code = *matrix.get(index)?;
-        hid_code_to_name(hid_code)
+        let name = crate::protocol::hid::key_name(hid_code);
+        if name == "?" || name == "None" {
+            None
+        } else {
+            Some(name)
+        }
     }
 
     /// Find matrix position index for a key name (case-insensitive)
     pub fn key_index(&self, name: &str) -> Option<usize> {
         let matrix = self.led_matrix.as_ref()?;
-        let target_hid = name_to_hid_code(name)?;
+        let target_hid = crate::protocol::hid::key_code_from_name(name)?;
         matrix.iter().position(|&hid| hid == target_hid)
     }
 
@@ -123,108 +128,6 @@ impl JsonDeviceDefinition {
             self.key_index("D")?,
         ))
     }
-}
-
-/// Convert HID keycode to key name (delegates to protocol::hid::key_name)
-fn hid_code_to_name(hid: u8) -> Option<&'static str> {
-    match crate::protocol::hid::key_name(hid) {
-        "?" | "None" => None,
-        name => Some(name),
-    }
-}
-
-/// Convert key name to HID keycode (case-insensitive)
-fn name_to_hid_code(name: &str) -> Option<u8> {
-    Some(match name.to_uppercase().as_str() {
-        "A" => 4,
-        "B" => 5,
-        "C" => 6,
-        "D" => 7,
-        "E" => 8,
-        "F" => 9,
-        "G" => 10,
-        "H" => 11,
-        "I" => 12,
-        "J" => 13,
-        "K" => 14,
-        "L" => 15,
-        "M" => 16,
-        "N" => 17,
-        "O" => 18,
-        "P" => 19,
-        "Q" => 20,
-        "R" => 21,
-        "S" => 22,
-        "T" => 23,
-        "U" => 24,
-        "V" => 25,
-        "W" => 26,
-        "X" => 27,
-        "Y" => 28,
-        "Z" => 29,
-        "1" => 30,
-        "2" => 31,
-        "3" => 32,
-        "4" => 33,
-        "5" => 34,
-        "6" => 35,
-        "7" => 36,
-        "8" => 37,
-        "9" => 38,
-        "0" => 39,
-        "ENTER" | "RETURN" => 40,
-        "ESC" | "ESCAPE" => 41,
-        "BACKSPACE" | "BKSP" => 42,
-        "TAB" => 43,
-        "SPACE" => 44,
-        "-" | "MINUS" => 45,
-        "=" | "EQUALS" => 46,
-        "[" | "LBRACKET" => 47,
-        "]" | "RBRACKET" => 48,
-        "\\" | "BACKSLASH" => 49,
-        "#" | "HASH" => 50,
-        ";" | "SEMICOLON" => 51,
-        "'" | "QUOTE" => 52,
-        "`" | "GRAVE" | "BACKTICK" => 53,
-        "," | "COMMA" => 54,
-        "." | "PERIOD" | "DOT" => 55,
-        "/" | "SLASH" => 56,
-        "CAPSLOCK" | "CAPS" => 57,
-        "F1" => 58,
-        "F2" => 59,
-        "F3" => 60,
-        "F4" => 61,
-        "F5" => 62,
-        "F6" => 63,
-        "F7" => 64,
-        "F8" => 65,
-        "F9" => 66,
-        "F10" => 67,
-        "F11" => 68,
-        "F12" => 69,
-        "PRINTSCREEN" | "PRTSC" => 70,
-        "SCROLLLOCK" => 71,
-        "PAUSE" => 72,
-        "INSERT" | "INS" => 73,
-        "HOME" => 74,
-        "PAGEUP" | "PGUP" => 75,
-        "DELETE" | "DEL" => 76,
-        "END" => 77,
-        "PAGEDOWN" | "PGDN" => 78,
-        "RIGHT" => 79,
-        "LEFT" => 80,
-        "DOWN" => 81,
-        "UP" => 82,
-        "LCTRL" | "LEFTCTRL" => 224,
-        "LSHIFT" | "LEFTSHIFT" => 225,
-        "LALT" | "LEFTALT" => 226,
-        "LWIN" | "LEFTWIN" | "LGUI" => 227,
-        "RCTRL" | "RIGHTCTRL" => 228,
-        "RSHIFT" | "RIGHTSHIFT" => 229,
-        "RALT" | "RIGHTALT" => 230,
-        "RWIN" | "RIGHTWIN" | "RGUI" => 231,
-        _ => return None,
-    })
 }
 
 /// Wrapper for the versioned devices.json format
@@ -792,25 +695,27 @@ mod tests {
 
     #[test]
     fn test_hid_code_conversion() {
+        use crate::protocol::hid::{key_code_from_name, key_name};
+
         // Letters
-        assert_eq!(hid_code_to_name(4), Some("A"));
-        assert_eq!(hid_code_to_name(26), Some("W"));
-        assert_eq!(hid_code_to_name(22), Some("S"));
-        assert_eq!(hid_code_to_name(7), Some("D"));
+        assert_eq!(key_name(4), "A");
+        assert_eq!(key_name(26), "W");
+        assert_eq!(key_name(22), "S");
+        assert_eq!(key_name(7), "D");
 
         // Numbers
-        assert_eq!(hid_code_to_name(30), Some("1"));
-        assert_eq!(hid_code_to_name(39), Some("0"));
+        assert_eq!(key_name(30), "1");
+        assert_eq!(key_name(39), "0");
 
         // Modifiers
-        assert_eq!(hid_code_to_name(224), Some("LCtrl"));
-        assert_eq!(hid_code_to_name(225), Some("LShift"));
+        assert_eq!(key_name(224), "LCtrl");
+        assert_eq!(key_name(225), "LShift");
 
         // Reverse
-        assert_eq!(name_to_hid_code("A"), Some(4));
-        assert_eq!(name_to_hid_code("w"), Some(26)); // Case insensitive
-        assert_eq!(name_to_hid_code("ESCAPE"), Some(41));
-        assert_eq!(name_to_hid_code("lshift"), Some(225));
+        assert_eq!(key_code_from_name("A"), Some(4));
+        assert_eq!(key_code_from_name("w"), Some(26)); // Case insensitive
+        assert_eq!(key_code_from_name("ESCAPE"), Some(41));
+        assert_eq!(key_code_from_name("lshift"), Some(225));
     }
 
     #[test]

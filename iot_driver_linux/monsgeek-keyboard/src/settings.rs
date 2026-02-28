@@ -164,61 +164,7 @@ pub struct BatteryInfo {
     pub idle: bool,
 }
 
-/// Polling rate options
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum PollingRate {
-    Hz125 = 125,
-    Hz250 = 250,
-    Hz500 = 500,
-    Hz1000 = 1000,
-    Hz2000 = 2000,
-    Hz4000 = 4000,
-    Hz8000 = 8000,
-}
-
-impl PollingRate {
-    /// Get polling rate from Hz value
-    pub fn from_hz(hz: u16) -> Option<Self> {
-        match hz {
-            125 => Some(Self::Hz125),
-            250 => Some(Self::Hz250),
-            500 => Some(Self::Hz500),
-            1000 => Some(Self::Hz1000),
-            2000 => Some(Self::Hz2000),
-            4000 => Some(Self::Hz4000),
-            8000 => Some(Self::Hz8000),
-            _ => None,
-        }
-    }
-
-    /// Get the protocol value for this rate
-    pub fn to_protocol_value(self) -> u8 {
-        match self {
-            Self::Hz125 => 6,
-            Self::Hz250 => 5,
-            Self::Hz500 => 4,
-            Self::Hz1000 => 3,
-            Self::Hz2000 => 2,
-            Self::Hz4000 => 1,
-            Self::Hz8000 => 0,
-        }
-    }
-
-    /// Parse from protocol value
-    pub fn from_protocol_value(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Hz8000),
-            1 => Some(Self::Hz4000),
-            2 => Some(Self::Hz2000),
-            3 => Some(Self::Hz1000),
-            4 => Some(Self::Hz500),
-            5 => Some(Self::Hz250),
-            6 => Some(Self::Hz125),
-            _ => None,
-        }
-    }
-}
+pub use monsgeek_transport::command::PollingRate;
 
 /// Keyboard options
 #[derive(Debug, Clone, Default)]

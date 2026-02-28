@@ -3,7 +3,7 @@
 use super::CommandResult;
 use iot_driver::profile::M1_V5_HE_KEY_NAMES;
 use iot_driver::protocol::magnetism;
-use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, SyncKeyboard};
+use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, KeyboardInterface};
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Run calibration (min + max) with per-key progress display
-pub fn calibrate(keyboard: &SyncKeyboard) -> CommandResult {
+pub fn calibrate(keyboard: &KeyboardInterface) -> CommandResult {
     let key_count = keyboard.key_count() as usize;
 
     // Set up Ctrl+C handler
@@ -250,7 +250,7 @@ fn check_stdin_ready(_state: &StdinState) -> bool {
 fn restore_stdin(_state: &StdinState) {}
 
 /// Show current trigger settings
-pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
+pub fn triggers(keyboard: &KeyboardInterface) -> CommandResult {
     let version = keyboard.get_version().unwrap_or_default();
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
@@ -263,24 +263,13 @@ pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
 
     match keyboard.get_all_triggers() {
         Ok(triggers) => {
-            let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-                if idx * 2 + 1 < data.len() {
-                    u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-                } else {
-                    0
-                }
-            };
-
-            let first_press = decode_u16(&triggers.press_travel, 0);
-            let first_lift = decode_u16(&triggers.lift_travel, 0);
-            let first_rt_press = decode_u16(&triggers.rt_press, 0);
-            let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
+            let first_press = triggers.press_travel.first().copied().unwrap_or(0);
+            let first_lift = triggers.lift_travel.first().copied().unwrap_or(0);
+            let first_rt_press = triggers.rt_press.first().copied().unwrap_or(0);
+            let first_rt_lift = triggers.rt_lift.first().copied().unwrap_or(0);
             let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
 
-            let num_keys = triggers
-                .key_modes
-                .len()
-                .min(triggers.press_travel.len() / 2);
+            let num_keys = triggers.key_modes.len().min(triggers.press_travel.len());
 
             println!("First key settings (as sample):");
             println!(
@@ -310,8 +299,11 @@ pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
             );
             println!();
 
-            let all_same_press =
-                (0..num_keys).all(|i| decode_u16(&triggers.press_travel, i) == first_press);
+            let all_same_press = triggers
+                .press_travel
+                .iter()
+                .take(num_keys)
+                .all(|&v| v == first_press);
             let all_same_mode = triggers
                 .key_modes
                 .iter()
@@ -324,7 +316,7 @@ pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
                 println!("Keys have varying settings ({num_keys} keys total)");
                 println!("\nFirst 10 key values:");
                 for i in 0..10.min(num_keys) {
-                    let press = decode_u16(&triggers.press_travel, i);
+                    let press = triggers.press_travel.get(i).copied().unwrap_or(0);
                     let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
                     println!(
                         "  Key {:2}: {:.1}mm mode={}",
@@ -341,7 +333,7 @@ pub fn triggers(keyboard: &SyncKeyboard) -> CommandResult {
 }
 
 /// Set actuation point for all keys
-pub fn set_actuation(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+pub fn set_actuation(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
     let raw = (mm * factor) as u16;
@@ -353,7 +345,7 @@ pub fn set_actuation(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
 }
 
 /// Enable/disable Rapid Trigger or set sensitivity
-pub fn set_rt(keyboard: &SyncKeyboard, value: &str) -> CommandResult {
+pub fn set_rt(keyboard: &KeyboardInterface, value: &str) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
 
@@ -382,7 +374,7 @@ pub fn set_rt(keyboard: &SyncKeyboard, value: &str) -> CommandResult {
 }
 
 /// Set release point for all keys
-pub fn set_release(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+pub fn set_release(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
     let raw = (mm * factor) as u16;
@@ -394,7 +386,7 @@ pub fn set_release(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
 }
 
 /// Set bottom deadzone for all keys
-pub fn set_bottom_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+pub fn set_bottom_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
     let raw = (mm * factor) as u16;
@@ -406,7 +398,7 @@ pub fn set_bottom_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
 }
 
 /// Set top deadzone for all keys
-pub fn set_top_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
+pub fn set_top_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     let factor = precision.factor() as f32;
     let raw = (mm * factor) as u16;
@@ -419,7 +411,7 @@ pub fn set_top_deadzone(keyboard: &SyncKeyboard, mm: f32) -> CommandResult {
 
 /// Set trigger settings for a specific key
 pub fn set_key_trigger(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     key: u8,
     actuation: Option<f32>,
     release: Option<f32>,

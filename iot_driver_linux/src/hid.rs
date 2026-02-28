@@ -128,20 +128,20 @@ impl BatteryInfo {
 /// Per-key trigger settings
 #[derive(Debug, Clone, Default)]
 pub struct TriggerSettings {
-    /// Press travel (actuation point) per key, in precision units
-    pub press_travel: Vec<u8>,
+    /// Press travel (actuation point) per key, in raw u16 firmware units
+    pub press_travel: Vec<u16>,
     /// Lift travel (release point) per key
-    pub lift_travel: Vec<u8>,
+    pub lift_travel: Vec<u16>,
     /// Rapid Trigger press sensitivity per key
-    pub rt_press: Vec<u8>,
+    pub rt_press: Vec<u16>,
     /// Rapid Trigger lift sensitivity per key
-    pub rt_lift: Vec<u8>,
+    pub rt_lift: Vec<u16>,
     /// Key mode per key (0=Normal, 2=DKS, 3=MT, 4=TglHold, 5=TglDots, 7=Snap, +128=RT)
     pub key_modes: Vec<u8>,
     /// Bottom deadzone per key (travel below which key won't deactivate)
-    pub bottom_deadzone: Vec<u8>,
+    pub bottom_deadzone: Vec<u16>,
     /// Top deadzone per key (travel above which key won't activate)
-    pub top_deadzone: Vec<u8>,
+    pub top_deadzone: Vec<u16>,
 }
 
 /// Key mode values for per-key settings
@@ -186,9 +186,9 @@ pub mod key_mode {
     }
 }
 
-/// Device information read from keyboard
+/// Firmware settings read from keyboard (LED, profile, debounce, etc.)
 #[derive(Debug, Clone, Default)]
-pub struct DeviceInfo {
+pub struct FirmwareSettings {
     pub device_id: u32,
     pub version: u16,
     pub profile: u8,

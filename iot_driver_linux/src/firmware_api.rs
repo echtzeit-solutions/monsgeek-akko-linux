@@ -132,52 +132,37 @@ impl FirmwareVersions {
         }
     }
 
+    /// Pairs of (label, self_field, other_field) for version comparison.
+    fn field_pairs<'a>(
+        &'a self,
+        other: &'a FirmwareVersions,
+    ) -> [(&'static str, Option<u16>, Option<u16>); 6] {
+        [
+            ("USB", self.usb, other.usb),
+            ("RF", self.rf, other.rf),
+            ("MLED", self.mled, other.mled),
+            ("Nordic", self.nord, other.nord),
+            ("OLED", self.oled, other.oled),
+            ("Flash", self.flash, other.flash),
+        ]
+    }
+
     /// Check if any update is available compared to current versions
     pub fn has_updates(&self, current: &FirmwareVersions) -> bool {
-        (self.usb.is_some() && current.usb.is_some() && self.usb > current.usb)
-            || (self.rf.is_some() && current.rf.is_some() && self.rf > current.rf)
-            || (self.mled.is_some() && current.mled.is_some() && self.mled > current.mled)
-            || (self.nord.is_some() && current.nord.is_some() && self.nord > current.nord)
-            || (self.oled.is_some() && current.oled.is_some() && self.oled > current.oled)
-            || (self.flash.is_some() && current.flash.is_some() && self.flash > current.flash)
+        self.field_pairs(current)
+            .iter()
+            .any(|&(_, new, old)| new.is_some() && old.is_some() && new > old)
     }
 
     /// Get list of available updates
     pub fn get_updates(&self, current: &FirmwareVersions) -> Vec<(String, u16, u16)> {
-        let mut updates = Vec::new();
-
-        if let (Some(new), Some(old)) = (self.usb, current.usb) {
-            if new > old {
-                updates.push(("USB".to_string(), old, new));
-            }
-        }
-        if let (Some(new), Some(old)) = (self.rf, current.rf) {
-            if new > old {
-                updates.push(("RF".to_string(), old, new));
-            }
-        }
-        if let (Some(new), Some(old)) = (self.mled, current.mled) {
-            if new > old {
-                updates.push(("MLED".to_string(), old, new));
-            }
-        }
-        if let (Some(new), Some(old)) = (self.nord, current.nord) {
-            if new > old {
-                updates.push(("Nordic".to_string(), old, new));
-            }
-        }
-        if let (Some(new), Some(old)) = (self.oled, current.oled) {
-            if new > old {
-                updates.push(("OLED".to_string(), old, new));
-            }
-        }
-        if let (Some(new), Some(old)) = (self.flash, current.flash) {
-            if new > old {
-                updates.push(("Flash".to_string(), old, new));
-            }
-        }
-
-        updates
+        self.field_pairs(current)
+            .iter()
+            .filter_map(|&(name, new, old)| {
+                let (new, old) = (new?, old?);
+                (new > old).then(|| (name.to_string(), old, new))
+            })
+            .collect()
     }
 }
 
@@ -469,7 +454,7 @@ pub mod device_ids {
     pub const M1_V5_HE: u32 = 2949;
 
     /// Get device ID from VID/PID if known (fallback when device query fails)
-    /// Prefer querying the device directly via SyncKeyboard::get_device_id()
+    /// Prefer querying the device directly via KeyboardInterface::get_device_id()
     pub fn from_vid_pid(vid: u16, pid: u16) -> Option<u32> {
         match (vid, pid) {
             (0x3151, 0x5030) => Some(M1_V5_HE),

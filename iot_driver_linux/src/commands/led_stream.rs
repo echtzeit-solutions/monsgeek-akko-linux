@@ -16,48 +16,18 @@
 //!   (the sweep "disappears" at gap positions, which is expected)
 
 use super::{open_keyboard, setup_interrupt_handler, CommandResult};
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 use monsgeek_transport::PrinterConfig;
 use std::sync::atomic::Ordering;
+
+// Re-export shared LED utilities so binary-crate callers (grpc.rs) can keep
+// importing from `commands::led_stream::*`.
+pub use iot_driver::led_stream::{apply_power_budget, send_full_frame};
+pub use iot_driver::notify::keymap::MATRIX_LEN;
 
 /// Matrix dimensions (row-major: index = row * COLS + col)
 const COLS: usize = 16;
 const ROWS: usize = 6;
-/// Total matrix positions in the LED grid (including gaps)
-pub const MATRIX_LEN: usize = COLS * ROWS; // 96
-const LEDS_PER_PAGE: usize = 18;
-/// Number of pages needed to cover the 16×6 grid
-const PAGE_COUNT: usize = MATRIX_LEN.div_ceil(LEDS_PER_PAGE); // 6
-
-/// Estimated current draw per WS2812 channel at full brightness (value=255).
-/// WS2812B datasheet: ~20mA typical per channel.
-const MA_PER_CHANNEL: f32 = 20.0;
-
-/// Scale LED values to stay within a power budget.
-///
-/// WS2812B model: each channel draws `MA_PER_CHANNEL` mA at value 255.
-/// Total per LED = `(R + G + B) / 255 × MA_PER_CHANNEL`.
-/// If total exceeds `budget_ma`, all values are uniformly scaled down.
-/// Returns `(estimated_ma_before_scaling, was_scaled)`.
-pub fn apply_power_budget(leds: &mut [(u8, u8, u8); MATRIX_LEN], budget_ma: u32) -> (f32, bool) {
-    let ma_per_unit = MA_PER_CHANNEL / 255.0;
-    let total_ma: f32 = leds
-        .iter()
-        .map(|&(r, g, b)| (r as f32 + g as f32 + b as f32) * ma_per_unit)
-        .sum();
-
-    if budget_ma > 0 && total_ma > budget_ma as f32 {
-        let scale = budget_ma as f32 / total_ma;
-        for led in leds.iter_mut() {
-            led.0 = (led.0 as f32 * scale) as u8;
-            led.1 = (led.1 as f32 * scale) as u8;
-            led.2 = (led.2 as f32 * scale) as u8;
-        }
-        (total_ma, true)
-    } else {
-        (total_ma, false)
-    }
-}
 
 /// Colors to cycle through in stream test
 const TEST_COLORS: [(u8, u8, u8); 7] = [
@@ -76,7 +46,7 @@ const TEST_COLORS: [(u8, u8, u8); 7] = [
 /// the keyboard may be asleep and needs a wake-up cycle.
 pub fn open_with_patch_check(
     printer_config: Option<PrinterConfig>,
-) -> Result<SyncKeyboard, Box<dyn std::error::Error>> {
+) -> Result<KeyboardInterface, Box<dyn std::error::Error>> {
     let kb = open_keyboard(printer_config).map_err(|e| format!("No device found: {e}"))?;
 
     let max_attempts = if kb.is_wireless() { 3 } else { 1 };
@@ -140,34 +110,6 @@ pub fn open_with_patch_check(
         last_err.map_or("unknown".to_string(), |e| e.to_string())
     )
     .into())
-}
-
-/// Send a full frame of RGB data to the keyboard.
-///
-/// `leds` has `MATRIX_LEN` entries (row-major: index = row*16 + col).
-/// Packs into pages of 18 entries each and sends via stream_led_page + commit.
-pub fn send_full_frame(
-    kb: &SyncKeyboard,
-    leds: &[(u8, u8, u8); MATRIX_LEN],
-) -> Result<(), Box<dyn std::error::Error>> {
-    for page in 0..PAGE_COUNT {
-        let start = page * LEDS_PER_PAGE;
-        let end = (start + LEDS_PER_PAGE).min(MATRIX_LEN);
-        let count = end - start;
-
-        let mut rgb_data = [0u8; LEDS_PER_PAGE * 3];
-        for i in 0..count {
-            let (r, g, b) = leds[start + i];
-            rgb_data[i * 3] = r;
-            rgb_data[i * 3 + 1] = g;
-            rgb_data[i * 3 + 2] = b;
-        }
-
-        kb.stream_led_page(page as u8, &rgb_data[..LEDS_PER_PAGE * 3])?;
-    }
-
-    kb.stream_led_commit()?;
-    Ok(())
 }
 
 /// Test LED streaming — lights one LED at a time, cycling through colors.

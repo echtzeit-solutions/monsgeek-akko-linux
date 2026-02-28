@@ -64,20 +64,20 @@ pub struct KeyDepthEvent {
 pub struct TriggerSettings {
     /// Number of keys
     pub key_count: usize,
-    /// Press travel (actuation point) per key, in raw units
-    pub press_travel: Vec<u8>,
+    /// Press travel (actuation point) per key, in raw u16 firmware units
+    pub press_travel: Vec<u16>,
     /// Lift travel (release point) per key
-    pub lift_travel: Vec<u8>,
+    pub lift_travel: Vec<u16>,
     /// Rapid Trigger press sensitivity per key
-    pub rt_press: Vec<u8>,
+    pub rt_press: Vec<u16>,
     /// Rapid Trigger lift sensitivity per key
-    pub rt_lift: Vec<u8>,
+    pub rt_lift: Vec<u16>,
     /// Key mode per key (0=Normal, 2=DKS, 3=MT, etc.)
     pub key_modes: Vec<u8>,
     /// Bottom deadzone per key
-    pub bottom_deadzone: Vec<u8>,
+    pub bottom_deadzone: Vec<u16>,
     /// Top deadzone per key
-    pub top_deadzone: Vec<u8>,
+    pub top_deadzone: Vec<u16>,
 }
 
 impl TriggerSettings {
@@ -95,26 +95,13 @@ impl TriggerSettings {
         }
     }
 
-    /// Parse from GET_MULTI_MAGNETISM response
-    /// Format: 7 arrays of key_count bytes each (press, lift, rt_press, rt_lift, mode, bottom_dz, top_dz)
-    pub fn from_bytes(bytes: &[u8], key_count: u8) -> Self {
-        let kc = key_count as usize;
-        let expected_len = kc * 7;
-
-        if bytes.len() < expected_len {
-            return Self::new(kc);
-        }
-
-        Self {
-            key_count: kc,
-            press_travel: bytes[0..kc].to_vec(),
-            lift_travel: bytes[kc..kc * 2].to_vec(),
-            rt_press: bytes[kc * 2..kc * 3].to_vec(),
-            rt_lift: bytes[kc * 3..kc * 4].to_vec(),
-            key_modes: bytes[kc * 4..kc * 5].to_vec(),
-            bottom_deadzone: bytes[kc * 5..kc * 6].to_vec(),
-            top_deadzone: bytes[kc * 6..kc * 7].to_vec(),
-        }
+    /// Decode a raw byte buffer of LE u16 pairs into a Vec<u16>
+    pub fn decode_u16_values(bytes: &[u8], key_count: usize) -> Vec<u16> {
+        bytes
+            .chunks_exact(2)
+            .take(key_count)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect()
     }
 
     /// Get settings for a specific key
@@ -150,20 +137,20 @@ pub struct KeyTriggerSettings {
 /// Detailed settings for a single key (from bulk query)
 #[derive(Debug, Clone, Default)]
 pub struct KeyTriggerSettingsDetail {
-    /// Press travel (actuation point)
-    pub press_travel: u8,
+    /// Press travel (actuation point) in raw u16 firmware units
+    pub press_travel: u16,
     /// Lift travel (release point)
-    pub lift_travel: u8,
+    pub lift_travel: u16,
     /// Rapid Trigger press sensitivity
-    pub rt_press: u8,
+    pub rt_press: u16,
     /// Rapid Trigger lift sensitivity
-    pub rt_lift: u8,
+    pub rt_lift: u16,
     /// Key mode
     pub key_mode: KeyMode,
     /// Bottom deadzone
-    pub bottom_deadzone: u8,
+    pub bottom_deadzone: u16,
     /// Top deadzone
-    pub top_deadzone: u8,
+    pub top_deadzone: u16,
 }
 
 /// Key trigger mode

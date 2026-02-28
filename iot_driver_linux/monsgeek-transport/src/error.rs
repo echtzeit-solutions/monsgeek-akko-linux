@@ -28,29 +28,6 @@ pub enum TransportError {
     #[error("HID permission denied: {0}")]
     HidPermissionDenied(String),
 
-    // Bluetooth-specific errors
-    #[error("Bluetooth error: {0}")]
-    BluetoothError(String),
-
-    #[error("GATT characteristic not found: {0}")]
-    GattCharacteristicNotFound(String),
-
-    #[error("Bluetooth pairing required")]
-    PairingRequired,
-
-    // WebRTC-specific errors
-    #[error("WebRTC error: {0}")]
-    WebRtcError(String),
-
-    #[error("Session expired")]
-    SessionExpired,
-
-    #[error("Authentication failed")]
-    AuthenticationFailed,
-
-    #[error("Network error: {0}")]
-    NetworkError(String),
-
     // Dongle-specific
     #[error("Dongle buffer overflow")]
     DongleBufferOverflow,

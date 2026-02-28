@@ -14,6 +14,19 @@
 #include "fw_v407.h"
 #include "hid_desc.h"
 
+/* ── SRAM addresses (from Ghidra RE, not yet in symbols.json) ─────────── */
+
+#define EP2_READY_FLAG    (*(volatile uint8_t  *)0x20000023)  /* g_hid_reports + 0x0B: EP2 IN idle flag */
+#define ADC_BATTERY_AVG   (*(volatile uint32_t *)0x20000010)  /* averaged battery ADC reading */
+#define ADC_SCAN_COUNTER  (*(volatile uint32_t *)0x20005234)  /* magnetism engine ADC scan counter */
+#define ADC_RAW_SAMPLE    (*(volatile uint32_t *)0x20003C88)  /* raw ADC sample 0 (battery channel) */
+
+/* ── USB HID request constants ───────────────────────────────────────── */
+
+#define USB_BMREQ_CLASS_IN         0xA1   /* bmRequestType: class, device-to-host, interface */
+#define HID_GET_REPORT             0x01   /* bRequest: GET_REPORT */
+#define WVALUE_FEATURE_REPORT(id)  ((3 << 8) | (id))  /* wValue for Feature report by ID */
+
 /* ── Derived addresses from exported symbols ─────────────────────────── */
 
 /* IF1 Report Descriptor length (from Ghidra RE of hid_class_setup_handler) */
@@ -246,18 +259,14 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
 void battery_monitor_before_hook(void) {
     volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
 
-    /* Averaged battery ADC: 32-bit value at 0x20000010 */
-    volatile uint32_t *adc_avg = (volatile uint32_t *)0x20000010;
-    rtt_emit(RTT_TAG_ADC_AVG, *adc_avg & 0xFFFF);
+    rtt_emit(RTT_TAG_ADC_AVG, ADC_BATTERY_AVG & 0xFFFF);
 
     rtt_emit(RTT_TAG_BATT_RAW, kbd->battery_raw_level);
     rtt_emit(RTT_TAG_BATT_LEVEL, kbd->battery_level);
     rtt_emit(RTT_TAG_CHARGER, kbd->charger_connected);
     rtt_emit(RTT_TAG_DEBOUNCE_CTR, kbd->battery_update_ctr);
 
-    /* ADC scan counter: *(uint32_t *)(0x20004410 + 0xe24) = 0x20005234 */
-    volatile uint32_t *adc_ctr = (volatile uint32_t *)0x20005234;
-    rtt_emit(RTT_TAG_ADC_COUNTER, *adc_ctr);
+    rtt_emit(RTT_TAG_ADC_COUNTER, ADC_SCAN_COUNTER);
 }
 
 /* Forward declaration for USB path (GET_REPORT IF2) and handle_patch_info. */
@@ -312,10 +321,10 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
     /* Only intercept GET_REPORT for IF1 battery Feature report.
      * All other requests (GET_DESCRIPTOR, SET_IDLE, etc.) pass through to
      * the original handler, which now reads from our extended_rdesc buffer. */
-    if (wIndex == 1 && bmReqType == 0xA1 && bRequest == 0x01) {
+    if (wIndex == 1 && bmReqType == USB_BMREQ_CLASS_IN && bRequest == HID_GET_REPORT) {
         /* GET_REPORT — wValue = (report_type << 8) | report_id
          * Feature report type = 3, Report ID = 7 → wValue = 0x0307 */
-        if (wValue == 0x0307) {
+        if (wValue == WVALUE_FEATURE_REPORT(7)) {
             uint8_t bat_level = *(volatile uint8_t *)&g_battery_level;
             uint8_t charging  = *(volatile uint8_t *)&g_charger_connected;
 
@@ -335,8 +344,7 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
              * The initial Input report from handle_vendor_cmd fires
              * before SET_CONFIGURATION, so EP2 isn't ready yet — this
              * is the reliable path for the first charge status update. */
-            volatile uint8_t *ep2_ready = (volatile uint8_t *)0x20000023;
-            if (*ep2_ready) {
+            if (EP2_READY_FLAG) {
                 static uint8_t bat_input[4] __attribute__((aligned(4)));
                 bat_input[0] = 0x07;
                 bat_input[1] = bat_level;
@@ -425,33 +433,26 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
 
     /* Raw kbd_state fields for battery debugging (offsets from g_kbd_state) */
     volatile uint8_t *kbd = (volatile uint8_t *)&g_kbd_state;
-    buf[30] = kbd[0x40];      /* battery_level */
-    buf[31] = kbd[0x41];      /* charger_connected */
-    buf[32] = kbd[0x42];      /* charger_debounce_ctr */
-    buf[33] = kbd[0x43];      /* battery_update_ctr */
-    buf[34] = kbd[0x44];      /* battery_raw_level */
-    buf[35] = kbd[0x45];      /* battery_indicator_active */
-    /* ADC counter: *(uint32_t *)(0x20004410 + 0xe24) = 0x20005234 */
-    volatile uint32_t *adc_ctr = (volatile uint32_t *)0x20005234;
-    buf[36] = (uint8_t)(*adc_ctr & 0xFF);
-    buf[37] = (uint8_t)((*adc_ctr >> 8) & 0xFF);
+    buf[30] = kbd[0x40];      /* battery_level (kbd_state_t.battery_level) */
+    buf[31] = kbd[0x41];      /* charger_connected (kbd_state_t.charger_connected) */
+    buf[32] = kbd[0x42];      /* charger_debounce_ctr (kbd_state_t.charger_debounce_ctr) */
+    buf[33] = kbd[0x43];      /* battery_update_ctr (kbd_state_t.battery_update_ctr) */
+    buf[34] = kbd[0x44];      /* battery_raw_level (kbd_state_t.battery_raw_level) */
+    buf[35] = kbd[0x45];      /* battery_indicator_active (kbd_state_t.battery_indicator_active) */
+    uint32_t adc_ctr = ADC_SCAN_COUNTER;
+    buf[36] = (uint8_t)(adc_ctr & 0xFF);
+    buf[37] = (uint8_t)((adc_ctr >> 8) & 0xFF);
 
-    /* Main loop timer counter: g_kbd_state[0..1] — outer loop gates on >= 2 */
-    buf[38] = kbd[0x00];      /* timer_counter lo */
+    buf[38] = kbd[0x00];      /* timer_counter lo (kbd_state_t.timer_counter, main loop gate >= 2) */
     buf[39] = kbd[0x01];      /* timer_counter hi */
-    /* Charge status: g_kbd_state + 0x4D (0x200004A9) */
-    buf[40] = kbd[0x4D];      /* charge_status (0=none, 1=charging, 2=complete) */
-    /* Connection mode: g_kbd_state + 0x04 */
-    buf[41] = kbd[0x04];      /* connection_mode */
+    buf[40] = kbd[0x4D];      /* charge_status (kbd_state_t +0x4D: 0=none, 1=charging, 2=complete) */
+    buf[41] = kbd[0x04];      /* connection_mode (kbd_state_t.connection_mode: 0=USB, 1=2.4G, 2=BT) */
 
-    /* Averaged ADC value (2 words at 0x20000010, we read first = current average) */
-    volatile uint32_t *adc_avg = (volatile uint32_t *)0x20000010;
-    uint32_t avg = *adc_avg;
+    uint32_t avg = ADC_BATTERY_AVG;
     buf[42] = (uint8_t)(avg & 0xFF);
     buf[43] = (uint8_t)((avg >> 8) & 0xFF);
 
-    /* Raw ADC sample 0 (at 0x20003410 + 0x878 = 0x20003C88) — 16-bit */
-    volatile uint16_t *adc_s0 = (volatile uint16_t *)0x20003C88;
+    volatile uint16_t *adc_s0 = (volatile uint16_t *)&ADC_RAW_SAMPLE;  /* raw ADC sample 0, 16-bit */
     buf[44] = (uint8_t)(*adc_s0 & 0xFF);
     buf[45] = (uint8_t)((*adc_s0 >> 8) & 0xFF);
 
@@ -623,8 +624,7 @@ int handle_vendor_cmd(void) {
             prev_charging = cur_charging;
 
             /* Check EP2 ready (not busy) before sending */
-            volatile uint8_t *ep2_ready = (volatile uint8_t *)0x20000023;
-            if (*ep2_ready) {
+            if (EP2_READY_FLAG) {
                 static uint8_t bat_input[4] __attribute__((aligned(4)));
                 uint8_t level = *(volatile uint8_t *)&g_battery_level;
                 bat_input[0] = 0x07;          /* Report ID 7 */

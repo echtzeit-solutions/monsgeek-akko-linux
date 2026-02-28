@@ -2,11 +2,11 @@
 
 use super::CommandResult;
 use iot_driver::protocol::{cmd, polling_rate};
-use monsgeek_keyboard::{PollingRate, SleepTimeSettings, SyncKeyboard};
+use monsgeek_keyboard::{KeyboardInterface, PollingRate, SleepTimeSettings};
 use std::io::{self, Write};
 
 /// Set active profile
-pub fn set_profile(keyboard: &SyncKeyboard, profile: u8) -> CommandResult {
+pub fn set_profile(keyboard: &KeyboardInterface, profile: u8) -> CommandResult {
     match keyboard.set_profile(profile) {
         Ok(_) => println!("Profile set to {profile}"),
         Err(e) => eprintln!("Failed to set profile: {e}"),
@@ -15,7 +15,7 @@ pub fn set_profile(keyboard: &SyncKeyboard, profile: u8) -> CommandResult {
 }
 
 /// Set debounce time
-pub fn set_debounce(keyboard: &SyncKeyboard, ms: u8) -> CommandResult {
+pub fn set_debounce(keyboard: &KeyboardInterface, ms: u8) -> CommandResult {
     match keyboard.set_debounce(ms) {
         Ok(_) => println!("Debounce set to {ms} ms"),
         Err(e) => eprintln!("Failed to set debounce: {e}"),
@@ -24,7 +24,7 @@ pub fn set_debounce(keyboard: &SyncKeyboard, ms: u8) -> CommandResult {
 }
 
 /// Set polling rate
-pub fn set_rate(keyboard: &SyncKeyboard, rate: &str) -> CommandResult {
+pub fn set_rate(keyboard: &KeyboardInterface, rate: &str) -> CommandResult {
     if let Some(hz) = polling_rate::parse(rate) {
         if let Some(rate_enum) = PollingRate::from_hz(hz) {
             match keyboard.set_polling_rate(rate_enum) {
@@ -46,7 +46,7 @@ pub fn set_rate(keyboard: &SyncKeyboard, rate: &str) -> CommandResult {
 
 /// Set LED mode and parameters
 pub fn set_led(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     mode: &str,
     brightness: u8,
     speed: u8,
@@ -77,7 +77,7 @@ pub fn set_led(
 /// Set sleep time settings
 #[allow(clippy::too_many_arguments)]
 pub fn set_sleep(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     idle: Option<String>,
     deep: Option<String>,
     idle_bt: Option<String>,
@@ -235,7 +235,7 @@ pub fn set_sleep(
 }
 
 /// Factory reset keyboard
-pub fn reset(keyboard: &SyncKeyboard) -> CommandResult {
+pub fn reset(keyboard: &KeyboardInterface) -> CommandResult {
     print!("This will factory reset the keyboard. Are you sure? (y/N) ");
     io::stdout().flush().unwrap();
     let mut input = String::new();
@@ -252,7 +252,13 @@ pub fn reset(keyboard: &SyncKeyboard) -> CommandResult {
 }
 
 /// Set all keys to a single color
-pub fn set_color_all(keyboard: &SyncKeyboard, r: u8, g: u8, b: u8, layer: u8) -> CommandResult {
+pub fn set_color_all(
+    keyboard: &KeyboardInterface,
+    r: u8,
+    g: u8,
+    b: u8,
+    layer: u8,
+) -> CommandResult {
     println!("Setting all keys to color #{r:02X}{g:02X}{b:02X}...");
     let color = monsgeek_keyboard::led::RgbColor { r, g, b };
     match keyboard.set_all_keys_color(color, layer) {

@@ -14,6 +14,7 @@ use crossterm::{
 };
 
 use super::{resolve, EffectDef, ResolvedEffect};
+use crate::led_stream::{apply_power_budget, send_full_frame, DEFAULT_POWER_BUDGET_MA};
 use crate::notify::keymap::{COLS, MATRIX_LEN, ROWS};
 use crate::profile::M1_V5_HE_KEY_NAMES;
 
@@ -186,16 +187,12 @@ fn build_labels() -> Vec<String> {
 /// Sends RGB frames at ~30 FPS using the 0xFC patch protocol.
 /// The caller is responsible for Ctrl-C handling and LED release.
 pub fn play_on_hardware(
-    kb: &monsgeek_keyboard::SyncKeyboard,
+    kb: &monsgeek_keyboard::KeyboardInterface,
     resolved: &ResolvedEffect,
     key_indices: &[usize],
     running: &std::sync::atomic::AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::Ordering;
-
-    const LEDS_PER_PAGE: usize = 18;
-    const PAGE_COUNT: usize = MATRIX_LEN.div_ceil(LEDS_PER_PAGE);
-    const MA_PER_CHANNEL: f32 = 20.0;
 
     let start = Instant::now();
     let frame_dur = Duration::from_millis(33); // ~30 FPS
@@ -211,37 +208,8 @@ pub fn play_on_hardware(
             }
         }
 
-        // Apply power budget (400mA)
-        let ma_per_unit = MA_PER_CHANNEL / 255.0;
-        let total_ma: f32 = leds
-            .iter()
-            .map(|&(r, g, b)| (r as f32 + g as f32 + b as f32) * ma_per_unit)
-            .sum();
-        if total_ma > 400.0 {
-            let scale = 400.0 / total_ma;
-            for led in leds.iter_mut() {
-                led.0 = (led.0 as f32 * scale) as u8;
-                led.1 = (led.1 as f32 * scale) as u8;
-                led.2 = (led.2 as f32 * scale) as u8;
-            }
-        }
-
-        // Send frame via 0xFC pages
-        for page in 0..PAGE_COUNT {
-            let start = page * LEDS_PER_PAGE;
-            let end = (start + LEDS_PER_PAGE).min(MATRIX_LEN);
-            let count = end - start;
-
-            let mut rgb_data = [0u8; LEDS_PER_PAGE * 3];
-            for i in 0..count {
-                let (r, g, b) = leds[start + i];
-                rgb_data[i * 3] = r;
-                rgb_data[i * 3 + 1] = g;
-                rgb_data[i * 3 + 2] = b;
-            }
-            kb.stream_led_page(page as u8, &rgb_data[..LEDS_PER_PAGE * 3])?;
-        }
-        kb.stream_led_commit()?;
+        apply_power_budget(&mut leds, DEFAULT_POWER_BUDGET_MA as u32);
+        send_full_frame(kb, &leds)?;
 
         print!(
             "\rRGB({:3},{:3},{:3}) {:6.0}ms",

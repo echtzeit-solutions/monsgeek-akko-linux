@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tracing::trace;
 
 use crate::protocol::{cmd, screen_color};
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 
 /// Screen color state shared between capture and main loop
 pub struct ScreenColorState {
@@ -98,7 +98,7 @@ pub fn compute_average_color(data: &[u8], width: u32, height: u32, is_bgra: bool
 /// Run the screen color streaming loop
 /// Sends RGB to keyboard at ~50Hz
 fn run_screen_color_loop(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     state: &Arc<ScreenColorState>,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -389,7 +389,7 @@ pub mod pipewire_capture {
 
 /// Run screen color reactive mode (async entry point)
 pub async fn run_screen_color_mode(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {
@@ -420,7 +420,7 @@ pub async fn run_screen_color_mode(
 
 /// Synchronous wrapper for running screen color mode
 pub fn run_screen_color_mode_sync(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {

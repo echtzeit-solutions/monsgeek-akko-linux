@@ -54,17 +54,11 @@ pub mod report_id {
     pub const MOUSE: u8 = 0x02;
     /// Vendor event report ID (USB wired/dongle)
     pub const USB_VENDOR_EVENT: u8 = 0x05;
-    /// Vendor report ID (Bluetooth)
-    pub const BLE_VENDOR: u8 = 0x06;
 }
 
-/// BLE framing markers
-pub mod ble {
-    /// BLE marker for command/response channel
-    pub const CMDRESP_MARKER: u8 = 0x55;
-    /// BLE marker for event channel
-    pub const EVENT_MARKER: u8 = 0x66;
-}
+// BLE constants (VENDOR_REPORT_ID, CMDRESP_MARKER, EVENT_MARKER) live in
+// protocol::ble — imported here to avoid duplication.
+use crate::protocol::ble;
 
 /// Parse keyboard function notification (type 0x03)
 ///
@@ -159,12 +153,12 @@ pub fn parse_ble_event(data: &[u8]) -> VendorEvent {
 
     // Bluetooth vendor events: [06, 66, type, value, ...]
     let payload =
-        if data[0] == report_id::BLE_VENDOR && data[1] == ble::EVENT_MARKER && data.len() > 2 {
+        if data[0] == ble::VENDOR_REPORT_ID && data[1] == ble::EVENT_MARKER && data.len() > 2 {
             &data[2..] // Skip report ID (06) and BLE marker (66)
         } else if data[0] == report_id::USB_VENDOR_EVENT && data.len() > 1 {
             // Fallback: USB-style events [05, type, value, ...]
             &data[1..]
-        } else if data[0] == report_id::BLE_VENDOR && data.len() > 1 {
+        } else if data[0] == ble::VENDOR_REPORT_ID && data.len() > 1 {
             // Alternate: just report ID 6 without 0x66 marker
             &data[1..]
         } else {
@@ -172,6 +166,87 @@ pub fn parse_ble_event(data: &[u8]) -> VendorEvent {
         };
 
     parse_event_payload(payload, data)
+}
+
+/// Shared event subsystem for all transport backends.
+///
+/// Manages the broadcast channel, event reader thread, and shutdown flag.
+/// All transports delegate `read_event()`, `subscribe_events()`, and `Drop`
+/// to this struct, eliminating ~80 lines of duplication.
+pub struct EventSubsystem {
+    /// Broadcast sender for timestamped vendor events (if input device available)
+    event_tx: Option<broadcast::Sender<TimestampedEvent>>,
+    /// Shutdown flag for event reader thread
+    shutdown: Arc<AtomicBool>,
+}
+
+/// Broadcast channel capacity for vendor events
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+impl EventSubsystem {
+    /// Create a new event subsystem, optionally spawning an event reader thread.
+    ///
+    /// If `input_device` is `Some`, spawns a background thread that reads HID
+    /// input reports and broadcasts parsed events to subscribers.
+    pub fn new<F>(input_device: Option<HidDevice>, parser: F, config: EventReaderConfig) -> Self
+    where
+        F: Fn(&[u8]) -> VendorEvent + Send + 'static,
+    {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let event_tx = input_device.map(|input| {
+            let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+            let tx_clone = tx.clone();
+            let shutdown_clone = shutdown.clone();
+
+            std::thread::Builder::new()
+                .name(format!("{}-event-reader", config.name))
+                .spawn(move || {
+                    run_event_reader_loop(input, tx_clone, shutdown_clone, parser, config);
+                })
+                .expect("Failed to spawn event reader thread");
+
+            tx
+        });
+
+        Self { event_tx, shutdown }
+    }
+
+    /// Poll for a single event with timeout.
+    pub fn read_event(
+        &self,
+        timeout_ms: u32,
+    ) -> Result<Option<VendorEvent>, crate::error::TransportError> {
+        if let Some(ref tx) = self.event_tx {
+            let mut rx = tx.subscribe();
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+            loop {
+                match rx.try_recv() {
+                    Ok(timestamped) => return Ok(Some(timestamped.event)),
+                    Err(broadcast::error::TryRecvError::Empty) => {
+                        if Instant::now() >= deadline {
+                            return Ok(None);
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Subscribe to the event broadcast channel.
+    pub fn subscribe(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
+        self.event_tx.as_ref().map(|tx| tx.subscribe())
+    }
+}
+
+impl Drop for EventSubsystem {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Configuration for the event reader loop
@@ -183,16 +258,6 @@ pub struct EventReaderConfig {
     pub error_sleep_ms: u64,
     /// Name prefix for debug logging
     pub name: &'static str,
-}
-
-impl Default for EventReaderConfig {
-    fn default() -> Self {
-        Self {
-            read_timeout_ms: 5,
-            error_sleep_ms: 100,
-            name: "event-reader",
-        }
-    }
 }
 
 impl EventReaderConfig {

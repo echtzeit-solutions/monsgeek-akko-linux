@@ -3,11 +3,11 @@
 use super::CommandResult;
 use iot_driver::macro_seq::MacroSeq;
 use iot_driver::protocol::hid;
-use monsgeek_keyboard::{parse_macro_events, SyncKeyboard};
+use monsgeek_keyboard::{parse_macro_events, KeyboardInterface};
 use monsgeek_transport::protocol::matrix;
 
 /// Get macro for a key
-pub fn get_macro(keyboard: &SyncKeyboard, key: &str) -> CommandResult {
+pub fn get_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
     let macro_index: u8 = key.parse().unwrap_or(0);
     println!("Reading macro {macro_index}...");
     match keyboard.get_macro(macro_index) {
@@ -63,7 +63,7 @@ pub fn get_macro(keyboard: &SyncKeyboard, key: &str) -> CommandResult {
 
 /// Set a text macro or key sequence for a macro slot
 pub fn set_macro(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     key: &str,
     text: &str,
     delay: u16,
@@ -111,7 +111,7 @@ pub fn set_macro(
 }
 
 /// Clear macro from a key
-pub fn clear_macro(keyboard: &SyncKeyboard, key: &str) -> CommandResult {
+pub fn clear_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
     let macro_index: u8 = key.parse().unwrap_or(0);
 
     println!("Clearing macro {macro_index}...");
@@ -125,7 +125,7 @@ pub fn clear_macro(keyboard: &SyncKeyboard, key: &str) -> CommandResult {
 
 /// Assign a macro to a key (base layer or Fn layer)
 pub fn assign_macro(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     key: &str,
     macro_index_str: &str,
     fn_layer: bool,
@@ -183,41 +183,4 @@ fn text_preview_from_events(events: &[monsgeek_keyboard::MacroEvent]) -> String 
     result
 }
 
-/// Convert HID keycode to character (inverse of char_to_hid)
-fn hid_keycode_to_char(keycode: u8, shift: bool) -> Option<char> {
-    match keycode {
-        0x04..=0x1D => {
-            // A-Z
-            let base = (keycode - 0x04 + b'a') as char;
-            Some(if shift {
-                base.to_ascii_uppercase()
-            } else {
-                base
-            })
-        }
-        0x1E..=0x26 => {
-            // 1-9
-            if shift {
-                Some(b"!@#$%^&*("[(keycode - 0x1E) as usize] as char)
-            } else {
-                Some((b'1' + keycode - 0x1E) as char)
-            }
-        }
-        0x27 => Some(if shift { ')' } else { '0' }),
-        0x28 => Some('\n'), // Enter
-        0x2B => Some('\t'), // Tab
-        0x2C => Some(' '),  // Space
-        0x2D => Some(if shift { '_' } else { '-' }),
-        0x2E => Some(if shift { '+' } else { '=' }),
-        0x2F => Some(if shift { '{' } else { '[' }),
-        0x30 => Some(if shift { '}' } else { ']' }),
-        0x31 => Some(if shift { '|' } else { '\\' }),
-        0x33 => Some(if shift { ':' } else { ';' }),
-        0x34 => Some(if shift { '"' } else { '\'' }),
-        0x35 => Some(if shift { '~' } else { '`' }),
-        0x36 => Some(if shift { '<' } else { ',' }),
-        0x37 => Some(if shift { '>' } else { '.' }),
-        0x38 => Some(if shift { '?' } else { '/' }),
-        _ => None,
-    }
-}
+use iot_driver::protocol::hid::keycode_to_char as hid_keycode_to_char;

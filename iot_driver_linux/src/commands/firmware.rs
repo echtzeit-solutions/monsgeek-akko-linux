@@ -2,7 +2,7 @@
 
 use super::CommandResult;
 use iot_driver::firmware::FirmwareFile;
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 use std::path::PathBuf;
 
 /// Validate a firmware file
@@ -48,7 +48,7 @@ pub fn dry_run(file: &PathBuf, verbose: bool) -> CommandResult {
     println!("=== DRY RUN - NO CHANGES WILL BE MADE ===\n");
 
     // Try to get current device info
-    let (current_version, device_id) = match SyncKeyboard::open_any() {
+    let (current_version, device_id) = match KeyboardInterface::open_any() {
         Ok(keyboard) => {
             let version = keyboard.get_version().unwrap_or_default();
             let device_id = keyboard.get_device_id().unwrap_or(0);
@@ -87,7 +87,7 @@ pub fn check(device_id: Option<u32>) -> CommandResult {
     let (api_device_id, keyboard) = if let Some(id) = device_id {
         (Some(id), None)
     } else {
-        match SyncKeyboard::open_any() {
+        match KeyboardInterface::open_any() {
             Ok(kb) => {
                 let id = kb.get_device_id().ok().filter(|&id| id != 0);
                 let id = id.or_else(|| device_ids::from_vid_pid(kb.vid(), kb.pid()));
@@ -124,7 +124,7 @@ pub fn check(device_id: Option<u32>) -> CommandResult {
             }
 
             // Compare with current device if connected
-            let kb = keyboard.or_else(|| SyncKeyboard::open_any().ok());
+            let kb = keyboard.or_else(|| KeyboardInterface::open_any().ok());
             if let Some(kb) = kb {
                 if let Ok(version) = kb.get_version() {
                     let current_usb = version.raw;
@@ -167,7 +167,7 @@ pub fn download(device_id: Option<u32>, output: &PathBuf) -> CommandResult {
 
     // Try to get device ID from connected device or argument
     let api_device_id = device_id.or_else(|| {
-        if let Ok(kb) = SyncKeyboard::open_any() {
+        if let Ok(kb) = KeyboardInterface::open_any() {
             kb.get_device_id()
                 .ok()
                 .filter(|&id| id != 0)

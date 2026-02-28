@@ -2,7 +2,7 @@
 
 use super::{format_command_response, open_preferred_transport, CommandResult};
 use hidapi::HidApi;
-use monsgeek_transport::{ChecksumType, PrinterConfig};
+use monsgeek_transport::{ChecksumType, PrinterConfig, Transport};
 
 /// List all HID devices
 pub fn list(hidapi: &HidApi) -> CommandResult {

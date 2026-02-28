@@ -2,10 +2,10 @@
 
 use super::CommandResult;
 use iot_driver::protocol::cmd::LedMode;
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 
 /// Set LED mode by name or number
-pub fn mode(keyboard: &SyncKeyboard, mode: &str, layer: u8) -> CommandResult {
+pub fn mode(keyboard: &KeyboardInterface, mode: &str, layer: u8) -> CommandResult {
     let led_mode = match LedMode::parse(mode) {
         Some(m) => m,
         None => {

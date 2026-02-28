@@ -10,7 +10,7 @@ use crate::key_action::KeyAction;
 use crate::protocol::hid;
 use monsgeek_transport::protocol::matrix;
 
-use monsgeek_keyboard::{KeyboardError, KeyboardInterface, SyncKeyboard};
+use monsgeek_keyboard::{KeyboardError, KeyboardInterface};
 
 // Re-export from monsgeek-transport so existing `use crate::keymap::{Layer, KeyRef}` still works.
 pub use monsgeek_transport::protocol::{KeyRef, Layer};
@@ -210,8 +210,8 @@ pub fn is_user_remap(k: &[u8], default_hid_code: u8) -> bool {
 /// Number of pages to read for a full key matrix (126 positions × 4 bytes = 504).
 const KEYMATRIX_PAGES: usize = 8;
 
-/// Load from SyncKeyboard (CLI).
-pub fn load_sync(keyboard: &SyncKeyboard) -> Result<KeyMap, KeyboardError> {
+/// Load from KeyboardInterface (CLI).
+pub fn load_sync(keyboard: &KeyboardInterface) -> Result<KeyMap, KeyboardError> {
     let key_count = keyboard.key_count() as usize;
     let base0 = keyboard.get_keymatrix(0, KEYMATRIX_PAGES)?;
     let base1 = keyboard.get_keymatrix(1, KEYMATRIX_PAGES)?;
@@ -244,9 +244,9 @@ pub fn load_async(keyboard: &KeyboardInterface) -> Result<KeyMap, KeyboardError>
 // I/O: writing
 // ---------------------------------------------------------------------------
 
-/// Write a key config via SyncKeyboard (CLI).
+/// Write a key config via KeyboardInterface (CLI).
 pub fn set_key_sync(
-    kb: &SyncKeyboard,
+    kb: &KeyboardInterface,
     index: u8,
     layer: Layer,
     action: &KeyAction,
@@ -264,8 +264,12 @@ pub fn set_key_async(
     kb.set_key_config(0, index, layer.wire_layer(), action.to_config_bytes())
 }
 
-/// Reset a key to default via SyncKeyboard (CLI).
-pub fn reset_key_sync(kb: &SyncKeyboard, index: u8, layer: Layer) -> Result<(), KeyboardError> {
+/// Reset a key to default via KeyboardInterface (CLI).
+pub fn reset_key_sync(
+    kb: &KeyboardInterface,
+    index: u8,
+    layer: Layer,
+) -> Result<(), KeyboardError> {
     kb.reset_key(layer.wire_layer(), index)
 }
 

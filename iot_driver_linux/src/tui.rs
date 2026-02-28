@@ -31,7 +31,7 @@ use crate::keymap::{self, KeyEntry, Layer};
 use crate::power_supply::{
     find_dongle_battery_power_supply, find_hid_battery_power_supply, read_kernel_battery,
 };
-use crate::{cmd, devices, key_mode, magnetism, DeviceInfo, TriggerSettings};
+use crate::{cmd, devices, key_mode, magnetism, FirmwareSettings, TriggerSettings};
 use monsgeek_transport::protocol::matrix;
 
 // Keyboard abstraction layer - using async interface directly
@@ -53,7 +53,7 @@ enum BatterySource {
 
 /// Application state
 struct App {
-    info: DeviceInfo,
+    info: FirmwareSettings,
     tab: usize,
     selected: usize,
     key_depths: Vec<f32>,
@@ -1171,26 +1171,17 @@ impl TriggerEditModal {
     /// Create modal for editing global settings
     fn new_global(triggers: &TriggerSettings, precision: Precision) -> Self {
         let factor = precision.factor() as f32;
-        // Decode first key's u16 values as representative global values
-        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-            if idx * 2 + 1 < data.len() {
-                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-            } else {
-                0
-            }
-        };
-
         Self {
             target: TriggerEditTarget::Global,
             field_index: 0,
             depth_history: VecDeque::with_capacity(100),
             depth_filter: None,
-            actuation_mm: decode_u16(&triggers.press_travel, 0) as f32 / factor,
-            release_mm: decode_u16(&triggers.lift_travel, 0) as f32 / factor,
-            rt_press_mm: decode_u16(&triggers.rt_press, 0) as f32 / factor,
-            rt_lift_mm: decode_u16(&triggers.rt_lift, 0) as f32 / factor,
-            top_dz_mm: decode_u16(&triggers.top_deadzone, 0) as f32 / factor,
-            bottom_dz_mm: decode_u16(&triggers.bottom_deadzone, 0) as f32 / factor,
+            actuation_mm: triggers.press_travel.first().copied().unwrap_or(0) as f32 / factor,
+            release_mm: triggers.lift_travel.first().copied().unwrap_or(0) as f32 / factor,
+            rt_press_mm: triggers.rt_press.first().copied().unwrap_or(0) as f32 / factor,
+            rt_lift_mm: triggers.rt_lift.first().copied().unwrap_or(0) as f32 / factor,
+            top_dz_mm: triggers.top_deadzone.first().copied().unwrap_or(0) as f32 / factor,
+            bottom_dz_mm: triggers.bottom_deadzone.first().copied().unwrap_or(0) as f32 / factor,
             mode: triggers.key_modes.first().copied().unwrap_or(0),
         }
     }
@@ -1198,25 +1189,23 @@ impl TriggerEditModal {
     /// Create modal for editing a specific key
     fn new_per_key(key_index: usize, triggers: &TriggerSettings, precision: Precision) -> Self {
         let factor = precision.factor() as f32;
-        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-            if idx * 2 + 1 < data.len() {
-                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-            } else {
-                0
-            }
-        };
-
         Self {
             target: TriggerEditTarget::PerKey { key_index },
             field_index: 0,
             depth_history: VecDeque::with_capacity(100),
             depth_filter: Some(key_index),
-            actuation_mm: decode_u16(&triggers.press_travel, key_index) as f32 / factor,
-            release_mm: decode_u16(&triggers.lift_travel, key_index) as f32 / factor,
-            rt_press_mm: decode_u16(&triggers.rt_press, key_index) as f32 / factor,
-            rt_lift_mm: decode_u16(&triggers.rt_lift, key_index) as f32 / factor,
-            top_dz_mm: decode_u16(&triggers.top_deadzone, key_index) as f32 / factor,
-            bottom_dz_mm: decode_u16(&triggers.bottom_deadzone, key_index) as f32 / factor,
+            actuation_mm: triggers.press_travel.get(key_index).copied().unwrap_or(0) as f32
+                / factor,
+            release_mm: triggers.lift_travel.get(key_index).copied().unwrap_or(0) as f32 / factor,
+            rt_press_mm: triggers.rt_press.get(key_index).copied().unwrap_or(0) as f32 / factor,
+            rt_lift_mm: triggers.rt_lift.get(key_index).copied().unwrap_or(0) as f32 / factor,
+            top_dz_mm: triggers.top_deadzone.get(key_index).copied().unwrap_or(0) as f32 / factor,
+            bottom_dz_mm: triggers
+                .bottom_deadzone
+                .get(key_index)
+                .copied()
+                .unwrap_or(0) as f32
+                / factor,
             mode: triggers.key_modes.get(key_index).copied().unwrap_or(0),
         }
     }
@@ -1602,7 +1591,7 @@ impl App {
     fn new() -> (Self, mpsc::UnboundedReceiver<AsyncResult>) {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         let app = Self {
-            info: DeviceInfo::default(),
+            info: FirmwareSettings::default(),
             tab: 0,
             selected: 0,
             key_depths: Vec::new(),
@@ -5243,23 +5232,12 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
     let precision_str = app.precision.as_str();
 
     let summary = if let Some(ref triggers) = app.triggers {
-        // Decode first key values
-        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-            if idx * 2 + 1 < data.len() {
-                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-            } else {
-                0
-            }
-        };
-        let first_press = decode_u16(&triggers.press_travel, 0);
-        let first_lift = decode_u16(&triggers.lift_travel, 0);
-        let first_rt_press = decode_u16(&triggers.rt_press, 0);
-        let first_rt_lift = decode_u16(&triggers.rt_lift, 0);
+        let first_press = triggers.press_travel.first().copied().unwrap_or(0);
+        let first_lift = triggers.lift_travel.first().copied().unwrap_or(0);
+        let first_rt_press = triggers.rt_press.first().copied().unwrap_or(0);
+        let first_rt_lift = triggers.rt_lift.first().copied().unwrap_or(0);
         let first_mode = triggers.key_modes.first().copied().unwrap_or(0);
-        let num_keys = triggers
-            .key_modes
-            .len()
-            .min(triggers.press_travel.len() / 2);
+        let num_keys = triggers.key_modes.len().min(triggers.press_travel.len());
 
         vec![
             Line::from(vec![
@@ -5332,27 +5310,16 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Key list section with ScrollView
     if let Some(ref triggers) = app.triggers {
-        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-            if idx * 2 + 1 < data.len() {
-                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-            } else {
-                0
-            }
-        };
-
-        let num_keys = triggers
-            .key_modes
-            .len()
-            .min(triggers.press_travel.len() / 2);
+        let num_keys = triggers.key_modes.len().min(triggers.press_travel.len());
 
         // Build ALL rows for table (ScrollView handles viewport)
         let selected_key = app.trigger_selected_key;
         let rows: Vec<Row> = (0..num_keys)
             .map(|i| {
-                let press = decode_u16(&triggers.press_travel, i);
-                let lift = decode_u16(&triggers.lift_travel, i);
-                let rt_p = decode_u16(&triggers.rt_press, i);
-                let rt_l = decode_u16(&triggers.rt_lift, i);
+                let press = triggers.press_travel.get(i).copied().unwrap_or(0);
+                let lift = triggers.lift_travel.get(i).copied().unwrap_or(0);
+                let rt_p = triggers.rt_press.get(i).copied().unwrap_or(0);
+                let rt_l = triggers.rt_lift.get(i).copied().unwrap_or(0);
                 let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
                 let key_name = get_key_label(i);
                 let is_selected = i == selected_key;
@@ -5545,21 +5512,13 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
         let pos = app.trigger_selected_key;
         let key_name = get_key_label(pos);
 
-        let decode_u16 = |data: &[u8], idx: usize| -> u16 {
-            if idx * 2 + 1 < data.len() {
-                u16::from_le_bytes([data[idx * 2], data[idx * 2 + 1]])
-            } else {
-                0
-            }
-        };
-
-        let press = decode_u16(&triggers.press_travel, pos);
-        let lift = decode_u16(&triggers.lift_travel, pos);
-        let rt_press = decode_u16(&triggers.rt_press, pos);
-        let rt_lift = decode_u16(&triggers.rt_lift, pos);
+        let press = triggers.press_travel.get(pos).copied().unwrap_or(0);
+        let lift = triggers.lift_travel.get(pos).copied().unwrap_or(0);
+        let rt_press = triggers.rt_press.get(pos).copied().unwrap_or(0);
+        let rt_lift = triggers.rt_lift.get(pos).copied().unwrap_or(0);
         let mode = triggers.key_modes.get(pos).copied().unwrap_or(0);
-        let bottom_dz = decode_u16(&triggers.bottom_deadzone, pos);
-        let top_dz = decode_u16(&triggers.top_deadzone, pos);
+        let bottom_dz = triggers.bottom_deadzone.get(pos).copied().unwrap_or(0);
+        let top_dz = triggers.top_deadzone.get(pos).copied().unwrap_or(0);
 
         let details = vec![
             Line::from(vec![
@@ -6385,39 +6344,4 @@ fn text_preview_from_events(events: &[monsgeek_keyboard::MacroEvent]) -> String 
     }
 }
 
-/// Convert HID keycode to character (inverse of char_to_hid)
-fn hid_keycode_to_char(keycode: u8, shift: bool) -> Option<char> {
-    match keycode {
-        0x04..=0x1D => {
-            let base = (keycode - 0x04 + b'a') as char;
-            Some(if shift {
-                base.to_ascii_uppercase()
-            } else {
-                base
-            })
-        }
-        0x1E..=0x26 => {
-            if shift {
-                Some(b"!@#$%^&*("[(keycode - 0x1E) as usize] as char)
-            } else {
-                Some((b'1' + keycode - 0x1E) as char)
-            }
-        }
-        0x27 => Some(if shift { ')' } else { '0' }),
-        0x28 => Some('\n'),
-        0x2B => Some('\t'),
-        0x2C => Some(' '),
-        0x2D => Some(if shift { '_' } else { '-' }),
-        0x2E => Some(if shift { '+' } else { '=' }),
-        0x2F => Some(if shift { '{' } else { '[' }),
-        0x30 => Some(if shift { '}' } else { ']' }),
-        0x31 => Some(if shift { '|' } else { '\\' }),
-        0x33 => Some(if shift { ':' } else { ';' }),
-        0x34 => Some(if shift { '"' } else { '\'' }),
-        0x35 => Some(if shift { '~' } else { '`' }),
-        0x36 => Some(if shift { '<' } else { ',' }),
-        0x37 => Some(if shift { '>' } else { '.' }),
-        0x38 => Some(if shift { '?' } else { '/' }),
-        _ => None,
-    }
-}
+use crate::protocol::hid::keycode_to_char as hid_keycode_to_char;

@@ -24,6 +24,12 @@
 #include "fw_dongle.h"
 #include "hid_desc.h"
 
+/* ── USB HID request constants ───────────────────────────────────────── */
+
+#define USB_BMREQ_CLASS_IN         0xA1   /* bmRequestType: class, device-to-host, interface */
+#define HID_GET_REPORT             0x01   /* bRequest: GET_REPORT */
+#define WVALUE_FEATURE_REPORT(id)  ((3 << 8) | (id))  /* wValue for Feature report by ID */
+
 /* ── Derived addresses ───────────────────────────────────────────────── */
 
 #define IF1_RDESC_LEN  171   /* original IF1 report descriptor length */
@@ -128,10 +134,10 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
 
     /* Only intercept GET_REPORT for IF1 battery Feature report.
      * All other requests pass through to the original handler. */
-    if (wIndex == 1 && bmReqType == 0xA1 && bRequest == 0x01) {
+    if (wIndex == 1 && bmReqType == USB_BMREQ_CLASS_IN && bRequest == HID_GET_REPORT) {
         /* GET_REPORT — wValue = (report_type << 8) | report_id
          * Feature report type = 3, Report ID = 7 → wValue = 0x0307 */
-        if (wValue == 0x0307) {
+        if (wValue == WVALUE_FEATURE_REPORT(7)) {
             volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
             uint8_t bat_level = ds->kb_battery_info;
             uint8_t charging  = ds->kb_charging;

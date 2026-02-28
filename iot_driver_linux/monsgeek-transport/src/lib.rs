@@ -6,7 +6,6 @@
 //! - HID Wired (direct USB connection)
 //! - HID Dongle (2.4GHz wireless via USB dongle)
 //! - HID Bluetooth (BLE via kernel's hid-over-gatt driver)
-//! - WebRTC (future, for remote access)
 
 pub mod command;
 pub mod device_registry;
@@ -22,12 +21,6 @@ mod hid_bluetooth;
 mod hid_dongle;
 mod hid_wired;
 mod sync_adapter;
-
-#[cfg(feature = "bluetooth")]
-pub mod bluetooth;
-
-#[cfg(feature = "webrtc")]
-pub mod webrtc;
 
 pub use command::{
     // Packet parsing
@@ -96,7 +89,7 @@ pub use flow_control::FlowControlTransport;
 pub use hid_bluetooth::HidBluetoothTransport;
 pub use hid_dongle::HidDongleTransport;
 pub use hid_wired::HidWiredTransport;
-pub use sync_adapter::{list_devices_sync, open_device_sync, SyncTransport};
+pub use sync_adapter::{list_devices_sync, open_device_sync};
 
 use std::sync::Arc;
 use tokio::sync::broadcast;

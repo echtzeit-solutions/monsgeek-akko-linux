@@ -12,28 +12,31 @@ Automates the generation of function hooks:
 Parameterized for reuse across different firmware targets (keyboard, dongle, etc.).
 
 Usage:
-    from hook_framework import HookEngine, Hook
+    from hook_framework import HookEngine, Hook, PatchProject, BinaryPatch
 
-    engine = HookEngine("../firmware.bin",
-                        file_base=0x08005000,
-                        patch_zone_start=0x08025800,
-                        patch_zone_end=0x08027FFF)
-    engine.add_hook(Hook(
-        name="my_hook",
-        target=0x0801474C,
-        handler="my_handler",
-    ))
-    engine.generate("hooks_gen.S")
-    engine.patch("../firmware_patched.bin")
+    project = PatchProject(
+        hooks=[Hook(name="my_hook", target=0x0801474C, handler="my_handler")],
+        binary_patches=[BinaryPatch(0x080147FC, b'\\xAB', b'\\xD9', "length cap")],
+        firmware_bin="../firmware.bin",
+        patched_bin="../firmware_patched.bin",
+        hook_bin="hook.bin",
+        elf_path="hook.elf",
+        build_dir=".",
+        engine_kwargs=dict(file_base=0x08005000,
+                           patch_zone_start=0x08025800,
+                           patch_zone_end=0x08027FFF),
+    )
+    project.main()
 """
 
 from __future__ import annotations
 
 import struct
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple
 
 
 # ── Thumb-2 instruction analysis ─────────────────────────────────────────────
@@ -75,7 +78,7 @@ def decode_instructions(data: bytes, base_addr: int) -> list[dict]:
     return insns
 
 
-def check_pc_relative(insn: dict) -> Optional[str]:
+def check_pc_relative(insn: dict) -> str | None:
     """
     Check if a Thumb instruction uses PC-relative addressing.
     Returns a description string if PC-relative, None if safe to relocate.
@@ -433,7 +436,7 @@ class HookEngine:
         ]
         return lines
 
-    def patch(self, output_path: str | Path, hook_bin_path: str | Path = None) -> None:
+    def patch(self, output_path: str | Path, hook_bin_path: str | Path | None = None) -> None:
         """
         Apply all hooks to the firmware and write the patched binary.
 
@@ -493,29 +496,180 @@ class HookEngine:
         return '\n'.join(lines)
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
-
-def main():
-    """Demo: validate hook points from the command line."""
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <firmware.bin> <addr1> [addr2] ...")
-        print(f"  Validates that the instructions at each address can be safely hooked.")
-        sys.exit(1)
-
-    fw_path = sys.argv[1]
-    engine = HookEngine(fw_path)
-
-    for arg in sys.argv[2:]:
-        addr = int(arg, 16) if arg.startswith('0x') else int(arg)
-        name = f"test_{addr:08X}"
-        try:
-            engine.add_hook(Hook(name=name, target=addr, handler="dummy"))
-            print(f"  → OK: safe to hook")
-        except ValueError as e:
-            print(f"  → {e}")
-
-    print(engine.summary())
+# ── Binary patch definition ──────────────────────────────────────────────────
 
 
-if __name__ == '__main__':
-    main()
+class BinaryPatch(NamedTuple):
+    """A single binary patch to apply to the firmware.
+
+    For byte patches: addr is the flash address, old_bytes/new_bytes are
+    the expected and replacement byte strings (e.g. b'\\xAB' → b'\\xD9').
+
+    For symbol-resolved patches: set symbol to an ELF symbol name.
+    old_bytes is the expected original word (4 bytes LE), and new_bytes
+    is ignored — the symbol's address is written instead.
+    """
+    addr: int
+    old_bytes: bytes
+    new_bytes: bytes
+    desc: str
+    symbol: str | None = None
+
+
+# ── Patch project (reusable CLI scaffold) ────────────────────────────────────
+
+
+class PatchProject:
+    """Reusable scaffold for a firmware hook project.
+
+    Encapsulates hooks, binary patches, file paths, and CLI commands
+    (validate / generate / patch).  Each firmware target (keyboard, dongle)
+    creates a PatchProject with its own configuration and calls .main().
+    """
+
+    def __init__(
+        self,
+        hooks: list[Hook],
+        binary_patches: list[BinaryPatch],
+        firmware_bin: str | Path,
+        patched_bin: str | Path,
+        hook_bin: str | Path,
+        elf_path: str | Path,
+        build_dir: str | Path,
+        engine_kwargs: dict | None = None,
+    ) -> None:
+        self.hooks = hooks
+        self.binary_patches = binary_patches
+        self.firmware_bin = Path(firmware_bin)
+        self.patched_bin = Path(patched_bin)
+        self.hook_bin = Path(hook_bin)
+        self.elf_path = Path(elf_path)
+        self.build_dir = Path(build_dir)
+        self.hooks_asm = self.build_dir / "hooks_gen.S"
+        self.engine_kwargs = engine_kwargs or {}
+
+    def _build_engine(self) -> HookEngine:
+        engine = HookEngine(self.firmware_bin, **self.engine_kwargs)
+        for hook in self.hooks:
+            engine.add_hook(hook)
+        return engine
+
+    def read_elf_symbols(self) -> dict[str, int]:
+        """Read all symbol addresses from hook.elf via nm."""
+        if not self.elf_path.exists():
+            return {}
+        result = subprocess.run(
+            ['arm-none-eabi-nm', str(self.elf_path)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return {}
+        symbols: dict[str, int] = {}
+        for line in result.stdout.strip().split('\n'):
+            parts = line.strip().split()
+            if len(parts) == 3:
+                symbols[parts[2]] = int(parts[0], 16)
+        return symbols
+
+    def fix_stub_addresses(self, engine: HookEngine, symbols: dict[str, int]) -> None:
+        """Fix hook stub addresses using actual ELF symbol addresses.
+
+        The framework estimates stub sizes for allocation, but the linker may
+        place sections at different offsets.  We use the resolved symbol table
+        to update each hook before encoding B.W trampolines.
+        """
+        for hook in engine.hooks:
+            sym = f"_hook_{hook.name}_stub"
+            if sym in symbols:
+                actual = symbols[sym]
+                if hook._stub_addr != actual:
+                    print(f"  Fix {hook.name} stub: "
+                          f"0x{hook._stub_addr:08X} → 0x{actual:08X}")
+                    hook._stub_addr = actual
+
+    def apply_binary_patches(self, fw: bytearray, symbols: dict[str, int]) -> None:
+        """Apply build-time binary patches to the firmware."""
+        file_base = self.engine_kwargs.get('file_base', 0x08005000)
+
+        for patch in self.binary_patches:
+            off = patch.addr - file_base
+
+            if patch.symbol is not None:
+                # Word-sized symbol-resolved patch
+                resolved = symbols.get(patch.symbol)
+                if resolved is None:
+                    print(f"ERROR: '{patch.symbol}' symbol not found in hook.elf. "
+                          f"Make sure it is non-static in handlers.c.",
+                          file=sys.stderr)
+                    sys.exit(1)
+                old_val = struct.unpack_from('<I', fw, off)[0]
+                expected = struct.unpack('<I', patch.old_bytes)[0]
+                if old_val != expected:
+                    print(f"WARNING: word at 0x{patch.addr:08X} is "
+                          f"0x{old_val:08X}, expected 0x{expected:08X}. "
+                          f"Already patched?", file=sys.stderr)
+                struct.pack_into('<I', fw, off, resolved)
+                print(f"  Patch: 0x{patch.addr:08X} "
+                      f"[0x{old_val:08X}→0x{resolved:08X}] {patch.desc}")
+            else:
+                # Byte-level patch
+                for i, (old_b, new_b) in enumerate(
+                    zip(patch.old_bytes, patch.new_bytes)
+                ):
+                    if fw[off + i] != old_b:
+                        print(f"WARNING: byte at 0x{patch.addr + i:08X} is "
+                              f"0x{fw[off + i]:02X}, expected 0x{old_b:02X}. "
+                              f"Already patched?", file=sys.stderr)
+                    else:
+                        fw[off + i] = new_b
+                old_hex = patch.old_bytes.hex()
+                new_hex = patch.new_bytes.hex()
+                print(f"  Patch: 0x{patch.addr:08X} "
+                      f"[0x{old_hex}→0x{new_hex}] {patch.desc}")
+
+    def cmd_validate(self) -> None:
+        engine = self._build_engine()
+        print(engine.summary())
+        print("\nAll hook points validated OK.")
+
+    def cmd_generate(self) -> None:
+        engine = self._build_engine()
+        engine.generate(self.hooks_asm)
+        print(engine.summary())
+        print(f"\nGenerated: {self.hooks_asm}")
+        print(f"Now define handlers in handlers.S, then run: make")
+
+    def cmd_patch(self) -> None:
+        engine = self._build_engine()
+        if not self.hook_bin.exists():
+            print(f"ERROR: {self.hook_bin} not found. Run 'make' first.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        symbols = self.read_elf_symbols()
+        self.fix_stub_addresses(engine, symbols)
+        engine.patch(self.patched_bin, self.hook_bin)
+
+        # Apply binary patches to the already-written output
+        fw = bytearray(self.patched_bin.read_bytes())
+        self.apply_binary_patches(fw, symbols)
+        self.patched_bin.write_bytes(fw)
+        print(f"Binary patches applied to {self.patched_bin}")
+
+        print(engine.summary())
+
+    def main(self) -> None:
+        if len(sys.argv) < 2:
+            print(f"Usage: {sys.argv[0]} <validate|generate|patch>")
+            sys.exit(1)
+
+        cmd = sys.argv[1]
+        if cmd == "validate":
+            self.cmd_validate()
+        elif cmd == "generate":
+            self.cmd_generate()
+        elif cmd == "patch":
+            self.cmd_patch()
+        else:
+            print(f"Unknown command: {cmd}")
+            sys.exit(1)

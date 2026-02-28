@@ -2,9 +2,9 @@
 
 use super::{open_preferred_transport, setup_interrupt_handler, with_keyboard, CommandResult};
 use iot_driver::protocol::cmd;
-use monsgeek_keyboard::SyncKeyboard;
+use monsgeek_keyboard::KeyboardInterface;
 use monsgeek_transport::protocol::cmd as transport_cmd;
-use monsgeek_transport::{list_devices_sync, ChecksumType, PrinterConfig};
+use monsgeek_transport::{list_devices_sync, ChecksumType, PrinterConfig, Transport};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -111,10 +111,7 @@ pub fn test_transport(printer_config: Option<PrinterConfig>) -> CommandResult {
                     &triggers.press_travel[..10.min(triggers.press_travel.len())]
                 );
 
-                // Decode first key's 16-bit travel
-                if triggers.press_travel.len() >= 2 {
-                    let first_travel =
-                        u16::from_le_bytes([triggers.press_travel[0], triggers.press_travel[1]]);
+                if let Some(&first_travel) = triggers.press_travel.first() {
                     println!(
                         "  First key travel (u16): {} ({:.2}mm at 0.01mm precision)",
                         first_travel,
@@ -133,7 +130,7 @@ pub fn test_transport(printer_config: Option<PrinterConfig>) -> CommandResult {
 
 /// Monitor real-time key depth (magnetism) from keyboard
 pub fn depth(
-    keyboard: &SyncKeyboard,
+    keyboard: &KeyboardInterface,
     show_raw: bool,
     show_zero: bool,
     verbose: bool,

@@ -1,21 +1,15 @@
 //! HID Wired transport implementation for direct USB connection
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
 use hidapi::HidDevice;
+use parking_lot::Mutex;
 use tokio::sync::broadcast;
 use tracing::debug;
 
 use crate::error::TransportError;
-use crate::event_parser::{parse_usb_event, run_event_reader_loop, EventReaderConfig};
+use crate::event_parser::{parse_usb_event, EventReaderConfig, EventSubsystem};
 use crate::protocol::{self, REPORT_SIZE};
 use crate::types::{ChecksumType, TimestampedEvent, TransportDeviceInfo, VendorEvent};
 use crate::Transport;
-
-/// Broadcast channel capacity for vendor events
-const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// HID transport for wired USB connection
 ///
@@ -29,10 +23,8 @@ pub struct HidWiredTransport {
     feature_device: Mutex<HidDevice>,
     /// Device information
     info: TransportDeviceInfo,
-    /// Broadcast sender for timestamped vendor events (if input device available)
-    event_tx: Option<broadcast::Sender<TimestampedEvent>>,
-    /// Shutdown flag for event reader thread
-    shutdown: Arc<AtomicBool>,
+    /// Shared event subsystem (reader thread, broadcast, shutdown)
+    events: EventSubsystem,
 }
 
 impl HidWiredTransport {
@@ -47,43 +39,18 @@ impl HidWiredTransport {
         input_device: Option<HidDevice>,
         info: TransportDeviceInfo,
     ) -> Self {
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let event_tx = if let Some(input) = input_device {
-            // Create broadcast channel for events
-            let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-            let tx_clone = tx.clone();
-            let shutdown_clone = shutdown.clone();
-
-            // Spawn dedicated event reader thread
-            std::thread::Builder::new()
-                .name("hid-event-reader".into())
-                .spawn(move || {
-                    run_event_reader_loop(
-                        input,
-                        tx_clone,
-                        shutdown_clone,
-                        parse_usb_event,
-                        EventReaderConfig::usb(),
-                    );
-                })
-                .expect("Failed to spawn HID event reader thread");
-
-            Some(tx)
-        } else {
-            None
-        };
+        let events = EventSubsystem::new(input_device, parse_usb_event, EventReaderConfig::usb());
 
         Self {
             feature_device: Mutex::new(feature_device),
             info,
-            event_tx,
-            shutdown,
+            events,
         }
     }
 
     /// Read feature report
     fn read_response(&self) -> Result<Vec<u8>, TransportError> {
-        let device = self.feature_device.lock().unwrap();
+        let device = self.feature_device.lock();
         let mut buf = vec![0u8; REPORT_SIZE];
         buf[0] = 0;
         device.get_feature_report(&mut buf)?;
@@ -99,7 +66,7 @@ impl Transport for HidWiredTransport {
         checksum: ChecksumType,
     ) -> Result<(), TransportError> {
         let buf = protocol::build_command(cmd, data, checksum);
-        let device = self.feature_device.lock().unwrap();
+        let device = self.feature_device.lock();
         device.send_feature_report(&buf)?;
         Ok(())
     }
@@ -112,29 +79,11 @@ impl Transport for HidWiredTransport {
     // send_flush: uses default no-op
 
     fn read_event(&self, timeout_ms: u32) -> Result<Option<VendorEvent>, TransportError> {
-        if let Some(ref tx) = self.event_tx {
-            let mut rx = tx.subscribe();
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-            loop {
-                match rx.try_recv() {
-                    Ok(timestamped) => return Ok(Some(timestamped.event)),
-                    Err(broadcast::error::TryRecvError::Empty) => {
-                        if Instant::now() >= deadline {
-                            return Ok(None);
-                        }
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::TryRecvError::Closed) => return Ok(None),
-                }
-            }
-        } else {
-            Ok(None)
-        }
+        self.events.read_event(timeout_ms)
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
-        self.event_tx.as_ref().map(|tx| tx.subscribe())
+        self.events.subscribe()
     }
 
     fn device_info(&self) -> &TransportDeviceInfo {
@@ -142,7 +91,7 @@ impl Transport for HidWiredTransport {
     }
 
     fn is_connected(&self) -> bool {
-        let device = self.feature_device.lock().unwrap();
+        let device = self.feature_device.lock();
         device.get_product_string().is_ok()
     }
 
@@ -157,8 +106,6 @@ impl Transport for HidWiredTransport {
 
 impl Drop for HidWiredTransport {
     fn drop(&mut self) {
-        // Signal shutdown to event reader thread
-        self.shutdown.store(true, Ordering::SeqCst);
         debug!("HidWiredTransport dropped, signaling event reader shutdown");
     }
 }
