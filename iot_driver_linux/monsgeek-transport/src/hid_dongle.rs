@@ -14,7 +14,8 @@ use crate::error::TransportError;
 use crate::event_parser::{parse_usb_event, EventReaderConfig, EventSubsystem};
 use crate::protocol::{self, cmd, REPORT_SIZE};
 use crate::types::{
-    ChecksumType, DongleStatus, TimestampedEvent, TransportDeviceInfo, VendorEvent,
+    ChecksumType, DongleInfo, DongleStatus, RfInfo, TimestampedEvent, TransportDeviceInfo,
+    VendorEvent,
 };
 use crate::Transport;
 
@@ -140,6 +141,42 @@ impl Transport for HidDongleTransport {
             rf_ready: buf[6] != 0,
             battery_level: level,
             charging: buf[4] != 0,
+        }))
+    }
+
+    fn query_dongle_info(&self) -> Result<Option<DongleInfo>, TransportError> {
+        let device = self.device.lock();
+
+        let buf = protocol::build_command(cmd::GET_DONGLE_INFO, &[], ChecksumType::Bit7);
+        device.send_feature_report(&buf)?;
+
+        let mut buf = vec![0u8; REPORT_SIZE];
+        buf[0] = 0;
+        device.get_feature_report(&mut buf)?;
+
+        // Response: {report_id, 0xF0, protocol_ver, max_packet_size, 0,0,0,0, fw_ver}
+        Ok(Some(DongleInfo {
+            protocol_version: buf[2],
+            max_packet_size: buf[3],
+            firmware_version: buf[8],
+        }))
+    }
+
+    fn query_rf_info(&self) -> Result<Option<RfInfo>, TransportError> {
+        let device = self.device.lock();
+
+        let buf = protocol::build_command(cmd::GET_RF_INFO, &[], ChecksumType::Bit7);
+        device.send_feature_report(&buf)?;
+
+        let mut buf = vec![0u8; REPORT_SIZE];
+        buf[0] = 0;
+        device.get_feature_report(&mut buf)?;
+
+        // Response (no echo): {report_id, rf_addr[0..4], fw_minor, fw_major, 0, 0}
+        Ok(Some(RfInfo {
+            rf_address: [buf[1], buf[2], buf[3], buf[4]],
+            firmware_version_minor: buf[5],
+            firmware_version_major: buf[6],
         }))
     }
 }

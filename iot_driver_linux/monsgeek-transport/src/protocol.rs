@@ -71,13 +71,18 @@ pub mod cmd {
     /// LED streaming - write RGB data to WS2812 frame buffer via patch.
     /// Sub-commands: page 0-6 = data, 0xFF = commit, 0xFE = release.
     pub const LED_STREAM: u8 = 0xE8;
+    /// Get RF info: returns {rf_addr[4], fw_ver_minor, fw_ver_major, 0, 0}.
+    /// Handled locally by dongle — NOT forwarded to keyboard.
+    pub const GET_RF_INFO: u8 = 0xFB;
     /// Get cached keyboard response: copies 64B cached_kb_response into the
     /// USB feature report buffer and clears has_response. Used as flush.
     pub const GET_CACHED_RESPONSE: u8 = 0xFC;
     /// Get dongle ID: returns {0xAA, 0x55, 0x01, 0x00}.
-    /// Note: same byte as GET_CALIBRATION (0xFE is GET_CALIBRATION on keyboard,
-    /// 0xFD is GET_DONGLE_ID on dongle, 0xFE is SET_RESPONSE_SIZE on dongle).
+    /// Note: 0xFE is GET_CALIBRATION on keyboard but SET_RESPONSE_SIZE on dongle.
     pub const GET_DONGLE_ID: u8 = 0xFD;
+    /// Set response size on dongle (dongle-local, NOT forwarded).
+    /// Note: same byte as GET_CALIBRATION (0xFE) on keyboard.
+    pub const SET_RESPONSE_SIZE: u8 = 0xFE;
 
     // Response status
     pub const STATUS_SUCCESS: u8 = 0xAA;
@@ -134,6 +139,7 @@ pub mod cmd {
             PAIRING_CMD => "PAIRING_CMD",
             GET_PATCH_INFO => "GET_PATCH_INFO",
             LED_STREAM => "LED_STREAM",
+            GET_RF_INFO => "GET_RF_INFO",
             GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
             GET_DONGLE_ID => "GET_DONGLE_ID",
             STATUS_SUCCESS => "STATUS_SUCCESS",

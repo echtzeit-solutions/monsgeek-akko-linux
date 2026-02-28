@@ -878,6 +878,198 @@ impl HidResponse for DongleStatusResponse {
 }
 
 // =============================================================================
+// Dongle Info (0xF0)
+// =============================================================================
+
+/// GET_DONGLE_INFO command (0xF0) - query dongle identity
+///
+/// Handled locally by the dongle — NOT forwarded to keyboard.
+#[derive(Debug, Clone, Default)]
+pub struct QueryDongleInfo;
+
+impl HidCommand for QueryDongleInfo {
+    const CMD: u8 = cmd::GET_DONGLE_INFO;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+/// Dongle info response from GET_DONGLE_INFO (0xF0)
+///
+/// Response: {0xF0, protocol_ver, max_packet_size, 0,0,0,0, fw_ver}
+#[derive(Debug, Clone)]
+pub struct DongleInfoResponse {
+    /// Protocol version (always 1)
+    pub protocol_version: u8,
+    /// Max packet size (always 8)
+    pub max_packet_size: u8,
+    /// Dongle firmware version
+    pub firmware_version: u8,
+}
+
+impl HidResponse for DongleInfoResponse {
+    const CMD_ECHO: u8 = cmd::GET_DONGLE_INFO;
+    const MIN_LEN: usize = 8;
+
+    fn from_data(data: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            protocol_version: data[1],
+            max_packet_size: data[2],
+            firmware_version: data[7],
+        })
+    }
+}
+
+// =============================================================================
+// RF Info (0xFB)
+// =============================================================================
+
+/// GET_RF_INFO command (0xFB) - query RF link info
+///
+/// Handled locally by the dongle — NOT forwarded to keyboard.
+#[derive(Debug, Clone, Default)]
+pub struct QueryRfInfo;
+
+impl HidCommand for QueryRfInfo {
+    const CMD: u8 = cmd::GET_RF_INFO;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+/// RF info response from GET_RF_INFO (0xFB)
+///
+/// Response: {rf_addr[0..4], fw_ver_minor, fw_ver_major, 0, 0}
+#[derive(Debug, Clone)]
+pub struct RfInfoResponse {
+    /// 4-byte RF address
+    pub rf_address: [u8; 4],
+    /// Firmware version minor
+    pub firmware_version_minor: u8,
+    /// Firmware version major
+    pub firmware_version_major: u8,
+}
+
+impl RfInfoResponse {
+    /// Parse from raw response bytes (no command echo — dongle doesn't echo 0xFB).
+    pub fn from_raw(data: &[u8]) -> Result<Self, ParseError> {
+        if data.len() < 6 {
+            return Err(ParseError::TooShort {
+                expected: 6,
+                got: data.len(),
+            });
+        }
+        Ok(Self {
+            rf_address: [data[0], data[1], data[2], data[3]],
+            firmware_version_minor: data[4],
+            firmware_version_major: data[5],
+        })
+    }
+}
+
+// =============================================================================
+// Dongle ID (0xFD)
+// =============================================================================
+
+/// GET_DONGLE_ID command (0xFD) - query dongle identity magic
+///
+/// Handled locally by the dongle — NOT forwarded to keyboard.
+#[derive(Debug, Clone, Default)]
+pub struct QueryDongleId;
+
+impl HidCommand for QueryDongleId {
+    const CMD: u8 = cmd::GET_DONGLE_ID;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+/// Dongle ID response from GET_DONGLE_ID (0xFD)
+///
+/// Response: {0xAA, 0x55, 0x01, 0x00}
+#[derive(Debug, Clone)]
+pub struct DongleIdResponse {
+    /// Raw 4-byte ID magic
+    pub id_bytes: [u8; 4],
+}
+
+impl DongleIdResponse {
+    /// Parse from raw response bytes (no command echo — dongle doesn't echo 0xFD).
+    pub fn from_raw(data: &[u8]) -> Result<Self, ParseError> {
+        if data.len() < 4 {
+            return Err(ParseError::TooShort {
+                expected: 4,
+                got: data.len(),
+            });
+        }
+        Ok(Self {
+            id_bytes: [data[0], data[1], data[2], data[3]],
+        })
+    }
+}
+
+// =============================================================================
+// Fire-and-forget dongle commands
+// =============================================================================
+
+/// SET_CTRL_BYTE command (0xF6) - set dongle control byte
+///
+/// Handled locally by the dongle — NOT forwarded to keyboard.
+#[derive(Debug, Clone)]
+pub struct SetCtrlByte {
+    pub value: u8,
+}
+
+impl HidCommand for SetCtrlByte {
+    const CMD: u8 = cmd::SET_CTRL_BYTE;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![self.value]
+    }
+}
+
+/// ENTER_PAIRING command (0xF8) - enter pairing mode
+///
+/// Requires 55AA55AA magic payload. Handled locally by dongle.
+#[derive(Debug, Clone, Default)]
+pub struct EnterPairing;
+
+impl HidCommand for EnterPairing {
+    const CMD: u8 = cmd::ENTER_PAIRING;
+    const CHECKSUM: ChecksumType = ChecksumType::None;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![0x55, 0xAA, 0x55, 0xAA]
+    }
+}
+
+/// PAIRING_CMD command (0x7A) - pairing control
+///
+/// Sends 3-byte SPI packet {cmd=1, action, channel}.
+/// Handled locally by dongle.
+#[derive(Debug, Clone)]
+pub struct PairingCmd {
+    pub action: u8,
+    pub channel: u8,
+}
+
+impl HidCommand for PairingCmd {
+    const CMD: u8 = cmd::PAIRING_CMD;
+    const CHECKSUM: ChecksumType = ChecksumType::Bit7;
+
+    fn to_data(&self) -> Vec<u8> {
+        vec![self.action, self.channel]
+    }
+}
+
+// =============================================================================
 // Magnetism (Hall Effect) Commands
 // =============================================================================
 
@@ -1433,6 +1625,12 @@ pub enum ParsedResponse {
     MledVersion {
         version: u16,
     },
+    /// GET_DONGLE_INFO (0xF0) response
+    DongleInfo(DongleInfoResponse),
+    /// GET_RF_INFO (0xFB) response
+    RfInfo(RfInfoResponse),
+    /// GET_DONGLE_ID (0xFD) response
+    DongleId(DongleIdResponse),
     /// GET_PATCH_INFO (0xE7) response - patch name, version, capabilities
     PatchInfo {
         data: Vec<u8>,
@@ -1545,8 +1743,19 @@ pub enum ParsedCommand {
         data: Vec<u8>,
     },
     // Dongle commands
+    GetDongleInfo,
     GetDongleStatus,
+    GetRfInfo,
+    GetDongleId,
     GetCachedResponse,
+    SetCtrlByte {
+        value: u8,
+    },
+    EnterPairing,
+    PairingCmd {
+        action: u8,
+        channel: u8,
+    },
     /// Command we don't have a parser for yet
     Unknown {
         cmd: u8,
@@ -1672,6 +1881,12 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
         cmd::GET_CALIBRATION => ParsedResponse::Calibration {
             data: data[1..].to_vec(),
         },
+        cmd::GET_DONGLE_INFO => DongleInfoResponse::parse(data)
+            .map(ParsedResponse::DongleInfo)
+            .unwrap_or_else(|_| ParsedResponse::Unknown {
+                cmd,
+                data: data.to_vec(),
+            }),
         cmd::GET_PATCH_INFO => ParsedResponse::PatchInfo {
             data: data[1..].to_vec(),
         },
@@ -1862,8 +2077,19 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
         }
 
         // Dongle commands
+        cmd::GET_DONGLE_INFO => ParsedCommand::GetDongleInfo,
         cmd::GET_DONGLE_STATUS => ParsedCommand::GetDongleStatus,
+        cmd::GET_RF_INFO => ParsedCommand::GetRfInfo,
+        cmd::GET_DONGLE_ID => ParsedCommand::GetDongleId,
         cmd::GET_CACHED_RESPONSE => ParsedCommand::GetCachedResponse,
+        cmd::SET_CTRL_BYTE => ParsedCommand::SetCtrlByte {
+            value: data.get(1).copied().unwrap_or(0),
+        },
+        cmd::ENTER_PAIRING => ParsedCommand::EnterPairing,
+        cmd::PAIRING_CMD => ParsedCommand::PairingCmd {
+            action: data.get(1).copied().unwrap_or(0),
+            channel: data.get(2).copied().unwrap_or(0),
+        },
 
         _ => ParsedCommand::Unknown {
             cmd,

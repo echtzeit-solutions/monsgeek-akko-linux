@@ -217,6 +217,32 @@ pub struct DongleStatus {
     pub charging: bool,
 }
 
+/// Dongle info from GET_DONGLE_INFO (0xF0)
+///
+/// Response layout: {0xF0, protocol_version, max_packet_size, 0,0,0,0, firmware_version}
+#[derive(Debug, Clone)]
+pub struct DongleInfo {
+    /// Protocol version (always 1)
+    pub protocol_version: u8,
+    /// Max packet size (always 8)
+    pub max_packet_size: u8,
+    /// Dongle firmware version
+    pub firmware_version: u8,
+}
+
+/// RF info from GET_RF_INFO (0xFB)
+///
+/// Response layout: {rf_addr[0..4], fw_ver_minor, fw_ver_major, 0, 0}
+#[derive(Debug, Clone)]
+pub struct RfInfo {
+    /// 4-byte RF address
+    pub rf_address: [u8; 4],
+    /// Firmware version minor
+    pub firmware_version_minor: u8,
+    /// Firmware version major
+    pub firmware_version_major: u8,
+}
+
 /// Discovered device that can be opened
 #[derive(Debug, Clone)]
 pub struct DiscoveredDevice {

@@ -31,15 +31,19 @@ pub use command::{
     try_parse_command,
     try_parse_response,
     DebounceResponse,
-    // Dongle status
+    // Dongle commands
+    DongleIdResponse,
+    DongleInfoResponse,
     DongleStatusQuery,
     DongleStatusResponse,
+    EnterPairing,
     HidCommand,
     HidResponse,
     LedMode,
     LedParamsResponse,
     // Magnetism data decoding
     MagnetismData,
+    PairingCmd,
     ParseError,
     // Packet dispatchers for pcap analysis
     ParsedCommand,
@@ -48,13 +52,18 @@ pub use command::{
     PollingRateResponse,
     ProfileResponse,
     QueryDebounce,
+    QueryDongleId,
+    QueryDongleInfo,
     // Queries
     QueryLedParams,
     QueryPollingRate,
     QueryProfile,
+    QueryRfInfo,
     QuerySleepTime,
     QueryVersion,
+    RfInfoResponse,
     Rgb,
+    SetCtrlByte,
     SetDebounce,
     // LED
     SetLedParams,
@@ -80,8 +89,8 @@ pub use printer::{
 };
 pub use protocol::{KeyRef, Layer};
 pub use types::{
-    ChecksumType, DiscoveredDevice, DiscoveryEvent, DongleStatus, TimestampedEvent,
-    TransportDeviceInfo, TransportType, VendorEvent,
+    ChecksumType, DiscoveredDevice, DiscoveryEvent, DongleInfo, DongleStatus, RfInfo,
+    TimestampedEvent, TransportDeviceInfo, TransportType, VendorEvent,
 };
 
 pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice};
@@ -141,6 +150,16 @@ pub trait Transport: Send + Sync {
 
     /// Query dongle status (F7). Returns None on non-dongle transports.
     fn query_dongle_status(&self) -> Result<Option<DongleStatus>, TransportError> {
+        Ok(None)
+    }
+
+    /// Query dongle info (F0). Returns None on non-dongle transports.
+    fn query_dongle_info(&self) -> Result<Option<DongleInfo>, TransportError> {
+        Ok(None)
+    }
+
+    /// Query RF info (FB). Returns None on non-dongle transports.
+    fn query_rf_info(&self) -> Result<Option<RfInfo>, TransportError> {
         Ok(None)
     }
 

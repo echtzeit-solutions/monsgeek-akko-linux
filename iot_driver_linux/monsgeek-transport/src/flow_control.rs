@@ -428,6 +428,14 @@ impl Transport for FlowControlTransport {
     fn query_dongle_status(&self) -> Result<Option<crate::types::DongleStatus>, TransportError> {
         self.inner.query_dongle_status()
     }
+
+    fn query_dongle_info(&self) -> Result<Option<crate::types::DongleInfo>, TransportError> {
+        self.inner.query_dongle_info()
+    }
+
+    fn query_rf_info(&self) -> Result<Option<crate::types::RfInfo>, TransportError> {
+        self.inner.query_rf_info()
+    }
 }
 
 // ============================================================================
@@ -481,6 +489,23 @@ impl FlowControlTransport {
 // Dongle worker (fully synchronous)
 // ============================================================================
 
+/// Returns true for commands handled locally by the dongle (NOT forwarded to keyboard).
+/// These commands get immediate responses — no F7 polling or FC flush needed.
+fn is_dongle_local(cmd: u8) -> bool {
+    matches!(
+        cmd,
+        cmd::GET_DONGLE_INFO
+            | cmd::SET_CTRL_BYTE
+            | cmd::GET_DONGLE_STATUS
+            | cmd::ENTER_PAIRING
+            | cmd::PAIRING_CMD
+            | cmd::GET_RF_INFO
+            | cmd::GET_CACHED_RESPONSE
+            | cmd::GET_DONGLE_ID
+            | cmd::SET_RESPONSE_SIZE
+    )
+}
+
 fn dongle_command_worker(
     inner: Arc<dyn Transport>,
     state: Arc<DongleSharedState>,
@@ -490,8 +515,19 @@ fn dongle_command_worker(
     debug!("Dongle flow-control worker started");
 
     while let Ok(req) = rx.recv() {
-        let result = if req.fire_and_forget {
+        let result = if req.fire_and_forget && is_dongle_local(req.cmd) {
+            // Dongle-local fire-and-forget: no flush needed
+            debug!(
+                "Dongle local SET command 0x{:02X} (fire-and-forget)",
+                req.cmd
+            );
+            inner
+                .send_report(req.cmd, &req.data, req.checksum)
+                .map(|_| Vec::new())
+        } else if req.fire_and_forget {
             execute_send_only(&inner, &state, req.cmd, &req.data, req.checksum)
+        } else if is_dongle_local(req.cmd) {
+            execute_dongle_local(&inner, req.cmd, &req.data, req.checksum)
         } else {
             execute_query(
                 &inner,
@@ -526,6 +562,25 @@ fn execute_send_only(
 
     std::thread::sleep(Duration::from_millis(dongle_timing::POLL_CYCLE_MS * 5));
     Ok(Vec::new())
+}
+
+/// Execute a dongle-local command: send → short delay → read.
+/// No F7 polling or FC flush needed — the dongle responds immediately.
+fn execute_dongle_local(
+    inner: &Arc<dyn Transport>,
+    cmd_byte: u8,
+    data: &[u8],
+    checksum: ChecksumType,
+) -> Result<Vec<u8>, TransportError> {
+    debug!(
+        "Dongle local command 0x{:02X} ({})",
+        cmd_byte,
+        cmd::name(cmd_byte)
+    );
+
+    inner.send_report(cmd_byte, data, checksum)?;
+    std::thread::sleep(Duration::from_millis(2));
+    inner.read_report()
 }
 
 fn execute_query(

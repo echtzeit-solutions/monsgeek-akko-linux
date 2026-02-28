@@ -905,6 +905,20 @@ impl Transport for Printer {
             .query_dongle_status()
     }
 
+    fn query_dongle_info(&self) -> Result<Option<crate::types::DongleInfo>, TransportError> {
+        self.inner
+            .as_ref()
+            .ok_or(TransportError::Disconnected)?
+            .query_dongle_info()
+    }
+
+    fn query_rf_info(&self) -> Result<Option<crate::types::RfInfo>, TransportError> {
+        self.inner
+            .as_ref()
+            .ok_or(TransportError::Disconnected)?
+            .query_rf_info()
+    }
+
     fn subscribe_events(&self) -> Option<broadcast::Receiver<TimestampedEvent>> {
         self.inner.as_ref()?.subscribe_events()
     }
