@@ -273,7 +273,7 @@ pub fn flash(file: &PathBuf, device: Option<&str>, dongle: bool, yes: bool) -> C
         FlashTarget::Keyboard
     };
 
-    // 1. Load + validate firmware
+    // 1. Load + validate firmware, auto-strip bootloader if full flash dump
     let fw = match FirmwareFile::load(file) {
         Ok(fw) => fw,
         Err(e) => {
@@ -286,6 +286,16 @@ pub fn flash(file: &PathBuf, device: Option<&str>, dongle: bool, yes: bool) -> C
         eprintln!("Firmware validation failed: {e}");
         return Ok(());
     }
+
+    let fw = if let Some(stripped) = iot_driver::firmware::strip_bootloader_if_needed(&fw, target) {
+        eprintln!(
+            "Detected full flash dump (includes 20KB bootloader), using app region at offset 0x{:X}",
+            iot_driver::protocol::firmware_update::USB_FIRMWARE_OFFSET,
+        );
+        stripped
+    } else {
+        fw
+    };
 
     // 2. Print summary + safety warning
     let device_name = target.name();

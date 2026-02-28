@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use std::path::Path;
 use zip::ZipArchive;
 
-use crate::protocol::firmware_update;
+use crate::protocol::firmware_update::{self, FlashTarget};
 
 /// Error types for firmware operations
 #[derive(Debug)]
@@ -229,6 +229,57 @@ impl FirmwareFile {
 
         Ok(names)
     }
+}
+
+/// If the firmware looks like a full flash dump (bootloader + app), strip the
+/// bootloader prefix and return a new `FirmwareFile` with only the app region.
+///
+/// Returns `None` if the image already starts with the expected chip ID (app-only)
+/// or doesn't look like a valid full dump.
+pub fn strip_bootloader_if_needed(
+    firmware: &FirmwareFile,
+    target: FlashTarget,
+) -> Option<FirmwareFile> {
+    let chip_id = target.chip_id();
+    let offset = firmware_update::USB_FIRMWARE_OFFSET;
+
+    // Already an app-only image — chip ID matches at offset 0
+    if firmware.data.starts_with(chip_id) {
+        return None;
+    }
+
+    // Too small to contain bootloader + app with chip ID
+    if firmware.data.len() <= offset + chip_id.len() {
+        return None;
+    }
+
+    // Check for chip ID at the expected app offset
+    if &firmware.data[offset..offset + chip_id.len()] != chip_id {
+        return None;
+    }
+
+    // Safety: verify the leading bytes look like a Cortex-M vector table.
+    // Bytes 0..4 = initial SP (should be in SRAM: 0x20000000..0x20010000)
+    // Bytes 4..8 = reset vector (should point into bootloader flash: 0x08000000..0x08005000)
+    if firmware.data.len() < 8 {
+        return None;
+    }
+    let initial_sp = u32::from_le_bytes(firmware.data[0..4].try_into().unwrap());
+    let reset_vector = u32::from_le_bytes(firmware.data[4..8].try_into().unwrap());
+
+    if !(0x2000_0000..0x2001_0000).contains(&initial_sp) {
+        return None;
+    }
+    if !(0x0800_0000..0x0800_5000).contains(&reset_vector) {
+        return None;
+    }
+
+    let data = firmware.data[offset..].to_vec();
+    Some(FirmwareFile::from_data(
+        data,
+        firmware.filename.clone(),
+        firmware.firmware_type,
+    ))
 }
 
 /// Represents a command in the dry-run simulation
