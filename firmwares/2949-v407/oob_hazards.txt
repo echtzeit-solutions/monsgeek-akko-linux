@@ -1,0 +1,248 @@
+Out-of-Bounds Hazards in Vendor Command Handlers
+=================================================
+
+Firmware version 4.07 (device ID 2949, AT32F405).
+Other versions not tested but likely share the same code.
+
+
+1. Chunked Staging Buffer Overflow (chunk_index)
+-------------------------------------------------
+
+Affected commands: SET_KEYMATRIX (0x0A), SET_MACRO (0x0B), SET_FN (0x10)
+
+These commands use a multi-report chunked write protocol. Each chunk writes
+56 bytes into a staging area at g_vendor_cmd_buf + 0x42. The staging offset
+is calculated as chunk_index * 56, where chunk_index comes from byte [2] of
+the HID report and is not bounds-checked.
+
+The staging area sits inside the 588-byte vendor command buffer. Only about
+9 chunks (indices 0-9) fit before the write overflows into adjacent RAM.
+chunk_index >= 10 writes past the end of g_vendor_cmd_buf.
+
+Impact: A host sending chunk_index >= 10 corrupts RAM following the command
+buffer (LED animation state at 0x20008528 and beyond). This can cause
+unpredictable behavior or be used to overwrite specific RAM structures.
+
+Fix: Reject reports where chunk_index > 9 (or compute the safe maximum
+from the buffer layout). Discard the report and do not write the chunk.
+
+
+2. flash_save_userpic Stack Buffer Overflow (slot_id)
+-----------------------------------------------------
+
+Affected command: SET_USERPIC (0x0C)
+
+When dirty bit 0x40 is set, flash_save_userpic reads a 2048-byte flash
+sector into a 2048-byte stack-allocated buffer, then patches in userpic
+data at offset slot_id * 0x180 (384 bytes per slot). slot_id is read from
+cmd_buf[0x244] (byte, range 0-255) and is not bounds-checked.
+
+The buffer fits at most 5 complete slots (5 * 384 = 1920 < 2048). Starting
+at slot_id = 6, the write offset is 6 * 384 = 2304, which is 256 bytes past
+the end of the stack buffer. This overwrites saved registers (r4-r9, lr)
+and the return address on the stack.
+
+There is also a single-event write path where the offset is calculated as
+event_index * 3 + slot_id * 0x180. Both event_index and slot_id are
+unchecked, so this path has the same overflow.
+
+Impact: Arbitrary data from the host is written past the stack frame. An
+attacker can overwrite the return address and gain code execution on the
+keyboard MCU. This is exploitable over USB HID with no authentication.
+
+Fix: Validate slot_id < 5 (or the correct maximum number of userpic slots)
+before using it as an array index. Also validate event_index in the
+single-event path. Discard the command and clear the dirty bit if the
+value is out of range.
+
+
+3. flash_save_macro Flash Region Overflow (macro_id)
+----------------------------------------------------
+
+Affected command: SET_MACRO (0x0B)
+
+When dirty bit 0x20 is set, flash_save_macro computes a flash page address
+as FLASH_MACROS_BASE + (macro_id >> 3) * 0x800 and an offset within the
+page as (macro_id & 7) * 0x100. macro_id is read from cmd_buf[0x244]
+(byte, range 0-255) and is not bounds-checked.
+
+The stack buffer offset (macro_id & 7) * 0x100 is always <= 0x700, which
+fits within the 2048-byte stack buffer. So there is no stack overflow here.
+
+However, the flash page address is unbounded. The macros region is 14 KB
+(0x0802B800 to 0x0802EFFF, pages 0-6). macro_id >= 56 selects page 7+,
+which falls outside the macros region:
+
+    macro_id 56-63:  page 7  = 0x0802F800 (userpic region)
+    macro_id 64-71:  page 8  = 0x08030000 (past userpics)
+    macro_id 72+:    page 9+ = calibration / magnetism regions
+    macro_id 248-255: page 31 = 0x0803B000 (near end of flash)
+
+The function erases the 2 KB flash sector and rewrites it, destroying
+whatever data was there.
+
+Impact: A host sending SET_MACRO with macro_id >= 56 corrupts flash data
+in other configuration regions (userpic patterns, magnetism calibration,
+switch thresholds). macro_id in the range 128-191 can corrupt the
+magnetism calibration data at 0x08033800, which requires physical
+recalibration to restore.
+
+Fix: Validate macro_id <= 49 (maximum valid macro slot) before setting
+dirty bit 0x20. Discard the command if the value is out of range.
+
+
+4. config_load Profile ID Overflow
+-----------------------------------
+
+Not directly triggered by a host command, but a robustness issue.
+
+On boot, config_load_all reads the profile byte from the config header in
+flash at 0x08028000. It then loads the keymap for that profile from
+FLASH_KEYMAPS + profile_id * 0x800.
+
+Valid profile values are 0-3 (4 profiles). If the config flash is erased
+or corrupted (e.g. after a failed flash write), the profile byte reads as
+0xFF. The address becomes 0x08028800 + 255 * 0x800 = 0x080A8000, which is
+past the end of the 256 KB flash (0x08040000). This triggers a HardFault
+and bricks the keyboard until the config flash is erased via ISP/DFU.
+
+Impact: Flash corruption during a power loss or failed write can
+permanently brick the keyboard (until recovered with ISP). The keyboard
+enters a HardFault loop on every boot attempt.
+
+Fix: Validate profile_id < 4 after reading from flash. If out of range,
+treat as 0 (default profile) or trigger a factory reset to write known-good
+defaults.
+
+
+Summary
+-------
+
+| # | Hazard | Trigger | Impact | Fix |
+|---|--------|---------|--------|-----|
+| 1 | Staging overflow | chunk_index >= 10 | RAM corruption | Bounds-check chunk_index |
+| 2 | Stack overflow | SET_USERPIC slot >= 6 | Code execution | Bounds-check slot_id |
+| 3 | Flash overflow | SET_MACRO id >= 56 | Config corruption | Bounds-check macro_id |
+| 4 | Profile overflow | Erased flash (0xFF) | Brick (HardFault) | Validate on boot |
+
+
+=========================================================================
+
+
+厂商命令处理中的越界访问隐患
+=========================================================================
+
+固件版本 4.07（设备 ID 2949，AT32F405）。
+其他版本未测试，但可能存在相同问题。
+
+
+1. 分块暂存缓冲区溢出（chunk_index 未校验）
+--------------------------------------------
+
+受影响的命令：SET_KEYMATRIX (0x0A)、SET_MACRO (0x0B)、SET_FN (0x10)
+
+这些命令使用多报文分块写入协议。每个分块将 56 字节写入
+g_vendor_cmd_buf + 0x42 处的暂存区域。暂存偏移量按
+chunk_index * 56 计算，其中 chunk_index 来自 HID 报文的字节 [2]，
+未做边界检查。
+
+暂存区域位于 588 字节的厂商命令缓冲区内。最多容纳约 9 个分块
+（索引 0-9）。chunk_index >= 10 的写入将超出 g_vendor_cmd_buf 的末尾，
+覆盖相邻 RAM。
+
+影响：主机发送 chunk_index >= 10 会破坏命令缓冲区之后的 RAM
+（0x20008528 处的 LED 动画状态等），可导致不可预期的行为，或被用于
+覆写特定 RAM 结构。
+
+修复方案：拒绝 chunk_index > 9 的报文（或根据缓冲区布局计算安全
+上限）。丢弃该报文，不写入分块数据。
+
+
+2. flash_save_userpic 栈缓冲区溢出（slot_id 未校验）
+-----------------------------------------------------
+
+受影响的命令：SET_USERPIC (0x0C)
+
+当脏标志位 0x40 置位时，flash_save_userpic 将 2048 字节的 Flash 扇区
+读入栈上分配的 2048 字节缓冲区，然后在偏移量 slot_id * 0x180
+（每槽 384 字节）处写入灯效数据。slot_id 从 cmd_buf[0x244] 读取
+（字节类型，范围 0-255），未做边界检查。
+
+缓冲区最多容纳 5 个完整槽位（5 * 384 = 1920 < 2048）。从 slot_id = 6
+开始，写入偏移量为 6 * 384 = 2304，超出栈缓冲区末尾 256 字节。
+这将覆盖栈上保存的寄存器（r4-r9、lr）和返回地址。
+
+单事件写入路径中偏移量按 event_index * 3 + slot_id * 0x180 计算，
+event_index 和 slot_id 均未检查，同样存在溢出。
+
+影响：来自主机的任意数据写入栈帧之外。攻击者可覆盖返回地址，在键盘
+MCU 上获得代码执行能力。该漏洞可通过 USB HID 利用，无需认证。
+
+修复方案：在用作数组索引前，验证 slot_id < 5（或自定义灯效槽位的
+正确最大值）。在单事件路径中同时验证 event_index。若超出范围，
+丢弃命令并清除脏标志位。
+
+
+3. flash_save_macro Flash 区域溢出（macro_id 未校验）
+-----------------------------------------------------
+
+受影响的命令：SET_MACRO (0x0B)
+
+当脏标志位 0x20 置位时，flash_save_macro 按
+FLASH_MACROS_BASE + (macro_id >> 3) * 0x800 计算 Flash 页地址，
+按 (macro_id & 7) * 0x100 计算页内偏移。macro_id 从 cmd_buf[0x244]
+读取（字节类型，范围 0-255），未做边界检查。
+
+栈缓冲区内的偏移量 (macro_id & 7) * 0x100 始终 <= 0x700，在 2048 字节
+的栈缓冲区范围内，不会导致栈溢出。
+
+但 Flash 页地址无上限约束。宏区域为 14 KB（0x0802B800 至 0x0802EFFF，
+页 0-6）。macro_id >= 56 选择页 7 及以上，落在宏区域之外：
+
+    macro_id 56-63:   页 7  = 0x0802F800（灯效区域）
+    macro_id 64-71:   页 8  = 0x08030000（灯效区域之后）
+    macro_id 72+:     页 9+ = 校准数据 / 磁轴数据区域
+    macro_id 248-255: 页 31 = 0x0803B000（接近 Flash 末尾）
+
+该函数会擦除 2 KB Flash 扇区并重写，销毁原有数据。
+
+影响：主机发送 macro_id >= 56 的 SET_MACRO 会破坏其他配置区域的
+Flash 数据（灯效图案、磁轴校准、开关阈值等）。macro_id 在 128-191
+范围内可破坏 0x08033800 处的磁轴校准数据，恢复该数据需要物理重新
+校准。
+
+修复方案：在置位脏标志 0x20 前验证 macro_id <= 49（有效宏槽位最大值）。
+超出范围时丢弃该命令。
+
+
+4. config_load 配置加载时 Profile ID 溢出
+------------------------------------------
+
+该问题不由主机命令直接触发，属于健壮性问题。
+
+开机时，config_load_all 从 0x08028000 处的配置头 Flash 中读取
+profile 字节，然后从 FLASH_KEYMAPS + profile_id * 0x800 加载
+对应配置的键位映射。
+
+有效的 profile 值为 0-3（共 4 个配置）。如果配置 Flash 被擦除或
+损坏（例如写入过程中断电），profile 字节读取为 0xFF。地址变为
+0x08028800 + 255 * 0x800 = 0x080A8000，超出 256 KB Flash 的末尾
+（0x08040000），触发 HardFault，键盘变砖，直到通过 ISP/DFU 擦除
+配置 Flash 才能恢复。
+
+影响：掉电或写入失败导致的 Flash 损坏可使键盘永久变砖（需 ISP
+恢复）。键盘每次上电均进入 HardFault 循环。
+
+修复方案：从 Flash 读取 profile_id 后验证其 < 4。若超出范围，视为 0
+（默认配置），或触发恢复出厂设置以写入已知正确的默认值。
+
+
+总结
+----
+
+| # | 隐患 | 触发条件 | 影响 | 修复方案 |
+|---|------|----------|------|----------|
+| 1 | 暂存区溢出 | chunk_index >= 10 | RAM 损坏 | 校验 chunk_index |
+| 2 | 栈溢出 | SET_USERPIC slot >= 6 | 代码执行 | 校验 slot_id |
+| 3 | Flash 溢出 | SET_MACRO id >= 56 | 配置数据损坏 | 校验 macro_id |
+| 4 | Profile 溢出 | Flash 擦除态 (0xFF) | 变砖 (HardFault) | 启动时验证 |
