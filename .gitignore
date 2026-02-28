@@ -82,6 +82,14 @@ firmwares/*/patch/fw_symbols.ld
 firmwares/*/patch/symbols.json
 firmwares/*/patch/callgraph.*
 
+# Ghidra temp/lock files
+*.rep/**/*.ps
+*.rep/**/*.lock
+*.rep/**/changeA.grf
+*.rep/**/changeB.grf
+*.rep/**/snapshotA.grf
+*.rep/**/snapshotB.grf
+
 # Misc temp
 aux
 ps
