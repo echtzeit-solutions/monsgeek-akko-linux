@@ -121,7 +121,7 @@ Works on stock firmware, no patch required. Best for: persistent decorative anim
 
 #### LED Streaming (Patched Firmware)
 
-Streams RGB data directly to the WS2812 frame buffer over USB via the 0xFC patch protocol — no flash writes, real-time host-driven control. Requires the [firmware patch](#firmware-patch).
+Streams RGB data directly to the WS2812 frame buffer over USB via the 0xE8 patch protocol — no flash writes, real-time host-driven control. Requires the [firmware patch](#firmware-patch).
 
 ```bash
 # Sweep test — one LED at a time, cycling colors
@@ -242,9 +242,9 @@ The firmware patch extends the stock v407 firmware with additional capabilities 
 
 | Command | Protocol | Description |
 |---|---|---|
-| `0xFB` | Patch Discovery | Returns patch magic (0xCAFE), version, capabilities, name |
-| `0xFC` | LED Streaming | Per-key RGB data to WS2812 frame buffer (6 pages, commit/release) |
-| `0xFD` | Debug Log | Ring buffer in SRAM, 10-page read, 5 entry types |
+| `0xE7` | Patch Discovery | Returns patch magic (0xCAFE), version, capabilities, name |
+| `0xE8` | LED Streaming | Per-key RGB data to WS2812 frame buffer (7 pages, commit/release) |
+| `0xE9` | Debug Log | Ring buffer in SRAM, 10-page read, 5 entry types |
 | Battery HID | USB descriptor | Adds battery level + charging status to HID report descriptor |
 
 ### Building the Patch
@@ -310,6 +310,59 @@ iot_driver_linux/
   monsgeek-keyboard/    # High-level keyboard API
   monsgeek-joystick/    # Joystick mapper (uinput)
 ```
+
+## Changelog
+
+### 2026-02-28
+
+- **TUI overhaul**: Consolidated 6 tabs down to 4 — merged LED Settings and Options into Device Info with inline `< value >` spinners for all editable settings (profile, debounce, rate, LED mode/brightness/speed/RGB, sleep, fn layer, WASD swap)
+- **Dongle status in TUI**: Device Info shows dongle firmware version, RF address, RF firmware version, and RF Ready status when connected via 2.4 GHz (auto-refreshes with battery tick)
+- **Depth monitoring over dongle**: Firmware patch now NOPs the BT-only gate in `send_depth_monitor_report`, enabling key depth data over 2.4 GHz and USB
+- **Dongle EP2 speed gate fix**: Firmware patch NOPs the `usb_device_speed_get() == FULL_SPEED` check in `rf_tx_handler` that blocked all EP2 IN transfers on the OTGHS-based dongle
+- **Auto-strip bootloader**: `firmware flash` transparently strips the 20 KB bootloader prefix from full 256 KB flash dump images
+- **Removed dongle pairing command**: `dongle pair` (F8) removed — it's PAN1082 SPI firmware programming mode, not user-facing pairing
+
+### 2026-02-27
+
+- **Patch command bytes changed**: 0xFB/0xFC/0xFD moved to 0xE7/0xE8/0xE9 — the dongle intercepts F-range commands locally and never forwards them to the keyboard
+- **Dongle-local command support**: Transport layer handles dongle-local commands (F0, F7, FB, FD) with correct checksum types
+- **Dongle CLI subcommand**: `dongle info` and `dongle status` for querying dongle firmware, RF info, and keyboard status via F7 polling
+- **Transport priority**: Wired USB preferred over BT over dongle when multiple transports available
+
+### 2026-02-26
+
+- **Firmware patch build improvements**: SDK type filtering (375 types), natural struct alignment, automatic gap padding in generated headers, PATCH_SRAM expanded to 4 KB
+- **Ghidra-sourced descriptor symbols**: Config descriptor addresses now come from Ghidra labels, not hardcoded SRAM addresses
+
+### 2026-02-25
+
+- **Dongle firmware flash**: `firmware flash --dongle` with chip ID safety validation (keyboard=`AT32F405 8KMKB`, dongle=`AT32F405 8K-DGKB`)
+- **Dongle battery HID patch**: Hooks dongle's `hid_class_setup_handler` to expose keyboard battery level over dongle USB (built, pending flash)
+
+### 2026-02-24
+
+- **RTT debug infrastructure**: SEGGER RTT control block in firmware patch for real-time battery ADC monitoring via Black Magic Probe
+- **Battery HID interrupt endpoint**: Patch pushes battery level changes to host via HID interrupt IN (no polling needed)
+
+### 2026-02-11
+
+- **Key action decoding**: All `config_type` cases decoded from firmware RE — ProfileSwitch, SpecialFn, ConnectionMode, Knob, LedControl. Zero "Unknown" entries in `remap-list`
+- **LED streaming**: `stream-test` and `stream` commands for real-time per-key RGB via patch protocol
+- **Audio reactive LEDs**: Spectrum and solid-color pulse modes driven by system audio capture
+- **Battery ADC quirk documented**: USB mode drops ADC by 311 counts (18%) due to OTG PHY ground shift
+
+### 2026-02-10
+
+- **Battery HID**: Firmware patch adds battery level + charging status to USB HID report descriptor. Kernel creates `power_supply` device automatically
+- **Firmware flash engine**: Full RY bootloader protocol implementation with checksum verification
+
+### Earlier
+
+- gRPC server with LED streaming and effect RPCs
+- Userpic/GIF upload to keyboard flash (mode 25)
+- Joystick mapper (Hall effect analog to uinput axes)
+- Key remapping, macro recording, trigger/actuation configuration
+- pcap replay mode for offline protocol analysis
 
 ## License
 
