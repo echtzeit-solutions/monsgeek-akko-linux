@@ -278,9 +278,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             DongleCommands::Info => {
                 commands::dongle::info(printer_config)?;
             }
-            DongleCommands::Pair => {
-                commands::dongle::pair(printer_config)?;
-            }
             DongleCommands::Status => {
                 commands::dongle::status(printer_config)?;
             }

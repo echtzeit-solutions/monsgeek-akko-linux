@@ -567,9 +567,6 @@ pub enum DongleCommands {
     #[command(visible_alias = "i")]
     Info,
 
-    /// Enter pairing mode (F8)
-    Pair,
-
     /// Show detailed dongle status (F7)
     Status,
 }

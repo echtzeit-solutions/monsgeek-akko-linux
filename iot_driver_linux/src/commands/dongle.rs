@@ -2,8 +2,7 @@
 
 use super::{open_preferred_transport, CommandResult};
 use monsgeek_transport::{
-    ChecksumType, EnterPairing, FlowControlTransport, HidCommand, PrinterConfig, Transport,
-    TransportType,
+    ChecksumType, FlowControlTransport, PrinterConfig, Transport, TransportType,
 };
 use std::sync::Arc;
 
@@ -92,21 +91,6 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
             if status.has_response { "Yes" } else { "No" }
         );
     }
-
-    Ok(())
-}
-
-/// `iot_driver dongle pair` — send ENTER_PAIRING (F8)
-pub fn pair(printer_config: Option<PrinterConfig>) -> CommandResult {
-    let transport = open_dongle_transport(printer_config)?;
-
-    println!("Entering pairing mode...");
-    transport.send_command(
-        EnterPairing::CMD,
-        &EnterPairing.to_data(),
-        EnterPairing::CHECKSUM,
-    )?;
-    println!("Pairing mode activated. Press the pairing button on the keyboard.");
 
     Ok(())
 }

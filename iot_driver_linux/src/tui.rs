@@ -94,6 +94,7 @@ struct App {
     patch_info: Option<PatchInfoData>,
     // Dongle info (for 2.4GHz dongle)
     dongle_info: Option<monsgeek_transport::DongleInfo>,
+    dongle_status: Option<monsgeek_transport::DongleStatus>,
     rf_info: Option<monsgeek_transport::RfInfo>,
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
@@ -1696,6 +1697,7 @@ impl App {
             patch_info: None,
             // Dongle info
             dongle_info: None,
+            dongle_status: None,
             rf_info: None,
             // Battery status
             battery: None,
@@ -1810,6 +1812,7 @@ impl App {
             if let Some(ref keyboard) = self.keyboard {
                 let transport = keyboard.transport();
                 self.dongle_info = transport.query_dongle_info().ok().flatten();
+                self.dongle_status = transport.query_dongle_status().ok().flatten();
                 self.rf_info = transport.query_rf_info().ok().flatten();
             }
         }
@@ -2029,6 +2032,15 @@ impl App {
                 .map_err(|e| e.to_string());
             let _ = tx.send(AsyncResult::Triggers(result));
         });
+    }
+
+    fn refresh_dongle_status(&mut self) {
+        if !self.is_wireless {
+            return;
+        }
+        if let Some(ref keyboard) = self.keyboard {
+            self.dongle_status = keyboard.transport().query_dongle_status().ok().flatten();
+        }
     }
 
     fn refresh_battery(&mut self) {
@@ -3753,6 +3765,7 @@ pub async fn run() -> io::Result<()> {
                             // Re-check battery/idle state before refresh
                             if app.is_wireless {
                                 app.refresh_battery();
+                                app.refresh_dongle_status();
                             }
                             let is_idle = app.is_wireless && app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
                             if is_idle {
@@ -4061,6 +4074,7 @@ pub async fn run() -> io::Result<()> {
                 if app.is_wireless && app.last_battery_check.elapsed() >= Duration::from_secs(30) {
                     let was_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
                     app.refresh_battery();
+                    app.refresh_dongle_status();
                     let is_idle = app.battery.as_ref().map(|b| b.idle).unwrap_or(false);
 
                     if is_idle {
@@ -5222,6 +5236,22 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                             rf.firmware_version_major, rf.firmware_version_minor
                         ),
                         Style::default().fg(Color::Yellow),
+                    ),
+                ])),
+            ));
+        }
+        if let Some(ref ds) = app.dongle_status {
+            items.push((
+                InfoTag::ReadOnly,
+                ListItem::new(Line::from(vec![
+                    Span::raw("RF Ready:       "),
+                    Span::styled(
+                        if ds.rf_ready { "Yes" } else { "No" },
+                        Style::default().fg(if ds.rf_ready {
+                            Color::Green
+                        } else {
+                            Color::Red
+                        }),
                     ),
                 ])),
             ));
