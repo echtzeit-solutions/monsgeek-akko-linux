@@ -72,6 +72,11 @@ BINARY_PATCHES = [
     BinaryPatch(0x0801485C, struct.pack('<I', 0x20000318), b'',
                 "IF1 rdesc pointer → extended_rdesc",
                 symbol='extended_rdesc'),
+    # Depth monitoring: allow 2.4GHz dongle (was BT-only gate)
+    # send_depth_monitor_report @ 0x08012804 checks connection type at +0x26:
+    #   CMP r0, #1 (BT only) → CMP r0, #0 (any wireless: BT=1 or 2.4G=2)
+    BinaryPatch(0x08012836, b'\x01', b'\x00',
+                "depth monitor: CMP #1 (BT-only) → CMP #0 (any wireless)"),
 ]
 
 project = PatchProject(
