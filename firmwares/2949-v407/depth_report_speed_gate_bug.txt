@@ -1,0 +1,294 @@
+Depth / Magnetism Reports Silenced on 2.4 GHz Dongle and Non-BT Connections
+============================================================================
+
+Firmware versions tested:
+  Keyboard: v407 (device ID 2949, AT32F405 8KMKB)
+  Dongle:   v903 (RY6108-RF-KB, AT32F405 8K-DGKB)
+
+Other versions not tested but likely share the same code.
+
+
+Overview
+--------
+
+Depth monitoring reports (HID Report ID 9, magnetism / analog key travel)
+are silently dropped in two independent places:
+
+  A. The dongle's rf_tx_handler gates all EP2 IN traffic on USB Full Speed,
+     but the dongle hardware always enumerates at High Speed.
+
+  B. The keyboard's send_depth_monitor_report gates on BT-only mode and
+     on 8 KHz polling rate over wireless, preventing depth reports from
+     reaching the host in USB and 2.4 GHz modes.
+
+The combined effect is that depth/magnetism data is never delivered to the
+host over the 2.4 GHz dongle, and only works over Bluetooth.
+
+
+A. Dongle: rf_tx_handler USB Speed Gate
+----------------------------------------
+
+Affected function: rf_tx_handler (0x08006A34 in dongle firmware)
+
+The dongle firmware calls usb_device_speed_get() and compares the result
+against the constant 3, which corresponds to USB_DSTS_FULL_SPEED. The
+relevant disassembly:
+
+    08006A34:  CMP   r0, #3        ; compare speed with USB_DSTS_FULL_SPEED
+    08006A36:  BNE   0x08006B32    ; skip all EP2 sends if not Full Speed
+
+The AT32F405 USB OTG defines these speed constants (from AT32 SDK
+at32f402_405_usb.h):
+
+    #define USB_DSTS_HIGH_SPEED       0    // device high speed
+    #define USB_DSTS_FULL_HIGH_SPEED  1    // full speed phy clock 30/60 MHz
+    #define USB_DSTS_FULL_SPEED       3    // device full speed
+
+The dongle uses the OTGHS peripheral (High Speed capable, IRQ 77), unlike
+the keyboard which uses OTGFS1 (Full Speed only). When the dongle is
+plugged in, usb_device_speed_get() returns 0 (USB_DSTS_HIGH_SPEED). The
+CMP r0,#3 comparison fails, the BNE is taken, and the entire EP2 send
+block is skipped.
+
+EP2 IN carries all non-boot reports: consumer, NKRO, mouse, dial, depth
+monitoring, and extended data. EP1 IN (boot keyboard) is unaffected and
+continues to work normally, masking the bug — basic typing works fine, but
+advanced report types are silently lost.
+
+Impact: All EP2 IN reports from the keyboard (consumer keys, NKRO, mouse,
+dial, depth/magnetism) are silently dropped when forwarded through the
+2.4 GHz dongle. Only the boot keyboard report on EP1 reaches the host.
+
+Root cause: The firmware was likely developed and tested with the OTGFS1
+peripheral (Full Speed, speed==3) and the speed gate was never updated
+when the dongle hardware moved to OTGHS (High Speed, speed==0).
+
+Fix: Remove the speed check entirely. The EP2 send path should execute
+regardless of enumerated speed. Replace the CMP+BNE (4 bytes) with two
+NOP instructions:
+
+    Before:  03 28 7C D1    CMP r0,#3; BNE +0xFC
+    After:   00 BF 00 BF    NOP; NOP
+
+
+B. Keyboard: send_depth_monitor_report Gating
+----------------------------------------------
+
+Affected function: send_depth_monitor_report (keyboard firmware)
+
+Two independent checks block depth reports in non-BT modes:
+
+
+B1. 8 KHz Polling Rate Gate (0x0801282A)
+
+When the keyboard is set to 8 KHz polling rate and the connection is not
+USB (i.e., wireless), depth reports are suppressed:
+
+    0801282A:  CMP   r0, #6        ; 6 = 8 KHz polling rate enum
+    0801282C:  IT    EQ
+    0801282E:  POP.W {r4-r8, pc}   ; bail out if 8 KHz
+
+This prevents depth reporting at 8 KHz over both 2.4 GHz and Bluetooth.
+
+
+B2. BT-Only Gate (0x08012836)
+
+Immediately after the 8 KHz check, the function restricts depth reports
+to Bluetooth-only connections:
+
+    08012836:  CMP   r0, #1        ; 1 = Bluetooth mode
+    08012838:  IT    NE
+    0801283A:  POP.W {r4-r8, pc}   ; bail out if not BT
+
+This blocks depth reports on USB and 2.4 GHz modes entirely. Only
+Bluetooth connections receive magnetism data.
+
+Combined impact: Depth/magnetism reports only work over Bluetooth at
+polling rates below 8 KHz. Users on USB or 2.4 GHz dongle connections
+never receive analog key travel data, which is the primary feature of a
+TMR (magnetic) keyboard.
+
+Note: Unlike the dongle speed gate (A), these keyboard gates may be
+intentional engineering decisions rather than bugs. The 2.4 GHz link via
+the PAN1082 transceiver has limited bandwidth compared to BLE, and
+sending 82-key depth reports at high poll rates could saturate the SPI
+link between MCUs. If that is the case, consider documenting this
+limitation and exposing a user-facing toggle (e.g. a vendor command to
+enable depth-over-2.4G) rather than silently dropping the data. At
+minimum, depth reports should work over USB (wired mode), where bandwidth
+is not a concern.
+
+Fix for B1: Replace CMP+IT+POP.W (8 bytes) with 4× NOP at 0x0801282A:
+
+    Before:  06 28 08 BF BD E8 F0 81    CMP+IT EQ+POP.W
+    After:   00 BF 00 BF 00 BF 00 BF    4× NOP
+
+Fix for B2: Replace CMP+IT+POP.W (8 bytes) with 4× NOP at 0x08012836:
+
+    Before:  01 28 18 BF BD E8 F0 81    CMP+IT NE+POP.W
+    After:   00 BF 00 BF 00 BF 00 BF    4× NOP
+
+
+Reproduction
+------------
+
+1. Connect the keyboard to the host via the 2.4 GHz dongle
+2. Open a HID report viewer that shows all interfaces and report types
+3. Press keys with varying force / partial key travel
+4. Expected: Report ID 9 depth reports on EP2
+5. Actual: No Report ID 9 data received; only boot keyboard reports on EP1
+
+Switching to Bluetooth mode and repeating shows depth reports working
+(unless polling rate is 8 KHz).
+
+
+Summary
+-------
+
+| # | Location | Address | Condition | Effect |
+|---|----------|---------|-----------|--------|
+| A | Dongle rf_tx_handler | 0x08006A34 | speed != 3 (FS) | All EP2 reports dropped |
+| B1 | KB send_depth_monitor | 0x0801282A | rate == 8KHz && wireless | Depth dropped at 8KHz |
+| B2 | KB send_depth_monitor | 0x08012836 | mode != BT | Depth dropped on USB/2.4G |
+
+
+=========================================================================
+
+
+深度/磁轴报告在 2.4 GHz 接收器和非蓝牙连接下被静默丢弃
+=========================================================================
+
+测试固件版本：
+  键盘：v407（设备 ID 2949，AT32F405 8KMKB）
+  接收器：v903（RY6108-RF-KB，AT32F405 8K-DGKB）
+
+其他版本未测试，但可能存在相同问题。
+
+
+概述
+----
+
+深度监测报告（HID Report ID 9，磁轴/模拟按键行程数据）在两个独立的
+位置被静默丢弃：
+
+  A. 接收器（dongle）的 rf_tx_handler 将所有 EP2 IN 流量限制为
+     USB 全速（Full Speed），但接收器硬件始终以高速（High Speed）枚举。
+
+  B. 键盘的 send_depth_monitor_report 限制深度报告仅在蓝牙模式下
+     发送，且屏蔽 8 KHz 轮询率下的无线传输。
+
+综合效果：通过 2.4 GHz 接收器连接时，深度/磁轴数据永远无法传递到
+主机，仅蓝牙模式下可用。
+
+
+A. 接收器：rf_tx_handler USB 速度门控
+--------------------------------------
+
+受影响函数：rf_tx_handler（接收器固件 0x08006A34）
+
+接收器固件调用 usb_device_speed_get() 并将结果与常量 3 比较，该常量
+对应 USB_DSTS_FULL_SPEED。相关反汇编：
+
+    08006A34:  CMP   r0, #3        ; 与 USB_DSTS_FULL_SPEED 比较
+    08006A36:  BNE   0x08006B32    ; 非全速则跳过所有 EP2 发送
+
+AT32F405 USB OTG 速度常量定义（AT32 SDK at32f402_405_usb.h）：
+
+    #define USB_DSTS_HIGH_SPEED       0    // 设备高速
+    #define USB_DSTS_FULL_HIGH_SPEED  1    // 全速 PHY 时钟 30/60 MHz
+    #define USB_DSTS_FULL_SPEED       3    // 设备全速
+
+接收器使用 OTGHS 外设（高速，IRQ 77），而键盘使用 OTGFS1（仅全速）。
+接收器插入后，usb_device_speed_get() 返回 0（USB_DSTS_HIGH_SPEED）。
+CMP r0,#3 比较失败，BNE 跳转被执行，整个 EP2 发送代码块被跳过。
+
+EP2 IN 承载所有非启动报告：消费者控制、NKRO、鼠标、旋钮、深度监测、
+扩展数据。EP1 IN（启动键盘）不受影响，继续正常工作，掩盖了此缺陷——
+基本打字功能正常，但高级报告类型被静默丢失。
+
+影响：通过 2.4 GHz 接收器转发时，键盘的所有 EP2 IN 报告（消费者按键、
+NKRO、鼠标、旋钮、深度/磁轴）被静默丢弃，仅 EP1 启动键盘报告到达
+主机。
+
+根本原因：固件可能最初针对 OTGFS1 外设（全速，speed==3）开发和测试，
+接收器硬件切换到 OTGHS（高速，speed==0）后，速度门控未随之更新。
+
+修复方案：移除速度检查。EP2 发送路径应在任何枚举速度下执行。将
+CMP+BNE（4 字节）替换为两条 NOP 指令：
+
+    修改前：03 28 7C D1    CMP r0,#3; BNE +0xFC
+    修改后：00 BF 00 BF    NOP; NOP
+
+
+B. 键盘：send_depth_monitor_report 门控
+-----------------------------------------
+
+受影响函数：send_depth_monitor_report（键盘固件）
+
+两个独立的检查阻止非蓝牙模式下的深度报告：
+
+
+B1. 8 KHz 轮询率门控（0x0801282A）
+
+当键盘设为 8 KHz 轮询率且连接方式非 USB（即无线）时，深度报告被抑制：
+
+    0801282A:  CMP   r0, #6        ; 6 = 8 KHz 轮询率枚举值
+    0801282C:  IT    EQ
+    0801282E:  POP.W {r4-r8, pc}   ; 若为 8 KHz 则直接返回
+
+此检查阻止 8 KHz 下通过 2.4 GHz 和蓝牙的深度报告。
+
+
+B2. 仅蓝牙门控（0x08012836）
+
+紧接 8 KHz 检查之后，函数将深度报告限制为仅蓝牙连接：
+
+    08012836:  CMP   r0, #1        ; 1 = 蓝牙模式
+    08012838:  IT    NE
+    0801283A:  POP.W {r4-r8, pc}   ; 非蓝牙则直接返回
+
+此检查在 USB 和 2.4 GHz 模式下完全阻止深度报告。仅蓝牙连接可接收
+磁轴数据。
+
+综合影响：深度/磁轴报告仅在蓝牙模式且轮询率低于 8 KHz 时工作。
+使用 USB 或 2.4 GHz 接收器的用户永远收不到模拟按键行程数据，
+而这正是 TMR（磁轴）键盘的核心功能。
+
+注意：与接收器的速度门控（A）不同，键盘端的这些限制可能是有意的工程
+决策而非缺陷。2.4 GHz 链路通过 PAN1082 收发器，带宽相比 BLE 有限，
+高轮询率下发送 82 键深度报告可能使 MCU 间的 SPI 链路饱和。如果确实
+如此，建议记录此限制并提供用户可控的开关（例如厂商命令启用
+depth-over-2.4G），而非静默丢弃数据。至少，深度报告应在 USB（有线）
+模式下正常工作，因为有线模式不存在带宽瓶颈。
+
+B1 修复方案：将 0x0801282A 处的 CMP+IT+POP.W（8 字节）替换为 4× NOP：
+
+    修改前：06 28 08 BF BD E8 F0 81    CMP+IT EQ+POP.W
+    修改后：00 BF 00 BF 00 BF 00 BF    4× NOP
+
+B2 修复方案：将 0x08012836 处的 CMP+IT+POP.W（8 字节）替换为 4× NOP：
+
+    修改前：01 28 18 BF BD E8 F0 81    CMP+IT NE+POP.W
+    修改后：00 BF 00 BF 00 BF 00 BF    4× NOP
+
+
+复现步骤
+--------
+
+1. 通过 2.4 GHz 接收器连接键盘到主机
+2. 打开可显示所有接口和报告类型的 HID 报告查看器
+3. 以不同力度按键 / 部分按下按键
+4. 预期：EP2 上出现 Report ID 9 深度报告
+5. 实际：未收到 Report ID 9 数据；仅 EP1 上有启动键盘报告
+
+切换到蓝牙模式重复上述步骤，深度报告正常出现（除非轮询率为 8 KHz）。
+
+
+总结
+----
+
+| # | 位置 | 地址 | 条件 | 影响 |
+|---|------|------|------|------|
+| A | 接收器 rf_tx_handler | 0x08006A34 | speed != 3 (FS) | 所有 EP2 报告丢弃 |
+| B1 | 键盘 send_depth_monitor | 0x0801282A | rate == 8KHz 且无线 | 8KHz 下深度丢弃 |
+| B2 | 键盘 send_depth_monitor | 0x08012836 | mode != BT | USB/2.4G 下深度丢弃 |
