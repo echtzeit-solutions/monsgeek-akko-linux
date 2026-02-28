@@ -40,7 +40,7 @@ use monsgeek_keyboard::{
     KeyboardInterface, KeyboardOptions as KbOptions, LedMode, LedParams, Precision, RgbColor,
     SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
-use monsgeek_transport::{FlowControlTransport, HidDiscovery};
+use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
 
 /// Battery data source
 #[derive(Debug, Clone)]
@@ -90,6 +90,9 @@ struct App {
     depth_cursor: usize,                      // Cursor for key selection
     max_observed_depth: f32,                  // Max depth observed during session (for bar scaling)
     depth_last_update: Vec<Instant>,          // Last update time per key (for stale detection)
+    // Dongle info (for 2.4GHz dongle)
+    dongle_info: Option<monsgeek_transport::DongleInfo>,
+    rf_info: Option<monsgeek_transport::RfInfo>,
     // Battery status (for 2.4GHz dongle)
     battery: Option<BatteryInfo>,
     battery_source: Option<BatterySource>,
@@ -1623,6 +1626,9 @@ impl App {
             depth_cursor: 0,
             max_observed_depth: 0.1, // Will grow as keys are pressed
             depth_last_update: Vec::new(),
+            // Dongle info
+            dongle_info: None,
+            rf_info: None,
             // Battery status
             battery: None,
             battery_source: None,
@@ -1728,6 +1734,15 @@ impl App {
         }
 
         self.connected = true;
+
+        // Load dongle info (instant dongle-local queries)
+        if self.is_wireless {
+            if let Some(ref keyboard) = self.keyboard {
+                let transport = keyboard.transport();
+                self.dongle_info = transport.query_dongle_info().ok().flatten();
+                self.rf_info = transport.query_rf_info().ok().flatten();
+            }
+        }
 
         // Load battery status immediately for wireless devices
         if self.is_wireless {
@@ -4455,7 +4470,7 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
         }
     };
 
-    let text = vec![
+    let mut text = vec![
         // Device name and key count are from device definition, not async loaded
         Line::from(vec![
             Span::raw("Device:         "),
@@ -4586,47 +4601,90 @@ fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
                 Color::Cyan,
             ),
         ]),
-        Line::from(""),
-        // LED params
-        Line::from(vec![
-            Span::raw("LED Mode:       "),
-            value_span(
-                loading.led_params,
-                format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
-                Color::Magenta,
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("LED Color:      "),
-            if loading.led_params == LoadState::Loaded {
+    ];
+
+    // Dongle info section (only shown when connected via dongle)
+    if app.is_wireless {
+        if let Some(ref di) = app.dongle_info {
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                "Dongle",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            text.push(Line::from(vec![
+                Span::raw("Dongle FW:      "),
+                Span::styled(
+                    format!("v{}", di.firmware_version),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+        }
+        if let Some(ref rf) = app.rf_info {
+            text.push(Line::from(vec![
+                Span::raw("RF Address:     "),
                 Span::styled(
                     format!(
-                        "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
-                        info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
+                        "{:02X}:{:02X}:{:02X}:{:02X}",
+                        rf.rf_address[0], rf.rf_address[1], rf.rf_address[2], rf.rf_address[3]
                     ),
-                    Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
-                )
-            } else {
-                value_span(loading.led_params, String::new(), Color::Magenta)
-            },
-        ]),
-        Line::from(vec![
-            Span::raw("Brightness:     "),
-            value_span(
-                loading.led_params,
-                format!("{}/4", info.led_brightness),
-                Color::Magenta,
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("Speed:          "),
-            value_span(
-                loading.led_params,
-                format!("{}/4", speed_to_wire(info.led_speed)),
-                Color::Magenta,
-            ),
-        ]),
-    ];
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+            text.push(Line::from(vec![
+                Span::raw("RF FW Version:  "),
+                Span::styled(
+                    format!(
+                        "v{}.{}",
+                        rf.firmware_version_major, rf.firmware_version_minor
+                    ),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+        }
+    }
+
+    text.push(Line::from(""));
+    // LED params
+    text.push(Line::from(vec![
+        Span::raw("LED Mode:       "),
+        value_span(
+            loading.led_params,
+            format!("{} ({})", info.led_mode, cmd::led_mode_name(info.led_mode)),
+            Color::Magenta,
+        ),
+    ]));
+    text.push(Line::from(vec![
+        Span::raw("LED Color:      "),
+        if loading.led_params == LoadState::Loaded {
+            Span::styled(
+                format!(
+                    "RGB({}, {}, {}) #{:02X}{:02X}{:02X}",
+                    info.led_r, info.led_g, info.led_b, info.led_r, info.led_g, info.led_b
+                ),
+                Style::default().fg(Color::Rgb(info.led_r, info.led_g, info.led_b)),
+            )
+        } else {
+            value_span(loading.led_params, String::new(), Color::Magenta)
+        },
+    ]));
+    text.push(Line::from(vec![
+        Span::raw("Brightness:     "),
+        value_span(
+            loading.led_params,
+            format!("{}/4", info.led_brightness),
+            Color::Magenta,
+        ),
+    ]));
+    text.push(Line::from(vec![
+        Span::raw("Speed:          "),
+        value_span(
+            loading.led_params,
+            format!("{}/4", speed_to_wire(info.led_speed)),
+            Color::Magenta,
+        ),
+    ]));
 
     // Render the block border first
     let block = Block::default()

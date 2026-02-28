@@ -435,6 +435,11 @@ pub enum Commands {
         fps: u32,
     },
 
+    // === Dongle Commands ===
+    /// Dongle-specific commands (info, pair, status)
+    #[command(subcommand)]
+    Dongle(DongleCommands),
+
     // === Debug Commands ===
     /// Test new transport abstraction layer
     #[command(visible_alias = "tt")]
@@ -553,6 +558,20 @@ pub enum Commands {
     /// Clear all notifications
     #[cfg(feature = "notify")]
     NotifyClear,
+}
+
+/// Dongle commands
+#[derive(Subcommand)]
+pub enum DongleCommands {
+    /// Show all dongle information (F0 + F7 + FB + FD)
+    #[command(visible_alias = "i")]
+    Info,
+
+    /// Enter pairing mode (F8)
+    Pair,
+
+    /// Show detailed dongle status (F7)
+    Status,
 }
 
 /// Effect commands

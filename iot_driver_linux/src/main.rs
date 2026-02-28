@@ -10,7 +10,7 @@ use tracing::info;
 
 // CLI definitions
 mod cli;
-use cli::{Cli, Commands, EffectCommands, FirmwareCommands};
+use cli::{Cli, Commands, DongleCommands, EffectCommands, FirmwareCommands};
 
 // Command handlers (split from main.rs)
 mod commands;
@@ -272,6 +272,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Screen { fps }) => {
             commands::reactive::screen(fps).await?;
         }
+
+        // === Dongle Commands ===
+        Some(Commands::Dongle(dongle_cmd)) => match dongle_cmd {
+            DongleCommands::Info => {
+                commands::dongle::info(printer_config)?;
+            }
+            DongleCommands::Pair => {
+                commands::dongle::pair(printer_config)?;
+            }
+            DongleCommands::Status => {
+                commands::dongle::status(printer_config)?;
+            }
+        },
 
         // === Debug Commands ===
         Some(Commands::Depth { raw, zero, verbose }) => {

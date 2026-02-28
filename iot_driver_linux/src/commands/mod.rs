@@ -15,6 +15,7 @@
 
 pub mod animations;
 pub mod debug;
+pub mod dongle;
 pub mod effect;
 pub mod firmware;
 pub mod keymap;
