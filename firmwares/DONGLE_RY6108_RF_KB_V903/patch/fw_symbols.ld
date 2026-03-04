@@ -10,6 +10,7 @@ usb_otg_in_ep_xfer_start        = 0x08009aeb;
 
 /* ── SRAM globals ──────────────────────────────────────────────────────── */
 g_dongle_state                   = 0x20000330;
+g_spi_buf                        = 0x20000834;
 g_usb_device                     = 0x20000484;
 g_if1_report_desc                = 0x200001EC;
 g_ep2_report_buf                 = 0x200007F4;

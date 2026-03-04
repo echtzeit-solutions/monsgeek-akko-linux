@@ -59,11 +59,16 @@ BINARY_PATCHES = [
                 "IF1 rdesc pointer → extended_rdesc",
                 symbol='extended_rdesc'),
     # rf_tx_handler speed gate: CMP r0,#3 + BNE skips all EP2 sends when
-    # not Full Speed. Dongle runs at High Speed (speed==0), so EP2 is dead.
-    # NOP both instructions to always send on EP2.
+    # not Full Speed. Dongle runs at High Speed (speed==0), so all sends
+    # are dead without this NOP.  The 6KRO keyboard path (EP1) also goes
+    # through this gate, so we must NOP it for ANY typing to work.
     BinaryPatch(0x08006A34, b'\x03\x28\x7c\xd1',
                 b'\x00\xbf\x00\xbf',
                 "rf_tx_handler: NOP Full-Speed-only gate (CMP+BNE → 2×NOP)"),
+    # NOTE: The rf_tx_handler "consumer" path (EP1, no report ID) is actually
+    # the 6KRO keyboard path (sub=1).  Do NOT redirect it to EP2 — the kernel
+    # needs it on IF0/EP1 for keyboard input.  Consumer reports from sub=1 are
+    # intercepted in handle_rf_dispatch and sent to EP2 with report_id=3.
 ]
 
 project = PatchProject(

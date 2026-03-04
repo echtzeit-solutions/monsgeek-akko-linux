@@ -13,7 +13,9 @@ typedef struct __attribute__((packed)) {
     uint8_t usb_response[64];       /* +0x01 */
     uint8_t vendor_cmd_pending;     /* +0x41 */
     uint8_t vendor_cmd_buf[64];     /* +0x42 */
-    uint8_t _pad_82[0x56];         /* +0x82 .. +0xD7 */
+    uint8_t ep1_in_xfer_busy;      /* +0x82  EP1 IN busy (cleared by SOF bit 0) */
+    uint8_t ep2_in_xfer_busy;      /* +0x83  EP2 IN busy (cleared by SOF bit 1) */
+    uint8_t _pad_84[0x54];         /* +0x84 .. +0xD7 */
     uint8_t rf_idle;                /* +0xD8 (idle status from keyboard) */
     uint8_t _pad_d9[2];            /* +0xD9 .. +0xDA */
     uint8_t kb_battery_info;        /* +0xDB */
@@ -21,8 +23,27 @@ typedef struct __attribute__((packed)) {
     uint8_t kb_connection_status;   /* +0xDD */
 } dongle_state_t;  /* partial, 222 bytes declared */
 
+/* ── SPI buffer struct (150 bytes @ 0x20000834) ──────────────────────── */
+/* Used to intercept RF packets before rf_packet_dispatch processes them. */
+typedef struct __attribute__((packed)) {
+    uint8_t _pad_00;                /* +0x00 */
+    uint8_t tx_ready;               /* +0x01 */
+    uint8_t rx_processed;           /* +0x02 */
+    uint8_t _pad_03;                /* +0x03 */
+    uint8_t rx_command;             /* +0x04  received cmd (0x81-0x8A, bit 7 = valid) */
+    uint8_t rx_length;              /* +0x05 */
+    uint8_t rx_data[70];            /* +0x06 */
+    uint8_t rx_checksum;            /* +0x4C */
+    uint8_t _pad_4d;                /* +0x4D */
+    uint8_t tx_length;              /* +0x4E */
+    uint8_t tx_command;             /* +0x4F */
+    uint8_t tx_data[68];            /* +0x50 */
+    uint8_t tx_checksum;            /* +0x95 */
+} spi_buf_t;
+
 /* ── Firmware globals (in SRAM, resolved by fw_symbols.ld) ────────────── */
 extern dongle_state_t g_dongle_state;       /* 0x20000330 */
+extern spi_buf_t g_spi_buf;                 /* 0x20000834 */
 extern uint8_t g_usb_device[];              /* 0x20000484 (opaque USB device struct) */
 extern uint8_t g_if1_report_desc[];         /* 0x200001EC (171 bytes, IF1 HID rdesc) */
 extern uint8_t g_ep2_report_buf[];          /* 0x200007F4 (64 bytes, EP2 IN buffer) */

@@ -14,12 +14,11 @@
 #include "fw_v407.h"
 #include "hid_desc.h"
 
-/* ── SRAM addresses (from Ghidra RE, not yet in symbols.json) ─────────── */
+/* ── SRAM addresses (via linker symbols where available) ──────────────── */
 
-#define EP2_READY_FLAG    (*(volatile uint8_t  *)0x20000023)  /* g_hid_reports + 0x0B: EP2 IN idle flag */
-#define ADC_BATTERY_AVG   (*(volatile uint32_t *)0x20000010)  /* averaged battery ADC reading */
-#define ADC_SCAN_COUNTER  (*(volatile uint32_t *)0x20005234)  /* magnetism engine ADC scan counter */
-#define ADC_RAW_SAMPLE    (*(volatile uint32_t *)0x20003C88)  /* raw ADC sample 0 (battery channel) */
+#define ADC_BATTERY_AVG   (*(volatile uint32_t *)&g_battery_avg_buf)   /* averaged battery ADC reading */
+#define ADC_SCAN_COUNTER  (*(volatile uint32_t *)&g_adc_accumulator)   /* magnetism engine ADC scan counter */
+#define ADC_RAW_SAMPLE    (*(volatile uint32_t *)0x20003C88)           /* raw ADC sample 0 (battery channel, no symbol) */
 
 /* ── USB HID request constants ───────────────────────────────────────── */
 
@@ -175,6 +174,12 @@ static const char rtt_channel_name[] = "monsmod";
 #define RTT_TAG_ADC_COUNTER   0x10  /* u32: magnetism engine ADC scan counter */
 
 static void rtt_init(void) {
+    /* Already initialized?  max_up is set to 1 as the last step below,
+     * and PATCH_SRAM is NOT zero-initialized, so garbage max_up ≠ 1
+     * with overwhelming probability (1 in 2^32). */
+    if (rtt_cb.max_up == 1)
+        return;
+
     /* Zero everything — PATCH_SRAM .bss is NOT zero-initialized */
     uint8_t *p = (uint8_t *)&rtt_cb;
     for (uint32_t i = 0; i < sizeof(rtt_cb); i++)
@@ -189,18 +194,25 @@ static void rtt_init(void) {
     rtt_cb.up[0].wr_off = 0;
     rtt_cb.up[0].rd_off = 0;
     rtt_cb.up[0].flags  = 0;  /* SEGGER_RTT_MODE_NO_BLOCK_SKIP */
-    rtt_cb.max_up   = 1;
     rtt_cb.max_down = 0;
 
-    /* Write magic LAST — prevents BMP finding half-initialized CB.
-     * Use volatile to prevent reordering with struct init above. */
+    /* Write magic + max_up LAST — prevents BMP finding half-initialized CB
+     * and serves as the initialization guard for rtt_emit(). */
     __asm__ volatile ("dsb" ::: "memory");
     const char magic[] = "SEGGER RTT\0\0\0\0\0";
     for (int i = 0; i < 16; i++)
         ((volatile char *)rtt_cb.id)[i] = magic[i];
+    rtt_cb.max_up = 1;
 }
 
 static void rtt_emit(uint8_t tag, uint32_t val) {
+    /* Guard: RTT control block is in PATCH_SRAM which is NOT zero-initialized.
+     * In dongle mode, rtt_init() never runs (handle_usb_connect doesn't fire),
+     * so wr_off/rd_off contain garbage.  Using garbage as an index into rtt_buf
+     * would corrupt random SRAM.  max_up is set to 1 only by rtt_init(). */
+    if (rtt_cb.max_up != 1)
+        return;
+
     /* Write 5-byte record: [tag:u8] [value:u32 LE] non-blocking. */
     uint32_t wr = rtt_cb.up[0].wr_off;
     uint32_t rd = rtt_cb.up[0].rd_off;
@@ -251,12 +263,125 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
         log_buf.count = LOG_BUF_SIZE;
 }
 
+/* ── Dongle reports "before" hook ──────────────────────────────────── */
+/* Called BEFORE build_dongle_reports runs.
+ *
+ * Stock firmware bug #1 (dongle path): keycode_dispatch case 3 (consumer
+ * keys like volume knob) writes usage data to g_hid_6kro_report.keys[1..3]
+ * and sets bit 0x04 in pending_reports_bitmap.  But build_dongle_reports
+ * maps bit 0x04 to sub=3 (mouse), not sub=1 (consumer).  The encoder's
+ * consumer usage codes get sent as a mouse report to the dongle.
+ *
+ * Stock firmware bug #2 (hid_report_check_send): after the sub=1 path
+ * sends from consumer_report_t, hid_report_check_send sees the stale
+ * non-zero data, zeros it (fine), and sets bit 0x01 (keyboard sub=0) in
+ * pending_reports_bitmap — triggering a spurious keyboard report.  This
+ * is a firmware bug: consumer buffer cleanup should NOT set the keyboard
+ * bit.  Fixed by binary patch: NOP the STRB at 0x080124B2 in hooks.py.
+ *
+ * Fix: copy encoder usage data from 6KRO keys[1..3] into consumer_report_t
+ * with proper dongle consumer Report ID (3), swap bit 0x04 → bit 0x20 so
+ * the stock sub=1 path sends it correctly.
+ *
+ * pending_reports_bitmap bit → build_dongle_reports sub type:
+ *   0x01→sub=0(keyboard)  0x04→sub=3(mouse)  0x08→sub=4(dial)
+ *   0x10→sub=5(extra)     0x20→sub=1(consumer)  0x40→sub=2(NKRO) */
+
+/* RTT tags for dongle report debugging */
+#define RTT_TAG_DONGLE_FLAGS   0x20  /* u8: pending_reports_bitmap after swap */
+#define RTT_TAG_DONGLE_RFPKT   0x21  /* u32: report_id | usage_lo<<8 | usage_hi<<16 */
+#define RTT_TAG_DONGLE_ENC_RAW 0x22  /* u32: keys[1] | keys[2]<<8 | keys[3]<<16 | bitmap<<24 */
+#define RTT_TAG_DONGLE_SKIP    0x24  /* u32: keys[1] | bitmap<<8 (bit 0x04 set but not encoder) */
+
+void dongle_reports_before_hook(void) {
+    rtt_init();  /* idempotent; ensures RTT works in dongle mode */
+
+    volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+    if (kbd->connection_mode != 5)
+        return;
+
+    volatile hid_report_state_t *reports =
+        (volatile hid_report_state_t *)&g_hid_report_pending_flags;
+    uint8_t bitmap = reports->pending_reports_bitmap;
+    volatile consumer_report_t *con = (volatile consumer_report_t *)&g_hid_report_buffer;
+
+    /* Clean up consumer_report_t after build_dongle_reports has sent it.
+     * We NOP'd hid_report_check_send's block 2 (which zeroed this buffer
+     * at the wrong time — before build_dongle_reports could read it).
+     * Detect "sent": report_type non-zero but bit 0x20 clear (build_dongle_reports
+     * clears bit 0x20 after reading and sending the RF packet). */
+    if (con->report_type != 0 && !(bitmap & 0x20)) {
+        con->report_type = 0;
+        con->data[0] = 0;
+        con->data[1] = 0;
+        con->data[2] = 0;
+        con->data[3] = 0;
+        con->data[4] = 0;
+        con->data[5] = 0;
+        con->data[6] = 0;
+    }
+
+    if (!(bitmap & 0x04))
+        return;
+
+    volatile hid_6kro_report_t *kro = (volatile hid_6kro_report_t *)&g_hid_6kro_report;
+
+    rtt_emit(RTT_TAG_DONGLE_ENC_RAW,
+             (uint32_t)kro->keys[1] |
+             ((uint32_t)kro->keys[2] << 8) |
+             ((uint32_t)kro->keys[3] << 16) |
+             ((uint32_t)bitmap << 24));
+
+    if (kro->keys[1] != 3) {
+        /* Not an encoder consumer event — bit 0x04 set by
+         * hid_report_check_send (flush) or hid_mouse_report_clear.
+         * Let the stock sub=3 path handle it (harmless zeroed mouse). */
+        rtt_emit(RTT_TAG_DONGLE_SKIP,
+                 (uint32_t)kro->keys[1] | ((uint32_t)bitmap << 8));
+        return;
+    }
+
+    /* Encoder consumer event: copy to consumer_report_t for sub=1 path.
+     *
+     * Sub=1 copy chain in build_dongle_reports reads from consumer_report_t:
+     *   payload[3] = report_type, payload[4] = data[1] (SKIPS data[0]),
+     *   payload[5..9] = data[2..6].
+     *
+     * hid_report_check_send's block 2 is NOP'd (would zero this buffer
+     * before build_dongle_reports reads it).  Our hook zeroes it instead,
+     * after build_dongle_reports has sent the report (see cleanup above). */
+    con->report_type = 3;           /* dongle consumer Report ID */
+    con->data[0]     = 0;           /* skipped by sub=1 copy chain */
+    con->data[1]     = kro->keys[2]; /* usage_lo (e.g. 0xE9 = Vol Down) */
+    con->data[2]     = kro->keys[3]; /* usage_hi */
+    con->data[3]     = 0;
+    con->data[4]     = 0;
+    con->data[5]     = 0;
+    con->data[6]     = 0;
+
+    /* Clear encoder data from shared 6KRO buffer */
+    kro->keys[1] = 0;
+    kro->keys[2] = 0;
+    kro->keys[3] = 0;
+
+    /* Swap flags: clear bit 0x04 (sub=3/mouse), set bit 0x20 (sub=1/consumer) */
+    reports->pending_reports_bitmap = (bitmap & ~0x04) | 0x20;
+
+    rtt_emit(RTT_TAG_DONGLE_FLAGS, reports->pending_reports_bitmap);
+    rtt_emit(RTT_TAG_DONGLE_RFPKT,
+             (uint32_t)con->report_type |
+             ((uint32_t)con->data[1] << 8) |
+             ((uint32_t)con->data[2] << 16));
+}
+
 /* ── Battery monitor "before" hook ─────────────────────────────────── */
 /* Called BEFORE battery_level_monitor runs. Emits RTT records with
  * current battery ADC, level, charger state etc. for live observation.
  * battery_level_monitor fires when adc_counter == 2000 (~every few seconds). */
 
 void battery_monitor_before_hook(void) {
+    rtt_init();  /* idempotent; ensures RTT works in all modes */
+
     volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
 
     rtt_emit(RTT_TAG_ADC_AVG, ADC_BATTERY_AVG & 0xFFFF);
@@ -325,8 +450,9 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
         /* GET_REPORT — wValue = (report_type << 8) | report_id
          * Feature report type = 3, Report ID = 7 → wValue = 0x0307 */
         if (wValue == WVALUE_FEATURE_REPORT(7)) {
-            uint8_t bat_level = *(volatile uint8_t *)&g_battery_level;
-            uint8_t charging  = *(volatile uint8_t *)&g_charger_connected;
+            volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+            uint8_t bat_level = kbd->battery_level;
+            uint8_t charging  = kbd->charger_connected;
 
             /* Respond directly via EP0 with capped length.
              * Report format: [ID=7] [battery 0-100] [charging 0/1]
@@ -344,7 +470,7 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
              * The initial Input report from handle_vendor_cmd fires
              * before SET_CONFIGURATION, so EP2 isn't ready yet — this
              * is the reliable path for the first charge status update. */
-            if (EP2_READY_FLAG) {
+            if (((volatile hid_report_state_t *)&g_hid_report_pending_flags)->ep2_tx_ready) {
                 static uint8_t bat_input[4] __attribute__((aligned(4)));
                 bat_input[0] = 0x07;
                 bat_input[1] = bat_level;
@@ -431,22 +557,22 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[28] = diag.last_battery_level;
     buf[29] = diag.last_result;
 
-    /* Raw kbd_state fields for battery debugging (offsets from g_kbd_state) */
-    volatile uint8_t *kbd = (volatile uint8_t *)&g_kbd_state;
-    buf[30] = kbd[0x40];      /* battery_level (kbd_state_t.battery_level) */
-    buf[31] = kbd[0x41];      /* charger_connected (kbd_state_t.charger_connected) */
-    buf[32] = kbd[0x42];      /* charger_debounce_ctr (kbd_state_t.charger_debounce_ctr) */
-    buf[33] = kbd[0x43];      /* battery_update_ctr (kbd_state_t.battery_update_ctr) */
-    buf[34] = kbd[0x44];      /* battery_raw_level (kbd_state_t.battery_raw_level) */
-    buf[35] = kbd[0x45];      /* battery_indicator_active (kbd_state_t.battery_indicator_active) */
+    /* Raw kbd_state fields for battery debugging */
+    volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+    buf[30] = kbd->battery_level;
+    buf[31] = kbd->charger_connected;
+    buf[32] = kbd->charger_debounce_ctr;
+    buf[33] = kbd->battery_update_ctr;
+    buf[34] = kbd->battery_raw_level;
+    buf[35] = kbd->animation_dirty;
     uint32_t adc_ctr = ADC_SCAN_COUNTER;
     buf[36] = (uint8_t)(adc_ctr & 0xFF);
     buf[37] = (uint8_t)((adc_ctr >> 8) & 0xFF);
 
-    buf[38] = kbd[0x00];      /* timer_counter lo (kbd_state_t.timer_counter, main loop gate >= 2) */
-    buf[39] = kbd[0x01];      /* timer_counter hi */
-    buf[40] = kbd[0x4D];      /* charge_status (kbd_state_t +0x4D: 0=none, 1=charging, 2=complete) */
-    buf[41] = kbd[0x04];      /* connection_mode (kbd_state_t.connection_mode: 0=USB, 1=2.4G, 2=BT) */
+    buf[38] = kbd->scan_tick_counter;
+    buf[39] = kbd->report_state;
+    buf[40] = kbd->charge_status;
+    buf[41] = kbd->connection_mode;
 
     uint32_t avg = ADC_BATTERY_AVG;
     buf[42] = (uint8_t)(avg & 0xFF);
@@ -619,14 +745,15 @@ int handle_vendor_cmd(void) {
     {
         static uint8_t prev_charging;  /* .bss → starts at 0 */
 
-        uint8_t cur_charging = *(volatile uint8_t *)&g_charger_connected;
+        volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+        uint8_t cur_charging = kbd->charger_connected;
         if (cur_charging != prev_charging) {
             prev_charging = cur_charging;
 
             /* Check EP2 ready (not busy) before sending */
-            if (EP2_READY_FLAG) {
+            if (((volatile hid_report_state_t *)&g_hid_report_pending_flags)->ep2_tx_ready) {
                 static uint8_t bat_input[4] __attribute__((aligned(4)));
-                uint8_t level = *(volatile uint8_t *)&g_battery_level;
+                uint8_t level = kbd->battery_level;
                 bat_input[0] = 0x07;          /* Report ID 7 */
                 bat_input[1] = level;         /* Battery 0-100 */
                 bat_input[2] = cur_charging;  /* 1=charging, 0=not */
