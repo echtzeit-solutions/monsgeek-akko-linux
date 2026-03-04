@@ -65,10 +65,10 @@ BINARY_PATCHES = [
     BinaryPatch(0x08006A34, b'\x03\x28\x7c\xd1',
                 b'\x00\xbf\x00\xbf',
                 "rf_tx_handler: NOP Full-Speed-only gate (CMP+BNE → 2×NOP)"),
-    # NOTE: The rf_tx_handler "consumer" path (EP1, no report ID) is actually
-    # the 6KRO keyboard path (sub=1).  Do NOT redirect it to EP2 — the kernel
-    # needs it on IF0/EP1 for keyboard input.  Consumer reports from sub=1 are
-    # intercepted in handle_rf_dispatch and sent to EP2 with report_id=3.
+    # NOTE: rf_tx_handler's consumer path already uses EP2 (0x82) with
+    # report_id=3 natively.  No EP redirect patches needed — the stock
+    # code is correct once consumer_ready/consumer_data are populated
+    # (via sub=3 in rf_packet_dispatch, triggered by our keyboard hook).
 ]
 
 project = PatchProject(

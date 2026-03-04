@@ -167,52 +167,19 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
     return 0;  /* passthrough to original handler */
 }
 
-/* ── RF packet dispatch hook (consumer redirect + battery notifications) ─
+/* ── RF packet dispatch hook (battery notifications) ─────────────────────
  * "before" hook on rf_packet_dispatch: runs every SPI cycle.
  *
- * 1. Consumer redirect: The keyboard sends consumer data (volume knob) as
- *    sub=1 RF packets.  The stock firmware puts sub=1 into kbd_6kro_report
- *    and sends it on EP1/IF0 (6KRO keyboard descriptor, no report IDs).
- *    The kernel misinterprets consumer usage codes as keyboard modifier+keys.
- *    Fix: intercept sub=1 here, extract the consumer usage, send it on EP2
- *    with report_id=3 (Consumer Control), then suppress the sub=1 processing
- *    in rf_packet_dispatch by clearing rx_command.
+ * Consumer reports now flow through sub=3 natively: the keyboard hook
+ * copies encoder data to g_dongle_consumer_buf (sub=3 source buffer),
+ * the stock rf_packet_dispatch sets consumer_ready, and rf_tx_handler
+ * sends it on EP2 (binary-patched from EP1 in hooks.py).
  *
- *    Sub=1 RF packet format (from keyboard's build_dongle_reports):
- *      rx_data[0] = 1 (sub type)
- *      rx_data[1] = report_type (3 = consumer control)
- *      rx_data[2] = usage_lo (e.g. 0xE9 = Volume Down)
- *      rx_data[3] = usage_hi
- *      rx_data[4..7] = 0
- *
- * 2. Battery notifications: compares battery/charging values against cached
- *    copies.  If changed, pushes HID Input report on EP2. */
+ * Battery notifications: compares battery/charging values against cached
+ * copies.  If changed, pushes HID Input report on EP2. */
 
 void handle_rf_dispatch(void) {
-    volatile spi_buf_t *spi = (volatile spi_buf_t *)&g_spi_buf;
     volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
-
-    /* ── Consumer redirect: intercept sub=1 before rf_packet_dispatch ─── */
-    if (spi->rx_command == 0x81 && spi->rx_length == 8 &&
-        spi->rx_data[0] == 1 && spi->rx_data[1] == 3) {
-        /* Consumer control report from keyboard encoder.
-         * Send as report_id=3 on EP2 (IF1 Consumer Control descriptor).
-         * Only send if EP2 is not busy — drop otherwise (transient event). */
-        if (!ds->ep2_in_xfer_busy) {
-            static uint8_t consumer_buf[4] __attribute__((aligned(4)));
-            consumer_buf[0] = 3;              /* Report ID 3 = Consumer Control */
-            consumer_buf[1] = spi->rx_data[2]; /* usage_lo */
-            consumer_buf[2] = spi->rx_data[3]; /* usage_hi */
-            ds->ep2_in_xfer_busy = 1;
-            usb_otg_in_ep_xfer_start(g_usb_device, 0x82, consumer_buf, 3);
-        }
-
-        /* Suppress rf_packet_dispatch's sub=1 handler by clearing rx_command.
-         * This prevents the consumer data from being misrouted to EP1 as
-         * a 6KRO keyboard report. */
-        spi->rx_command = 0xFF;
-        spi->rx_length = 0;
-    }
 
     /* ── Battery change notifications ──────────────────────────────────── */
     static uint8_t prev_inited;

@@ -266,112 +266,58 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
 /* ── Dongle reports "before" hook ──────────────────────────────────── */
 /* Called BEFORE build_dongle_reports runs.
  *
- * Stock firmware bug #1 (dongle path): keycode_dispatch case 3 (consumer
- * keys like volume knob) writes usage data to g_hid_6kro_report.keys[1..3]
- * and sets bit 0x04 in pending_reports_bitmap.  But build_dongle_reports
- * maps bit 0x04 to sub=3 (mouse), not sub=1 (consumer).  The encoder's
- * consumer usage codes get sent as a mouse report to the dongle.
+ * Stock firmware bug: hid_report_check_send block 3 zeros the consumer
+ * buffer before build_dongle_reports can read it.  Fixed by NOP in
+ * hooks.py.  With the NOP, keycode_dispatch case 3 writes consumer data
+ * to g_dongle_consumer_buf (0x20000027) and sets bit 0x04.
+ * build_dongle_reports reads the actual data for sub=3.  The dongle
+ * handles sub=3 → consumer_ready → EP2 natively (rf_tx_handler, with
+ * speed gate NOP'd in dongle hooks.py).
  *
- * Stock firmware bug #2 (hid_report_check_send): after the sub=1 path
- * sends from consumer_report_t, hid_report_check_send sees the stale
- * non-zero data, zeros it (fine), and sets bit 0x01 (keyboard sub=0) in
- * pending_reports_bitmap — triggering a spurious keyboard report.  This
- * is a firmware bug: consumer buffer cleanup should NOT set the keyboard
- * bit.  Fixed by binary patch: NOP the STRB at 0x080124B2 in hooks.py.
- *
- * Fix: copy encoder usage data from 6KRO keys[1..3] into consumer_report_t
- * with proper dongle consumer Report ID (3), swap bit 0x04 → bit 0x20 so
- * the stock sub=1 path sends it correctly.
+ * Auto-release: after build_dongle_reports sends a consumer press
+ * (detected by bit 0x04 clearing between cycles while data is non-zero),
+ * we zero the buffer and re-set bit 0x04 to force a release report.
+ * This handles encoders that don't generate explicit release events.
  *
  * pending_reports_bitmap bit → build_dongle_reports sub type:
- *   0x01→sub=0(keyboard)  0x04→sub=3(mouse)  0x08→sub=4(dial)
- *   0x10→sub=5(extra)     0x20→sub=1(consumer)  0x40→sub=2(NKRO) */
+ *   0x01→sub=0(mouse)    0x04→sub=3(consumer)  0x08→sub=4(dial)
+ *   0x10→sub=5(extra)    0x20→sub=1(keyboard)   0x40→sub=2(NKRO) */
 
-/* RTT tags for dongle report debugging */
-#define RTT_TAG_DONGLE_FLAGS   0x20  /* u8: pending_reports_bitmap after swap */
-#define RTT_TAG_DONGLE_RFPKT   0x21  /* u32: report_id | usage_lo<<8 | usage_hi<<16 */
-#define RTT_TAG_DONGLE_ENC_RAW 0x22  /* u32: keys[1] | keys[2]<<8 | keys[3]<<16 | bitmap<<24 */
-#define RTT_TAG_DONGLE_SKIP    0x24  /* u32: keys[1] | bitmap<<8 (bit 0x04 set but not encoder) */
+#define RTT_TAG_DONGLE_BITMAP  0x20  /* u8: pending_reports_bitmap snapshot */
 
 void dongle_reports_before_hook(void) {
     rtt_init();  /* idempotent; ensures RTT works in dongle mode */
 
-    volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
-    if (kbd->connection_mode != 5)
+    if (*(volatile uint8_t *)&g_connection_mode != 5)
         return;
 
     volatile hid_report_state_t *reports =
         (volatile hid_report_state_t *)&g_hid_report_pending_flags;
     uint8_t bitmap = reports->pending_reports_bitmap;
-    volatile consumer_report_t *con = (volatile consumer_report_t *)&g_hid_report_buffer;
 
-    /* Clean up consumer_report_t after build_dongle_reports has sent it.
-     * We NOP'd hid_report_check_send's block 2 (which zeroed this buffer
-     * at the wrong time — before build_dongle_reports could read it).
-     * Detect "sent": report_type non-zero but bit 0x20 clear (build_dongle_reports
-     * clears bit 0x20 after reading and sending the RF packet). */
-    if (con->report_type != 0 && !(bitmap & 0x20)) {
-        con->report_type = 0;
-        con->data[0] = 0;
-        con->data[1] = 0;
-        con->data[2] = 0;
-        con->data[3] = 0;
-        con->data[4] = 0;
-        con->data[5] = 0;
-        con->data[6] = 0;
+    /* Consumer auto-release: g_dongle_consumer_buf layout is
+     * [report_type:u8] [usage_lo:u8] [usage_hi:u8] at 0x20000027.
+     * After build_dongle_reports sends the press (clears bit 0x04),
+     * if the usage data is still non-zero, schedule a release. */
+    static uint8_t consumer_was_pending;
+    volatile uint8_t *cbuf = (volatile uint8_t *)&g_dongle_consumer_buf;
+
+    if (bitmap & 0x04) {
+        /* Consumer send pending — remember for next cycle */
+        consumer_was_pending = 1;
+    } else if (consumer_was_pending) {
+        /* Bit 0x04 cleared = build_dongle_reports sent the report.
+         * If usage data is non-zero, force a release (zeros). */
+        consumer_was_pending = 0;
+        if (cbuf[1] != 0 || cbuf[2] != 0) {
+            cbuf[1] = 0;
+            cbuf[2] = 0;
+            reports->pending_reports_bitmap |= 0x04;
+        }
     }
 
-    if (!(bitmap & 0x04))
-        return;
-
-    volatile hid_6kro_report_t *kro = (volatile hid_6kro_report_t *)&g_hid_6kro_report;
-
-    rtt_emit(RTT_TAG_DONGLE_ENC_RAW,
-             (uint32_t)kro->keys[1] |
-             ((uint32_t)kro->keys[2] << 8) |
-             ((uint32_t)kro->keys[3] << 16) |
-             ((uint32_t)bitmap << 24));
-
-    if (kro->keys[1] != 3) {
-        /* Not an encoder consumer event — bit 0x04 set by
-         * hid_report_check_send (flush) or hid_mouse_report_clear.
-         * Let the stock sub=3 path handle it (harmless zeroed mouse). */
-        rtt_emit(RTT_TAG_DONGLE_SKIP,
-                 (uint32_t)kro->keys[1] | ((uint32_t)bitmap << 8));
-        return;
-    }
-
-    /* Encoder consumer event: copy to consumer_report_t for sub=1 path.
-     *
-     * Sub=1 copy chain in build_dongle_reports reads from consumer_report_t:
-     *   payload[3] = report_type, payload[4] = data[1] (SKIPS data[0]),
-     *   payload[5..9] = data[2..6].
-     *
-     * hid_report_check_send's block 2 is NOP'd (would zero this buffer
-     * before build_dongle_reports reads it).  Our hook zeroes it instead,
-     * after build_dongle_reports has sent the report (see cleanup above). */
-    con->report_type = 3;           /* dongle consumer Report ID */
-    con->data[0]     = 0;           /* skipped by sub=1 copy chain */
-    con->data[1]     = kro->keys[2]; /* usage_lo (e.g. 0xE9 = Vol Down) */
-    con->data[2]     = kro->keys[3]; /* usage_hi */
-    con->data[3]     = 0;
-    con->data[4]     = 0;
-    con->data[5]     = 0;
-    con->data[6]     = 0;
-
-    /* Clear encoder data from shared 6KRO buffer */
-    kro->keys[1] = 0;
-    kro->keys[2] = 0;
-    kro->keys[3] = 0;
-
-    /* Swap flags: clear bit 0x04 (sub=3/mouse), set bit 0x20 (sub=1/consumer) */
-    reports->pending_reports_bitmap = (bitmap & ~0x04) | 0x20;
-
-    rtt_emit(RTT_TAG_DONGLE_FLAGS, reports->pending_reports_bitmap);
-    rtt_emit(RTT_TAG_DONGLE_RFPKT,
-             (uint32_t)con->report_type |
-             ((uint32_t)con->data[1] << 8) |
-             ((uint32_t)con->data[2] << 16));
+    if (bitmap)
+        rtt_emit(RTT_TAG_DONGLE_BITMAP, bitmap);
 }
 
 /* ── Battery monitor "before" hook ─────────────────────────────────── */
@@ -572,7 +518,7 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[38] = kbd->scan_tick_counter;
     buf[39] = kbd->report_state;
     buf[40] = kbd->charge_status;
-    buf[41] = kbd->connection_mode;
+    buf[41] = *(volatile uint8_t *)&g_connection_mode;
 
     uint32_t avg = ADC_BATTERY_AVG;
     buf[42] = (uint8_t)(avg & 0xFF);

@@ -92,27 +92,22 @@ BINARY_PATCHES = [
                 b'\x00\xbf\x00\xbf\x00\xbf\x00\xbf',
                 "depth monitor: NOP BT-only gate (CMP+IT+POP → 4×NOP)"),
     # ── Consumer over dongle ──────────────────────────────────────────────
-    # Bug #1 (dongle sub-type): Fixed in dongle_reports_before_hook —
-    # reroutes encoder consumer data from bit 0x04 (sub=3/mouse) to
-    # bit 0x20 (sub=1/consumer) with correct Report ID 3.
+    # Stock firmware bug: hid_report_check_send block 3 zeros the consumer
+    # buffer (0x20000027) AND sets bitmap |= 0x04.  build_dongle_reports
+    # then reads zeros instead of the actual consumer usage code.  The
+    # timer gate in build_dongle_reports makes this worse — it defers the
+    # send, giving block 3 even more time to wipe the data.
     #
-    # Bug #2 (hid_report_check_send block 1): checks buffer at 0x20000054;
-    # when non-zero, zeros it AND sets bit 0x01 (keyboard sub=0) — spurious
-    # keyboard report.  Fix: NOP the STRB that writes bitmap |= 0x01.
-    BinaryPatch(0x080124B2, b'\x20\x70', b'\x00\xbf',
-                "hid_report_check_send blk1: NOP bitmap |= 0x01"),
-    #
-    # Bug #3 (hid_report_check_send block 2): checks consumer_report_t at
-    # 0x2000004C; when non-zero, zeros it via dma_struct_default THEN sets
-    # bit 0x20.  If build_dongle_reports' timer gate deferred the send,
-    # the consumer data is wiped before it can be read.  This is a stock
-    # firmware bug (never triggered because encoder goes through 6KRO/bit
-    # 0x04, not consumer_report_t).  Fix: NOP the entire action path
-    # (ldr+bl+ldrb+orr+strb = 14 bytes → 7×NOP).  Our hook handles cleanup.
-    BinaryPatch(0x080124DA,
-                b'\x0e\x48\x01\xf0\x26\xfc\x20\x78\x40\xf0\x20\x00\x20\x70',
+    # Fix: NOP block 3's action path (zero + bitmap set, 14 bytes → 7×NOP).
+    # With this NOP, keycode_dispatch case 3 is the only writer of both the
+    # consumer buffer and bitmap bit 0x04.  build_dongle_reports reads the
+    # actual data.  dongle_reports_before_hook handles auto-release: after
+    # a press is sent, it zeros the buffer and re-sets 0x04 to guarantee a
+    # release report on the next cycle.
+    BinaryPatch(0x080124FA,
+                b'\x08\x48\x01\x80\x81\x70\x20\x78\x40\xf0\x04\x00\x20\x70',
                 b'\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf',
-                "hid_report_check_send blk2: NOP consumer zero+bitmap (7×NOP)"),
+                "hid_report_check_send blk3: NOP consumer zero+bitmap (7×NOP)"),
 ]
 
 project = PatchProject(
