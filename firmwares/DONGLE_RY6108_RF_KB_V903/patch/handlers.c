@@ -132,11 +132,28 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
      * length cap at 0x080072C6/CA patched from 0xAB to 0xD9. */
     patch_descriptors();
 
-    /* Only intercept GET_REPORT for IF1 battery Feature report.
+    /* Only intercept GET_REPORT for IF1 Feature reports.
      * All other requests pass through to the original handler. */
     if (wIndex == 1 && bmReqType == USB_BMREQ_CLASS_IN && bRequest == HID_GET_REPORT) {
-        /* GET_REPORT — wValue = (report_type << 8) | report_id
-         * Feature report type = 3, Report ID = 7 → wValue = 0x0307 */
+        /* GET_REPORT Feature ID 8 — dongle patch discovery.
+         * Same format as keyboard 0xE7 but via HID Feature report. */
+        if (wValue == WVALUE_FEATURE_REPORT(8)) {
+            static uint8_t patch_rsp[16] __attribute__((aligned(4)));
+            patch_rsp[0]  = 0x08;       /* Report ID 8 */
+            patch_rsp[1]  = 0xCA;       /* magic hi */
+            patch_rsp[2]  = 0xFE;       /* magic lo */
+            patch_rsp[3]  = 0x01;       /* version */
+            patch_rsp[4]  = 0x31;       /* caps lo: battery(0x01) + consumer_redirect(0x10) + speed_gate_nop(0x20) */
+            patch_rsp[5]  = 0x00;       /* caps hi */
+            /* name: "MONSDON\0" */
+            patch_rsp[6]  = 'M'; patch_rsp[7]  = 'O'; patch_rsp[8]  = 'N'; patch_rsp[9]  = 'S';
+            patch_rsp[10] = 'D'; patch_rsp[11] = 'O'; patch_rsp[12] = 'N'; patch_rsp[13] = '\0';
+            uint16_t xfer_len = (wLength < 14) ? wLength : 14;
+            usb_ep0_in_xfer_start(udev, patch_rsp, xfer_len);
+            return 1;  /* intercepted */
+        }
+
+        /* GET_REPORT Feature ID 7 — battery report */
         if (wValue == WVALUE_FEATURE_REPORT(7)) {
             volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
             uint8_t bat_level = ds->kb_battery_info;

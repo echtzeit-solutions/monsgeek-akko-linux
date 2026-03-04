@@ -476,7 +476,7 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[3]  = 0xCA;           /* magic hi */
     buf[4]  = 0xFE;           /* magic lo */
     buf[5]  = 1;              /* patch version */
-    buf[6]  = 0x07;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) */
+    buf[6]  = 0x0F;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) + consumer_fix(3) */
     buf[7]  = 0x00;           /* capabilities hi */
     buf[8]  = 'M';
     buf[9]  = 'O';
