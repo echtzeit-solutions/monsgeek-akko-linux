@@ -103,6 +103,7 @@ project = PatchProject(
     flash_size=128 * 1024,    # AT32F405KBU7
     sram_size=96 * 1024,      # 0x20000000-0x20017FFF (all AT32F405 variants)
     initial_sp=0x200012B0,    # from vector table
+    memmap_svg=SCRIPT_DIR / ".." / ".." / ".." / "docs" / "memmap-dongle.svg",
 )
 
 if __name__ == '__main__':

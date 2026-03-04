@@ -525,9 +525,10 @@ class MemoryRegion(NamedTuple):
 
 
 def _fmt_size(size: int) -> str:
-    """Format a byte size as human-readable (e.g. 10240 → '10 KB')."""
-    if size >= 1024 and size % 1024 == 0:
-        return f"{size // 1024} KB"
+    """Format a byte size as KiB (e.g. 10240 → '10.0 KiB', 5508 → '5.4 KiB')."""
+    kib = size / 1024
+    if kib >= 1:
+        return f"{kib:.1f} KiB" if kib != int(kib) else f"{int(kib)} KiB"
     return f"{size} B"
 
 
@@ -561,13 +562,13 @@ def render_memmap_svg(
         "stack":  ("#B39DDB", "#333333"),  # light purple, dark text
     }
 
-    col_w = 200
-    label_w = 100  # space for address labels
+    col_w = 260
+    label_w = 110  # space for address labels
     gap = 60       # gap between columns
     top_margin = 50
     bottom_margin = 80
     max_col_h = 700  # max pixel height per column
-    min_region_h = 24  # minimum region height in px
+    min_region_h = 20  # minimum region height in px
 
     def layout_column(regions: list[MemoryRegion], total_size: int) -> list[tuple[MemoryRegion, float]]:
         """Assign pixel heights to regions, with minimum height enforcement."""
@@ -610,10 +611,10 @@ def render_memmap_svg(
         '  text { font-family: "Consolas", "Monaco", monospace; }',
         '  .title { font-size: 16px; font-weight: bold; fill: #333; }',
         '  .col-title { font-size: 13px; font-weight: bold; fill: #555; }',
-        '  .region-name { font-size: 10px; }',
-        '  .region-size { font-size: 9px; opacity: 0.8; }',
-        '  .addr { font-size: 9px; fill: #666; }',
-        '  .legend-text { font-size: 11px; fill: #333; }',
+        '  .region-name { font-size: 9px; }',
+        '  .region-size { font-size: 8px; opacity: 0.8; }',
+        '  .addr { font-size: 8px; fill: #666; }',
+        '  .legend-text { font-size: 10px; fill: #333; }',
         '  rect.region { stroke: #666; stroke-width: 0.5; }',
         '  pattern#hatch { patternUnits: userSpaceOnUse; }',
         '</style>',
@@ -627,6 +628,10 @@ def render_memmap_svg(
         '    <rect width="6" height="6" fill="#F5C882"/>',
         '    <line x1="0" y1="0" x2="0" y2="6" stroke="#D4981C" stroke-width="1.5"/>',
         '  </pattern>',
+        '  <linearGradient id="stack-grad" x1="0" y1="0" x2="0" y2="1">',
+        '    <stop offset="0%" stop-color="#7E57C2" stop-opacity="1"/>',
+        '    <stop offset="100%" stop-color="#7E57C2" stop-opacity="0"/>',
+        '  </linearGradient>',
         '</defs>',
         f'<text x="{total_w / 2}" y="30" text-anchor="middle" class="title">{title}</text>',
     ]
@@ -654,6 +659,16 @@ def render_memmap_svg(
                     f'<rect x="{x_rect}" y="{y:.1f}" width="{col_w}" height="{h:.1f}"'
                     f' fill="url(#hatch-orange)" class="region"/>'
                 )
+            elif region.style == "stack":
+                # Hatch underneath, gradient on top fading to transparent
+                lines.append(
+                    f'<rect x="{x_rect}" y="{y:.1f}" width="{col_w}" height="{h:.1f}"'
+                    f' fill="url(#hatch)" class="region"/>'
+                )
+                lines.append(
+                    f'<rect x="{x_rect}" y="{y:.1f}" width="{col_w}" height="{h:.1f}"'
+                    f' fill="url(#stack-grad)" stroke="none"/>'
+                )
             else:
                 lines.append(
                     f'<rect x="{x_rect}" y="{y:.1f}" width="{col_w}" height="{h:.1f}"'
@@ -667,18 +682,26 @@ def render_memmap_svg(
             )
 
             # Region name + size (centered in rect)
-            if h >= 16:
+            size_str = _fmt_size(region_size)
+            if h >= 32:
+                # Two lines: name above, size below
                 lines.append(
-                    f'<text x="{x_rect + col_w / 2}" y="{y + h / 2 + 3:.1f}"'
+                    f'<text x="{x_rect + col_w / 2}" y="{y + h / 2 + 1:.1f}"'
                     f' text-anchor="middle" class="region-name"'
                     f' fill="{text_color}">{region.name}</text>'
                 )
-                if h >= 32:
-                    lines.append(
-                        f'<text x="{x_rect + col_w / 2}" y="{y + h / 2 + 10:.1f}"'
-                        f' text-anchor="middle" class="region-size"'
-                        f' fill="{text_color}">{_fmt_size(region_size)}</text>'
-                    )
+                lines.append(
+                    f'<text x="{x_rect + col_w / 2}" y="{y + h / 2 + 10:.1f}"'
+                    f' text-anchor="middle" class="region-size"'
+                    f' fill="{text_color}">{size_str}</text>'
+                )
+            elif h >= 16:
+                # Single line: "name (size)"
+                lines.append(
+                    f'<text x="{x_rect + col_w / 2}" y="{y + h / 2 + 3:.1f}"'
+                    f' text-anchor="middle" class="region-name"'
+                    f' fill="{text_color}">{region.name} ({size_str})</text>'
+                )
 
             y += h
 
@@ -725,6 +748,15 @@ def render_memmap_svg(
                 f'<rect x="{legend_x}" y="{legend_y - 10}" width="14" height="14"'
                 f' fill="url(#hatch-orange)" stroke="#999" stroke-width="0.5"/>'
             )
+        elif style == "stack":
+            lines.append(
+                f'<rect x="{legend_x}" y="{legend_y - 10}" width="14" height="14"'
+                f' fill="url(#hatch)" stroke="#999" stroke-width="0.5"/>'
+            )
+            lines.append(
+                f'<rect x="{legend_x}" y="{legend_y - 10}" width="14" height="14"'
+                f' fill="url(#stack-grad)" stroke="none"/>'
+            )
         else:
             lines.append(
                 f'<rect x="{legend_x}" y="{legend_y - 10}" width="14" height="14"'
@@ -766,6 +798,7 @@ class PatchProject:
         flash_size: int | None = None,
         sram_size: int | None = None,
         initial_sp: int | None = None,
+        memmap_svg: str | Path | None = None,
     ) -> None:
         self.hooks = hooks
         self.binary_patches = binary_patches
@@ -782,6 +815,7 @@ class PatchProject:
         self.flash_size = flash_size
         self.sram_size = sram_size
         self.initial_sp = initial_sp
+        self.memmap_svg = Path(memmap_svg) if memmap_svg else None
 
     def _build_engine(self) -> HookEngine:
         engine = HookEngine(self.firmware_bin, **self.engine_kwargs)
@@ -1039,6 +1073,12 @@ class PatchProject:
                 flash_col.append(MemoryRegion(
                     "Bootloader", 0x08000000, bl_end, "code"))
 
+            # Read firmware binary to trim code blocks to actual content
+            file_base = self.engine_kwargs.get('file_base', 0x08005000)
+            fw_data = None
+            if self.firmware_bin.exists():
+                fw_data = self.firmware_bin.read_bytes()
+
             for block in flash_blocks:
                 start = int(block['start'], 16)
                 end = int(block['end'], 16)
@@ -1053,6 +1093,27 @@ class PatchProject:
                     style = "config"
                 else:
                     style = "code"
+
+                # Trim code blocks to actual content (scan for trailing 0xFF)
+                if style == "code" and fw_data is not None:
+                    file_off_start = start - file_base
+                    file_off_end = end - file_base
+                    if 0 <= file_off_start < len(fw_data):
+                        actual_end = min(file_off_end, len(fw_data) - 1)
+                        # Scan backwards for last non-0xFF byte
+                        trimmed_end = file_off_start - 1
+                        for off in range(actual_end, file_off_start - 1, -1):
+                            if fw_data[off] != 0xFF:
+                                trimmed_end = off
+                                break
+                        if trimmed_end < file_off_start:
+                            # Entire block is 0xFF — mark as free
+                            style = "free"
+                            name = "(unused)"
+                        else:
+                            # Trim end to actual content (align to 16)
+                            end = file_base + ((trimmed_end + 16) & ~15) - 1
+
                 flash_col.append(MemoryRegion(name, start, end, style))
         else:
             print("WARNING: no symbols.json and no flash_regions — "
@@ -1122,29 +1183,10 @@ class PatchProject:
                 if i + 1 < len(resolved):
                     end = resolved[i + 1][0] - 1
                 else:
-                    # Last landmark: extend to patch SRAM origin.
-                    # If SP is below patch SRAM, _fill_gaps + stack insertion
-                    # will carve out the stack region in between.
                     end = patch_sram_origin - 1
                 sram_col.append(MemoryRegion(name, addr, end, "code"))
         elif self.sram_regions:
             sram_col = list(self.sram_regions)
-
-        # Insert stack (ARM Cortex-M stack grows downward from initial SP).
-        # If SP falls inside a landmark region, split: data below SP,
-        # unused above SP (above initial SP is never touched).
-        if sp and sp > sram_base:
-            new_sram_col: list[MemoryRegion] = []
-            for r in sram_col:
-                if r.start < sp < r.end:
-                    # SP falls inside — truncate region at SP,
-                    # remainder becomes unused (above stack top)
-                    new_sram_col.append(MemoryRegion(
-                        r.name, r.start, sp - 1, r.style))
-                    # Don't add the above-SP part; _fill_gaps handles it
-                else:
-                    new_sram_col.append(r)
-            sram_col = new_sram_col
 
         # Insert patch SRAM (split into used/free)
         patch_sram_end = patch_sram_origin + patch_sram_len - 1
@@ -1164,6 +1206,23 @@ class PatchProject:
 
         sram_col.sort(key=lambda r: r.start)
 
+        # ── Insert stack region ──
+        # ARM Cortex-M stack grows downward from initial SP.
+        # We don't know the exact depth, so show a fixed estimate
+        # (2 KB) below SP.  The gradient fades out at the bottom
+        # to convey the uncertain lower bound.
+        STACK_ESTIMATE = 2048
+        if sp and sp > sram_base:
+            stack_bottom = sp - STACK_ESTIMATE
+            # Clamp to not overlap existing regions
+            for r in sram_col:
+                if r.end >= stack_bottom and r.end < sp:
+                    stack_bottom = r.end + 1
+            if stack_bottom < sp:
+                sram_col.append(MemoryRegion(
+                    "Stack", stack_bottom, sp - 1, "stack"))
+                sram_col.sort(key=lambda r: r.start)
+
         # ── Fill gaps with 'free' regions ──
         sram_size = self.sram_size or 96 * 1024
         flash_base = 0x08000000
@@ -1174,7 +1233,7 @@ class PatchProject:
         # ── Render ──
         title = self.firmware_bin.stem.replace('_', ' ').title()
         svg = render_memmap_svg(flash_col, sram_col, flash_size, sram_size, title)
-        out_path = self.build_dir / "memmap.svg"
+        out_path = self.memmap_svg or (self.build_dir / "memmap.svg")
         out_path.write_text(svg)
         print(f"Wrote: {out_path}")
 

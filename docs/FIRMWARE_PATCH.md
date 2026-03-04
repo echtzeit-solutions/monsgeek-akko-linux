@@ -195,6 +195,8 @@ Hook modes:
 
 ### Keyboard patch details
 
+![Keyboard memory map](memmap-keyboard.svg)
+
 **Flash layout** (patch zone):
 ```
 0x08025800 - 0x08027FFF   Patch zone (10KB, unused in stock firmware)
@@ -230,6 +232,8 @@ Hook modes:
 - Charging (Usage Page 0x85, Usage 0x44): 0/1
 
 ### Dongle patch details
+
+![Dongle memory map](memmap-dongle.svg)
 
 **Flash layout**:
 ```

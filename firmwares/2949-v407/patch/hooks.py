@@ -139,6 +139,7 @@ project = PatchProject(
     sram_landmarks=SRAM_LANDMARKS,
     flash_size=256 * 1024,   # AT32F405RCT7
     sram_size=96 * 1024,     # 0x20000000-0x20017FFF
+    memmap_svg=SCRIPT_DIR / ".." / ".." / ".." / "docs" / "memmap-keyboard.svg",
 )
 
 if __name__ == '__main__':
