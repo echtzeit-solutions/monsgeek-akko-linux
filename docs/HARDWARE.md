@@ -292,8 +292,8 @@ ATTRS{idVendor}=="2e3c", ATTRS{idProduct}=="df11", TAG+="uaccess"
 | 1 (square pad) | VCC (3.3V) |
 | 2 | SWDIO (PA13) |
 | 3 | SWCLK (PA14) |
-| 4 | GND |
-| 5 | NRST (leave disconnected - BMP drives it low and resets MCU) |
+| 4 | NRST (leave disconnected - BMP drives it low and resets MCU) |
+| 5 | GND |
 
 ### PAN1080 SWD (Keyboard, 6-pin header)
 
@@ -313,7 +313,15 @@ SWDIO (PA13, pin 23) and PB8/USART1_TX (pin 32) are exposed as PCB pads.
 ### Debug Notes
 
 - Use `gdb-multiarch` on Ubuntu (not `arm-none-eabi-gdb` which may not be installed)
-- BMP clone quirk: reverts to ST-Link firmware on power loss, needs reflashing
+- **BMP probes** (custom builds with AT32F405 support from `blackmagic` source):
+  - **Black board** (STM32F103C8T6, 128 KB): swlink platform, `cortexm+stm+at32f4`,
+    RTT enabled, BMD DFU bootloader. Self-updatable via `dfu-util -d 1d50:6017
+    -s 0x08002000:leave -D firmware.bin`. SWD output: PA13 (SWDIO), PA14 (SWCLK).
+  - **ST-Link clone** (APM32F103C8, 64 KB): stlink platform, `cortexm+at32f4`,
+    no bootloader (requires SWD to update). SWD output: PB14 (SWDIO), PA5 (SWCLK).
+  - **Blue board** (CKS32F103C8T6, 64 KB): swlink platform, `cortexm+at32f4`,
+    no `stm` support, no bootloader.
+  - Build: `blackmagic/` at `/home/florian/src-misc/stlink-clone/blackmagic/`
 - SEGGER RTT works via BMP: `monitor rtt ram 0x20009800 0x20009C00`, then
   `monitor rtt enable`. Target must remain attached (not detached) for polling.
   RTT data appears on the secondary BMP serial port.
