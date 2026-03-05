@@ -6,14 +6,15 @@
  * exposes them as a standard HID battery via IF1's report descriptor and
  * GET_REPORT interception, with proactive Input report push on changes.
  *
- * Three hooks:
+ * Four hooks:
  *   1. "before" hook on usb_init — populates extended_rdesc + patches
  *      wDescriptorLength before USB enumeration starts.
  *   2. "filter" hook on hid_class_setup_handler — intercepts GET_REPORT
  *      Feature ID 7 for battery data.
  *   3. "before" hook on rf_packet_dispatch — detects battery/charging
- *      changes and pushes HID Input reports on EP2 interrupt endpoint.
- *      Linux kernel's hidinput_update_battery() picks these up.
+ *      changes and sets a pending flag for deferred EP2 send.
+ *   4. Trampoline in rf_tx_handler (speed gate site) — sends pending
+ *      battery Input reports using the stock EP2 busy-flag contract.
  *
  * Convention (filter mode):
  *   return 0     = passthrough to original firmware handler
@@ -81,6 +82,13 @@ static const uint8_t battery_rdesc[] = {
  * Placed in .bss → PATCH_SRAM (0x20002000+). */
 uint8_t extended_rdesc[EXTENDED_RDESC_LEN];
 
+/* ── Deferred battery EP2 send state ─────────────────────────────────── */
+/* These live in PATCH_SRAM (.bss), zeroed by handle_usb_init. */
+
+static uint8_t battery_ep2_pending;
+static uint8_t pending_bat_level;
+static uint8_t pending_bat_charging;
+
 /* ── Descriptor patching (idempotent) ────────────────────────────────── */
 
 static void patch_descriptors(void) {
@@ -107,7 +115,21 @@ static void patch_descriptors(void) {
  * and patch wDescriptorLength so they're ready when the host enumerates. */
 
 void handle_usb_init(void) {
+    /* Zero PATCH_SRAM — stock crt0 only initializes the firmware's own
+     * .bss region, not ours.  SRAM survives soft reboot (flash + reset)
+     * so statics from the previous run persist as garbage. */
+    uint8_t *p = (uint8_t *)0x20002000;
+    for (int i = 0; i < 1024; i++)
+        p[i] = 0;
+
     patch_descriptors();
+
+    /* Clear EP busy flags — USB peripheral state can survive a soft
+     * reboot.  If the bootloader's USB session left a transfer
+     * in-flight, EP2 starts wedged and consumer/mouse reports die. */
+    volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
+    ds->ep1_in_xfer_busy = 0;
+    ds->ep2_in_xfer_busy = 0;
 }
 
 /* ── HID class setup handler (battery reporting) ─────────────────────── */
@@ -168,14 +190,11 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
             uint16_t xfer_len = (wLength < 3) ? wLength : 3;
             usb_ep0_in_xfer_start(udev, bat_report, xfer_len);
 
-            /* Also push Input report on EP2 so kernel's event chain fires
-             * (hidinput_update_battery → hidinput_update_battery_charge_status).
-             * Use g_ep2_report_buf as the transmit buffer (same as firmware). */
-            volatile uint8_t *ep2_buf = (volatile uint8_t *)g_ep2_report_buf;
-            ep2_buf[0] = 0x07;
-            ep2_buf[1] = bat_level;
-            ep2_buf[2] = charging;
-            usb_otg_in_ep_xfer_start(g_usb_device, 0x82, (void *)ep2_buf, 3);
+            /* Queue EP2 Input report for rf_tx_handler trampoline.
+             * Will be sent at the correct point in the main loop. */
+            pending_bat_level = bat_level;
+            pending_bat_charging = charging;
+            battery_ep2_pending = 1;
 
             return 1;  /* intercepted */
         }
@@ -184,7 +203,7 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
     return 0;  /* passthrough to original handler */
 }
 
-/* ── RF packet dispatch hook (battery notifications) ─────────────────────
+/* ── RF packet dispatch hook (battery change detection) ──────────────────
  * "before" hook on rf_packet_dispatch: runs every SPI cycle.
  *
  * Consumer reports now flow through sub=3 natively: the keyboard hook
@@ -193,12 +212,13 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
  * sends it on EP2 (binary-patched from EP1 in hooks.py).
  *
  * Battery notifications: compares battery/charging values against cached
- * copies.  If changed, pushes HID Input report on EP2. */
+ * copies.  If changed, sets a pending flag — the actual EP2 send happens
+ * in handle_battery_ep2_send (called from rf_tx_handler trampoline). */
 
 void handle_rf_dispatch(void) {
     volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
 
-    /* ── Battery change notifications ──────────────────────────────────── */
+    /* ── Battery change detection ─────────────────────────────────────── */
     static uint8_t prev_inited;
     static uint8_t prev_battery;
     static uint8_t prev_charging;
@@ -210,11 +230,31 @@ void handle_rf_dispatch(void) {
         prev_inited = 1;
         prev_battery = bat;
         prev_charging = chg;
-
-        static uint8_t bat_input[4] __attribute__((aligned(4)));
-        bat_input[0] = 0x07;       /* Report ID 7 */
-        bat_input[1] = bat;
-        bat_input[2] = chg;
-        usb_otg_in_ep_xfer_start(g_usb_device, 0x82, bat_input, 3);
+        pending_bat_level = bat;
+        pending_bat_charging = chg;
+        battery_ep2_pending = 1;
     }
+}
+
+/* ── Battery EP2 send (called from rf_tx_handler trampoline) ─────────────
+ * Runs inside rf_tx_handler at the correct point in the main loop,
+ * following the stock EP2 contract: check busy → set busy → send.
+ * If EP2 is busy, the pending flag stays set and retries next cycle. */
+
+void handle_battery_ep2_send(void) {
+    if (!battery_ep2_pending)
+        return;
+
+    volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
+    if (ds->ep2_in_xfer_busy)
+        return;  /* retry next cycle */
+
+    ds->ep2_in_xfer_busy = 1;
+    battery_ep2_pending = 0;
+
+    volatile uint8_t *ep2_buf = (volatile uint8_t *)g_ep2_report_buf;
+    ep2_buf[0] = 0x07;
+    ep2_buf[1] = pending_bat_level;
+    ep2_buf[2] = pending_bat_charging;
+    usb_otg_in_ep_xfer_start(g_usb_device, 0x82, (void *)ep2_buf, 3);
 }

@@ -505,12 +505,17 @@ class BinaryPatch(NamedTuple):
     For symbol-resolved patches: set symbol to an ELF symbol name.
     old_bytes is the expected original word (4 bytes LE), and new_bytes
     is ignored — the symbol's address is written instead.
+
+    For branch patches: set branch_symbol to an ELF symbol name.
+    Encodes a B.W from addr to the symbol's address (4 bytes).
+    old_bytes is verified before patching; new_bytes is ignored.
     """
     addr: int
     old_bytes: bytes
     new_bytes: bytes
     desc: str
     symbol: str | None = None
+    branch_symbol: str | None = None
 
 
 class MemoryRegion(NamedTuple):
@@ -921,7 +926,26 @@ class PatchProject:
         for patch in self.binary_patches:
             off = patch.addr - file_base
 
-            if patch.symbol is not None:
+            if patch.branch_symbol is not None:
+                # B.W branch to ELF symbol
+                resolved = symbols.get(patch.branch_symbol)
+                if resolved is None:
+                    print(f"ERROR: '{patch.branch_symbol}' symbol not found in hook.elf. "
+                          f"Make sure it is non-static in handlers.S/handlers.c.",
+                          file=sys.stderr)
+                    sys.exit(1)
+                # Verify original bytes
+                current = fw[off:off + len(patch.old_bytes)]
+                if current != patch.old_bytes:
+                    print(f"WARNING: bytes at 0x{patch.addr:08X} are "
+                          f"{current.hex()}, expected {patch.old_bytes.hex()}. "
+                          f"Already patched?", file=sys.stderr)
+                bw = encode_thumb2_bw(patch.addr, resolved)
+                fw[off:off + 4] = bw
+                print(f"  Patch: 0x{patch.addr:08X} "
+                      f"[B.W → 0x{resolved:08X}] ({bw.hex()}) {patch.desc}")
+
+            elif patch.symbol is not None:
                 # Word-sized symbol-resolved patch
                 resolved = symbols.get(patch.symbol)
                 if resolved is None:
