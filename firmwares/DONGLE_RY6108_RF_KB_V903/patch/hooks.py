@@ -60,12 +60,11 @@ BINARY_PATCHES = [
                 symbol='extended_rdesc'),
     # rf_tx_handler speed gate: CMP r0,#3 + BNE skips all EP2 sends when
     # not Full Speed. Dongle runs at High Speed (speed==0), so all sends
-    # are dead without this NOP.  Instead of 2×NOP, branch to our battery
-    # EP2 trampoline — serves double duty: bypasses the speed gate AND
-    # injects battery sends at the correct point in the EP2 pipeline.
-    BinaryPatch(0x08006A34, b'\x03\x28\x7c\xd1', b'',
-                "rf_tx_handler: speed gate → battery EP2 trampoline",
-                branch_symbol='battery_ep2_trampoline'),
+    # are dead without this NOP.  The 6KRO keyboard path (EP1) also goes
+    # through this gate, so we must NOP it for ANY typing to work.
+    BinaryPatch(0x08006A34, b'\x03\x28\x7c\xd1',
+                b'\x00\xbf\x00\xbf',
+                "rf_tx_handler: NOP Full-Speed-only gate (CMP+BNE → 2×NOP)"),
     # NOTE: rf_tx_handler's consumer path already uses EP2 (0x82) with
     # report_id=3 natively.  No EP redirect patches needed — the stock
     # code is correct once consumer_ready/consumer_data are populated
