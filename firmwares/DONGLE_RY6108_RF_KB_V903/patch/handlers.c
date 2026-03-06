@@ -12,8 +12,7 @@
  *   2. "filter" hook on hid_class_setup_handler — intercepts GET_REPORT
  *      Feature ID 7 for battery data.
  *   3. "before" hook on rf_packet_dispatch — detects battery/charging
- *      changes and pushes HID Input reports on EP2 interrupt endpoint.
- *      Linux kernel's hidinput_update_battery() picks these up.
+ *      changes and pushes HID Input reports on EP2 (with busy-flag check).
  *
  * Convention (filter mode):
  *   return 0     = passthrough to original firmware handler
@@ -80,6 +79,22 @@ static const uint8_t battery_rdesc[] = {
  * Non-static: address must be visible in ELF for build-time literal pool patch.
  * Placed in .bss → PATCH_SRAM (0x20002000+). */
 uint8_t extended_rdesc[EXTENDED_RDESC_LEN];
+
+/* ── Safe EP2 send (follows stock busy-flag contract) ────────────────── */
+/* Check ep2_in_xfer_busy → set → fill g_ep2_report_buf → xfer_start.
+ * Returns 1 if sent, 0 if busy. */
+
+static inline int ep2_send_if_ready(uint8_t *data, uint32_t len) {
+    volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
+    if (ds->ep2_in_xfer_busy)
+        return 0;
+    ds->ep2_in_xfer_busy = 1;
+    volatile uint8_t *ep2_buf = (volatile uint8_t *)g_ep2_report_buf;
+    for (uint32_t i = 0; i < len; i++)
+        ep2_buf[i] = data[i];
+    usb_otg_in_ep_xfer_start(g_usb_device, 0x82, (void *)ep2_buf, len);
+    return 1;
+}
 
 /* ── Descriptor patching (idempotent) ────────────────────────────────── */
 
@@ -182,15 +197,6 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
             uint16_t xfer_len = (wLength < 3) ? wLength : 3;
             usb_ep0_in_xfer_start(udev, bat_report, xfer_len);
 
-            /* Also push Input report on EP2 so kernel's event chain fires
-             * (hidinput_update_battery → hidinput_update_battery_charge_status).
-             * Use g_ep2_report_buf as the transmit buffer (same as firmware). */
-            volatile uint8_t *ep2_buf = (volatile uint8_t *)g_ep2_report_buf;
-            ep2_buf[0] = 0x07;
-            ep2_buf[1] = bat_level;
-            ep2_buf[2] = charging;
-            usb_otg_in_ep_xfer_start(g_usb_device, 0x82, (void *)ep2_buf, 3);
-
             return 1;  /* intercepted */
         }
     }
@@ -207,7 +213,9 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
  * sends it on EP2 (binary-patched from EP1 in hooks.py).
  *
  * Battery notifications: compares battery/charging values against cached
- * copies.  If changed, pushes HID Input report on EP2. */
+ * copies.  If changed, pushes HID Input report on EP2 using the busy-flag
+ * protocol.  rf_packet_dispatch and rf_tx_handler run sequentially in the
+ * main loop (no preemption), so the busy check is race-free. */
 
 void handle_rf_dispatch(void) {
     volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
@@ -225,10 +233,7 @@ void handle_rf_dispatch(void) {
         prev_battery = bat;
         prev_charging = chg;
 
-        static uint8_t bat_input[4] __attribute__((aligned(4)));
-        bat_input[0] = 0x07;       /* Report ID 7 */
-        bat_input[1] = bat;
-        bat_input[2] = chg;
-        usb_otg_in_ep_xfer_start(g_usb_device, 0x82, bat_input, 3);
+        uint8_t bat_input[4] = { 0x07, bat, chg, 0 };
+        ep2_send_if_ready(bat_input, 3);
     }
 }

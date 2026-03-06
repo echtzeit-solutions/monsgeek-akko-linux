@@ -108,6 +108,21 @@ static const uint8_t battery_rdesc[] = {
  * Placed in .bss → PATCH_SRAM (0x20009800+). */
 uint8_t extended_rdesc[EXTENDED_RDESC_LEN];
 
+/* ── Safe EP2 send (follows stock busy-flag contract) ────────────────── */
+/* Check ep2_tx_ready → clear → flush+xfer.  Returns 1 if sent, 0 if busy.
+ * Stock usb_ep_report_send uses the same protocol; if we grab the flag
+ * first, the stock sender skips that cycle and retries next time. */
+
+static inline int ep2_send_if_ready(void *buf, uint32_t len) {
+    volatile hid_report_state_t *rpt =
+        (volatile hid_report_state_t *)&g_hid_report_pending_flags;
+    if (!rpt->ep2_tx_ready)
+        return 0;
+    rpt->ep2_tx_ready = 0;
+    usb_ep2_in_transmit(buf, len);
+    return 1;
+}
+
 /* ── Diagnostics (readable via 0xE7 patch info) ──────────────────────── */
 static struct {
     uint32_t hid_setup_calls;       /* total calls to handle_hid_setup */
@@ -411,19 +426,6 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
             uint16_t xfer_len = (wLength < 3) ? wLength : 3;
             usb_ep0_in_xfer_start(udev, bat_report, xfer_len);
 
-            /* Also push an Input report on EP2 so the kernel's event
-             * chain fires (hidinput_update_battery_charge_status).
-             * The initial Input report from handle_vendor_cmd fires
-             * before SET_CONFIGURATION, so EP2 isn't ready yet — this
-             * is the reliable path for the first charge status update. */
-            if (((volatile hid_report_state_t *)&g_hid_report_pending_flags)->ep2_tx_ready) {
-                static uint8_t bat_input[4] __attribute__((aligned(4)));
-                bat_input[0] = 0x07;
-                bat_input[1] = bat_level;
-                bat_input[2] = charging;
-                usb_ep2_in_transmit(bat_input, 3);
-            }
-
             diag.last_battery_level = bat_level;
             diag.last_result = 1;
             diag.hid_setup_intercepts++;
@@ -697,22 +699,18 @@ int handle_vendor_cmd(void) {
 
     /* ── Battery Input report on charge state change ─────────────── */
     {
-        static uint8_t prev_charging;  /* .bss → starts at 0 */
+        static uint8_t prev_charging;
 
         volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
         uint8_t cur_charging = kbd->charger_connected;
         if (cur_charging != prev_charging) {
             prev_charging = cur_charging;
 
-            /* Check EP2 ready (not busy) before sending */
-            if (((volatile hid_report_state_t *)&g_hid_report_pending_flags)->ep2_tx_ready) {
-                static uint8_t bat_input[4] __attribute__((aligned(4)));
-                uint8_t level = kbd->battery_level;
-                bat_input[0] = 0x07;          /* Report ID 7 */
-                bat_input[1] = level;         /* Battery 0-100 */
-                bat_input[2] = cur_charging;  /* 1=charging, 0=not */
-                usb_ep2_in_transmit(bat_input, 3);
-            }
+            static uint8_t bat_input[4] __attribute__((aligned(4)));
+            bat_input[0] = 0x07;
+            bat_input[1] = kbd->battery_level;
+            bat_input[2] = cur_charging;
+            ep2_send_if_ready(bat_input, 3);
         }
     }
 
