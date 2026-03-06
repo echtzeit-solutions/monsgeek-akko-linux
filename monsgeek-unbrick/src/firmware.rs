@@ -1,0 +1,106 @@
+use anyhow::{bail, Context, Result};
+use std::path::Path;
+
+/// A firmware image: data bytes and their target flash address.
+pub struct FirmwareImage {
+    pub address: u32,
+    pub data: Vec<u8>,
+}
+
+/// Load a firmware file. Supports raw .bin and DfuSe .dfu formats.
+pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareImage>> {
+    let data = std::fs::read(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+
+    if data.len() < 8 {
+        bail!("file too small ({} bytes)", data.len());
+    }
+
+    // Check for DfuSe prefix magic "DfuSe"
+    if &data[..5] == b"DfuSe" {
+        return parse_dfuse(&data);
+    }
+
+    // Raw .bin — require explicit or default address
+    let addr = address.unwrap_or(crate::flash_map::FIRMWARE_START);
+    crate::flash_map::validate_write_address(addr, data.len() as u32)?;
+
+    Ok(vec![FirmwareImage {
+        address: addr,
+        data,
+    }])
+}
+
+/// Parse a DfuSe container file.
+/// Format: prefix(11B) + targets(variable) + suffix(16B)
+fn parse_dfuse(data: &[u8]) -> Result<Vec<FirmwareImage>> {
+    if data.len() < 11 {
+        bail!("DfuSe file too short for prefix");
+    }
+
+    let version = data[5];
+    if version != 1 {
+        bail!("unsupported DfuSe version {version}");
+    }
+
+    let _dfu_image_size = u32::from_le_bytes(data[6..10].try_into().unwrap());
+    let num_targets = data[10];
+
+    let mut images = Vec::new();
+    let mut offset = 11; // after prefix
+
+    for target_idx in 0..num_targets {
+        if offset + 274 > data.len() {
+            bail!("DfuSe target {target_idx} header truncated");
+        }
+
+        // Target prefix: "Target" (6B) + alt_setting(1B) + named(4B) + name(255B) + size(4B) + num_elements(4B)
+        if &data[offset..offset + 6] != b"Target" {
+            bail!(
+                "expected 'Target' magic at offset {offset}, got {:?}",
+                &data[offset..offset + 6]
+            );
+        }
+
+        let target_size =
+            u32::from_le_bytes(data[offset + 266..offset + 270].try_into().unwrap());
+        let num_elements =
+            u32::from_le_bytes(data[offset + 270..offset + 274].try_into().unwrap());
+        let _ = target_size; // validated implicitly by parsing elements
+
+        offset += 274; // past target prefix
+
+        for elem_idx in 0..num_elements {
+            if offset + 8 > data.len() {
+                bail!("DfuSe element {elem_idx} header truncated in target {target_idx}");
+            }
+
+            let elem_addr =
+                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            let elem_size =
+                u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+
+            offset += 8;
+
+            if offset + elem_size > data.len() {
+                bail!(
+                    "DfuSe element data truncated: need {elem_size} bytes at offset {offset}"
+                );
+            }
+
+            crate::flash_map::validate_write_address(elem_addr, elem_size as u32)?;
+            images.push(FirmwareImage {
+                address: elem_addr,
+                data: data[offset..offset + elem_size].to_vec(),
+            });
+
+            offset += elem_size;
+        }
+    }
+
+    if images.is_empty() {
+        bail!("DfuSe file contains no elements");
+    }
+
+    Ok(images)
+}
