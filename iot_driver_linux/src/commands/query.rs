@@ -32,6 +32,15 @@ pub fn info(printer_config: Option<PrinterConfig>) -> CommandResult {
     println!("Firmware:  v{major}.{minor:02} (raw 0x{version:04X}, dec {version})");
     println!("Device ID: {device_id} (0x{device_id:08X})");
 
+    // Protocol family
+    let device_info =
+        iot_driver::devices::get_device_info_with_id(Some(device_id as i32), dev.vid, dev.pid);
+    let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(
+        device_info.as_ref().map(|d| d.name.as_str()),
+        dev.pid,
+    );
+    println!("Protocol:  {protocol}");
+
     // Boot mode (bootloader / firmware update mode)
     let is_boot = iot_driver::protocol::firmware_update::is_boot_mode(dev.vid, dev.pid);
     println!("Boot mode: {}", if is_boot { "Yes" } else { "No" });

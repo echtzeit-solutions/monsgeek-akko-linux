@@ -1774,10 +1774,12 @@ impl App {
             };
 
         let flow_transport = Arc::new(FlowControlTransport::new(transport));
+        let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(None, pid);
         let keyboard = Arc::new(KeyboardInterface::new(
             flow_transport,
             key_count,
             has_magnetism,
+            protocol,
         ));
         let is_wireless = keyboard.is_wireless();
 

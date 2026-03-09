@@ -88,7 +88,13 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
         info.pid
     );
 
-    let keyboard = KeyboardInterface::new(transport, monsgeek_keyboard::KEY_COUNT_M1_V5, true);
+    let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(None, info.pid);
+    let keyboard = KeyboardInterface::new(
+        transport,
+        monsgeek_keyboard::KEY_COUNT_M1_V5,
+        true,
+        protocol,
+    );
 
     let precision_factor = match keyboard.get_precision() {
         Ok(precision) => {

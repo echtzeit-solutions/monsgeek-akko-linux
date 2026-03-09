@@ -22,6 +22,8 @@ pub use settings::{
 };
 pub use sync::list_keyboards;
 
+pub use monsgeek_transport::protocol::ProtocolFamily;
+
 /// Information about firmware patches applied to the keyboard
 #[derive(Debug, Clone)]
 pub struct PatchInfo {
@@ -54,16 +56,14 @@ pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 
 use std::sync::Arc;
 
-use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd};
+use monsgeek_transport::protocol::{cmd, magnetism as mag_cmd, CommandTable};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
-    DebounceResponse, GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData,
-    LedParamsResponse as TransportLedParamsResponse, PollingRateResponse, ProfileResponse,
-    QueryDebounce, QueryLedParams, QueryPollingRate, QueryProfile, QuerySleepTime, SetDebounce,
-    SetFnData, SetKeyMagnetismModeData, SetKeyMatrixData, SetMacroCommand, SetMagnetismReport,
-    SetMultiMagnetismCommand, SetMultiMagnetismHeader, SetPollingRate, SetProfile, SetSleepTime,
-    SleepTimeResponse,
+    GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData, HidCommand,
+    LedParamsResponse as TransportLedParamsResponse, QueryLedParams, SetFnData,
+    SetKeyMagnetismModeData, SetKeyMatrixData, SetMacroCommand, SetMagnetismReport,
+    SetMultiMagnetismCommand, SetMultiMagnetismHeader,
 };
 use zerocopy::IntoBytes;
 
@@ -75,6 +75,14 @@ pub struct KeyboardInterface {
     transport: Arc<FlowControlTransport>,
     key_count: u8,
     has_magnetism: bool,
+    /// Key names indexed by matrix position. Empty string = no physical key at that position.
+    matrix_key_names: Vec<String>,
+    /// Matrix positions that are non-analog (GPIO/encoder, not magnetic switches).
+    non_analog_positions: Vec<u8>,
+    /// Protocol family determines which command byte mapping to use.
+    protocol: ProtocolFamily,
+    /// Command table for the active protocol family.
+    commands: &'static CommandTable,
 }
 
 impl KeyboardInterface {
@@ -84,12 +92,46 @@ impl KeyboardInterface {
     /// * `transport` - Flow-controlled transport layer
     /// * `key_count` - Number of keys on the keyboard
     /// * `has_magnetism` - Whether the keyboard has Hall Effect switches
-    pub fn new(transport: Arc<FlowControlTransport>, key_count: u8, has_magnetism: bool) -> Self {
+    /// * `protocol` - Protocol family (RY5088 or YiChip)
+    pub fn new(
+        transport: Arc<FlowControlTransport>,
+        key_count: u8,
+        has_magnetism: bool,
+        protocol: ProtocolFamily,
+    ) -> Self {
         Self {
             transport,
             key_count,
             has_magnetism,
+            matrix_key_names: Vec::new(),
+            non_analog_positions: Vec::new(),
+            protocol,
+            commands: protocol.commands(),
         }
+    }
+
+    /// Set matrix key names from a device profile.
+    pub fn set_matrix_key_names(&mut self, names: Vec<String>) {
+        self.matrix_key_names = names;
+    }
+
+    /// Get the display name for a matrix position.
+    /// Returns empty string for positions with no physical key.
+    pub fn matrix_key_name(&self, position: usize) -> &str {
+        self.matrix_key_names
+            .get(position)
+            .map(|s| s.as_str())
+            .unwrap_or("")
+    }
+
+    /// Set non-analog matrix positions (GPIO/encoder keys that can't be calibrated).
+    pub fn set_non_analog_positions(&mut self, positions: Vec<u8>) {
+        self.non_analog_positions = positions;
+    }
+
+    /// Check if a matrix position is non-analog (GPIO/encoder, not a magnetic switch).
+    pub fn is_non_analog(&self, position: usize) -> bool {
+        self.non_analog_positions.contains(&(position as u8))
     }
 
     /// Open any supported device (auto-detecting wired vs dongle)
@@ -115,7 +157,12 @@ impl KeyboardInterface {
         let transport = monsgeek_transport::open_device_sync(device)?;
 
         // Default to M1 V5 HE — callers with database access should use new() directly
-        Ok(Self::new(transport, KEY_COUNT_M1_V5, true))
+        Ok(Self::new(
+            transport,
+            KEY_COUNT_M1_V5,
+            true,
+            ProtocolFamily::default(),
+        ))
     }
 
     /// Get the underlying transport
@@ -131,6 +178,11 @@ impl KeyboardInterface {
     /// Check if keyboard has magnetism (Hall Effect) support
     pub fn has_magnetism(&self) -> bool {
         self.has_magnetism
+    }
+
+    /// Get the protocol family
+    pub fn protocol_family(&self) -> ProtocolFamily {
+        self.protocol
     }
 
     /// Check if using wireless transport
@@ -219,8 +271,14 @@ impl KeyboardInterface {
 
     /// Get current profile (0-3)
     pub fn get_profile(&self) -> Result<u8, KeyboardError> {
-        let resp: ProfileResponse = self.transport.query(&QueryProfile::default())?;
-        Ok(resp.profile)
+        let cmd = self.commands.get_profile;
+        let resp = self.transport.query_command(cmd, &[], ChecksumType::Bit7)?;
+        if resp.is_empty() || resp[0] != cmd {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid profile response".into(),
+            ));
+        }
+        Ok(resp[1])
     }
 
     /// Set current profile (0-3)
@@ -230,19 +288,36 @@ impl KeyboardInterface {
                 "Profile must be 0-3".into(),
             ));
         }
-        self.transport.send(&SetProfile::new(profile))?;
+        self.transport
+            .send_command(self.commands.set_profile, &[profile], ChecksumType::Bit7)?;
         Ok(())
     }
 
-    /// Get polling rate
+    /// Get polling rate (RY5088-only, uses GET_REPORT)
     pub fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
-        let resp: PollingRateResponse = self.transport.query(&QueryPollingRate::default())?;
-        Ok(resp.rate)
+        let cmd_byte = self.commands.get_report.ok_or_else(|| {
+            KeyboardError::NotSupported("Polling rate not available on this device".into())
+        })?;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.is_empty() || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid polling rate response".into(),
+            ));
+        }
+        PollingRate::from_protocol(resp[1]).ok_or_else(|| {
+            KeyboardError::UnexpectedResponse(format!("Unknown polling rate: 0x{:02X}", resp[1]))
+        })
     }
 
-    /// Set polling rate
+    /// Set polling rate (RY5088-only, uses SET_REPORT)
     pub fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
-        self.transport.send(&SetPollingRate::new(rate))?;
+        let cmd_byte = self.commands.set_report.ok_or_else(|| {
+            KeyboardError::NotSupported("Polling rate not available on this device".into())
+        })?;
+        self.transport
+            .send_command(cmd_byte, &[rate as u8], ChecksumType::Bit7)?;
         Ok(())
     }
 
@@ -250,8 +325,16 @@ impl KeyboardInterface {
 
     /// Get debounce time in milliseconds
     pub fn get_debounce(&self) -> Result<u8, KeyboardError> {
-        let resp: DebounceResponse = self.transport.query(&QueryDebounce::default())?;
-        Ok(resp.ms)
+        let cmd_byte = self.commands.get_debounce;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.is_empty() || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid debounce response".into(),
+            ));
+        }
+        Ok(resp[1])
     }
 
     /// Set debounce time in milliseconds (0-50)
@@ -261,37 +344,53 @@ impl KeyboardInterface {
                 "Debounce must be 0-50ms".into(),
             ));
         }
-        self.transport.send(&SetDebounce::new(ms))?;
+        self.transport
+            .send_command(self.commands.set_debounce, &[ms], ChecksumType::Bit7)?;
         Ok(())
     }
 
     // === Sleep ===
 
-    /// Get sleep time settings for all wireless modes
+    /// Get sleep time settings for all wireless modes (RY5088-only)
     ///
     /// Returns idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
     /// All values are in seconds.
     pub fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
-        let resp: SleepTimeResponse = self.transport.query(&QuerySleepTime::default())?;
+        let cmd_byte = self.commands.get_sleeptime.ok_or_else(|| {
+            KeyboardError::NotSupported("Sleep time not available on this device".into())
+        })?;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.len() < 16 || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid sleep time response".into(),
+            ));
+        }
         Ok(SleepTimeSettings {
-            idle_bt: resp.idle_bt,
-            idle_24g: resp.idle_24g,
-            deep_bt: resp.deep_bt,
-            deep_24g: resp.deep_24g,
+            idle_bt: u16::from_le_bytes([resp[8], resp[9]]),
+            idle_24g: u16::from_le_bytes([resp[10], resp[11]]),
+            deep_bt: u16::from_le_bytes([resp[12], resp[13]]),
+            deep_24g: u16::from_le_bytes([resp[14], resp[15]]),
         })
     }
 
-    /// Set sleep time settings for all wireless modes
+    /// Set sleep time settings for all wireless modes (RY5088-only)
     ///
     /// Sets idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
     /// All values are in seconds. Set to 0 to disable a particular timeout.
     pub fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
-        self.transport.send(&SetSleepTime::new(
-            settings.idle_bt,
-            settings.idle_24g,
-            settings.deep_bt,
-            settings.deep_24g,
-        ))?;
+        let cmd_byte = self.commands.set_sleeptime.ok_or_else(|| {
+            KeyboardError::NotSupported("Sleep time not available on this device".into())
+        })?;
+        // Build data with same layout as SetSleepTime::to_data()
+        let mut data = vec![0u8; 15];
+        data[7..9].copy_from_slice(&settings.idle_bt.to_le_bytes());
+        data[9..11].copy_from_slice(&settings.idle_24g.to_le_bytes());
+        data[11..13].copy_from_slice(&settings.deep_bt.to_le_bytes());
+        data[13..15].copy_from_slice(&settings.deep_24g.to_le_bytes());
+        self.transport
+            .send_command(cmd_byte, &data, ChecksumType::Bit7)?;
         Ok(())
     }
 
@@ -299,11 +398,14 @@ impl KeyboardInterface {
 
     /// Get keyboard options (OS mode, Fn layer, etc.)
     pub fn get_kb_options(&self) -> Result<KeyboardOptions, KeyboardError> {
+        let cmd_byte = self.commands.get_kboption.ok_or_else(|| {
+            KeyboardError::NotSupported("KB options not available on this device".into())
+        })?;
         let resp = self
             .transport
-            .query_command(cmd::GET_KBOPTION, &[], ChecksumType::Bit7)?;
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
 
-        if resp.len() < 9 || resp[0] != cmd::GET_KBOPTION {
+        if resp.len() < 9 || resp[0] != cmd_byte {
             return Err(KeyboardError::UnexpectedResponse(
                 "Invalid KB options response".into(),
             ));
@@ -314,8 +416,11 @@ impl KeyboardInterface {
 
     /// Set keyboard options
     pub fn set_kb_options(&self, options: &KeyboardOptions) -> Result<(), KeyboardError> {
+        let cmd_byte = self.commands.set_kboption.ok_or_else(|| {
+            KeyboardError::NotSupported("KB options not available on this device".into())
+        })?;
         self.transport
-            .send_command(cmd::SET_KBOPTION, &options.to_bytes(), ChecksumType::Bit7)?;
+            .send_command(cmd_byte, &options.to_bytes(), ChecksumType::Bit7)?;
 
         Ok(())
     }
@@ -959,7 +1064,7 @@ impl KeyboardInterface {
     /// Factory reset the keyboard
     pub fn reset(&self) -> Result<(), KeyboardError> {
         self.transport
-            .send_command(cmd::SET_RESET, &[], ChecksumType::Bit7)?;
+            .send_command(self.commands.set_reset, &[], ChecksumType::Bit7)?;
         Ok(())
     }
 
@@ -1009,10 +1114,11 @@ impl KeyboardInterface {
                 magnetism_profile: 0,
             };
 
-            match self
-                .transport
-                .query_raw(cmd::GET_KEYMATRIX, query.as_bytes(), ChecksumType::Bit7)
-            {
+            match self.transport.query_raw(
+                self.commands.get_keymatrix,
+                query.as_bytes(),
+                ChecksumType::Bit7,
+            ) {
                 Ok(resp) => {
                     all_data.extend_from_slice(&resp);
                 }
@@ -1087,9 +1193,12 @@ impl KeyboardInterface {
     ) -> Result<(), KeyboardError> {
         let enabled = config != [0, 0, 0, 0];
         if layer <= 1 {
-            self.transport.send(&SetKeyMatrixData::new(
-                profile, key_index, layer, enabled, config,
-            )?)?;
+            let pkt = SetKeyMatrixData::new(profile, key_index, layer, enabled, config)?;
+            self.transport.send_command(
+                self.commands.set_keymatrix,
+                &pkt.to_data(),
+                ChecksumType::Bit7,
+            )?;
         } else {
             self.transport
                 .send(&SetFnData::new(0, profile, key_index, config)?)?;
@@ -1108,13 +1217,12 @@ impl KeyboardInterface {
         enabled: bool,
         layer: u8,
     ) -> Result<(), KeyboardError> {
-        self.transport.send(&SetKeyMatrixData::new(
-            profile,
-            key_index,
-            layer,
-            enabled,
-            [0, 0, hid_code, 0],
-        )?)?;
+        let pkt = SetKeyMatrixData::new(profile, key_index, layer, enabled, [0, 0, hid_code, 0])?;
+        self.transport.send_command(
+            self.commands.set_keymatrix,
+            &pkt.to_data(),
+            ChecksumType::Bit7,
+        )?;
         Ok(())
     }
 
@@ -1251,9 +1359,14 @@ impl KeyboardInterface {
             let chunk = &macro_data[start..end];
             let is_last = page == num_pages - 1;
 
-            let cmd = SetMacroCommand::new(macro_index, page as u8, is_last, chunk.to_vec())?;
+            let macro_cmd = SetMacroCommand::new(macro_index, page as u8, is_last, chunk.to_vec())?;
 
-            self.transport.send_with_delay(&cmd, 30)?;
+            self.transport.send_command_with_delay(
+                self.commands.set_macro,
+                &macro_cmd.to_data(),
+                ChecksumType::Bit7,
+                30,
+            )?;
         }
 
         Ok(())

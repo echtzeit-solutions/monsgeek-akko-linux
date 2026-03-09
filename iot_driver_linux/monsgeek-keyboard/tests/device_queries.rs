@@ -26,7 +26,12 @@ fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
     };
 
     let flow = Arc::new(FlowControlTransport::new(Arc::clone(&transport)));
-    let kb = KeyboardInterface::new(flow, key_count, has_magnetism);
+    let kb = KeyboardInterface::new(
+        flow,
+        key_count,
+        has_magnetism,
+        monsgeek_transport::protocol::ProtocolFamily::default(),
+    );
     (transport, kb)
 }
 

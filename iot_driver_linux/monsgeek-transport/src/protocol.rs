@@ -411,6 +411,125 @@ pub fn resolve_key(key: &str) -> Result<u8, String> {
     ))
 }
 
+// =============================================================================
+// Protocol Family (RY5088 vs YiChip)
+// =============================================================================
+
+/// Protocol family — determines which command byte mapping to use.
+///
+/// Transport layer is identical between families (same checksums, same IF2 vendor HID,
+/// same bootloader). Only the command byte mapping differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProtocolFamily {
+    #[default]
+    Ry5088,
+    YiChip,
+}
+
+/// Command byte mapping table for a protocol family.
+///
+/// Contains only the command bytes that differ between RY5088 and YiChip.
+/// Shared commands (SET_LEDPARAM, GET_USB_VERSION, GET_MACRO, etc.) use
+/// the constants in `cmd::` directly.
+#[derive(Debug)]
+pub struct CommandTable {
+    pub set_reset: u8,
+    pub set_profile: u8,
+    pub set_debounce: u8,
+    pub set_keymatrix: u8,
+    pub set_macro: u8,
+    pub get_profile: u8,
+    pub get_debounce: u8,
+    pub get_keymatrix: u8,
+    // RY5088-only commands (None on YiChip)
+    pub set_report: Option<u8>,
+    pub set_kboption: Option<u8>,
+    pub set_sleeptime: Option<u8>,
+    pub get_report: Option<u8>,
+    pub get_kboption: Option<u8>,
+    pub get_sleeptime: Option<u8>,
+}
+
+pub static RY5088_COMMANDS: CommandTable = CommandTable {
+    set_reset: 0x01,
+    set_profile: 0x04,
+    set_debounce: 0x06,
+    set_keymatrix: 0x0A,
+    set_macro: 0x0B,
+    get_profile: 0x84,
+    get_debounce: 0x86,
+    get_keymatrix: 0x8A,
+    set_report: Some(0x03),
+    set_kboption: Some(0x09),
+    set_sleeptime: Some(0x11),
+    get_report: Some(0x83),
+    get_kboption: Some(0x89),
+    get_sleeptime: Some(0x91),
+};
+
+pub static YICHIP_COMMANDS: CommandTable = CommandTable {
+    set_reset: 0x02,
+    set_profile: 0x05,
+    set_debounce: 0x11,
+    set_keymatrix: 0x09,
+    set_macro: 0x08,
+    get_profile: 0x85,
+    get_debounce: 0x91,
+    get_keymatrix: 0x89,
+    set_report: None,
+    set_kboption: None,
+    set_sleeptime: None,
+    get_report: None,
+    get_kboption: Some(0x86),
+    get_sleeptime: None,
+};
+
+impl ProtocolFamily {
+    /// Get the command table for this protocol family.
+    pub fn commands(&self) -> &'static CommandTable {
+        match self {
+            ProtocolFamily::Ry5088 => &RY5088_COMMANDS,
+            ProtocolFamily::YiChip => &YICHIP_COMMANDS,
+        }
+    }
+
+    /// Detect protocol family from device name and PID.
+    ///
+    /// Detection priority:
+    /// 1. Name prefix from device database (`ry5088_` → RY5088, `yc*_` → YiChip)
+    /// 2. PID heuristic (0x40xx → YiChip, 0x50xx → RY5088)
+    /// 3. Default: RY5088
+    pub fn detect(device_name: Option<&str>, pid: u16) -> Self {
+        if let Some(name) = device_name {
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with("ry5088_") || lower.starts_with("ry1086_") {
+                return ProtocolFamily::Ry5088;
+            }
+            if lower.starts_with("yc500_")
+                || lower.starts_with("yc300_")
+                || lower.starts_with("yc3121_")
+                || lower.starts_with("yc3123_")
+            {
+                return ProtocolFamily::YiChip;
+            }
+        }
+        // PID heuristic: 0x40xx PIDs are YiChip-based
+        if pid & 0xFF00 == 0x4000 {
+            return ProtocolFamily::YiChip;
+        }
+        ProtocolFamily::Ry5088
+    }
+}
+
+impl fmt::Display for ProtocolFamily {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProtocolFamily::Ry5088 => f.write_str("RY5088"),
+            ProtocolFamily::YiChip => f.write_str("YiChip"),
+        }
+    }
+}
+
 /// HID report sizes
 pub const REPORT_SIZE: usize = 65;
 pub const INPUT_REPORT_SIZE: usize = 64;

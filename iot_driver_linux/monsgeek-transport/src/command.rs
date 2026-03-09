@@ -1167,6 +1167,15 @@ impl SetKeyMatrixData {
     }
 }
 
+impl SetKeyMatrixData {
+    /// Build a complete HID buffer using a caller-supplied command byte.
+    ///
+    /// Used for protocol family dispatch where the SET_KEYMATRIX byte differs.
+    pub fn build_with_cmd(&self, cmd_byte: u8) -> Vec<u8> {
+        protocol::build_command(cmd_byte, self.as_bytes(), ChecksumType::Bit7)
+    }
+}
+
 impl HidCommand for SetKeyMatrixData {
     const CMD: u8 = cmd::SET_KEYMATRIX;
     const CHECKSUM: ChecksumType = ChecksumType::Bit7;
@@ -1331,6 +1340,17 @@ impl SetMacroCommand {
             },
             payload,
         })
+    }
+}
+
+impl SetMacroCommand {
+    /// Build a complete HID buffer using a caller-supplied command byte.
+    ///
+    /// Used for protocol family dispatch where the SET_MACRO byte differs.
+    pub fn build_with_cmd(&self, cmd_byte: u8) -> Vec<u8> {
+        let mut data = self.header.as_bytes().to_vec();
+        data.extend_from_slice(&self.payload);
+        protocol::build_command(cmd_byte, &data, ChecksumType::Bit7)
     }
 }
 
