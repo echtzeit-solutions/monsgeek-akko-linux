@@ -96,6 +96,30 @@ static inline int ep2_send_if_ready(uint8_t *data, uint32_t len) {
     return 1;
 }
 
+/* ── Key drop test counter ─────────────────────────────────────────────── */
+/* Counts sub=1 (keyboard) RF packets received from the keyboard.
+ * Read via Feature Report 8 (extended patch_rsp), reset via Feature Report 9. */
+static uint16_t keytest_recv_count;
+
+/* ── Dongle 6KRO ring buffer (for key drop diagnosis) ─────────────────── */
+/* Records every sub=1 (6KRO keyboard) RF packet received from the keyboard.
+ * Read via Feature Report 10 (auto-advancing cursor with freeze-on-first-read). */
+
+#define DONGLE_RING_SIZE 64
+
+static struct {
+    uint8_t write_idx;                      /* next write position, wraps 0-63 */
+    uint8_t count;                          /* entries written (saturates at 64) */
+    uint8_t entries[DONGLE_RING_SIZE][8];   /* [modifier, key0..key5, 0, 0] */
+} dongle_ring;                              /* 514 bytes in PATCH_SRAM */
+
+/* Freeze state for ring buffer readout — prevents writes from corrupting
+ * the snapshot while the host reads 10 pages sequentially. */
+static uint8_t ring_cursor;
+static uint8_t ring_frozen;
+static uint8_t frozen_write_idx;
+static uint8_t frozen_count;
+
 /* ── Descriptor patching (idempotent) ────────────────────────────────── */
 
 static void patch_descriptors(void) {
@@ -164,8 +188,8 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
     /* Only intercept GET_REPORT for IF1 Feature reports.
      * All other requests pass through to the original handler. */
     if (wIndex == 1 && bmReqType == USB_BMREQ_CLASS_IN && bRequest == HID_GET_REPORT) {
-        /* GET_REPORT Feature ID 8 — dongle patch discovery.
-         * Same format as keyboard 0xE7 but via HID Feature report. */
+        /* GET_REPORT Feature ID 8 — dongle patch discovery + keytest counter.
+         * Bytes 0-13: standard patch info. Bytes 14-15: keytest_recv_count LE16. */
         if (wValue == WVALUE_FEATURE_REPORT(8)) {
             static uint8_t patch_rsp[16] __attribute__((aligned(4)));
             patch_rsp[0]  = 0x08;       /* Report ID 8 */
@@ -177,8 +201,65 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
             /* name: "MONSDON\0" */
             patch_rsp[6]  = 'M'; patch_rsp[7]  = 'O'; patch_rsp[8]  = 'N'; patch_rsp[9]  = 'S';
             patch_rsp[10] = 'D'; patch_rsp[11] = 'O'; patch_rsp[12] = 'N'; patch_rsp[13] = '\0';
-            uint16_t xfer_len = (wLength < 14) ? wLength : 14;
+            /* Key drop test: RF sub=1 receive counter */
+            patch_rsp[14] = (uint8_t)(keytest_recv_count & 0xFF);
+            patch_rsp[15] = (uint8_t)(keytest_recv_count >> 8);
+            uint16_t xfer_len = (wLength < 16) ? wLength : 16;
             usb_ep0_in_xfer_start(udev, patch_rsp, xfer_len);
+            return 1;  /* intercepted */
+        }
+
+        /* GET_REPORT Feature ID 9 — reset keytest counter.
+         * Reading this report resets the counter and returns the pre-reset value. */
+        if (wValue == WVALUE_FEATURE_REPORT(9)) {
+            static uint8_t reset_rsp[4] __attribute__((aligned(4)));
+            reset_rsp[0] = 0x09;  /* Report ID 9 */
+            reset_rsp[1] = (uint8_t)(keytest_recv_count & 0xFF);
+            reset_rsp[2] = (uint8_t)(keytest_recv_count >> 8);
+            keytest_recv_count = 0;
+            ring_frozen = 0;  /* also unfreeze ring buffer snapshot */
+            /* Reset dongle ring buffer for clean next capture */
+            dongle_ring.write_idx = 0;
+            dongle_ring.count = 0;
+            uint16_t xfer_len = (wLength < 3) ? wLength : 3;
+            usb_ep0_in_xfer_start(udev, reset_rsp, xfer_len);
+            return 1;  /* intercepted */
+        }
+
+        /* GET_REPORT Feature ID 10 — dongle ring buffer read.
+         * Auto-advancing cursor with freeze-on-first-read.
+         * First read freezes the snapshot; 10th read unfreezes.
+         * Feature Report 9 (counter reset) also unfreezes. */
+        if (wValue == WVALUE_FEATURE_REPORT(10)) {
+            if (!ring_frozen) {
+                ring_frozen = 1;
+                ring_cursor = 0;
+                frozen_write_idx = dongle_ring.write_idx;
+                frozen_count = dongle_ring.count;
+            }
+            static uint8_t ring_rsp[64] __attribute__((aligned(4)));
+            ring_rsp[0] = 10;              /* report ID */
+            ring_rsp[1] = ring_cursor;     /* current page */
+            ring_rsp[2] = frozen_write_idx;
+            ring_rsp[3] = frozen_count;
+            /* Copy 7 entries (56 bytes) starting at ring_cursor * 7 */
+            uint8_t start = ring_cursor * 7;
+            for (int i = 0; i < 7; i++) {
+                uint8_t idx = start + i;
+                for (int j = 0; j < 8; j++) {
+                    if (idx < DONGLE_RING_SIZE)
+                        ring_rsp[4 + i * 8 + j] = dongle_ring.entries[idx][j];
+                    else
+                        ring_rsp[4 + i * 8 + j] = 0;
+                }
+            }
+            ring_cursor++;
+            if (ring_cursor >= 10) {
+                ring_frozen = 0;
+                ring_cursor = 0;
+            }
+            uint16_t xfer_len = (wLength < 60) ? wLength : 60;
+            usb_ep0_in_xfer_start(udev, ring_rsp, xfer_len);
             return 1;  /* intercepted */
         }
 
@@ -219,6 +300,32 @@ int handle_hid_setup(void *udev, uint8_t *setup_pkt) {
 
 void handle_rf_dispatch(void) {
     volatile dongle_state_t *ds = (volatile dongle_state_t *)&g_dongle_state;
+    volatile spi_buf_t *spi = (volatile spi_buf_t *)&g_spi_buf;
+
+    /* Count sub=1 (6KRO keyboard) RF packets for key drop test.
+     * SPI framing: rx_command=0x81, rx_length=N, rx_data[0]=sub_type.
+     * payload[0]=cmd(0x81), payload[1]=len → rx_length, payload[2]=sub → rx_data[0].
+     * Sub=1 = 6KRO keyboard.
+     * Only count when rx_processed == 0 (fresh packet, not yet consumed). */
+    if (spi->rx_command == 0x81 && spi->rx_data[0] == 1 && spi->rx_processed == 0) {
+        keytest_recv_count++;
+
+        /* Record 6KRO report to ring buffer for key drop diagnosis.
+         * rx_data layout: [0]=sub_type(1), [1]=modifier, [2..7]=key0..key5 */
+        uint8_t idx = dongle_ring.write_idx % DONGLE_RING_SIZE;  /* bounds-safe */
+        uint8_t *entry = dongle_ring.entries[idx];
+        entry[0] = spi->rx_data[1];  /* modifier */
+        entry[1] = spi->rx_data[2];  /* key0 */
+        entry[2] = spi->rx_data[3];  /* key1 */
+        entry[3] = spi->rx_data[4];  /* key2 */
+        entry[4] = spi->rx_data[5];  /* key3 */
+        entry[5] = spi->rx_data[6];  /* key4 */
+        entry[6] = spi->rx_data[7];  /* key5 */
+        entry[7] = 0;                /* padding */
+        dongle_ring.write_idx = (idx + 1) % DONGLE_RING_SIZE;
+        if (dongle_ring.count < DONGLE_RING_SIZE)
+            dongle_ring.count++;
+    }
 
     /* ── Battery change notifications ──────────────────────────────────── */
     static uint8_t prev_inited;

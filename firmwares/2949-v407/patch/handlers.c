@@ -123,6 +123,27 @@ static inline int ep2_send_if_ready(void *buf, uint32_t len) {
     return 1;
 }
 
+/* ── PATCH_SRAM initialization ────────────────────────────────────────── */
+/* Stock crt0 only zeros the firmware's own .bss, not ours.  SRAM also
+ * survives soft reboot (flash + reset), so statics contain garbage.
+ * handle_usb_connect zeros SRAM in USB mode, but in dongle/BT modes it
+ * never fires.  This idempotent guard ensures all .bss is zeroed exactly
+ * once, regardless of which hook runs first. */
+
+#define PATCH_SRAM_BASE   0x20009800
+#define PATCH_SRAM_SIZE   4096
+#define BSS_GUARD_ADDR    ((volatile uint32_t *)(PATCH_SRAM_BASE + PATCH_SRAM_SIZE - 4))
+#define BSS_GUARD_MAGIC   0xB55A0001
+
+static void patch_sram_init(void) {
+    if (*BSS_GUARD_ADDR == BSS_GUARD_MAGIC)
+        return;
+    uint8_t *p = (uint8_t *)PATCH_SRAM_BASE;
+    for (int i = 0; i < PATCH_SRAM_SIZE; i++)
+        p[i] = 0;
+    *BSS_GUARD_ADDR = BSS_GUARD_MAGIC;
+}
+
 /* ── Diagnostics (readable via 0xE7 patch info) ──────────────────────── */
 static struct {
     uint32_t hid_setup_calls;       /* total calls to handle_hid_setup */
@@ -278,6 +299,21 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
         log_buf.count = LOG_BUF_SIZE;
 }
 
+/* ── Keyboard 6KRO ring buffer (for key drop diagnosis) ───────────── */
+/* Records every 6KRO report queued for RF transmission.  Read back via
+ * vendor command 0xEB (10 pages × 7 entries = 70 slots, 64 used). */
+
+#define KB_RING_SIZE 64
+
+static struct {
+    uint8_t write_idx;              /* next write position, wraps 0-63 */
+    uint8_t count;                  /* entries written (saturates at 64) */
+    uint16_t hook_run_count;        /* total hook invocations (diagnostic) */
+    /* Diagnostic counters: how many hook calls had each bitmap bit set */
+    uint16_t bitmap_hist[8];        /* [bit0=0x01, bit1=0x02, ..., bit7=0x80] */
+    uint8_t entries[KB_RING_SIZE][8]; /* [modifier, bitmap, key0..key5] */
+} kb_ring;                          /* 532 bytes in PATCH_SRAM */
+
 /* ── Dongle reports "before" hook ──────────────────────────────────── */
 /* Called BEFORE build_dongle_reports runs.
  *
@@ -300,7 +336,30 @@ static void log_entry(uint8_t type, const uint8_t *payload, uint8_t len) {
 
 #define RTT_TAG_DONGLE_BITMAP  0x20  /* u8: pending_reports_bitmap snapshot */
 
+/* ── Key drop test state machine ──────────────────────────────────────── */
+/* Injects a known synthetic key sequence (digits 1-0, repeated) into the
+ * dongle report path.  Three-point statistics (keyboard sent / dongle recv /
+ * host recv) reveal where key events are lost over the 2.4GHz link.
+ *
+ * HID usage codes for digit keys: 0x1E ('1') .. 0x26 ('9'), 0x27 ('0'). */
+
+static const uint8_t keytest_usages[10] = {
+    0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27
+};
+
+static struct {
+    uint16_t remaining;     /* press+release pairs remaining */
+    uint16_t sent_count;    /* events sent so far (press=+1, release=+1) */
+    uint16_t total;         /* total events to send (iterations × 10 × 2) */
+    uint8_t  interval;      /* extra wait cycles between pairs */
+    uint8_t  timer;         /* countdown timer */
+    uint8_t  phase;         /* 0=idle, 1=press_pending, 2=release_pending */
+    uint8_t  digit;         /* 0-9, cycles through number keys */
+    uint8_t  warmup;        /* warmup cycles: press/release Left Shift to prime RF */
+} keytest;
+
 void dongle_reports_before_hook(void) {
+    patch_sram_init();
     rtt_init();  /* idempotent; ensures RTT works in dongle mode */
 
     if (*(volatile uint8_t *)&g_connection_mode != 5)
@@ -309,6 +368,33 @@ void dongle_reports_before_hook(void) {
     volatile hid_report_state_t *reports =
         (volatile hid_report_state_t *)&g_hid_report_pending_flags;
     uint8_t bitmap = reports->pending_reports_bitmap;
+
+    /* ── Record keyboard RF packets to ring buffer ──────────────────── */
+    kb_ring.hook_run_count++;
+
+    /* Count bitmap bits seen across all hook invocations */
+    for (int b = 0; b < 8; b++) {
+        if (bitmap & (1 << b))
+            kb_ring.bitmap_hist[b]++;
+    }
+
+    /* Capture from dongle_kbd_buf when bitmap bit 0x20 is set */
+    volatile uint8_t *kbd_src = (volatile uint8_t *)&g_dongle_kbd_buf;
+    if (bitmap & 0x20) {
+        uint8_t idx = kb_ring.write_idx % KB_RING_SIZE;
+        uint8_t *entry = kb_ring.entries[idx];
+        entry[0] = kbd_src[0];       /* modifier */
+        entry[1] = bitmap;
+        entry[2] = kbd_src[2];       /* key0 (skip reserved byte) */
+        entry[3] = kbd_src[3];
+        entry[4] = kbd_src[4];
+        entry[5] = kbd_src[5];
+        entry[6] = kbd_src[6];
+        entry[7] = kbd_src[7];
+        kb_ring.write_idx = (idx + 1) % KB_RING_SIZE;
+        if (kb_ring.count < KB_RING_SIZE)
+            kb_ring.count++;
+    }
 
     /* Consumer auto-release: g_dongle_consumer_buf layout is
      * [report_type:u8] [usage_lo:u8] [usage_hi:u8] at 0x20000027.
@@ -333,6 +419,90 @@ void dongle_reports_before_hook(void) {
 
     if (bitmap)
         rtt_emit(RTT_TAG_DONGLE_BITMAP, bitmap);
+
+    /* ── Key drop test injection ───────────────────────────────────── */
+    /* Writes to g_dongle_kbd_buf and sets bitmap bit 0x20 so
+     * build_dongle_reports picks it up on this cycle.
+     *
+     * Race note: hid_report_check_send runs BEFORE our hook in the
+     * main loop.  It zeros the kbd buffer if non-zero and sets bit 0x20.
+     * By the time we run, the buffer is zero and bit 0x20 may already be
+     * set (from a previous physical keypress).  We check tx_busy on the
+     * RF packet buffer to know if build_dongle_reports has finished
+     * transmitting the previous packet. */
+    if (keytest.phase == 0)
+        return;
+
+    volatile rf_packet_buf_t *pkt =
+        (volatile rf_packet_buf_t *)&g_rf_packet_buf;
+
+    /* Previous RF packet not yet transmitted — back off */
+    if (pkt->tx_busy != 0)
+        return;
+
+    /* Interval wait between pairs */
+    if (keytest.timer > 0) {
+        keytest.timer--;
+        return;
+    }
+
+    /* Force send_interval_counter to satisfy the >= send_interval*2
+     * gate in build_dongle_reports.  Without this, the first press sits
+     * in the buffer for 2 cycles, and hid_report_check_send zeros it
+     * on the next cycle before build_dongle_reports reads it. */
+    volatile dongle_report_flags_t *dflags =
+        (volatile dongle_report_flags_t *)&g_dongle_report_flags;
+    dflags->send_interval_counter = 2;
+
+    volatile uint8_t *kbd_buf = (volatile uint8_t *)&g_dongle_kbd_buf;
+
+    /* Warmup: alternate Left Shift press/release to prime the RF link.
+     * All-zeros reports get suppressed (no state change), so we use a
+     * real non-zero key.  Left Shift (modifier bit 1) is harmless. */
+    if (keytest.warmup > 0) {
+        uint8_t mod = (keytest.warmup & 1) ? 0x02 : 0x00;  /* odd=press, even=release */
+        kbd_buf[0] = mod;
+        kbd_buf[1] = 0; kbd_buf[2] = 0; kbd_buf[3] = 0;
+        kbd_buf[4] = 0; kbd_buf[5] = 0; kbd_buf[6] = 0; kbd_buf[7] = 0;
+        reports->pending_reports_bitmap |= 0x20;
+        keytest.warmup--;
+        return;
+    }
+
+    if (keytest.phase == 1) {
+        /* Press: write key into 6KRO buffer */
+        kbd_buf[0] = 0;  /* modifier */
+        kbd_buf[1] = 0;  /* reserved */
+        kbd_buf[2] = keytest_usages[keytest.digit];
+        kbd_buf[3] = 0;
+        kbd_buf[4] = 0;
+        kbd_buf[5] = 0;
+        kbd_buf[6] = 0;
+        kbd_buf[7] = 0;
+        reports->pending_reports_bitmap |= 0x20;
+        keytest.sent_count++;
+        keytest.phase = 2;
+    } else if (keytest.phase == 2) {
+        /* Release: all zeros = key up */
+        kbd_buf[0] = 0;
+        kbd_buf[1] = 0;
+        kbd_buf[2] = 0;
+        kbd_buf[3] = 0;
+        kbd_buf[4] = 0;
+        kbd_buf[5] = 0;
+        kbd_buf[6] = 0;
+        kbd_buf[7] = 0;
+        reports->pending_reports_bitmap |= 0x20;
+        keytest.sent_count++;
+        keytest.digit = (keytest.digit + 1) % 10;
+        if (keytest.remaining > 0) {
+            keytest.remaining--;
+            keytest.phase = 1;
+            keytest.timer = keytest.interval;
+        } else {
+            keytest.phase = 0;  /* done */
+        }
+    }
 }
 
 /* ── Battery monitor "before" hook ─────────────────────────────────── */
@@ -341,6 +511,7 @@ void dongle_reports_before_hook(void) {
  * battery_level_monitor fires when adc_counter == 2000 (~every few seconds). */
 
 void battery_monitor_before_hook(void) {
+    patch_sram_init();
     rtt_init();  /* idempotent; ensures RTT works in all modes */
 
     volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
@@ -366,6 +537,7 @@ static void fill_patch_info_response(volatile uint8_t *buf);
  * i.e. it points to g_usb_device_handle (otg_dev_handle_t). */
 
 int handle_hid_setup(otg_dev_handle_t *udev) {
+    patch_sram_init();
     uint8_t  bmReqType = udev->setup.bmRequestType;
     uint8_t  bRequest  = udev->setup.bRequest;
     uint16_t wValue    = udev->setup.wValue;
@@ -627,13 +799,7 @@ static int handle_led_stream(volatile uint8_t *buf) {
 /* ── USB connect init (patches config descriptors before enumeration) ──── */
 
 int handle_usb_connect(void) {
-    /* Zero PATCH_SRAM — stock crt0 only initializes the firmware's own
-     * .bss region, not ours.  SRAM survives soft reboot (flash + reset)
-     * so statics from the previous run persist as garbage.
-     * Must come before rtt_init() and log_entry() which use PATCH_SRAM. */
-    uint8_t *p = (uint8_t *)0x20009800;
-    for (int i = 0; i < 4096; i++)
-        p[i] = 0;
+    patch_sram_init();
 
     log_entry(LOG_USB_CONNECT, (const uint8_t *)0, 0);
 
@@ -692,9 +858,163 @@ static int handle_log_read(volatile uint8_t *buf) {
     return 1;
 }
 
+/* ── Keyboard ring buffer read (0xEB) ──────────────────────────────────── */
+/* 10 pages × 7 entries per page = 70 slots (covers all 64 ring entries).
+ * Response layout in cmd_buf:
+ *   buf[3] = page (echo)    buf[4] = write_idx    buf[5] = count
+ *   buf[6..61] = 7 entries × 8 bytes = 56 bytes of ring data */
+
+static int handle_ring_read(volatile uint8_t *buf) {
+    uint8_t page = buf[3];
+    if (page == 0xFF) {
+        /* Reset ring buffer for clean next capture */
+        kb_ring.write_idx = 0;
+        kb_ring.count = 0;
+        kb_ring.hook_run_count = 0;
+        for (int b = 0; b < 8; b++)
+            kb_ring.bitmap_hist[b] = 0;
+        buf[0] = 0;
+        return 1;
+    }
+    if (page >= 10) {
+        buf[0] = 0;
+        return 1;
+    }
+
+    buf[3] = page;
+    buf[4] = kb_ring.write_idx;
+    buf[5] = kb_ring.count;
+    buf[6] = (uint8_t)(kb_ring.hook_run_count & 0xFF);
+    buf[7] = (uint8_t)(kb_ring.hook_run_count >> 8);
+
+    /* Page 0 header: include raw snapshot (8 bytes @ buf[8..15]) */
+    if (page == 0) {
+        /* Bitmap histogram: 16 bytes (8 × uint16_t LE) */
+        for (int b = 0; b < 8; b++) {
+            buf[8 + b * 2]     = (uint8_t)(kb_ring.bitmap_hist[b] & 0xFF);
+            buf[8 + b * 2 + 1] = (uint8_t)(kb_ring.bitmap_hist[b] >> 8);
+        }
+        /* 5 entries on page 0: buf[24..63] = 5×8 = 40 bytes */
+        for (int i = 0; i < 5; i++) {
+            for (int j = 0; j < 8; j++) {
+                if (i < KB_RING_SIZE)
+                    buf[24 + i * 8 + j] = kb_ring.entries[i][j];
+                else
+                    buf[24 + i * 8 + j] = 0;
+            }
+        }
+    } else {
+        /* Pages 1-9: 7 entries each, starting from adjusted offset */
+        uint8_t start = 5 + (page - 1) * 7;  /* page 0 has 5, rest have 7 */
+        for (int i = 0; i < 7; i++) {
+            uint8_t idx = start + i;
+            for (int j = 0; j < 8; j++) {
+                if (idx < KB_RING_SIZE)
+                    buf[8 + i * 8 + j] = kb_ring.entries[idx][j];
+                else
+                    buf[8 + i * 8 + j] = 0;
+            }
+        }
+    }
+
+    buf[0] = 0;  /* mark consumed */
+    return 1;
+}
+
+/* ── Key drop test command (0xEA) ──────────────────────────────────────── */
+/* subcmd 0x01 = start test, subcmd 0x00 = status query.
+ *
+ * Start:  buf[3]=0x01, buf[4]=iterations(1-255), buf[5]=interval(0-255)
+ * Status: buf[3]=0x00 → response: [running] [sent_lo] [sent_hi] [total_lo] [total_hi] */
+
+static int handle_keytest_cmd(volatile uint8_t *buf) {
+    uint8_t subcmd = buf[3];
+
+    if (subcmd == 0x01) {
+        /* Start test */
+        uint8_t iterations = buf[4];
+        uint8_t interval   = buf[5];
+        if (iterations == 0)
+            iterations = 1;
+
+        keytest.total     = (uint16_t)iterations * 10 * 2;  /* 10 digits × (press+release) */
+        keytest.remaining = (uint16_t)iterations * 10 - 1;  /* first pair starts immediately */
+        keytest.sent_count = 0;
+        keytest.interval  = interval;
+        keytest.timer     = 10; /* delay first press to let main loop settle */
+        keytest.digit     = 0;
+        keytest.warmup    = 6;  /* 3 press/release cycles of Left Shift to prime RF */
+        keytest.phase     = 1;  /* start with first press */
+    } else {
+        /* Status query */
+        buf[3] = (keytest.phase != 0) ? 1 : 0;  /* running */
+        buf[4] = (uint8_t)(keytest.sent_count & 0xFF);
+        buf[5] = (uint8_t)(keytest.sent_count >> 8);
+        buf[6] = (uint8_t)(keytest.total & 0xFF);
+        buf[7] = (uint8_t)(keytest.total >> 8);
+    }
+
+    buf[0] = 0;  /* mark consumed */
+    return 1;
+}
+
+/* ── System control (0xEC) ───────────────────────────────────────────────
+ * Subcmd 0xBB: Enter RY bootloader from any mode.
+ *   Writes 0x55AA55AA to mailbox at 0x08004800, triggers system reset.
+ *   Unlike stock 0x7F, does NOT erase config/keymaps.
+ *
+ * Subcmd 0x01 + mode byte: Switch connection mode.
+ *   Sets target mode in kbd_state and signals connection_mode_transition.
+ *   Mode values: 0-2=BT profiles, 5=2.4G dongle, 6=USB.
+ *
+ * Usage: SET_REPORT [0xEC, subcmd, ...] on vendor IF. */
+
+#define BOOTLOADER_MAILBOX  0x08004800
+#define BOOTLOADER_MAGIC    0x55AA55AA
+
+/* kbd_state + 0x27 = target connection mode (written by fn_key_mode_switch) */
+#define KBD_TARGET_MODE     (*(volatile uint8_t *)((uintptr_t)&g_kbd_state + 0x27))
+/* g_dongle_report_flags + 7 = mode change dirty flag */
+#define MODE_CHANGE_DIRTY   (*(volatile uint8_t *)((uintptr_t)&g_dongle_report_flags + 7))
+/* g_dongle_report_flags + 0xd = vendor data relay flag.
+ * When set, build_dongle_reports sends cmd_buf content back via RF (0x81/0x41).
+ * The ISR only sets this when g_rf_rx_cmd_byte & 0x80 (PAN1080 status), which
+ * doesn't happen for SPI-forwarded vendor commands. Set it ourselves. */
+#define VENDOR_DATA_RELAY   (*(volatile uint8_t *)((uintptr_t)&g_dongle_report_flags + 0xd))
+
+static int handle_system_control(volatile uint8_t *buf) {
+    uint8_t subcmd = buf[3];
+
+    if (subcmd == 0xBB) {
+        /* Enter bootloader */
+        flash_unlock();
+        flash_erase_sector(BOOTLOADER_MAILBOX);
+
+        uint32_t magic = BOOTLOADER_MAGIC;
+        flash_program_bytes(BOOTLOADER_MAILBOX, &magic, 4);
+
+        flash_lock();
+        nvic_system_reset();
+        /* never reached */
+    }
+
+    if (subcmd == 0x01) {
+        /* Switch connection mode */
+        uint8_t target = buf[4];
+        if (target <= 2 || target == 5 || target == 6) {
+            KBD_TARGET_MODE = target;
+            MODE_CHANGE_DIRTY = 1;
+        }
+    }
+
+    buf[0] = 0;
+    return 1;
+}
+
 /* ── Vendor command dispatcher ─────────────────────────────────────────── */
 
 int handle_vendor_cmd(void) {
+    patch_sram_init();
     volatile uint8_t *cmd_buf = (volatile uint8_t *)&g_vendor_cmd_buffer;
 
     /* ── Battery Input report on charge state change ─────────────── */
@@ -727,14 +1047,32 @@ int handle_vendor_cmd(void) {
 
     /* Command byte is at cmd_buf[2] = lp_class_report_buf[0]
      * (SET_REPORT data lands at cmd_buf+2, first byte = command) */
+    int handled;
     switch (cmd_buf[2]) {
     case 0xE7:
-        return handle_patch_info(cmd_buf);
+        handled = handle_patch_info(cmd_buf); break;
     case 0xE8:
-        return handle_led_stream(cmd_buf);
+        handled = handle_led_stream(cmd_buf); break;
     case 0xE9:
-        return handle_log_read(cmd_buf);
+        handled = handle_log_read(cmd_buf); break;
+    case 0xEA:
+        handled = handle_keytest_cmd(cmd_buf); break;
+    case 0xEB:
+        handled = handle_ring_read(cmd_buf); break;
+    case 0xEC:
+        handled = handle_system_control(cmd_buf); break;
     default:
         return 0;   /* passthrough to original firmware */
     }
+
+    /* In dongle mode, the ISR only sets pending_vendor_data_relay when
+     * g_rf_rx_cmd_byte & 0x80 — which is never true for SPI-forwarded
+     * vendor commands.  Set it ourselves so build_dongle_reports relays
+     * our response back via RF to the dongle.
+     * Skip for 0xE8 (LED stream, no response) and 0xEC (system control,
+     * no response + the relay flag interferes with mode switch SPI). */
+    if (handled && cmd_buf[2] != 0xE8 && cmd_buf[2] != 0xEC)
+        VENDOR_DATA_RELAY = 1;
+
+    return handled;
 }
