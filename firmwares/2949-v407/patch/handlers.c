@@ -14,6 +14,16 @@
 #include "fw_v407.h"
 #include "hid_desc.h"
 
+/* ── Linker-provided BSS boundaries (from patch.ld) ──────────────────── */
+
+extern uint8_t __patch_bss_start[];
+extern uint8_t __patch_bss_end[];
+
+static void zero_patch_bss(void) {
+    for (uint8_t *p = __patch_bss_start; p < __patch_bss_end; p++)
+        *p = 0;
+}
+
 /* ── SRAM addresses (via linker symbols where available) ──────────────── */
 
 #define ADC_BATTERY_AVG   (*(volatile uint32_t *)&g_battery_avg_buf)   /* averaged battery ADC reading */
@@ -189,18 +199,12 @@ static const char rtt_channel_name[] = "monsmod";
 #define RTT_TAG_ADC_COUNTER   0x10  /* u32: magnetism engine ADC scan counter */
 
 static void rtt_init(void) {
-    /* Already initialized?  max_up is set to 1 as the last step below,
-     * and PATCH_SRAM is NOT zero-initialized, so garbage max_up ≠ 1
-     * with overwhelming probability (1 in 2^32). */
+    /* Already initialized?  max_up is set to 1 as the last step below.
+     * After zero_patch_bss(), max_up == 0 so this runs once. */
     if (rtt_cb.max_up == 1)
         return;
 
-    /* Zero everything — PATCH_SRAM .bss is NOT zero-initialized */
-    uint8_t *p = (uint8_t *)&rtt_cb;
-    for (uint32_t i = 0; i < sizeof(rtt_cb); i++)
-        p[i] = 0;
-    for (uint32_t i = 0; i < RTT_BUF_SIZE; i++)
-        rtt_buf[i] = 0;
+    /* .bss is zeroed by zero_patch_bss() — no manual zeroing needed. */
 
     /* Set up channel 0 (up only) */
     rtt_cb.up[0].name  = rtt_channel_name;
@@ -627,13 +631,11 @@ static int handle_led_stream(volatile uint8_t *buf) {
 /* ── USB connect init (patches config descriptors before enumeration) ──── */
 
 int handle_usb_connect(void) {
-    /* Zero PATCH_SRAM — stock crt0 only initializes the firmware's own
+    /* Zero PATCH_SRAM .bss — stock crt0 only initializes the firmware's own
      * .bss region, not ours.  SRAM survives soft reboot (flash + reset)
      * so statics from the previous run persist as garbage.
-     * Must come before rtt_init() and log_entry() which use PATCH_SRAM. */
-    uint8_t *p = (uint8_t *)0x20009800;
-    for (int i = 0; i < 4096; i++)
-        p[i] = 0;
+     * Uses linker-provided __patch_bss_start/__patch_bss_end symbols. */
+    zero_patch_bss();
 
     log_entry(LOG_USB_CONNECT, (const uint8_t *)0, 0);
 

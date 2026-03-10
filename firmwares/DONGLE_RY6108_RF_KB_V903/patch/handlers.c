@@ -23,6 +23,16 @@
 #include "fw_dongle.h"
 #include "hid_desc.h"
 
+/* ── Linker-provided BSS boundaries (from patch.ld) ──────────────────── */
+
+extern uint8_t __patch_bss_start[];
+extern uint8_t __patch_bss_end[];
+
+static void zero_patch_bss(void) {
+    for (uint8_t *p = __patch_bss_start; p < __patch_bss_end; p++)
+        *p = 0;
+}
+
 /* ── USB HID request constants ───────────────────────────────────────── */
 
 #define USB_BMREQ_CLASS_IN         0xA1   /* bmRequestType: class, device-to-host, interface */
@@ -122,12 +132,11 @@ static void patch_descriptors(void) {
  * and patch wDescriptorLength so they're ready when the host enumerates. */
 
 void handle_usb_init(void) {
-    /* Zero PATCH_SRAM — stock crt0 only initializes the firmware's own
+    /* Zero PATCH_SRAM .bss — stock crt0 only initializes the firmware's own
      * .bss region, not ours.  SRAM survives soft reboot (flash + reset)
-     * so statics from the previous run persist as garbage. */
-    uint8_t *p = (uint8_t *)0x20002000;
-    for (int i = 0; i < 1024; i++)
-        p[i] = 0;
+     * so statics from the previous run persist as garbage.
+     * Uses linker-provided __patch_bss_start/__patch_bss_end symbols. */
+    zero_patch_bss();
 
     patch_descriptors();
 

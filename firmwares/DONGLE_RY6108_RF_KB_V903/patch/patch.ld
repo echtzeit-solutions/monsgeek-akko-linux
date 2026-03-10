@@ -13,8 +13,10 @@ SECTIONS {
         *(.rodata*)
     } > PATCH
     .bss (NOLOAD) : {
+        __patch_bss_start = .;
         *(.bss*)
         *(COMMON)
+        __patch_bss_end = .;
     } > PATCH_SRAM
     /DISCARD/ : {
         *(.ARM.*)
