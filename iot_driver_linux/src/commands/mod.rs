@@ -45,7 +45,7 @@ pub type CommandResult = Result<(), Box<dyn std::error::Error>>;
 /// When printer_config is Some, the transport is wrapped so send/receive is printed.
 /// Query firmware device ID from a transport (GET_USB_VERSION bytes 1-4).
 /// Returns None if the device doesn't respond or the response is malformed.
-fn query_device_id(flow: &FlowControlTransport) -> Option<i32> {
+pub(crate) fn query_device_id(flow: &FlowControlTransport) -> Option<i32> {
     flow.query_command(
         protocol::cmd::GET_USB_VERSION,
         &[],

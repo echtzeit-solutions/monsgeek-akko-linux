@@ -24,7 +24,6 @@ use std::path::PathBuf;
 
 // Use shared library
 use crate::firmware_api::FirmwareCheckResult;
-use crate::hal::constants::{KEY_COUNT_M1_V5, MATRIX_SIZE_M1_V5};
 use crate::hid::BatteryInfo;
 use crate::key_action::KeyAction;
 use crate::keymap::{self, KeyEntry, Layer};
@@ -64,6 +63,8 @@ struct App {
     key_count: u8,
     has_sidelight: bool,
     has_magnetism: bool,
+    matrix_size: usize,
+    matrix_key_names: Vec<String>,
     // Trigger settings
     triggers: Option<TriggerSettings>,
     trigger_scroll: usize,
@@ -1676,6 +1677,8 @@ impl App {
             key_count: 0,
             has_sidelight: false,
             has_magnetism: false,
+            matrix_size: 0,
+            matrix_key_names: Vec::new(),
             triggers: None,
             trigger_scroll: 0,
             trigger_view_mode: TriggerViewMode::default(),
@@ -1751,36 +1754,80 @@ impl App {
         let vid = transport_info.vid;
         let pid = transport_info.pid;
 
-        // Look up device info from database, falling back to hardcoded or defaults
-        let (key_count, has_magnetism, has_sidelight, device_name) =
-            if let Some(info) = devices::get_device_info(vid, pid) {
-                (
-                    if info.key_count > 0 {
-                        info.key_count
-                    } else {
-                        KEY_COUNT_M1_V5
-                    },
-                    info.has_magnetism,
-                    info.has_sidelight,
-                    info.display_name,
-                )
-            } else {
-                // Fallback for unknown devices
-                let name = transport_info
-                    .product_name
-                    .clone()
-                    .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"));
-                (KEY_COUNT_M1_V5, true, false, name) // Default: assume M1 V5, magnetism, no sidelight
-            };
-
         let flow_transport = Arc::new(FlowControlTransport::new(transport));
-        let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(None, pid);
-        let keyboard = Arc::new(KeyboardInterface::new(
-            flow_transport,
-            key_count,
-            has_magnetism,
-            protocol,
-        ));
+
+        // Query device_id for accurate DB lookup (shared PIDs are ambiguous without it)
+        let device_id = flow_transport
+            .query_command(
+                cmd::GET_USB_VERSION,
+                &[],
+                monsgeek_transport::ChecksumType::Bit7,
+            )
+            .ok()
+            .filter(|r| r.len() >= 5 && r[0] == cmd::GET_USB_VERSION)
+            .map(|r| u32::from_le_bytes([r[1], r[2], r[3], r[4]]) as i32);
+
+        let mut key_count = devices::key_count_with_id(device_id, vid, pid);
+        let has_magnetism = devices::has_magnetism_with_id(device_id, vid, pid);
+        let device_info = devices::get_device_info_with_id(device_id, vid, pid);
+        let has_sidelight = device_info
+            .as_ref()
+            .map(|d| d.has_sidelight)
+            .unwrap_or(false);
+        let device_name = device_info
+            .as_ref()
+            .map(|d| d.display_name.clone())
+            .or_else(|| transport_info.product_name.clone())
+            .unwrap_or_else(|| format!("Device {vid:04x}:{pid:04x}"));
+
+        let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(
+            device_info.as_ref().map(|d| d.name.as_str()),
+            pid,
+        );
+
+        // Try matrix database for key names and matrix size
+        let registry = crate::profile_registry();
+        let matrix_db: Option<&crate::device_loader::JsonDeviceMatrix> =
+            device_id.and_then(|id| registry.get_device_matrix(id));
+        if let Some(matrix) = matrix_db {
+            let matrix_size = matrix.matrix_size() as u8;
+            if key_count == 0 || (key_count < matrix_size && matrix_size > 0) {
+                key_count = matrix_size;
+            }
+        }
+
+        let mut kb = KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
+
+        // Resolve key names: prefer builtin profile, fall back to matrix database.
+        let profile = device_id
+            .and_then(|id| registry.find_by_id(id as u32))
+            .or_else(|| registry.find_by_vid_pid(vid, pid));
+        if let Some(p) = profile {
+            let names: Vec<String> = (0..p.matrix_size())
+                .map(|i| p.matrix_key_name(i as u8).to_string())
+                .collect();
+            kb.set_matrix_key_names(names);
+        } else if let Some(matrix) = matrix_db {
+            let size = matrix.matrix_size();
+            let names: Vec<String> = (0..size)
+                .map(|i| matrix.key_name(i).unwrap_or("").to_string())
+                .collect();
+            kb.set_matrix_key_names(names);
+        }
+
+        // Set non-analog positions from matrix database (encoder/GPIO keys).
+        if let Some(matrix) = matrix_db {
+            if let Some(positions) = &matrix.non_analog_positions {
+                kb.set_non_analog_positions(positions.clone());
+            }
+        }
+
+        let matrix_size = kb.matrix_size();
+        let matrix_key_names: Vec<String> = (0..matrix_size)
+            .map(|i| kb.matrix_key_name(i).to_string())
+            .collect();
+
+        let keyboard = Arc::new(kb);
         let is_wireless = keyboard.is_wireless();
 
         // Subscribe to low-latency event notifications
@@ -1790,6 +1837,8 @@ impl App {
         self.key_count = key_count;
         self.has_sidelight = has_sidelight;
         self.has_magnetism = has_magnetism;
+        self.matrix_size = matrix_size;
+        self.matrix_key_names = matrix_key_names;
         self.is_wireless = is_wireless;
         self.keyboard = Some(keyboard);
 
@@ -2382,7 +2431,7 @@ impl App {
         if let Some(ref mut triggers) = self.triggers {
             triggers.key_modes[key_index] = mode;
         }
-        let key_name = get_key_label(key_index);
+        let key_name = get_key_label(self, key_index);
         self.status_msg = format!(
             "Key {} ({}) set to {}",
             key_index,
@@ -3170,7 +3219,7 @@ impl App {
                 }
                 self.depth_monitoring = true;
             }
-            let key_name = get_key_label(key_index);
+            let key_name = get_key_label(self, key_index);
             self.status_msg = format!(
                 "Editing key {} ({}) - press it to see depth",
                 key_index, key_name
@@ -3254,7 +3303,7 @@ impl App {
 
                 match keyboard.set_key_trigger(&settings) {
                     Ok(()) => {
-                        let key_name = get_key_label(key_index);
+                        let key_name = get_key_label(self, key_index);
                         self.status_msg = format!(
                             "Key {} ({}) saved: act={:.1}mm rel={:.1}mm mode={:?}",
                             key_index,
@@ -3326,7 +3375,7 @@ impl App {
         let row = self.trigger_selected_key % 6;
         if row < 5 {
             let new_pos = col * 6 + (row + 1);
-            if new_pos < MATRIX_SIZE_M1_V5 && self.is_valid_key_position(new_pos) {
+            if new_pos < self.matrix_size && self.is_valid_key_position(new_pos) {
                 self.trigger_selected_key = new_pos;
             }
         }
@@ -3351,7 +3400,7 @@ impl App {
         if col < 20 {
             // 21 columns total
             let new_pos = (col + 1) * 6 + row;
-            if new_pos < MATRIX_SIZE_M1_V5 && self.is_valid_key_position(new_pos) {
+            if new_pos < self.matrix_size && self.is_valid_key_position(new_pos) {
                 self.trigger_selected_key = new_pos;
             }
         }
@@ -3359,10 +3408,10 @@ impl App {
 
     /// Check if a matrix position has an active key
     fn is_valid_key_position(&self, pos: usize) -> bool {
-        if pos >= MATRIX_SIZE_M1_V5 {
+        if pos >= self.matrix_size {
             return false;
         }
-        let name = get_key_label(pos);
+        let name = get_key_label(self, pos);
         !name.is_empty() && name != "?"
     }
 }
@@ -3941,7 +3990,7 @@ pub async fn run() -> io::Result<()> {
                         KeyCode::Char(' ') if app.tab == 1 => {
                             if app.depth_view_mode == DepthViewMode::BarChart {
                                 app.toggle_key_selection(app.depth_cursor);
-                                let label = get_key_label(app.depth_cursor);
+                                let label = get_key_label(&app, app.depth_cursor);
                                 if app.selected_keys.contains(&app.depth_cursor) {
                                     app.status_msg = format!("Selected Key {label} for time series");
                                 } else {
@@ -4410,7 +4459,7 @@ fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: Rect) {
     let title = match modal.target {
         TriggerEditTarget::Global => " Edit Global Trigger Settings ".to_string(),
         TriggerEditTarget::PerKey { key_index } => {
-            let key_name = get_key_label(key_index);
+            let key_name = get_key_label(app, key_index);
             format!(" Edit Key {} ({}) ", key_index, key_name)
         }
     };
@@ -5431,14 +5480,12 @@ fn render_depth_monitor(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Get key label for display - use device profile matrix key names
-fn get_key_label(index: usize) -> String {
-    use crate::profile::builtin::M1V5HeProfile;
-    use crate::profile::DeviceProfile;
-
-    // Use builtin profile for key name lookup
-    static PROFILE: std::sync::OnceLock<M1V5HeProfile> = std::sync::OnceLock::new();
-    let profile = PROFILE.get_or_init(M1V5HeProfile::new);
-    profile.matrix_key_name(index as u8).to_string()
+fn get_key_label(app: &App, index: usize) -> String {
+    app.matrix_key_names
+        .get(index)
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn render_depth_bar_chart(f: &mut Frame, app: &mut App, area: Rect) {
@@ -5453,7 +5500,7 @@ fn render_depth_bar_chart(f: &mut Frame, app: &mut App, area: Rect) {
         if depth > 0.01 || app.active_keys.contains(&i) {
             // Convert mm to 0.01mm units for integer display
             let depth_raw = (depth * 100.0) as u64;
-            let label = get_key_label(i);
+            let label = get_key_label(app, i);
             bar_data.push((label, depth_raw));
         }
     }
@@ -5589,7 +5636,7 @@ fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
             all_data.push(data);
 
             let color = colors[color_idx % colors.len()];
-            let label = get_key_label(key_idx);
+            let label = get_key_label(app, key_idx);
             datasets.push(
                 Dataset::default()
                     .name(label)
@@ -5623,7 +5670,7 @@ fn render_depth_time_series(f: &mut Frame, app: &mut App, area: Rect) {
                 7 => "y",
                 _ => "?",
             };
-            format!("[{}]K{}", color_char, get_key_label(k))
+            format!("[{}]K{}", color_char, get_key_label(app, k))
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -5810,7 +5857,7 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
                 let rt_p = triggers.rt_press.get(i).copied().unwrap_or(0);
                 let rt_l = triggers.rt_lift.get(i).copied().unwrap_or(0);
                 let mode = triggers.key_modes.get(i).copied().unwrap_or(0);
-                let key_name = get_key_label(i);
+                let key_name = get_key_label(app, i);
                 let is_selected = i == selected_key;
 
                 let row = Row::new(vec![
@@ -5930,12 +5977,12 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
     let key_height = 2u16; // Height of each key cell
 
     // Draw each key in the matrix (column-major order: 21 cols × 6 rows)
-    for pos in 0..MATRIX_SIZE_M1_V5 {
+    for pos in 0..app.matrix_size {
         let col = pos / 6;
         let row = pos % 6;
 
         // Skip positions outside visible area or empty keys
-        let key_name = get_key_label(pos);
+        let key_name = get_key_label(app, pos);
         if key_name.is_empty() || key_name == "?" {
             continue;
         }
@@ -5999,7 +6046,7 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
     // Render selected key details
     if let Some(ref triggers) = app.triggers {
         let pos = app.trigger_selected_key;
-        let key_name = get_key_label(pos);
+        let key_name = get_key_label(app, pos);
 
         let press = triggers.press_travel.get(pos).copied().unwrap_or(0);
         let lift = triggers.lift_travel.get(pos).copied().unwrap_or(0);

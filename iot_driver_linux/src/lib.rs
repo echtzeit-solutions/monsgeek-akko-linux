@@ -25,11 +25,9 @@ pub mod tui;
 
 pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
 pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
-pub use devices::{find_device, is_supported, DeviceDefinition, SUPPORTED_DEVICES};
+pub use devices::is_supported;
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
-pub use hid::{
-    key_mode, BatteryInfo, ConnectedDeviceInfo, FirmwareSettings, TriggerSettings, VendorEventType,
-};
+pub use hid::{key_mode, BatteryInfo, FirmwareSettings, TriggerSettings, VendorEventType};
 pub use power_supply::{
     BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration,
 };

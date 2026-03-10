@@ -88,13 +88,12 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
         info.pid
     );
 
-    let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(None, info.pid);
-    let keyboard = KeyboardInterface::new(
-        transport,
-        monsgeek_keyboard::KEY_COUNT_M1_V5,
-        true,
-        protocol,
-    );
+    let pid = info.pid;
+    let protocol = monsgeek_transport::protocol::ProtocolFamily::detect(None, pid);
+
+    // Joystick only needs magnetism depth reports — key_count/has_magnetism don't affect
+    // axis mapping (that comes from the config file). Use safe defaults.
+    let keyboard = KeyboardInterface::new(transport, 0, false, protocol);
 
     let precision_factor = match keyboard.get_precision() {
         Ok(precision) => {

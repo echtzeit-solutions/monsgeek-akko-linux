@@ -45,12 +45,6 @@ impl PatchInfo {
 // Macro parsing
 // (MacroEvent struct and parse_macro_events fn are defined after KeyboardInterface impl)
 
-/// Number of physical keys on M1 V5 HE
-pub const KEY_COUNT_M1_V5: u8 = 98;
-
-/// Total matrix positions for M1 V5 HE (98 active keys + empty positions)
-pub const MATRIX_SIZE_M1_V5: usize = 126;
-
 // Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
 pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
 
@@ -134,35 +128,25 @@ impl KeyboardInterface {
         self.non_analog_positions.contains(&(position as u8))
     }
 
-    /// Open any supported device (auto-detecting wired vs dongle)
-    pub fn open_any() -> Result<Self, KeyboardError> {
-        let devices = monsgeek_transport::list_devices_sync()?;
-
-        if devices.is_empty() {
-            return Err(KeyboardError::NotFound("No supported device found".into()));
+    /// Get the matrix size (number of positions including empty slots).
+    /// Uses matrix_key_names length if populated, otherwise falls back to key_count.
+    pub fn matrix_size(&self) -> usize {
+        if self.matrix_key_names.is_empty() {
+            self.key_count as usize
+        } else {
+            self.matrix_key_names.len()
         }
-
-        Self::open_device(&devices[0])
     }
 
-    /// Open a specific discovered device
-    ///
-    /// Queries GET_USB_VERSION to get device_id, but uses hardcoded defaults
-    /// for key_count/has_magnetism since this crate can't access the device database.
-    /// For accurate metadata lookup on shared-PID devices, use `KeyboardInterface::new()`
-    /// with values from `iot_driver::devices::key_count_with_id()`.
+    /// Open a specific discovered device with metadata from the device database.
     pub fn open_device(
         device: &monsgeek_transport::DiscoveredDevice,
+        key_count: u8,
+        has_magnetism: bool,
+        protocol: ProtocolFamily,
     ) -> Result<Self, KeyboardError> {
         let transport = monsgeek_transport::open_device_sync(device)?;
-
-        // Default to M1 V5 HE — callers with database access should use new() directly
-        Ok(Self::new(
-            transport,
-            KEY_COUNT_M1_V5,
-            true,
-            ProtocolFamily::default(),
-        ))
+        Ok(Self::new(transport, key_count, has_magnetism, protocol))
     }
 
     /// Get the underlying transport
@@ -512,7 +496,7 @@ impl KeyboardInterface {
 
     /// Set all keys to a single color (for per-key RGB mode)
     pub fn set_all_keys_color(&self, color: RgbColor, layer: u8) -> Result<(), KeyboardError> {
-        let colors = vec![(color.r, color.g, color.b); MATRIX_SIZE_M1_V5];
+        let colors = vec![(color.r, color.g, color.b); self.matrix_size()];
         self.set_per_key_colors_to_layer(&colors, layer)
     }
 
@@ -969,8 +953,9 @@ impl KeyboardInterface {
         const CHUNK_SIZE: usize = 18; // 18 keys per chunk (54 bytes RGB)
 
         // Pad colors to full matrix size
-        let mut full_colors = vec![(0u8, 0u8, 0u8); MATRIX_SIZE_M1_V5];
-        let len = colors.len().min(MATRIX_SIZE_M1_V5);
+        let matrix_size = self.matrix_size();
+        let mut full_colors = vec![(0u8, 0u8, 0u8); matrix_size];
+        let len = colors.len().min(matrix_size);
         full_colors[..len].copy_from_slice(&colors[..len]);
 
         for _ in 0..repeat.max(1) {

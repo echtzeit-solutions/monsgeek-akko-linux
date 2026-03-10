@@ -1,17 +1,6 @@
 // MonsGeek/Akko HID Communication
 // Shared types for device communication
 
-use crate::devices::DeviceDefinition;
-
-/// Connected device info (VID, PID, path)
-#[derive(Debug, Clone)]
-pub struct ConnectedDeviceInfo {
-    pub vid: u16,
-    pub pid: u16,
-    pub path: String,
-    pub definition: &'static DeviceDefinition,
-}
-
 /// Vendor event types from HID input reports
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VendorEventType {

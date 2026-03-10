@@ -1,12 +1,10 @@
 //! Reactive mode command handlers (audio, screen).
 
 use super::{setup_interrupt_handler, CommandResult};
-use monsgeek_keyboard::KeyboardInterface;
 
 /// Run audio reactive LED mode
 pub fn audio(color_mode: &str, hue: f32, sensitivity: f32) -> CommandResult {
-    let keyboard =
-        KeyboardInterface::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
+    let keyboard = super::open_keyboard(None).map_err(|e| format!("Failed to open device: {e}"))?;
 
     println!(
         "Starting audio reactive mode on {}...",
@@ -58,8 +56,7 @@ pub fn audio_levels() -> CommandResult {
 pub async fn screen(fps: u32) -> CommandResult {
     let fps = fps.clamp(1, 60);
 
-    let keyboard =
-        KeyboardInterface::open_any().map_err(|e| format!("Failed to open device: {e}"))?;
+    let keyboard = super::open_keyboard(None).map_err(|e| format!("Failed to open device: {e}"))?;
 
     println!(
         "Starting screen color mode on {}...",

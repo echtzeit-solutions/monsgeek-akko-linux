@@ -399,24 +399,6 @@ pub mod timing {
     pub const ANIMATION_START_DELAY_MS: u64 = 500;
 }
 
-/// Per-key RGB animation constants
-pub mod rgb {
-    use crate::hal::constants::MATRIX_SIZE_M1_V5;
-
-    /// Total RGB data size (MATRIX_SIZE * 3 bytes)
-    pub const TOTAL_RGB_SIZE: usize = MATRIX_SIZE_M1_V5 * 3;
-    /// Number of pages per frame
-    pub const NUM_PAGES: usize = 7;
-    /// RGB data per full page
-    pub const PAGE_SIZE: usize = 56;
-    /// RGB data in last page
-    pub const LAST_PAGE_SIZE: usize = 42;
-    /// LED matrix positions (keys)
-    pub const MATRIX_SIZE: usize = MATRIX_SIZE_M1_V5;
-    /// Magic value for per-key color commands
-    pub const MAGIC_VALUE: u8 = 255;
-}
-
 /// Firmware version thresholds for precision
 pub mod firmware {
     /// Version threshold for 0.005mm precision
