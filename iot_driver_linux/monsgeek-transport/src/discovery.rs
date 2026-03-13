@@ -94,31 +94,81 @@ impl HidDiscovery {
             && device_info.usage() == device::USAGE_INPUT
     }
 
-    /// Find the input interface for a USB device
+    /// Extract USB bus location from a hidraw sysfs path.
+    /// e.g., `/sys/devices/.../usb9/9-2/9-2:1.2/0003:3151:5030.065C/hidraw/hidraw10`
+    /// returns `"9-2"` — the USB port, shared by all interfaces of the same device.
+    fn usb_bus_location(hidraw_path: &str) -> Option<String> {
+        // Read the sysfs path for this hidraw device
+        let devname = std::path::Path::new(hidraw_path).file_name()?.to_str()?;
+        let sysfs = std::fs::read_link(format!("/sys/class/hidraw/{}", devname)).ok()?;
+        let sysfs_str = sysfs.to_string_lossy();
+        // Find the USB port segment (e.g., "9-2" in ".../usb9/9-2/9-2:1.2/...")
+        for component in sysfs_str.split('/') {
+            // USB port segments match pattern like "1-2", "3-4.1", "9-2"
+            if component.contains('-')
+                && !component.contains(':')
+                && !component.contains('.')
+                && component.chars().next().is_some_and(|c| c.is_ascii_digit())
+            {
+                return Some(component.to_string());
+            }
+        }
+        None
+    }
+
+    /// Check if two hidraw devices are on the same USB physical device.
+    fn is_same_usb_device(path_a: &str, path_b: &str) -> bool {
+        match (
+            Self::usb_bus_location(path_a),
+            Self::usb_bus_location(path_b),
+        ) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    /// Find the input interface for a USB device, preferring a sibling of `feature_path`.
     fn find_usb_input_device(
         &self,
         api: &HidApi,
         vid: u16,
         pid: u16,
+        feature_path: &str,
     ) -> Option<hidapi::DeviceInfo> {
         api.device_list()
-            .find(|d| {
+            .filter(|d| {
                 d.vendor_id() == vid && d.product_id() == pid && Self::is_usb_input_interface(d)
+            })
+            .find(|d| Self::is_same_usb_device(&d.path().to_string_lossy(), feature_path))
+            // Fallback: any matching VID/PID input interface
+            .or_else(|| {
+                api.device_list().find(|d| {
+                    d.vendor_id() == vid && d.product_id() == pid && Self::is_usb_input_interface(d)
+                })
             })
             .cloned()
     }
 
-    /// Find the IF1 (composite HID) interface for a dongle device.
+    /// Find the IF1 (composite HID) interface for a dongle device,
+    /// preferring a sibling of `feature_path`.
     /// IF1 hosts the patched HID descriptor with Feature Report ID 8.
-    fn find_dongle_if1_device(api: &HidApi, vid: u16, pid: u16) -> Option<hidapi::DeviceInfo> {
+    fn find_dongle_if1_device(
+        api: &HidApi,
+        vid: u16,
+        pid: u16,
+        feature_path: &str,
+    ) -> Option<hidapi::DeviceInfo> {
+        let is_if1 = |d: &&hidapi::DeviceInfo| {
+            d.vendor_id() == vid
+                && d.product_id() == pid
+                && d.interface_number() == 1
+                && !Self::is_usb_feature_interface(d)
+                && !Self::is_usb_input_interface(d)
+        };
         api.device_list()
-            .find(|d| {
-                d.vendor_id() == vid
-                    && d.product_id() == pid
-                    && d.interface_number() == 1
-                    && !Self::is_usb_feature_interface(d)
-                    && !Self::is_usb_input_interface(d)
-            })
+            .filter(is_if1)
+            .find(|d| Self::is_same_usb_device(&d.path().to_string_lossy(), feature_path))
+            .or_else(|| api.device_list().find(is_if1))
             .cloned()
     }
 
@@ -242,13 +292,23 @@ impl DeviceDiscovery for HidDiscovery {
                 ))
             }
             TransportType::HidWired | TransportType::HidDongle => {
-                // Find and open the USB feature interface
+                // Find and open the USB feature interface.
+                // Match by device_path to distinguish multiple same-VID/PID devices.
+                // The discovered device_path points to the feature interface (IF2),
+                // so an exact path match is the primary lookup strategy.
                 let feature_info = api
                     .device_list()
                     .find(|d| {
-                        d.vendor_id() == device.info.vid
-                            && d.product_id() == device.info.pid
+                        d.path().to_string_lossy() == device.info.device_path
                             && Self::is_usb_feature_interface(d)
+                    })
+                    // Fallback: VID/PID match (for devices discovered before path was tracked)
+                    .or_else(|| {
+                        api.device_list().find(|d| {
+                            d.vendor_id() == device.info.vid
+                                && d.product_id() == device.info.pid
+                                && Self::is_usb_feature_interface(d)
+                        })
                     })
                     .ok_or_else(|| {
                         TransportError::DeviceNotFound(format!(
@@ -261,9 +321,11 @@ impl DeviceDiscovery for HidDiscovery {
                     .open_device(&api)
                     .map_err(TransportError::from)?;
 
-                // Try to open input interface
+                let feature_path = feature_info.path().to_string_lossy().to_string();
+
+                // Try to open input interface (sibling of feature interface)
                 let input_device = self
-                    .find_usb_input_device(&api, device.info.vid, device.info.pid)
+                    .find_usb_input_device(&api, device.info.vid, device.info.pid, &feature_path)
                     .and_then(|info| info.open_device(&api).ok());
 
                 if input_device.is_some() {
@@ -272,18 +334,22 @@ impl DeviceDiscovery for HidDiscovery {
 
                 if device.info.transport_type == TransportType::HidDongle {
                     // Open IF1 for dongle patch discovery (Feature Report ID 8)
-                    let if1_device =
-                        Self::find_dongle_if1_device(&api, device.info.vid, device.info.pid)
-                            .and_then(|info| match info.open_device(&api) {
-                                Ok(dev) => {
-                                    debug!("Opened dongle IF1 for patch discovery");
-                                    Some(dev)
-                                }
-                                Err(e) => {
-                                    debug!("Failed to open dongle IF1: {}", e);
-                                    None
-                                }
-                            });
+                    let if1_device = Self::find_dongle_if1_device(
+                        &api,
+                        device.info.vid,
+                        device.info.pid,
+                        &feature_path,
+                    )
+                    .and_then(|info| match info.open_device(&api) {
+                        Ok(dev) => {
+                            debug!("Opened dongle IF1 for patch discovery");
+                            Some(dev)
+                        }
+                        Err(e) => {
+                            debug!("Failed to open dongle IF1: {}", e);
+                            None
+                        }
+                    });
 
                     Arc::new(HidDongleTransport::new(
                         feature_device,

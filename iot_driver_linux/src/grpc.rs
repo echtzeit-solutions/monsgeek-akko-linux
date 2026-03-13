@@ -557,10 +557,13 @@ impl DriverService {
         }
     }
 
-    /// Create a path key compatible with the original protocol format
+    /// Create a path key compatible with the original protocol format.
+    ///
+    /// Appends `@<device_path>` so that multiple devices sharing the same
+    /// VID/PID get unique keys. The webapp's `parse_device_path()` splits on
+    /// `-` and takes the first 5 parts, so the suffix is harmlessly ignored.
     fn make_path_key(info: &monsgeek_transport::TransportDeviceInfo) -> String {
-        // Format: vid-pid-usage_page-usage-interface
-        // For compatibility with browser client
+        // Format: vid-pid-usage_page-usage-interface@device_path
         let usage_page = 0xFFFF_u16;
         let usage = 0x02_u16;
         let interface = match info.transport_type {
@@ -569,41 +572,43 @@ impl DriverService {
             _ => 0,
         };
         format!(
-            "{:04x}-{:04x}-{:04x}-{:04x}-{}",
-            info.vid, info.pid, usage_page, usage, interface
+            "{:04x}-{:04x}-{:04x}-{:04x}-{}@{}",
+            info.vid, info.pid, usage_page, usage, interface, info.device_path
         )
     }
 
-    /// Query device ID using GET_USB_VERSION command (raw send+read)
+    /// Query device ID using GET_USB_VERSION command.
+    ///
+    /// Uses FlowControlTransport which properly handles dongle SPI round-trips
+    /// (send → flush → poll for echoed response).
     async fn query_device_id_static(transport: &Arc<dyn Transport>) -> Option<i32> {
         use monsgeek_transport::protocol::cmd;
+        use monsgeek_transport::FlowControlTransport;
 
-        if let Err(e) = transport.send_report(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7) {
-            warn!("Failed to send device ID query: {}", e);
-            return None;
-        }
-
-        let _ = transport.send_flush();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        match transport.read_report() {
-            Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
-                let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]) as i32;
-                info!("Device ID: {}", device_id);
-                Some(device_id)
+        let transport = transport.clone();
+        tokio::task::spawn_blocking(move || {
+            let fc = FlowControlTransport::new(transport);
+            match fc.query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7) {
+                Ok(resp) if resp.len() >= 5 && resp[0] == cmd::GET_USB_VERSION => {
+                    let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]) as i32;
+                    info!("Device ID: {}", device_id);
+                    Some(device_id)
+                }
+                Ok(resp) => {
+                    warn!(
+                        "Unexpected response to device ID query: {:02x?}",
+                        &resp[..resp.len().min(16)]
+                    );
+                    None
+                }
+                Err(e) => {
+                    warn!("Failed to query device ID: {}", e);
+                    None
+                }
             }
-            Ok(resp) => {
-                warn!(
-                    "Unexpected response to device ID query: {:02x?}",
-                    &resp[..resp.len().min(16)]
-                );
-                None
-            }
-            Err(e) => {
-                warn!("Failed to read device ID response: {}", e);
-                None
-            }
-        }
+        })
+        .await
+        .unwrap_or(None)
     }
 
     /// Scan for and connect to known devices (only returns client-facing interfaces)
@@ -737,9 +742,12 @@ impl DriverService {
             }
         }
 
-        // Parse path to get VID/PID
+        // Parse path to get VID/PID (for fallback matching)
         let (vid, pid, _usage_page, _usage, _interface) = parse_device_path(device_path)
             .ok_or_else(|| Status::invalid_argument("Invalid device path format"))?;
+
+        // Extract HID device path from the @suffix (e.g. "3151-5030-...-1@/dev/hidraw5")
+        let hid_path = device_path.split_once('@').map(|(_, p)| p);
 
         // Find and open the device
         let discovered = self
@@ -747,31 +755,39 @@ impl DriverService {
             .list_devices()
             .map_err(|e| Status::internal(format!("Discovery error: {}", e)))?;
 
-        for dev in discovered {
-            if dev.info.vid == vid && dev.info.pid == pid {
-                let transport = self
-                    .discovery
-                    .open_device(&dev)
-                    .map_err(|e| Status::internal(format!("Failed to open device: {}", e)))?;
+        // Prefer exact HID path match, fall back to VID/PID
+        let target = if let Some(path) = hid_path {
+            discovered.iter().find(|d| d.info.device_path == path)
+        } else {
+            None
+        };
+        let target = target.or_else(|| {
+            discovered
+                .iter()
+                .find(|d| d.info.vid == vid && d.info.pid == pid)
+        });
 
-                let mut devices = self.devices.lock().await;
-                devices.insert(
-                    device_path.to_string(),
-                    ConnectedTransport {
-                        transport,
-                        device_id: 0,
-                        is_dongle: dev.info.is_dongle,
-                        vid: dev.info.vid,
-                        pid: dev.info.pid,
-                    },
-                );
+        let dev = target.ok_or_else(|| Status::not_found("Device not found"))?;
 
-                info!("Opened device: {}", device_path);
-                return Ok(());
-            }
-        }
+        let transport = self
+            .discovery
+            .open_device(dev)
+            .map_err(|e| Status::internal(format!("Failed to open device: {}", e)))?;
 
-        Err(Status::not_found("Device not found"))
+        let mut devices = self.devices.lock().await;
+        devices.insert(
+            device_path.to_string(),
+            ConnectedTransport {
+                transport,
+                device_id: 0,
+                is_dongle: dev.info.is_dongle,
+                vid: dev.info.vid,
+                pid: dev.info.pid,
+            },
+        );
+
+        info!("Opened device: {}", device_path);
+        Ok(())
     }
 
     /// Open keyboard for LED streaming, caching it for reuse.
