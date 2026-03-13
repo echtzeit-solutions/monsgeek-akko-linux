@@ -303,8 +303,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Utility Commands ===
         Some(Commands::List) => {
-            let hidapi = HidApi::new()?;
-            commands::utility::list(&hidapi)?;
+            commands::utility::list()?;
         }
         Some(Commands::Raw { cmd: cmd_str }) => {
             commands::utility::raw(&cmd_str, &ctx)?;

@@ -1,22 +1,32 @@
 //! Utility command handlers.
 
 use super::{format_command_response, open_preferred_transport, CmdCtx, CommandResult};
-use hidapi::HidApi;
-use monsgeek_transport::{ChecksumType, Transport};
+use monsgeek_transport::{format_device_list, ChecksumType, HidDiscovery, Transport};
 
-/// List all HID devices
-pub fn list(hidapi: &HidApi) -> CommandResult {
-    println!("All HID devices:");
-    for device_info in hidapi.device_list() {
-        println!(
-            "  VID={:04x} PID={:04x} usage={:04x} page={:04x} if={} path=...",
-            device_info.vendor_id(),
-            device_info.product_id(),
-            device_info.usage(),
-            device_info.usage_page(),
-            device_info.interface_number(),
-        );
+/// List supported devices with probe results (replaces raw HID dump)
+pub fn list() -> CommandResult {
+    let discovery = HidDiscovery::new();
+    let resolve_name = |device_id: Option<u32>, vid: u16, pid: u16| -> Option<String> {
+        iot_driver::devices::get_device_info_with_id(device_id.map(|id| id as i32), vid, pid)
+            .map(|info| info.display_name)
+    };
+
+    let labeled = discovery.list_labeled_devices(resolve_name)?;
+    if labeled.is_empty() {
+        println!("No supported devices found.");
+        return Ok(());
     }
+
+    let labels: Vec<_> = labeled.iter().map(|(_, l)| l.clone()).collect();
+    print!("{}", format_device_list(&labels));
+
+    // Show transport details for each device
+    for (probed, label) in &labeled {
+        if !probed.responsive {
+            println!("  #{} — not responding (may be asleep)", label.index);
+        }
+    }
+
     Ok(())
 }
 
