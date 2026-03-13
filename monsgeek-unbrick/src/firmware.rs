@@ -21,6 +21,11 @@ pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareIm
         return parse_dfuse(&data);
     }
 
+    // Full 256KB flash dump? Split into segments, skipping bootloader.
+    if data.len() as u32 == crate::flash_map::FLASH_SIZE {
+        return split_flash_dump(&data);
+    }
+
     // Raw .bin — require explicit or default address
     let addr = address.unwrap_or(crate::flash_map::FIRMWARE_START);
     crate::flash_map::validate_write_address(addr, data.len() as u32)?;
@@ -28,6 +33,38 @@ pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareIm
     Ok(vec![FirmwareImage {
         address: addr,
         data,
+    }])
+}
+
+/// Split a full 256KB flash dump into writable segments, skipping the bootloader
+/// and any trailing erased (0xFF) regions.
+fn split_flash_dump(data: &[u8]) -> Result<Vec<FirmwareImage>> {
+    use crate::flash_map::*;
+
+    let boot_size = (FIRMWARE_START - BOOTLOADER_START) as usize;
+    let writable = &data[boot_size..];
+    let writable_start = FIRMWARE_START;
+
+    // Find last non-0xFF byte to avoid writing huge erased tails
+    let last_used = writable
+        .iter()
+        .rposition(|&b| b != 0xFF)
+        .map(|i| i + 1)
+        .unwrap_or(0);
+
+    if last_used == 0 {
+        bail!("flash dump is entirely erased (all 0xFF) after bootloader");
+    }
+
+    // Round up to page boundary
+    let len = ((last_used as u32 + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE * FLASH_PAGE_SIZE) as usize;
+    let len = len.min(writable.len());
+
+    validate_write_address(writable_start, len as u32)?;
+
+    Ok(vec![FirmwareImage {
+        address: writable_start,
+        data: writable[..len].to_vec(),
     }])
 }
 

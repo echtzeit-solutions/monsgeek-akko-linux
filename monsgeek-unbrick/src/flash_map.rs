@@ -24,8 +24,11 @@ pub const CALIBRATION_START: u32 = 0x0803_2000;
 pub const CALIBRATION_END: u32 = 0x0803_8000;
 pub const CALIBRATION_SIZE: u32 = CALIBRATION_END - CALIBRATION_START;
 
+/// Total flash size (256KB)
+pub const FLASH_SIZE: u32 = 0x0004_0000;
+
 /// Flash end (256KB)
-pub const FLASH_END: u32 = 0x0804_0000;
+pub const FLASH_END: u32 = BOOTLOADER_START + FLASH_SIZE;
 
 /// Erase image: all 0xFF. Factory reset erases full user data region (32KB).
 pub const USER_DATA_ERASE: &[u8] = &[0xFF; USER_DATA_SIZE as usize];
@@ -97,7 +100,7 @@ mod tests {
     #[test]
     fn accepts_firmware_write() {
         assert!(validate_write_address(0x0800_5000, 0x20000).is_ok());
-        assert!(validate_write_address(CONFIG_START, CONFIG_SIZE).is_ok());
+        assert!(validate_write_address(CONFIG_START, USER_DATA_SIZE).is_ok());
     }
 
     #[test]

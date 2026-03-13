@@ -44,7 +44,7 @@ fn append_log(msg: &str) -> std::io::Result<()> {
 }
 
 fn run() -> Result<()> {
-    println!("MonsGeek Keyboard Recovery Tool v0.2.1");
+    println!("MonsGeek Keyboard Recovery Tool v0.2.2");
     println!("======================================\n");
 
     let dev = try_open_device()?;
