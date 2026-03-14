@@ -53,11 +53,13 @@ jobs:
 
             **Features:**
             - Factory reset (erase all user data: config, keymaps, FN layers, macros, userpics)
-            - Flash stock firmware v407 + factory reset
+            - Flash stock firmware v407 (device 2949) with reference calibration
+            - Flash stock firmware v402 (device 2679) — complete image with calibration
             - Deep reset (also erase calibration — for when keys don't respond after factory reset)
-            - Flash custom firmware file
-            - Dump full flash to file (for remote diagnosis)
+            - Flash custom firmware file (supports .bin, .dfu, and 256KB flash dumps)
             - Device info with calibration status diagnostics
+            - Dump full flash to file (for remote diagnosis)
+            - Read-back verification after every write
             - Auto WinUSB driver installation
 
             No installation required — single standalone .exe.

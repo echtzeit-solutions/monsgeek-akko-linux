@@ -7,9 +7,13 @@ mod winusb;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// Stock v407 firmware, embedded at compile time.
+/// Stock v407 firmware code (device 2949), embedded at compile time.
 const FIRMWARE_V407: &[u8] =
     include_bytes!("../../firmwares/2949-v407/firmware_reconstructed.bin");
+
+/// Full 256KB flash dump from a working M1 V5 TMR running v402 (device 2679).
+/// Contains firmware, config, keymaps, and calibration data.
+const FLASH_V402: &[u8] = include_bytes!("../../firmwares/2679-v402/flash_256k.bin");
 
 fn main() {
     // Catch panics so the elevated console window stays open
@@ -44,7 +48,7 @@ fn append_log(msg: &str) -> std::io::Result<()> {
 }
 
 fn run() -> Result<()> {
-    println!("MonsGeek Keyboard Recovery Tool v0.2.2");
+    println!("MonsGeek Keyboard Recovery Tool v0.3.0");
     println!("======================================\n");
 
     let dev = try_open_device()?;
@@ -67,22 +71,24 @@ fn run() -> Result<()> {
 
     println!("What would you like to do?");
     println!("  1) Factory reset (erase settings, keymaps, macros — keeps firmware + calibration)");
-    println!("  2) Flash stock firmware v407 + factory reset");
-    println!("  3) Deep reset (factory reset + erase calibration data — requires recalibration)");
-    println!("  4) Flash a custom firmware file");
-    println!("  5) Read device info");
-    println!("  6) Dump flash to file (for diagnosis)");
+    println!("  2) Flash stock firmware v407 (device 2949) + reference calibration");
+    println!("  3) Flash stock firmware v402 (device 2679) — full image with calibration");
+    println!("  4) Deep reset (factory reset + erase calibration data — requires recalibration)");
+    println!("  5) Flash a custom firmware file");
+    println!("  6) Read device info");
+    println!("  7) Dump flash to file (for diagnosis)");
     println!();
 
-    let choice = prompt("Choice [1-6]")?;
+    let choice = prompt("Choice [1-7]")?;
 
     match choice.trim() {
         "1" => cmd_factory_reset(&dev)?,
-        "2" => cmd_flash_stock(&dev)?,
-        "3" => cmd_deep_reset(&dev)?,
-        "4" => cmd_flash_custom(&dev)?,
-        "5" => cmd_info(&dev, &id_data)?,
-        "6" => cmd_dump(&dev)?,
+        "2" => cmd_flash_stock_v407(&dev)?,
+        "3" => cmd_flash_stock_v402(&dev)?,
+        "4" => cmd_deep_reset(&dev)?,
+        "5" => cmd_flash_custom(&dev)?,
+        "6" => cmd_info(&dev, &id_data)?,
+        "7" => cmd_dump(&dev)?,
         _ => println!("Invalid choice."),
     }
 
@@ -164,11 +170,11 @@ fn cmd_factory_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_flash_stock(dev: &dfuse::DfuSeDevice) -> Result<()> {
-    println!(
-        "\nThis will flash stock firmware v407 ({} bytes) and erase all user data.",
-        FIRMWARE_V407.len()
-    );
+fn cmd_flash_stock_v407(dev: &dfuse::DfuSeDevice) -> Result<()> {
+    println!("\nThis will flash stock firmware v407 (device 2949), erase user data,");
+    println!("and write reference calibration from a known-good M1 V5 TMR board.");
+    println!("  Firmware:    {} bytes", FIRMWARE_V407.len());
+    println!("  Calibration: from reference board (may need recalibration for best results)");
     if !confirm("Proceed?")? {
         println!("Aborted.");
         return Ok(());
@@ -184,8 +190,61 @@ fn cmd_flash_stock(dev: &dfuse::DfuSeDevice) -> Result<()> {
     println!("Erasing user data (config, keymaps, macros)...");
     dev.write_data(flash_map::CONFIG_START, flash_map::USER_DATA_ERASE)?;
 
+    // Write reference calibration from v402 dump
+    let cal_offset = (flash_map::CALIBRATION_START - flash_map::BOOTLOADER_START) as usize;
+    let cal_end = (flash_map::CALIBRATION_END - flash_map::BOOTLOADER_START) as usize;
+    let cal_data = &FLASH_V402[cal_offset..cal_end];
+    println!(
+        "Writing reference calibration to 0x{:08X} ({}KB)...",
+        flash_map::CALIBRATION_START,
+        flash_map::CALIBRATION_SIZE / 1024,
+    );
+    dev.write_data(flash_map::CALIBRATION_START, cal_data)?;
+
     println!("\nDone! Unplug device, disconnect BOOT0, replug.");
     println!("The keyboard will regenerate default keymaps on first boot.");
+    println!("For best results, recalibrate in the MonsGeek app afterward.");
+    Ok(())
+}
+
+fn cmd_flash_stock_v402(dev: &dfuse::DfuSeDevice) -> Result<()> {
+    let boot_size = (flash_map::FIRMWARE_START - flash_map::BOOTLOADER_START) as usize;
+    let writable = &FLASH_V402[boot_size..];
+
+    // Find last non-0xFF byte to trim trailing erased pages
+    let last_used = writable
+        .iter()
+        .rposition(|&b| b != 0xFF)
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let len = ((last_used as u32 + flash_map::FLASH_PAGE_SIZE - 1)
+        / flash_map::FLASH_PAGE_SIZE
+        * flash_map::FLASH_PAGE_SIZE) as usize;
+    let data = &writable[..len];
+
+    println!("\nThis will flash a complete v402 image (device 2679) from a known-good");
+    println!("M1 V5 TMR board, including firmware, config, keymaps, and calibration.");
+    println!(
+        "  Write: 0x{:08X}..0x{:08X} ({} bytes = {}KB)",
+        flash_map::FIRMWARE_START,
+        flash_map::FIRMWARE_START + data.len() as u32,
+        data.len(),
+        data.len() / 1024,
+    );
+    if !confirm("Proceed?")? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    println!(
+        "Flashing {} bytes to 0x{:08X}...",
+        data.len(),
+        flash_map::FIRMWARE_START,
+    );
+    dev.write_data(flash_map::FIRMWARE_START, data)?;
+
+    println!("\nDone! Unplug device, disconnect BOOT0, replug.");
+    println!("For best results, recalibrate in the MonsGeek app afterward.");
     Ok(())
 }
 
