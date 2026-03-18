@@ -551,76 +551,103 @@ static int handle_patch_info(volatile uint8_t *buf) {
     return 1;
 }
 
-/* ── LED streaming (0xE8) ──────────────────────────────────────────────
+/* ── LED overlay (0xE8) ───────────────────────────────────────────────
  *
- * Page 0-6:  Write 18 keys × RGB directly to g_led_frame_buf (WS2812 encoded)
- * Page 0xFF: Commit — copy g_led_frame_buf → g_led_dma_buf for immediate display
- * Page 0xFE: Release — restore built-in LED effect mode
+ * Persistent additive overlay: host-set RGB values are stored in overlay_buf
+ * and added (saturating) to the animation output every frame by
+ * led_overlay_memcpy_and_blend(), which replaces the firmware's frame→DMA
+ * memcpy via a BL patch at 0x080161a8.
  *
- * On first page write, we set led_effect_mode to 0xFF (invalid) so
- * rgb_led_animate()'s switch falls through without touching the frame buffer.
- * On release, the saved mode is restored.
+ * Page 0-6:  Write 18 keys × raw RGB into overlay_buf
+ * Page 0xFF: Commit — no-op (overlay applied every frame automatically)
+ * Page 0xFE: Clear overlay
  *
  * Data layout: buf[3] = page, buf[4..57] = 18×RGB (54 bytes).
  * Host sends row-major indices (page*18 + i), where pos = row*16 + col.
- * Images scale to 16×6 and map pixel (x,y) → pos = y*16+x directly.
  *
  * Uses static_led_pos_tbl from firmware ROM (0x08025031, via fw_symbols.ld).
  * Row-major: static_led_pos_tbl[row*16+col] → WS2812 strip index (0–81).
- * 0xFF = no LED (gap for wide keys / empty slots).  Gaps are part of
- * the rectangular coordinate space — the host is aware and simply gets
- * no visible output at those positions. */
-static uint8_t stream_active;
-static uint8_t saved_led_effect_mode;
+ * 0xFF = no LED (gap for wide keys / empty slots). */
+
+/* Per-LED RGB overlay: additive, saturating. 0 = no overlay for that channel. */
+static uint8_t overlay_buf[LED_COUNT * 3];  /* 82×3 = 246 bytes in .bss */
+static uint8_t overlay_active;              /* non-zero if any overlay pixel set */
+
+/* Decode one color byte from WS2812 SPI encoding (8 SPI bytes → 1 data byte).
+ * Each SPI byte's bit 4 carries one data bit (0xF0 → 1, 0xC0 → 0). */
+static inline uint8_t decode_ws2812_byte(volatile uint8_t *p) {
+    return ((p[0] & 0x10) << 3) | ((p[1] & 0x10) << 2) |
+           ((p[2] & 0x10) << 1) | ((p[3] & 0x10)     ) |
+           ((p[4] & 0x10) >> 1) | ((p[5] & 0x10) >> 2) |
+           ((p[6] & 0x10) >> 3) | ((p[7] & 0x10) >> 4);
+}
+
+/* Replacement for firmware's memcpy(dma_buf, frame_buf, 0x7b0) at 0x080161a8.
+ * Called every scan cycle after led_render_frame writes to g_led_frame_buf.
+ * Copies frame→DMA then applies the additive overlay. */
+void led_overlay_memcpy_and_blend(void *dst, const void *src, uint32_t len) {
+    memcpy(dst, src, len);
+
+    if (!overlay_active)
+        return;
+
+    volatile uint8_t *dma = (volatile uint8_t *)dst;
+    for (int i = 0; i < LED_COUNT; i++) {
+        uint8_t *ov = &overlay_buf[i * 3];
+        if (ov[0] == 0 && ov[1] == 0 && ov[2] == 0)
+            continue;
+
+        volatile uint8_t *p = &dma[i * 24];
+        /* Decode GRB from WS2812, add overlay RGB, re-encode */
+        uint16_t g = decode_ws2812_byte(p);
+        uint16_t r = decode_ws2812_byte(p + 8);
+        uint16_t b = decode_ws2812_byte(p + 16);
+
+        r += ov[0]; if (r > 255) r = 255;
+        g += ov[1]; if (g > 255) g = 255;
+        b += ov[2]; if (b > 255) b = 255;
+
+        encode_ws2812_byte(p,      (uint8_t)g);  /* GRB order */
+        encode_ws2812_byte(p + 8,  (uint8_t)r);
+        encode_ws2812_byte(p + 16, (uint8_t)b);
+    }
+}
 
 static int handle_led_stream(volatile uint8_t *buf) {
     uint8_t page = buf[3];
 
-    if (page == 0xFF) {
-        /* Commit: copy frame buffer to DMA buffer for immediate display */
-        memcpy((void *)&g_led_dma_buf, (void *)&g_led_frame_buf, LED_BUF_SIZE);
+    if (page == 0xFE) {
+        /* Clear overlay */
+        for (int i = 0; i < LED_COUNT * 3; i++)
+            overlay_buf[i] = 0;
+        overlay_active = 0;
         buf[0] = 0;
         return 1;
     }
 
-    if (page == 0xFE) {
-        /* Release: restore built-in LED effect mode */
-        if (stream_active) {
-            stream_active = 0;
-            ((volatile connection_config_t *)&g_fw_config)->led_effect_mode = saved_led_effect_mode;
-        }
+    if (page == 0xFF) {
+        /* Commit — no-op (overlay applied every frame automatically).
+         * Kept for protocol compatibility. */
         buf[0] = 0;
         return 1;
     }
 
     if (page < 7) {
-        /* First page write: suppress built-in animation */
-        if (!stream_active) {
-            stream_active = 1;
-            saved_led_effect_mode = ((volatile connection_config_t *)&g_fw_config)->led_effect_mode;
-            /* 0xFF = invalid mode → rgb_led_animate switch default does nothing */
-            ((volatile connection_config_t *)&g_fw_config)->led_effect_mode = 0xFF;
-        }
-
-        volatile uint8_t *rgb = &buf[4];
+        /* Write overlay RGB values (raw, not WS2812 encoded) */
+        uint8_t *rgb = (uint8_t *)&buf[4];
         uint8_t start = page * 18;
-        volatile uint8_t *frame = (volatile uint8_t *)&g_led_frame_buf;
 
-        /* Row-major position → physical strip index (0xFF = gap, skip). */
         for (int i = 0; i < 18 && (start + i) < MATRIX_LEN; i++) {
             uint32_t pos = start + i;
             uint8_t strip_idx = static_led_pos_tbl[pos];
             if (strip_idx >= LED_COUNT)
                 continue;
-            uint8_t r = rgb[i * 3];
-            uint8_t g = rgb[i * 3 + 1];
-            uint8_t b = rgb[i * 3 + 2];
-            volatile uint8_t *p = &frame[strip_idx * 24];
-            encode_ws2812_byte(p,      g);   /* GRB order for WS2812 */
-            encode_ws2812_byte(p + 8,  r);
-            encode_ws2812_byte(p + 16, b);
+            overlay_buf[strip_idx * 3 + 0] = rgb[i * 3];     /* R */
+            overlay_buf[strip_idx * 3 + 1] = rgb[i * 3 + 1]; /* G */
+            overlay_buf[strip_idx * 3 + 2] = rgb[i * 3 + 2]; /* B */
         }
 
+        overlay_active = 1;
         buf[0] = 0;
         return 1;
     }
@@ -720,6 +747,23 @@ int handle_vendor_cmd(void) {
     if (cmd_buf[0] == 0)
         return 0;
 
+    /* ── OOB guards (bugs 1-3 from oob_hazards.txt) ───────────────── */
+    {
+        uint8_t cmd = cmd_buf[2];
+
+        /* Bug 1: chunked staging overflow — cap chunk_index per command */
+        if (cmd == 0x0A && cmd_buf[5] > 9)  goto reject;  /* SET_KEYMATRIX */
+        if (cmd == 0x10 && cmd_buf[6] > 9)  goto reject;  /* SET_FN_LAYER  */
+        if (cmd == 0x0B && cmd_buf[4] > 9)  goto reject;  /* SET_MACRO     */
+        if (cmd == 0x0C && cmd_buf[5] > 6)  goto reject;  /* SET_USERPIC   */
+
+        /* Bug 2: flash_save_userpic stack overflow — slot_id must be < 5 */
+        if (cmd == 0x0C && cmd_buf[3] >= 5) goto reject;
+
+        /* Bug 3: flash_save_macro flash overflow — macro_id must be < 50 */
+        if (cmd == 0x0B && cmd_buf[3] >= 50) goto reject;
+    }
+
     /* Log vendor command entry (skip 0xE9 to avoid contaminating the log
      * when reading it — each log read would otherwise add 3 bytes) */
     if (cmd_buf[2] != 0xE9) {
@@ -739,4 +783,43 @@ int handle_vendor_cmd(void) {
     default:
         return 0;   /* passthrough to original firmware */
     }
+
+reject:
+    cmd_buf[0] = 0;   /* discard command */
+    return 1;          /* intercepted — skip original */
+}
+
+/* ── Boot-time config validation (bugs 4-5 from oob_hazards.txt) ──────────
+ * Called via BL.W from config_load_all (0x08012376), replacing:
+ *   ldr r4, [pc, #0xEC]   ; r4 = g_fw_config ptr
+ *   ldrb r0, [r4, #0]     ; r0 = profile_id
+ * Must return with r4 = g_fw_config, r0 = clamped profile_id.
+ * r1 is caller-saved (AAPCS) and safe to clobber. */
+
+__attribute__((naked))
+void validate_config_after_load(void) {
+    __asm__ volatile (
+        "ldr  r4, =g_fw_config          \n"
+
+        /* Bug 4: clamp profile_id (offset 0x00) to < 4 */
+        "ldrb r0, [r4, #0]              \n"
+        "cmp  r0, #4                    \n"
+        "blo  1f                        \n"
+        "movs r0, #0                    \n"
+        "strb r0, [r4, #0]             \n"
+        "1:                             \n"
+
+        /* Bug 5: clamp led_effect_mode (offset 0x08) to < 32 */
+        "ldrb r1, [r4, #8]             \n"
+        "cmp  r1, #32                   \n"
+        "blo  2f                        \n"
+        "movs r1, #0                    \n"
+        "strb r1, [r4, #8]             \n"
+        "2:                             \n"
+
+        /* Return: r4 = g_fw_config, r0 = clamped profile_id */
+        "ldrb r0, [r4, #0]             \n"
+        "bx   lr                        \n"
+        ".ltorg                         \n"
+    );
 }

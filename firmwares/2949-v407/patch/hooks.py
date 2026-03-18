@@ -60,9 +60,8 @@ HOOKS = [
         mode="before",
         displace=4,                # push {r4-r12,lr} — 4 bytes, safe
     ),
-    # LED streaming: no hook for rgb_led_animate or led_render_frame (both start with
-    # PC-relative LDR; can't displace). We set led_effect_mode=0 when streaming so
-    # rgb_led_animate returns immediately. Commit copies stream_frame_buf to frame+DMA.
+    # LED overlay: BL-patch the frame→DMA memcpy so our blend function runs every frame.
+    # No hook needed — rgb_led_animate and led_render_frame run normally.
 ]
 
 # ── Binary patches ───────────────────────────────────────────────────────────
@@ -108,6 +107,18 @@ BINARY_PATCHES = [
                 b'\x08\x48\x01\x80\x81\x70\x20\x78\x40\xf0\x04\x00\x20\x70',
                 b'\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf\x00\xbf',
                 "hid_report_check_send blk3: NOP consumer zero+bitmap (7×NOP)"),
+    # ── Boot-time config validation (bugs 4-5 from oob_hazards.txt) ──────
+    # config_load_all: replace ldr r4,[pc,#0xEC]; ldrb r0,[r4,#0] with
+    # BL validate_config_after_load (returns r4=g_fw_config, r0=profile_id)
+    BinaryPatch(0x08012376, bytes.fromhex('3b4c2078'), b'',
+                "config_load_all: validate profile_id+led_effect_mode after flash read",
+                bl_symbol='validate_config_after_load'),
+    # ── LED overlay blend ────────────────────────────────────────────────
+    # Replace memcpy(dma_buf, frame_buf, 0x7b0) in firmware_main's scan loop
+    # with our blend function that copies then applies the additive overlay.
+    BinaryPatch(0x080161A8, bytes.fromhex('eff75cfa'), b'',
+                "firmware_main: overlay blend in frame→DMA memcpy",
+                bl_symbol='led_overlay_memcpy_and_blend'),
 ]
 
 # ── Memory map ───────────────────────────────────────────────────────────────
