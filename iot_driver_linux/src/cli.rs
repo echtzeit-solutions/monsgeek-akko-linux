@@ -525,7 +525,7 @@ pub enum Commands {
         /// Effect name (breathe, pulse, police, etc.)
         effect: String,
         /// Color/variable bindings: name=value (e.g. color=red, status=green)
-        #[arg(long = "var", short = 'V')]
+        #[arg(long = "var", short = 'v')]
         vars: Vec<String>,
         /// Priority (higher wins conflicts, default 0)
         #[arg(long, default_value = "0")]
@@ -595,7 +595,7 @@ pub enum EffectCommands {
         /// Target keys (e.g. F1 F2 Esc) — defaults to F1-F4
         keys: Vec<String>,
         /// Variable bindings: name=value
-        #[arg(long = "var", short = 'V')]
+        #[arg(long = "var", short = 'v')]
         vars: Vec<String>,
         /// Preview FPS (1-60)
         #[arg(long, default_value = "15")]
@@ -609,7 +609,7 @@ pub enum EffectCommands {
         /// Target keys (at least one required)
         keys: Vec<String>,
         /// Variable bindings: name=value
-        #[arg(long = "var", short = 'V')]
+        #[arg(long = "var", short = 'v')]
         vars: Vec<String>,
     },
 }
