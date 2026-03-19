@@ -43,6 +43,29 @@ pub fn apply_power_budget(leds: &mut [(u8, u8, u8); MATRIX_LEN], budget_ma: u32)
     }
 }
 
+/// Send only changed LEDs as sparse overlay updates (matrix-indexed).
+///
+/// Compares `prev` and `curr` frames, collects differing indices, and sends
+/// via the 0xFD sparse protocol. Firmware handles matrix→strip mapping.
+/// Returns `true` if any data was sent.
+pub fn send_overlay_diff(
+    kb: &monsgeek_keyboard::KeyboardInterface,
+    prev: &[(u8, u8, u8); MATRIX_LEN],
+    curr: &[(u8, u8, u8); MATRIX_LEN],
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut entries = Vec::new();
+    for i in 0..MATRIX_LEN {
+        if prev[i] != curr[i] {
+            entries.push((i as u8, curr[i].0, curr[i].1, curr[i].2));
+        }
+    }
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    kb.stream_led_sparse(&entries)?;
+    Ok(true)
+}
+
 /// Send a full frame of RGB data to the keyboard.
 ///
 /// `leds` has `MATRIX_LEN` entries (row-major: index = row*16 + col).

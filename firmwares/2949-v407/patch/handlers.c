@@ -616,6 +616,27 @@ void led_overlay_memcpy_and_blend(void *dst, const void *src, uint32_t len) {
 static int handle_led_stream(volatile uint8_t *buf) {
     uint8_t page = buf[3];
 
+    if (page == 0xFD) {
+        /* Sparse overlay: buf[4]=count, buf[5..]=([matrix_idx,R,G,B] × count)
+         * 4 bytes per LED, max 13 entries (13×4+1 = 53, fits in 54 payload bytes).
+         * Firmware maps matrix_idx → strip_idx via static_led_pos_tbl. */
+        uint8_t count = buf[4];
+        if (count > 13) count = 13;
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t *entry = (uint8_t *)&buf[5 + i * 4];
+            uint8_t matrix_idx = entry[0];
+            if (matrix_idx >= MATRIX_LEN) continue;
+            uint8_t strip_idx = static_led_pos_tbl[matrix_idx];
+            if (strip_idx >= LED_COUNT) continue;
+            overlay_buf[strip_idx * 3 + 0] = entry[1];  /* R */
+            overlay_buf[strip_idx * 3 + 1] = entry[2];  /* G */
+            overlay_buf[strip_idx * 3 + 2] = entry[3];  /* B */
+        }
+        overlay_active = 1;
+        buf[0] = 0;
+        return 1;
+    }
+
     if (page == 0xFE) {
         /* Clear overlay */
         for (int i = 0; i < LED_COUNT * 3; i++)

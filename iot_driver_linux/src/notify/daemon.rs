@@ -1,4 +1,8 @@
 //! Notification daemon — D-Bus server + render loop + LED writer.
+//!
+//! Uses the persistent additive overlay: only sends LED updates when the
+//! rendered frame actually changes, avoiding constant USB traffic that
+//! interferes with keyboard scan timing.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,7 +12,7 @@ use super::dbus::{NotifyInterface, SharedStore};
 use super::keymap::MATRIX_LEN;
 use super::state::{self, NotificationStore};
 use crate::effect::EffectLibrary;
-use crate::led_stream::{apply_power_budget, send_full_frame};
+use crate::led_stream::{apply_power_budget, send_overlay_diff};
 
 /// Run the notification daemon (blocking).
 ///
@@ -17,7 +21,8 @@ use crate::led_stream::{apply_power_budget, send_full_frame};
 /// - Loads the effect library from `~/.config/monsgeek/effects.toml`
 /// - Starts a D-Bus server on `org.monsgeek.Notify1`
 /// - Runs a render loop at the specified FPS
-/// - Releases LEDs on Ctrl-C
+/// - Only sends LED updates when the frame changes (persistent overlay)
+/// - Clears overlay on Ctrl-C
 pub async fn run(
     kb: monsgeek_keyboard::KeyboardInterface,
     fps: u32,
@@ -59,9 +64,10 @@ pub async fn run(
         .await?;
 
     println!("D-Bus: org.monsgeek.Notify1 on session bus");
+    let effective_fps = fps.min(10);
     println!(
-        "Render: {} FPS, power budget {}",
-        fps,
+        "Render: {} FPS (sparse delta), power budget {}",
+        effective_fps,
         if power_budget > 0 {
             format!("{power_budget}mA")
         } else {
@@ -70,9 +76,11 @@ pub async fn run(
     );
     println!("Ready. Ctrl+C to stop.");
 
-    // Render loop
-    let frame_duration = std::time::Duration::from_secs_f64(1.0 / fps as f64);
+    // Render loop — sparse delta sends at capped FPS.
+    // Cap at 10 FPS max to minimize USB interrupt load (prevents stuck keys).
+    let frame_duration = std::time::Duration::from_secs_f64(1.0 / effective_fps as f64);
     let mut interval = tokio::time::interval(frame_duration);
+    let mut prev_frame = [(0u8, 0u8, 0u8); MATRIX_LEN];
 
     while running.load(Ordering::SeqCst) {
         interval.tick().await;
@@ -85,14 +93,17 @@ pub async fn run(
 
         apply_power_budget(&mut frame, power_budget);
 
-        if let Err(e) = send_full_frame(&kb, &frame) {
-            eprintln!("LED write error: {e}");
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if frame != prev_frame {
+            if let Err(e) = send_overlay_diff(&kb, &prev_frame, &frame) {
+                eprintln!("LED write error: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            prev_frame = frame;
         }
     }
 
-    // Cleanup
-    println!("\nReleasing LED stream...");
+    // Cleanup: clear overlay so animation shows through cleanly
+    println!("\nClearing overlay...");
     kb.stream_led_release().ok();
     drop(conn);
     println!("Done.");

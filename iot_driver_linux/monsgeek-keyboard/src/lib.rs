@@ -1478,6 +1478,32 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    /// Send sparse overlay update: set specific LEDs by matrix index.
+    ///
+    /// Each entry is `(matrix_idx, r, g, b)` where `matrix_idx = row*16 + col`.
+    /// The firmware maps matrix index to strip index via `static_led_pos_tbl`.
+    /// Max 13 entries per packet; larger slices are chunked automatically.
+    pub fn stream_led_sparse(&self, entries: &[(u8, u8, u8, u8)]) -> Result<(), KeyboardError> {
+        for chunk in entries.chunks(13) {
+            let mut data = vec![0u8; 2 + chunk.len() * 4]; // page + count + entries
+            data[0] = 0xFD;
+            data[1] = chunk.len() as u8;
+            for (i, &(idx, r, g, b)) in chunk.iter().enumerate() {
+                data[2 + i * 4] = idx;
+                data[2 + i * 4 + 1] = r;
+                data[2 + i * 4 + 2] = g;
+                data[2 + i * 4 + 3] = b;
+            }
+            self.transport.send_command_with_delay(
+                cmd::LED_STREAM,
+                &data,
+                ChecksumType::None,
+                0,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Release LED streaming — signals end of streaming session
     pub fn stream_led_release(&self) -> Result<(), KeyboardError> {
         self.transport
