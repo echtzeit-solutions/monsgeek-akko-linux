@@ -22,7 +22,7 @@ use super::super::App;
 // ============================================================================
 
 /// Notify tab state — effect editor, daemon control, preview.
-pub(crate) struct NotifyTabState {
+pub(in crate::tui) struct NotifyTabState {
     // Daemon
     pub daemon_running: bool,
     pub daemon_cancel: Option<Arc<AtomicBool>>,
@@ -89,7 +89,7 @@ impl Default for NotifyTabState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) enum NotifyFocus {
+pub(in crate::tui) enum NotifyFocus {
     #[default]
     EffectList,
     KeyframeList,

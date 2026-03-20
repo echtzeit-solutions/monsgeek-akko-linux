@@ -18,7 +18,7 @@ use super::super::App;
 
 /// Layer filter for the Remaps tab.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) enum RemapLayerView {
+pub(in crate::tui) enum RemapLayerView {
     #[default]
     Both,
     L0,
@@ -57,7 +57,7 @@ impl RemapLayerView {
 
 /// Which binding type is selected in the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BindingType {
+pub(in crate::tui) enum BindingType {
     Disabled,
     Key,
     Combo,
@@ -122,7 +122,7 @@ impl BindingType {
 
 /// Which field is focused in the binding editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BindingField {
+pub(in crate::tui) enum BindingField {
     Type,
     Filter,
     KeyList,
@@ -136,7 +136,7 @@ pub(crate) enum BindingField {
 
 /// Which part of a macro event is being edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MacroEventField {
+pub(in crate::tui) enum MacroEventField {
     Action,
     Key,
     Delay,
@@ -144,7 +144,7 @@ pub(crate) enum MacroEventField {
 
 /// Focus model for the remaps tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum RemapFocus {
+pub(in crate::tui) enum RemapFocus {
     #[default]
     List,
     Editor,
@@ -154,7 +154,7 @@ pub(crate) enum RemapFocus {
 // Constants
 // ============================================================================
 
-pub(crate) const CONSUMER_KEYS: &[(u16, &str)] = &[
+pub(in crate::tui) const CONSUMER_KEYS: &[(u16, &str)] = &[
     (0x00B5, "Next Track"),
     (0x00B6, "Previous Track"),
     (0x00B7, "Stop"),
@@ -171,14 +171,14 @@ pub(crate) const CONSUMER_KEYS: &[(u16, &str)] = &[
     (0x0223, "Browser Home"),
 ];
 
-pub(crate) const LED_CONTROLS: &[([u8; 3], &str)] = &[
+pub(in crate::tui) const LED_CONTROLS: &[([u8; 3], &str)] = &[
     ([2, 1, 0], "Brightness Up"),
     ([2, 2, 0], "Brightness Down"),
     ([3, 1, 0], "Speed Up"),
     ([3, 2, 0], "Speed Down"),
 ];
 
-pub(crate) const MODIFIER_LIST: &[(u8, &str)] = &[
+pub(in crate::tui) const MODIFIER_LIST: &[(u8, &str)] = &[
     (crate::key_action::mods::LCTRL, "LCtrl"),
     (crate::key_action::mods::LSHIFT, "LShift"),
     (crate::key_action::mods::LALT, "LAlt"),
@@ -193,7 +193,7 @@ pub(crate) const MODIFIER_LIST: &[(u8, &str)] = &[
 // Helpers
 // ============================================================================
 
-pub(crate) fn all_hid_keys() -> Vec<(u8, &'static str)> {
+pub(in crate::tui) fn all_hid_keys() -> Vec<(u8, &'static str)> {
     let mut keys = Vec::new();
     for code in 0x04..=0x73u8 {
         let name = key_name(code);
@@ -267,7 +267,7 @@ pub(in crate::tui) fn text_preview_from_events(events: &[monsgeek_keyboard::Macr
 // ============================================================================
 
 /// Inline binding editor (always visible in the right panel when a key is selected).
-pub(crate) struct BindingEditor {
+pub(in crate::tui) struct BindingEditor {
     pub binding_type: BindingType,
     pub field: BindingField,
     // Key type

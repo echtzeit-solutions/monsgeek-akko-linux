@@ -18,7 +18,7 @@ use crate::tui::App;
 
 /// Which color is being edited with hex input
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) enum HexColorTarget {
+pub(in crate::tui) enum HexColorTarget {
     #[default]
     MainLed,
     SideLed,
@@ -26,7 +26,7 @@ pub(crate) enum HexColorTarget {
 
 /// Tag identifying what each row in the Device Info list controls
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) enum InfoTag {
+pub(in crate::tui) enum InfoTag {
     #[default]
     ReadOnly,
     Separator,

@@ -12,6 +12,7 @@ use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, Precision};
 
 use super::super::shared::{AsyncResult, LoadState, SpinnerConfig, TriggerViewMode};
 use super::super::App;
+use super::depth::get_key_label;
 
 // ============================================================================
 // Types
@@ -19,7 +20,7 @@ use super::super::App;
 
 /// Trigger edit modal target - what we're editing
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum TriggerEditTarget {
+pub(in crate::tui) enum TriggerEditTarget {
     /// Edit global settings (applies to all keys)
     Global,
     /// Edit specific key settings
@@ -28,7 +29,7 @@ pub(crate) enum TriggerEditTarget {
 
 /// Editable field in trigger settings
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum TriggerField {
+pub(in crate::tui) enum TriggerField {
     Actuation,
     Release,
     RtPress,
@@ -39,7 +40,7 @@ pub(crate) enum TriggerField {
 }
 
 impl TriggerField {
-    pub(crate) fn label(&self) -> &'static str {
+    pub(in crate::tui) fn label(&self) -> &'static str {
         match self {
             Self::Actuation => "Actuation",
             Self::Release => "Release",
@@ -51,7 +52,7 @@ impl TriggerField {
         }
     }
 
-    pub(crate) fn all() -> &'static [TriggerField] {
+    pub(in crate::tui) fn all() -> &'static [TriggerField] {
         &[
             Self::Actuation,
             Self::Release,
@@ -64,7 +65,7 @@ impl TriggerField {
     }
 
     /// Get spinner configuration for this field (None for Mode which is cycled)
-    pub(crate) fn spinner_config(&self) -> Option<SpinnerConfig> {
+    pub(in crate::tui) fn spinner_config(&self) -> Option<SpinnerConfig> {
         match self {
             Self::Actuation | Self::Release => Some(SpinnerConfig {
                 min: 0.1,
@@ -97,7 +98,7 @@ impl TriggerField {
 
 /// Trigger edit modal state
 #[derive(Debug, Clone)]
-pub(crate) struct TriggerEditModal {
+pub(in crate::tui) struct TriggerEditModal {
     /// What we're editing (global or per-key)
     pub target: TriggerEditTarget,
     /// Currently focused field
@@ -118,7 +119,7 @@ pub(crate) struct TriggerEditModal {
 
 impl TriggerEditModal {
     /// Create modal for editing global settings
-    pub(crate) fn new_global(triggers: &TriggerSettings, precision: Precision) -> Self {
+    pub(in crate::tui) fn new_global(triggers: &TriggerSettings, precision: Precision) -> Self {
         let factor = precision.factor() as f32;
         Self {
             target: TriggerEditTarget::Global,
@@ -136,7 +137,7 @@ impl TriggerEditModal {
     }
 
     /// Create modal for editing a specific key
-    pub(crate) fn new_per_key(
+    pub(in crate::tui) fn new_per_key(
         key_index: usize,
         triggers: &TriggerSettings,
         precision: Precision,
@@ -163,15 +164,15 @@ impl TriggerEditModal {
         }
     }
 
-    pub(crate) fn current_field(&self) -> TriggerField {
+    pub(in crate::tui) fn current_field(&self) -> TriggerField {
         TriggerField::all()[self.field_index]
     }
 
-    pub(crate) fn next_field(&mut self) {
+    pub(in crate::tui) fn next_field(&mut self) {
         self.field_index = (self.field_index + 1) % TriggerField::all().len();
     }
 
-    pub(crate) fn prev_field(&mut self) {
+    pub(in crate::tui) fn prev_field(&mut self) {
         self.field_index = if self.field_index == 0 {
             TriggerField::all().len() - 1
         } else {
@@ -180,7 +181,7 @@ impl TriggerEditModal {
     }
 
     /// Get the current value for the selected field
-    pub(crate) fn current_value(&self) -> f32 {
+    pub(in crate::tui) fn current_value(&self) -> f32 {
         match self.current_field() {
             TriggerField::Actuation => self.actuation_mm,
             TriggerField::Release => self.release_mm,
@@ -193,7 +194,7 @@ impl TriggerEditModal {
     }
 
     /// Set the value for the selected field
-    pub(crate) fn set_current_value(&mut self, value: f32) {
+    pub(in crate::tui) fn set_current_value(&mut self, value: f32) {
         match self.current_field() {
             TriggerField::Actuation => self.actuation_mm = value,
             TriggerField::Release => self.release_mm = value,
@@ -206,7 +207,7 @@ impl TriggerEditModal {
     }
 
     /// Increment the current field value (using spinner config)
-    pub(crate) fn increment_current(&mut self, coarse: bool) {
+    pub(in crate::tui) fn increment_current(&mut self, coarse: bool) {
         if let Some(config) = self.current_field().spinner_config() {
             let new_value = config.increment(self.current_value(), coarse);
             self.set_current_value(new_value);
@@ -216,7 +217,7 @@ impl TriggerEditModal {
     }
 
     /// Decrement the current field value (using spinner config)
-    pub(crate) fn decrement_current(&mut self, coarse: bool) {
+    pub(in crate::tui) fn decrement_current(&mut self, coarse: bool) {
         if let Some(config) = self.current_field().spinner_config() {
             let new_value = config.decrement(self.current_value(), coarse);
             self.set_current_value(new_value);
@@ -226,7 +227,7 @@ impl TriggerEditModal {
     }
 
     /// Cycle mode forward: Normal -> RT -> DKS -> SnapTap -> Normal
-    pub(crate) fn cycle_mode(&mut self) {
+    pub(in crate::tui) fn cycle_mode(&mut self) {
         self.mode = match self.mode & 0x7F {
             0 => 0x80,                       // Normal -> RT
             _ if self.mode & 0x80 != 0 => 2, // RT -> DKS
@@ -237,7 +238,7 @@ impl TriggerEditModal {
     }
 
     /// Cycle mode backward: Normal <- RT <- DKS <- SnapTap <- Normal
-    pub(crate) fn cycle_mode_reverse(&mut self) {
+    pub(in crate::tui) fn cycle_mode_reverse(&mut self) {
         self.mode = match self.mode & 0x7F {
             0 if self.mode & 0x80 != 0 => 0, // RT -> Normal
             0 => 7,                          // Normal -> SnapTap
@@ -248,7 +249,7 @@ impl TriggerEditModal {
     }
 
     /// Add a depth sample to history
-    pub(crate) fn push_depth(&mut self, depth_mm: f32) {
+    pub(in crate::tui) fn push_depth(&mut self, depth_mm: f32) {
         if self.depth_history.len() >= 100 {
             self.depth_history.pop_front();
         }
@@ -1253,17 +1254,4 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
 
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, area);
-}
-
-// ============================================================================
-// Private helpers
-// ============================================================================
-
-/// Get key label for display - use device profile matrix key names
-fn get_key_label(app: &App, index: usize) -> String {
-    app.matrix_key_names
-        .get(index)
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .unwrap_or_default()
 }
