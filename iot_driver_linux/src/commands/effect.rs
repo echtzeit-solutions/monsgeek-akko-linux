@@ -118,15 +118,15 @@ pub fn preview(name: &str, keys: &[String], var_args: &[String], fps: u32) -> Co
     // Resolve keys to matrix indices
     let mut indices = Vec::new();
     for key in keys {
-        let idx = keymap::parse_key_target(key)?;
-        indices.extend(idx);
+        let target = keymap::parse_key_target(key)?;
+        indices.extend(target.indices);
     }
 
     if indices.is_empty() {
         // Default: show on F1-F4
         for key in &["F1", "F2", "F3", "F4"] {
-            if let Ok(idx) = keymap::parse_key_target(key) {
-                indices.extend(idx);
+            if let Ok(target) = keymap::parse_key_target(key) {
+                indices.extend(target.indices);
             }
         }
     }
@@ -157,8 +157,8 @@ pub fn play(
     // Resolve keys
     let mut indices = Vec::new();
     for key in keys {
-        let idx = keymap::parse_key_target(key)?;
-        indices.extend(idx);
+        let target = keymap::parse_key_target(key)?;
+        indices.extend(target.indices);
     }
 
     if indices.is_empty() {

@@ -3,7 +3,7 @@
 //! Bus name: `org.monsgeek.Notify1`
 //! Object path: `/org/monsgeek/Notify1`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -42,14 +42,20 @@ impl NotifyInterface {
         ttl_ms: i32,
         vars: BTreeMap<String, String>,
     ) -> zbus::fdo::Result<u64> {
-        let matrix_indices =
-            keymap::parse_key_target(key).map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+        let target = keymap::parse_key_target(key).map_err(zbus::fdo::Error::InvalidArgs)?;
 
         let def = self.effects.get(effect_name).ok_or_else(|| {
             zbus::fdo::Error::InvalidArgs(format!("unknown effect: {effect_name}"))
         })?;
 
-        let resolved = effect::resolve(def, &vars).map_err(|e| {
+        // Extract stagger before passing vars to effect resolver
+        let mut effect_vars = vars;
+        let stagger_ms: f64 = effect_vars
+            .remove("stagger")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+
+        let resolved = effect::resolve(def, &effect_vars).map_err(|e| {
             let required = effect::required_variables(def);
             zbus::fdo::Error::InvalidArgs(format!(
                 "{e} (required variables: {})",
@@ -57,8 +63,20 @@ impl NotifyInterface {
             ))
         })?;
 
+        // Compute per-key stagger offsets
+        let stagger_offsets: HashMap<usize, f64> = if stagger_ms > 0.0 {
+            target
+                .indices
+                .iter()
+                .zip(&target.slots)
+                .map(|(&idx, &slot)| (idx, slot as f64 * stagger_ms))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
         // TTL: -1 = use effect default, 0 = no expiry, >0 = explicit ms
-        let ttl = if ttl_ms > 0 {
+        let mut ttl = if ttl_ms > 0 {
             Some(Duration::from_millis(ttl_ms as u64))
         } else if ttl_ms == -1 {
             def.ttl_ms
@@ -68,15 +86,27 @@ impl NotifyInterface {
             None
         };
 
+        // Extend TTL to account for stagger: last key needs its full animation
+        if stagger_ms > 0.0 {
+            if let Some(max_slot) = target.slots.iter().max() {
+                let extension_ms = *max_slot as f64 * stagger_ms;
+                if extension_ms > 0.0 {
+                    let ext = Duration::from_secs_f64(extension_ms / 1000.0);
+                    ttl = ttl.map(|t| t + ext);
+                }
+            }
+        }
+
         let notif = Notification {
             id: 0,
             source: source.to_string(),
             effect_name: effect_name.to_string(),
-            matrix_indices,
+            matrix_indices: target.indices,
             resolved,
             priority,
             ttl,
             created: Instant::now(),
+            stagger_offsets,
         };
 
         let mut store = self.store.lock().await;
@@ -93,10 +123,9 @@ impl NotifyInterface {
 
     /// Acknowledge all notifications on a key.
     async fn acknowledge_key(&self, key: &str) -> zbus::fdo::Result<()> {
-        let indices =
-            keymap::parse_key_target(key).map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+        let target = keymap::parse_key_target(key).map_err(zbus::fdo::Error::InvalidArgs)?;
         let mut store = self.store.lock().await;
-        store.remove_by_key(&indices);
+        store.remove_by_key(&target.indices);
         Ok(())
     }
 

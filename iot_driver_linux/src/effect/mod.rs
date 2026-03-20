@@ -237,6 +237,12 @@ impl EffectLibrary {
     pub fn names(&self) -> Vec<&str> {
         self.effects.keys().map(|s| s.as_str()).collect()
     }
+
+    /// Save the library to the default config path.
+    pub fn save_default(&self) -> Result<(), String> {
+        let content = toml::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
+        std::fs::write(default_effects_path(), content).map_err(|e| format!("write: {e}"))
+    }
 }
 
 /// Path to the default effects TOML file.
@@ -597,6 +603,7 @@ description = "Smooth fade in/out"
 keyframes = [
     { d = "$half:1000", v = 0.0, easing = "EaseInOut" },
     { d = "$half:1000", v = 1.0, easing = "EaseInOut" },
+    { d = 0,            v = 0.0 },
 ]
 
 [flash]
@@ -660,7 +667,7 @@ mod tests {
         assert!(lib.effects.contains_key("police"));
         assert!(lib.effects.contains_key("rainbow"));
         assert!(lib.effects.contains_key("solid"));
-        assert_eq!(lib.effects["breathe"].keyframes.len(), 2);
+        assert_eq!(lib.effects["breathe"].keyframes.len(), 3);
     }
 
     #[test]

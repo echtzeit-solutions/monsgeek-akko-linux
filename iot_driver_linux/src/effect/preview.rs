@@ -161,7 +161,7 @@ fn run_loop(
 }
 
 /// Build 3-char labels for each matrix position from the key name table.
-fn build_labels() -> Vec<String> {
+pub fn build_labels() -> Vec<String> {
     let mut labels = vec![String::new(); MATRIX_LEN];
 
     // M1_V5_HE_KEY_NAMES is column-major: index = col * 6 + row

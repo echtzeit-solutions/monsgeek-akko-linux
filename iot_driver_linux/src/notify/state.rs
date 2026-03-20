@@ -1,6 +1,6 @@
 //! Notification state management — per-key priority stacks.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use super::keymap::MATRIX_LEN;
@@ -17,6 +17,8 @@ pub struct Notification {
     pub priority: i32,
     pub ttl: Option<Duration>,
     pub created: Instant,
+    /// Per-key stagger delay in ms. Keys not in this map start immediately.
+    pub stagger_offsets: HashMap<usize, f64>,
 }
 
 impl Notification {
@@ -28,10 +30,20 @@ impl Notification {
         }
     }
 
-    /// Evaluate the effect at the current time.
-    pub fn evaluate(&self) -> Rgb {
+    /// Evaluate the effect for a specific key at the current time,
+    /// accounting for per-key stagger delay.
+    pub fn evaluate_at(&self, matrix_idx: usize) -> Rgb {
         let elapsed_ms = self.created.elapsed().as_secs_f64() * 1000.0;
-        self.resolved.evaluate(elapsed_ms)
+        let offset = self
+            .stagger_offsets
+            .get(&matrix_idx)
+            .copied()
+            .unwrap_or(0.0);
+        let key_elapsed = elapsed_ms - offset;
+        if key_elapsed < 0.0 {
+            return Rgb::BLACK;
+        }
+        self.resolved.evaluate(key_elapsed)
     }
 }
 
@@ -206,7 +218,7 @@ pub fn render_frame(store: &NotificationStore) -> [(u8, u8, u8); MATRIX_LEN] {
 
     for (idx, pixel) in frame.iter_mut().enumerate() {
         if let Some(notif) = store.active_for_key(idx) {
-            let rgb = notif.evaluate();
+            let rgb = notif.evaluate_at(idx);
             *pixel = (rgb.r, rgb.g, rgb.b);
         }
     }
@@ -233,6 +245,7 @@ mod tests {
             priority,
             ttl: None,
             created: Instant::now(),
+            stagger_offsets: HashMap::new(),
         }
     }
 

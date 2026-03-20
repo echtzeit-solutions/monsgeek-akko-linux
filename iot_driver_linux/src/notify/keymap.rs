@@ -11,6 +11,22 @@ pub const COLS: usize = 16;
 pub const ROWS: usize = 6;
 pub const MATRIX_LEN: usize = COLS * ROWS; // 96
 
+/// Result of parsing a key target string.
+#[derive(Debug, Clone)]
+pub struct KeyTarget {
+    /// Matrix indices (row-major). For text: in character order; others sorted.
+    pub indices: Vec<usize>,
+    /// Per-index stagger slot. `slots[i]` is the stagger multiplier for `indices[i]`.
+    /// For non-text selectors: `[0, 1, 2, ...]` (natural order).
+    /// For text: may have gaps (space = skipped slot).
+    pub slots: Vec<usize>,
+}
+
+/// Physical LED grid column where an unaccounted gap exists per row.
+/// Keys at logical column >= this value need +1 to get the physical column.
+/// Derived from firmware's static_led_pos_tbl vs M1_V5_HE_KEY_NAMES layout.
+const PHYS_GAP_COL: [u8; ROWS] = [1, 1, 1, 1, 12, 9];
+
 /// Return sorted row-major indices for all keys matching a predicate.
 ///
 /// The predicate receives `(row_major_index, key_name)` for each non-empty key.
@@ -22,7 +38,7 @@ fn keys_matching(pred: impl Fn(usize, &str) -> bool) -> Vec<usize> {
         }
         let col = col_major_idx / ROWS;
         let row = col_major_idx % ROWS;
-        let row_major = row * COLS + col;
+        let row_major = pos_to_matrix_index(row as u8, col as u8);
         if pred(row_major, name) {
             result.push(row_major);
         }
@@ -98,9 +114,73 @@ pub fn key_name_to_pos(name: &str) -> Option<(u8, u8)> {
     None
 }
 
-/// Convert a (row, col) position to the row-major matrix index for LED streaming.
+/// Convert a logical (row, col) from the key name table to the physical row-major
+/// matrix index for LED streaming. Accounts for per-row gap columns in the
+/// firmware's `static_led_pos_tbl`.
 pub fn pos_to_matrix_index(row: u8, col: u8) -> usize {
-    row as usize * COLS + col as usize
+    let physical_col = if col >= PHYS_GAP_COL[row as usize] {
+        col as usize + 1
+    } else {
+        col as usize
+    };
+    row as usize * COLS + physical_col
+}
+
+/// Map a character to the key name on the keyboard.
+/// Returns `None` for unmappable characters (space is handled separately).
+fn char_to_key_name(ch: char) -> Option<&'static str> {
+    // Try ASCII first
+    if ch.is_ascii() {
+        return match ch.to_ascii_lowercase() {
+            'a'..='z' => {
+                const LETTERS: &[&str] = &[
+                    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+                    "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+                ];
+                Some(LETTERS[(ch.to_ascii_lowercase() as u8 - b'a') as usize])
+            }
+            '0'..='9' => {
+                const DIGITS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+                Some(DIGITS[(ch as u8 - b'0') as usize])
+            }
+            // Direct key names
+            '`' | '~' => Some("`"),
+            '-' | '_' => Some("-"),
+            '=' | '+' => Some("="),
+            '[' | '{' => Some("["),
+            ']' | '}' => Some("]"),
+            '\\' | '|' => Some("\\"),
+            ';' | ':' => Some(";"),
+            '\'' | '"' => Some("'"),
+            ',' | '<' => Some(","),
+            '.' | '>' => Some("."),
+            '/' | '?' => Some("/"),
+            _ => None,
+        };
+    }
+
+    // Unicode diacritics → base ASCII letter
+    let base = fold_to_ascii(ch)?;
+    char_to_key_name(base)
+}
+
+/// Fold common accented Latin characters to their ASCII base.
+fn fold_to_ascii(ch: char) -> Option<char> {
+    Some(match ch {
+        'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+        'È' | 'É' | 'Ê' | 'Ë' | 'è' | 'é' | 'ê' | 'ë' => 'e',
+        'Ì' | 'Í' | 'Î' | 'Ï' | 'ì' | 'í' | 'î' | 'ï' => 'i',
+        'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
+        'Ù' | 'Ú' | 'Û' | 'Ü' | 'ù' | 'ú' | 'û' | 'ü' => 'u',
+        'Ñ' | 'ñ' => 'n',
+        'Ç' | 'ç' => 'c',
+        'Ý' | 'ý' | 'ÿ' => 'y',
+        'Ð' | 'ð' => 'd',
+        'Ø' | 'ø' => 'o',
+        'Æ' | 'æ' => 'a',
+        'ß' => 's',
+        _ => return None,
+    })
 }
 
 /// Parse a key target string. Accepts:
@@ -115,51 +195,59 @@ pub fn pos_to_matrix_index(row: u8, col: u8) -> usize {
 /// - `modifiers` — Shift, Ctrl, Alt, Win, Fn
 /// - `Q..U` — key range (same row, inclusive)
 /// - `#10..#30` — index range (inclusive)
+/// - `text:HELLO WORLD` — spell text on keyboard (spaces = pauses)
 ///
 /// **Single key selectors**:
 /// - Key name: `F1`, `Esc`, `A`
 /// - Row,col pair: `0,5`
 /// - Matrix index: `#42`
 ///
-/// Returns sorted row-major matrix indices.
-pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
+/// Returns a `KeyTarget` with indices and stagger slots.
+pub fn parse_key_target(s: &str) -> Result<KeyTarget, String> {
     let lower = s.to_ascii_lowercase();
+
+    // --- text: selector ---
+    if let Some(text) = s.strip_prefix("text:") {
+        return parse_text_target(text);
+    }
 
     // --- Group selectors ---
     if lower == "all" {
-        return Ok(keys_matching(|_, _| true));
+        return Ok(KeyTarget::from_sorted(keys_matching(|_, _| true)));
     }
     if lower == "letters" {
-        return Ok(keys_matching(|_, name| {
+        return Ok(KeyTarget::from_sorted(keys_matching(|_, name| {
             name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic()
-        }));
+        })));
     }
     if lower == "frow" {
-        return Ok(keys_matching(|_, name| {
+        return Ok(KeyTarget::from_sorted(keys_matching(|_, name| {
             name.starts_with('F')
                 && name.len() >= 2
                 && name[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n))
-        }));
+        })));
     }
     if lower == "numbers" {
-        return Ok(keys_matching(|_, name| {
+        return Ok(KeyTarget::from_sorted(keys_matching(|_, name| {
             name.len() == 1 && name.as_bytes()[0].is_ascii_digit()
-        }));
+        })));
     }
     if lower == "modifiers" {
         const MODS: &[&str] = &[
             "LShift", "RShift", "LCtrl", "RCtrl", "LAlt", "RAlt", "LWin", "Fn",
         ];
-        return Ok(keys_matching(|_, name| {
+        return Ok(KeyTarget::from_sorted(keys_matching(|_, name| {
             MODS.iter().any(|m| m.eq_ignore_ascii_case(name))
-        }));
+        })));
     }
 
     // row<N>
     if let Some(n_s) = lower.strip_prefix("row") {
         if let Ok(row) = n_s.parse::<usize>() {
             if row < ROWS {
-                return Ok(keys_matching(|idx, _| idx / COLS == row));
+                return Ok(KeyTarget::from_sorted(keys_matching(|idx, _| {
+                    idx / COLS == row
+                })));
             }
             return Err(format!("row out of range: {row} (0-{max})", max = ROWS - 1));
         }
@@ -169,7 +257,9 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
     if let Some(n_s) = lower.strip_prefix("col") {
         if let Ok(col) = n_s.parse::<usize>() {
             if col < COLS {
-                return Ok(keys_matching(|idx, _| idx % COLS == col));
+                return Ok(KeyTarget::from_sorted(keys_matching(|idx, _| {
+                    idx % COLS == col
+                })));
             }
             return Err(format!("col out of range: {col} (0-{max})", max = COLS - 1));
         }
@@ -185,8 +275,9 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
                 return Err(format!("index range is empty: #{l}..#{r}"));
             }
             let end = r.min(MATRIX_LEN - 1);
-            // Only include indices that have a physical key
-            return Ok(keys_matching(|idx, _| idx >= l && idx <= end));
+            return Ok(KeyTarget::from_sorted(keys_matching(|idx, _| {
+                idx >= l && idx <= end
+            })));
         }
 
         // Key..Key — same-row range
@@ -203,13 +294,15 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
         } else {
             (r_col, l_col)
         };
+        let phys_min = pos_to_matrix_index(l_row, min_col) % COLS;
+        let phys_max = pos_to_matrix_index(l_row, max_col) % COLS;
         let row = l_row as usize;
-        return Ok(keys_matching(|idx, _| {
+        return Ok(KeyTarget::from_sorted(keys_matching(|idx, _| {
             idx / COLS == row && {
                 let c = idx % COLS;
-                c >= min_col as usize && c <= max_col as usize
+                c >= phys_min && c <= phys_max
             }
-        }));
+        })));
     }
 
     // --- Single-key selectors ---
@@ -225,7 +318,7 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
             .parse()
             .map_err(|_| format!("invalid col: {col_s}"))?;
         if (row as usize) < ROWS && (col as usize) < COLS {
-            return Ok(vec![pos_to_matrix_index(row, col)]);
+            return Ok(KeyTarget::from_sorted(vec![pos_to_matrix_index(row, col)]));
         } else {
             return Err(format!("position out of range: {row},{col}"));
         }
@@ -237,7 +330,7 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
             .parse()
             .map_err(|_| format!("invalid index: {idx_s}"))?;
         if idx < MATRIX_LEN {
-            return Ok(vec![idx]);
+            return Ok(KeyTarget::from_sorted(vec![idx]));
         } else {
             return Err(format!("index out of range: {idx}"));
         }
@@ -245,10 +338,53 @@ pub fn parse_key_target(s: &str) -> Result<Vec<usize>, String> {
 
     // Try key name
     if let Some((row, col)) = key_name_to_pos(s) {
-        return Ok(vec![pos_to_matrix_index(row, col)]);
+        return Ok(KeyTarget::from_sorted(vec![pos_to_matrix_index(row, col)]));
     }
 
     Err(format!("unknown key: {s}"))
+}
+
+impl KeyTarget {
+    /// Build from a sorted list of indices with sequential slot numbers.
+    fn from_sorted(indices: Vec<usize>) -> Self {
+        let slots = (0..indices.len()).collect();
+        Self { indices, slots }
+    }
+}
+
+/// Parse `text:` selector — map characters to keys in order.
+fn parse_text_target(text: &str) -> Result<KeyTarget, String> {
+    let mut indices = Vec::new();
+    let mut slots = Vec::new();
+    let mut slot = 0usize;
+    let mut seen = std::collections::HashSet::new();
+
+    for ch in text.chars() {
+        if ch == ' ' {
+            // Space = pause (increment slot, no key)
+            slot += 1;
+            continue;
+        }
+
+        if let Some(key_name) = char_to_key_name(ch) {
+            if let Some((row, col)) = key_name_to_pos(key_name) {
+                let idx = pos_to_matrix_index(row, col);
+                if seen.insert(idx) {
+                    indices.push(idx);
+                    slots.push(slot);
+                }
+                // Always advance slot even for duplicates
+            }
+        }
+        // Unknown chars are silently skipped (no slot advance)
+        slot += 1;
+    }
+
+    if indices.is_empty() {
+        return Err(format!("text contains no mappable characters: {text}"));
+    }
+
+    Ok(KeyTarget { indices, slots })
 }
 
 #[cfg(test)]
@@ -283,30 +419,34 @@ mod tests {
 
     #[test]
     fn test_matrix_index() {
-        // F1 at (0,1) → index 1 in row-major
-        assert_eq!(pos_to_matrix_index(0, 1), 1);
-        // Space at (5,6) → index 86
+        // Esc at (0,0) → col 0 < gap 1, no offset → index 0
+        assert_eq!(pos_to_matrix_index(0, 0), 0);
+        // F1 at (0,1) → col 1 >= gap 1, +1 → physical col 2 → index 2
+        assert_eq!(pos_to_matrix_index(0, 1), 2);
+        // Space at (5,6) → col 6 < gap 9, no offset → index 86
         assert_eq!(pos_to_matrix_index(5, 6), 86);
+        // RAlt at (5,9) → col 9 >= gap 9, +1 → physical col 10 → index 90
+        assert_eq!(pos_to_matrix_index(5, 9), 90);
     }
 
     #[test]
     fn test_parse_key_target_name() {
-        assert_eq!(parse_key_target("F1").unwrap(), vec![1]);
+        assert_eq!(parse_key_target("F1").unwrap().indices, vec![2]);
     }
 
     #[test]
     fn test_parse_key_target_rowcol() {
-        assert_eq!(parse_key_target("0,1").unwrap(), vec![1]);
+        assert_eq!(parse_key_target("0,1").unwrap().indices, vec![2]);
     }
 
     #[test]
     fn test_parse_key_target_index() {
-        assert_eq!(parse_key_target("#42").unwrap(), vec![42]);
+        assert_eq!(parse_key_target("#42").unwrap().indices, vec![42]);
     }
 
     #[test]
     fn test_all() {
-        let all = parse_key_target("all").unwrap();
+        let all = parse_key_target("all").unwrap().indices;
         // There are ~82 physical keys (non-empty names in first 96 positions)
         assert!(all.len() > 70 && all.len() < 96, "got {} keys", all.len());
         // Should be sorted
@@ -315,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_row0() {
-        let row = parse_key_target("row0").unwrap();
+        let row = parse_key_target("row0").unwrap().indices;
         // Row 0: Esc, F1-F12, Del, Vol+ — varies by layout
         assert!(!row.is_empty());
         // All indices should be in 0..16
@@ -324,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_col0() {
-        let col = parse_key_target("col0").unwrap();
+        let col = parse_key_target("col0").unwrap().indices;
         // Col 0: Esc, `, Tab, Caps, LShift, LCtrl
         assert_eq!(col.len(), 6);
         assert_eq!(col, vec![0, 16, 32, 48, 64, 80]);
@@ -332,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_letters() {
-        let letters = parse_key_target("letters").unwrap();
+        let letters = parse_key_target("letters").unwrap().indices;
         assert_eq!(letters.len(), 26);
         // Should be sorted row-major
         assert!(letters.windows(2).all(|w| w[0] < w[1]));
@@ -340,26 +480,26 @@ mod tests {
 
     #[test]
     fn test_frow() {
-        let frow = parse_key_target("frow").unwrap();
+        let frow = parse_key_target("frow").unwrap().indices;
         assert_eq!(frow.len(), 12);
-        // F1 is at row 0, col 1 → index 1
-        assert_eq!(frow[0], 1);
-        // F12 is at row 0, col 12 → index 12
-        assert_eq!(frow[11], 12);
+        // F1 at (0,1) → physical col 2 → index 2
+        assert_eq!(frow[0], 2);
+        // F12 at (0,12) → physical col 13 → index 13
+        assert_eq!(frow[11], 13);
     }
 
     #[test]
     fn test_numbers() {
-        let numbers = parse_key_target("numbers").unwrap();
+        let numbers = parse_key_target("numbers").unwrap().indices;
         assert_eq!(numbers.len(), 10);
-        // "1" at row 1, col 1 → 17; "0" at row 1, col 10 → 26
-        assert_eq!(numbers[0], 17);
-        assert_eq!(numbers[9], 26);
+        // "1" at (1,1) → physical col 2 → 18; "0" at (1,10) → physical col 11 → 27
+        assert_eq!(numbers[0], 18);
+        assert_eq!(numbers[9], 27);
     }
 
     #[test]
     fn test_modifiers() {
-        let mods = parse_key_target("modifiers").unwrap();
+        let mods = parse_key_target("modifiers").unwrap().indices;
         // LShift, RShift, LCtrl, RCtrl, LAlt, RAlt, LWin, Fn = 8
         assert_eq!(mods.len(), 8);
     }
@@ -367,11 +507,11 @@ mod tests {
     #[test]
     fn test_key_range_q_to_u() {
         // Q(row2,col1) .. U(row2,col7) — same row
-        let range = parse_key_target("Q..U").unwrap();
-        // Should include Q, W, E, R, T, Y, U = 7 keys (all in row 2, cols 1-7)
+        let range = parse_key_target("Q..U").unwrap().indices;
+        // Should include Q, W, E, R, T, Y, U = 7 keys (all in row 2, physical cols 2-8)
         assert_eq!(range.len(), 7);
-        // Q at row 2, col 1 → 33
-        assert_eq!(range[0], 33);
+        // Q at (2,1) → physical col 2 → index 34
+        assert_eq!(range[0], 34);
     }
 
     #[test]
@@ -381,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_index_range() {
-        let range = parse_key_target("#10..#20").unwrap();
+        let range = parse_key_target("#10..#20").unwrap().indices;
         // Only non-empty keys in index range 10..=20
         assert!(!range.is_empty());
         assert!(range.iter().all(|&i| i >= 10 && i <= 20));
@@ -389,11 +529,67 @@ mod tests {
 
     #[test]
     fn test_existing_selectors_still_work() {
-        // Single key name
-        assert_eq!(parse_key_target("Esc").unwrap(), vec![0]);
-        // Row,col
-        assert_eq!(parse_key_target("0,1").unwrap(), vec![1]);
-        // Index
-        assert_eq!(parse_key_target("#1").unwrap(), vec![1]);
+        // Single key name (col 0, no gap offset)
+        assert_eq!(parse_key_target("Esc").unwrap().indices, vec![0]);
+        // Row,col (logical col 1, gap offset → physical col 2)
+        assert_eq!(parse_key_target("0,1").unwrap().indices, vec![2]);
+        // Direct index (no conversion)
+        assert_eq!(parse_key_target("#1").unwrap().indices, vec![1]);
+    }
+
+    #[test]
+    fn test_text_hello() {
+        let target = parse_key_target("text:HELLO").unwrap();
+        assert_eq!(target.indices.len(), 4); // H, E, L, O (no dupes)
+                                             // Slots: H=0, E=1, L=2, L=skip(dupe), O=4
+        assert_eq!(target.slots.len(), 4);
+        assert_eq!(target.slots[0], 0); // H
+        assert_eq!(target.slots[1], 1); // E
+        assert_eq!(target.slots[2], 2); // L (first)
+        assert_eq!(target.slots[3], 4); // O (slot 3 was second L, skipped)
+    }
+
+    #[test]
+    fn test_text_with_spaces() {
+        let target = parse_key_target("text:HI THERE").unwrap();
+        // H=slot0, I=slot1, space=slot2(skip), T=slot3, H=skip(dupe), E=slot5, R=slot6, E=skip(dupe)
+        assert!(target.indices.len() >= 5); // H, I, T, E, R (at minimum)
+                                            // First key (H) at slot 0
+        assert_eq!(target.slots[0], 0);
+        // After space, slots jump
+        let t_pos = target.indices.iter().position(|&idx| {
+            // T key
+            key_name_to_pos("T").map(|(r, c)| pos_to_matrix_index(r, c)) == Some(idx)
+        });
+        assert!(t_pos.is_some());
+        // T's slot should be 3 (after space at slot 2)
+        assert_eq!(target.slots[t_pos.unwrap()], 3);
+    }
+
+    #[test]
+    fn test_text_unicode_folding() {
+        let target = parse_key_target("text:café").unwrap();
+        // c, a, f, é→e = 4 unique keys
+        assert_eq!(target.indices.len(), 4);
+    }
+
+    #[test]
+    fn test_text_empty() {
+        assert!(parse_key_target("text:   ").is_err());
+    }
+
+    #[test]
+    fn test_text_shifted_chars() {
+        // : maps to ; key, ~ maps to ` key
+        let target = parse_key_target("text:A:B").unwrap();
+        assert_eq!(target.indices.len(), 3); // A, ;, B
+    }
+
+    #[test]
+    fn test_stagger_slots_sequential() {
+        let target = parse_key_target("frow").unwrap();
+        // Sequential slots 0, 1, 2, ...
+        let expected: Vec<usize> = (0..target.indices.len()).collect();
+        assert_eq!(target.slots, expected);
     }
 }

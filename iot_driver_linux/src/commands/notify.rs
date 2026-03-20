@@ -13,7 +13,9 @@ pub async fn daemon(ctx: &super::CmdCtx, fps: u32, power_budget: u32) -> Command
         patch.name, patch.version, patch.capabilities
     );
 
-    iot_driver::notify::daemon::run(kb, fps, power_budget).await?;
+    iot_driver::notify::daemon::run(kb, fps, power_budget)
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> { e })?;
     Ok(())
 }
 
