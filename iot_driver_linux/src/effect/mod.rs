@@ -599,7 +599,7 @@ pub const DEFAULT_EFFECTS_TOML: &str = r##"# MonsGeek LED Effects Library
 # All variables are resolved at trigger time with --var name=value.
 
 [breathe]
-color = "$color"
+color = "$color:cyan"
 description = "Smooth fade in/out"
 keyframes = [
     { d = "$half:1000", v = 0.0, easing = "EaseInOut" },
@@ -608,7 +608,7 @@ keyframes = [
 ]
 
 [flash]
-color = "$color"
+color = "$color:yellow"
 description = "On/off blink with adjustable duty cycle"
 keyframes = [
     { d = "$on:500",  v = 1.0, easing = "Hold" },
@@ -616,7 +616,7 @@ keyframes = [
 ]
 
 [pulse]
-color = "$color"
+color = "$color:white"
 description = "Quick flash then slow fade"
 keyframes = [
     { d = 80,  v = 0.0, easing = "EaseOutQuad" },
@@ -624,7 +624,7 @@ keyframes = [
 ]
 
 [solid]
-color = "$color"
+color = "$color:green"
 description = "Constant color"
 priority = -10
 
@@ -644,7 +644,7 @@ keyframes = [
 ]
 
 [build-status]
-color = "$status"
+color = "$status:green"
 description = "Build result indicator"
 keyframes = [
     { t = 0,    v = 0.0, easing = "EaseOutQuad" },
@@ -710,8 +710,14 @@ mod tests {
 
     #[test]
     fn test_resolve_missing_variable() {
-        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
-        let def = lib.get("breathe").unwrap();
+        // All built-in effects now have defaults, so test with a synthetic one
+        let toml = r#"
+[test_no_default]
+color = "$color"
+keyframes = [{ d = 500, v = 1.0 }]
+"#;
+        let lib = EffectLibrary::from_toml(toml).unwrap();
+        let def = lib.get("test_no_default").unwrap();
         let vars = BTreeMap::new(); // missing "color" (no default)
         assert!(resolve(def, &vars).is_err());
     }
