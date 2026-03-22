@@ -588,6 +588,96 @@ pub fn required_variables(def: &EffectDef) -> Vec<String> {
     vars
 }
 
+// ── Firmware compilation ─────────────────────────────────────────────
+
+/// Firmware easing IDs (must match handlers.c EASE_* constants).
+pub mod fw_easing {
+    pub const HOLD: u8 = 0;
+    pub const LINEAR: u8 = 1;
+    pub const INOUT_QUAD: u8 = 2;
+    pub const IN_QUAD: u8 = 3;
+    pub const OUT_QUAD: u8 = 4;
+    pub const IN_EXPO: u8 = 5;
+    pub const OUT_EXPO: u8 = 6;
+}
+
+/// Firmware animation flags.
+pub mod fw_flags {
+    pub const ONE_SHOT: u8 = 0x01;
+    pub const RAINBOW: u8 = 0x04;
+}
+
+/// Pack RGB888 to RGB565.
+pub fn rgb_to_565(r: u8, g: u8, b: u8) -> u16 {
+    ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | ((b as u16) >> 3)
+}
+
+/// Map an easing name to the firmware easing ID.
+fn easing_to_fw(name: &str) -> u8 {
+    match name {
+        "Hold" | "Step" => fw_easing::HOLD,
+        "EaseIn" | "EaseInQuad" => fw_easing::IN_QUAD,
+        "EaseOut" | "EaseOutQuad" => fw_easing::OUT_QUAD,
+        "EaseInOut" | "EaseInOutQuad" => fw_easing::INOUT_QUAD,
+        "EaseInExpo" => fw_easing::IN_EXPO,
+        "EaseOutExpo" => fw_easing::OUT_EXPO,
+        _ => fw_easing::LINEAR,
+    }
+}
+
+/// Compiled animation ready to send to firmware.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledAnim {
+    /// Wire-format keyframes: `(t_ticks, color_rgb565, easing_id)`.
+    pub keyframes: Vec<(u16, u16, u8)>,
+    pub duration_ticks: u16,
+    pub flags: u8,
+    pub priority: i8,
+}
+
+impl ResolvedEffect {
+    /// Compile this effect into firmware wire format.
+    ///
+    /// Converts ms→ticks (10ms per tick, ~100Hz firmware blend rate),
+    /// RGB888→RGB565, easing names→IDs.
+    /// Returns `None` if the effect has no keyframes.
+    pub fn compile_for_firmware(&self, priority: i8, one_shot: bool) -> Option<CompiledAnim> {
+        if self.keyframes.is_empty() {
+            return None;
+        }
+
+        let flags = if one_shot { fw_flags::ONE_SHOT } else { 0 }
+            | if self.is_rainbow {
+                fw_flags::RAINBOW
+            } else {
+                0
+            };
+
+        let duration_ticks = (self.duration_ms / 10.0).round() as u16;
+
+        let keyframes: Vec<(u16, u16, u8)> = self
+            .keyframes
+            .iter()
+            .zip(self.easing_names.iter())
+            .map(|(kf, easing_name)| {
+                let t_ticks = (kf.t_ms / 10.0).round() as u16;
+                let scaled = kf.color.scale(kf.brightness as f32);
+                let c565 = rgb_to_565(scaled.r, scaled.g, scaled.b);
+                let easing_id = easing_to_fw(easing_name);
+                (t_ticks, c565, easing_id)
+            })
+            .take(8) // firmware max
+            .collect();
+
+        Some(CompiledAnim {
+            keyframes,
+            duration_ticks,
+            flags,
+            priority,
+        })
+    }
+}
+
 // ── Default effects ──────────────────────────────────────────────────
 
 pub const DEFAULT_EFFECTS_TOML: &str = r##"# MonsGeek LED Effects Library
@@ -653,6 +743,16 @@ keyframes = [
     { t = 3000, v = 0.0 },
 ]
 ttl_ms = 3000
+
+[typewriter]
+color = "$color:red"
+description = "Keypress flash with exponential falloff"
+keyframes = [
+    { d = 0,   v = 1.0, easing = "EaseOutExpo" },
+    { d = "$decay:800", v = 0.0 },
+]
+ttl_ms = 800
+priority = 5
 "##;
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -903,5 +1003,46 @@ keyframes = [{ d = 500, v = 1.0 }]
         // At t=0 should be red
         let c0 = resolved.evaluate(0.0);
         assert_eq!(c0, Rgb::new(255, 0, 0));
+    }
+
+    #[test]
+    fn test_compile_breathe() {
+        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
+        let vars = BTreeMap::new();
+        let resolved = resolve(lib.get("breathe").unwrap(), &vars).unwrap();
+        let compiled = resolved.compile_for_firmware(5, false).unwrap();
+
+        assert_eq!(compiled.keyframes.len(), 3);
+        assert_eq!(compiled.flags, 0); // looping, not rainbow
+        assert_eq!(compiled.priority, 5);
+        // Duration 2000ms → 200 ticks (at 10ms/tick, 100Hz)
+        assert_eq!(compiled.duration_ticks, 200);
+        // First KF at t=0, easing=EaseInOut → INOUT_QUAD
+        assert_eq!(compiled.keyframes[0].0, 0); // t_ticks
+        assert_eq!(compiled.keyframes[0].2, fw_easing::INOUT_QUAD);
+        // Second KF at t=1000ms → 100 ticks
+        assert_eq!(compiled.keyframes[1].0, 100);
+    }
+
+    #[test]
+    fn test_compile_one_shot() {
+        let lib = EffectLibrary::from_toml(DEFAULT_EFFECTS_TOML).unwrap();
+        let vars = BTreeMap::new();
+        let resolved = resolve(lib.get("breathe").unwrap(), &vars).unwrap();
+        let compiled = resolved.compile_for_firmware(0, true).unwrap();
+        assert_eq!(compiled.flags & fw_flags::ONE_SHOT, fw_flags::ONE_SHOT);
+    }
+
+    #[test]
+    fn test_rgb_to_565_roundtrip() {
+        // Pure red
+        let c = rgb_to_565(255, 0, 0);
+        assert_eq!(c, 0xF800);
+        // Pure green
+        let c = rgb_to_565(0, 255, 0);
+        assert_eq!(c, 0x07E0);
+        // Pure blue
+        let c = rgb_to_565(0, 0, 255);
+        assert_eq!(c, 0x001F);
     }
 }

@@ -71,6 +71,10 @@ pub mod cmd {
     /// LED streaming - write RGB data to WS2812 frame buffer via patch.
     /// Sub-commands: page 0-6 = data, 0xFF = commit, 0xFE = release.
     pub const LED_STREAM: u8 = 0xE8;
+    /// Animation engine — on-device keyframe playback.
+    /// Sub-commands: 0x00-0x07 = ASSIGN, 0x08-0x0F = DEF, 0x10-0x17 = DEF_EXT,
+    /// 0xFE = CANCEL, 0xFF = CLEAR.
+    pub const ANIM_CMD: u8 = 0xEA;
     /// Get RF info: returns {rf_addr[4], fw_ver_minor, fw_ver_major, 0, 0}.
     /// Handled locally by dongle — NOT forwarded to keyboard.
     pub const GET_RF_INFO: u8 = 0xFB;
@@ -139,6 +143,7 @@ pub mod cmd {
             PAIRING_CMD => "PAIRING_CMD",
             GET_PATCH_INFO => "GET_PATCH_INFO",
             LED_STREAM => "LED_STREAM",
+            ANIM_CMD => "ANIM_CMD",
             GET_RF_INFO => "GET_RF_INFO",
             GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
             GET_DONGLE_ID => "GET_DONGLE_ID",

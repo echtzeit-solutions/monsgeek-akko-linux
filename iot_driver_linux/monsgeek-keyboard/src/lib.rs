@@ -40,6 +40,39 @@ impl PatchInfo {
     pub fn has_led_stream(&self) -> bool {
         self.capabilities & 0x02 != 0
     }
+
+    pub fn has_anim_engine(&self) -> bool {
+        self.capabilities & 0x40 != 0
+    }
+}
+
+/// Status of a single animation definition slot.
+#[derive(Debug, Clone)]
+pub struct AnimDefStatus {
+    pub id: u8,
+    pub num_kf: u8,
+    pub flags: u8,
+    pub priority: i8,
+    pub key_count: u8,
+    pub duration_ticks: u16,
+}
+
+impl AnimDefStatus {
+    pub fn is_one_shot(&self) -> bool {
+        self.flags & 0x01 != 0
+    }
+    pub fn is_rainbow(&self) -> bool {
+        self.flags & 0x04 != 0
+    }
+}
+
+/// Animation engine status from firmware query.
+#[derive(Debug, Clone)]
+pub struct AnimStatus {
+    pub active_count: u8,
+    pub frame_count: u32,
+    pub overlay_active: bool,
+    pub defs: Vec<AnimDefStatus>,
 }
 
 // Macro parsing
@@ -1509,6 +1542,191 @@ impl KeyboardInterface {
         self.transport
             .send_command_with_delay(cmd::LED_STREAM, &[0xFE], ChecksumType::None, 0)?;
         Ok(())
+    }
+
+    // ── On-device animation engine (0xEA) ────────────────────────────
+
+    /// Define an animation on the firmware.
+    ///
+    /// `keyframes` is a slice of `(t_ticks, color_rgb565, easing)` tuples.
+    /// If more than 4 keyframes, sends a DEF_EXT packet automatically.
+    pub fn anim_define(
+        &self,
+        def_id: u8,
+        flags: u8,
+        priority: i8,
+        duration_ticks: u16,
+        keyframes: &[(u16, u16, u8)],
+    ) -> Result<(), KeyboardError> {
+        let num_kf = keyframes.len().min(8) as u8;
+
+        // ANIM_DEF packet
+        let mut data = vec![0u8; 26]; // sub + num_kf + flags + priority + duration + 4×5B
+        data[0] = 0x08 | (def_id & 0x07);
+        data[1] = num_kf;
+        data[2] = flags;
+        data[3] = priority as u8;
+        data[4] = (duration_ticks & 0xFF) as u8;
+        data[5] = (duration_ticks >> 8) as u8;
+
+        let kf_in_pkt = num_kf.min(4) as usize;
+        for (i, &(t, c565, easing)) in keyframes.iter().enumerate().take(kf_in_pkt) {
+            let off = 6 + i * 5;
+            data[off] = (t & 0xFF) as u8;
+            data[off + 1] = (t >> 8) as u8;
+            data[off + 2] = (c565 & 0xFF) as u8;
+            data[off + 3] = (c565 >> 8) as u8;
+            data[off + 4] = easing;
+        }
+
+        self.transport
+            .send_command_with_delay(cmd::ANIM_CMD, &data, ChecksumType::None, 0)?;
+
+        // ANIM_DEF_EXT if > 4 keyframes
+        if num_kf > 4 {
+            let mut ext = vec![0u8; 21]; // sub + up to 4×5B
+            ext[0] = 0x10 | (def_id & 0x07);
+            for (i, &(t, c565, easing)) in
+                keyframes.iter().enumerate().take(num_kf as usize).skip(4)
+            {
+                let off = 1 + (i - 4) * 5;
+                ext[off] = (t & 0xFF) as u8;
+                ext[off + 1] = (t >> 8) as u8;
+                ext[off + 2] = (c565 & 0xFF) as u8;
+                ext[off + 3] = (c565 >> 8) as u8;
+                ext[off + 4] = easing;
+            }
+            self.transport
+                .send_command_with_delay(cmd::ANIM_CMD, &ext, ChecksumType::None, 0)?;
+        }
+
+        Ok(())
+    }
+
+    /// Assign keys to an animation definition.
+    ///
+    /// `keys` is a slice of `(matrix_idx, phase_offset)` pairs.
+    /// Chunked automatically for packets > 30 entries.
+    pub fn anim_assign(&self, def_id: u8, keys: &[(u8, u8)]) -> Result<(), KeyboardError> {
+        for chunk in keys.chunks(30) {
+            let mut data = vec![0u8; 2 + chunk.len() * 2];
+            data[0] = def_id & 0x07;
+            data[1] = chunk.len() as u8;
+            for (i, &(idx, phase)) in chunk.iter().enumerate() {
+                data[2 + i * 2] = idx;
+                data[2 + i * 2 + 1] = phase;
+            }
+            self.transport
+                .send_command_with_delay(cmd::ANIM_CMD, &data, ChecksumType::None, 0)?;
+        }
+        Ok(())
+    }
+
+    /// Cancel a specific animation definition and release its keys.
+    pub fn anim_cancel(&self, def_id: u8) -> Result<(), KeyboardError> {
+        self.transport.send_command_with_delay(
+            cmd::ANIM_CMD,
+            &[0xFE, def_id],
+            ChecksumType::None,
+            0,
+        )?;
+        Ok(())
+    }
+
+    /// Clear all animations and overlay.
+    pub fn anim_clear(&self) -> Result<(), KeyboardError> {
+        self.transport
+            .send_command_with_delay(cmd::ANIM_CMD, &[0xFF], ChecksumType::None, 0)?;
+        Ok(())
+    }
+
+    /// Query animation engine status.
+    ///
+    /// Returns `None` if the firmware doesn't support the animation engine.
+    pub fn anim_query(&self) -> Result<Option<AnimStatus>, KeyboardError> {
+        // resp[0] = cmd echo (0xEA), resp[1] = sub echo (0xF0),
+        // resp[2] = active_count, resp[3..6] = frame_count,
+        // resp[7] = overlay_active, resp[8..55] = per-def status (8 × 6 bytes)
+        //
+        // Retry up to 3 times: the first read may return a stale response
+        // from a previous ANIM sub-command (all share cmd echo 0xEA).
+        let mut resp = Vec::new();
+        for _ in 0..3 {
+            resp = self
+                .transport
+                .query_raw(cmd::ANIM_CMD, &[0xF0], ChecksumType::None)?;
+            if resp.get(1) == Some(&0xF0) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        if resp.get(1) != Some(&0xF0) || resp.len() < 56 {
+            return Ok(None);
+        }
+
+        let active_count = resp[2];
+        let frame_count = u32::from_le_bytes([resp[3], resp[4], resp[5], resp[6]]);
+        let overlay_active = resp[7] != 0;
+
+        let mut defs = Vec::new();
+        for d in 0..8u8 {
+            let base = 8 + d as usize * 6;
+            let num_kf = resp[base];
+            if num_kf == 0 {
+                continue;
+            }
+            defs.push(AnimDefStatus {
+                id: d,
+                num_kf,
+                flags: resp[base + 1],
+                priority: resp[base + 2] as i8,
+                key_count: resp[base + 3],
+                duration_ticks: u16::from_le_bytes([resp[base + 4], resp[base + 5]]),
+            });
+        }
+
+        Ok(Some(AnimStatus {
+            active_count,
+            frame_count,
+            overlay_active,
+            defs,
+        }))
+    }
+
+    /// Query key assignments for an animation definition slot.
+    ///
+    /// Returns `(strip_idx, phase_offset)` pairs for all keys assigned to the def.
+    pub fn anim_query_keys(&self, def_id: u8) -> Result<Vec<(u8, u8)>, KeyboardError> {
+        let expected_sub = 0xF1 + (def_id & 0x07);
+
+        // Retry: the first GET_REPORT may return a stale response from a
+        // previous ANIM_QUERY since both share cmd echo 0xEA.  The sub-command
+        // echo at resp[1] disambiguates.
+        for _ in 0..3 {
+            let resp =
+                self.transport
+                    .query_raw(cmd::ANIM_CMD, &[expected_sub], ChecksumType::None)?;
+
+            // resp[0] = cmd echo (0xEA), resp[1] = sub echo, resp[2] = count,
+            // resp[3..] = (strip_idx, phase) pairs
+            if resp.get(1).copied() != Some(expected_sub) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                continue; // stale response, retry
+            }
+
+            let count = resp.get(2).copied().unwrap_or(0) as usize;
+            let mut keys = Vec::with_capacity(count);
+            for i in 0..count {
+                let base = 3 + i * 2;
+                if base + 1 < resp.len() {
+                    keys.push((resp[base], resp[base + 1]));
+                }
+            }
+            return Ok(keys);
+        }
+
+        Ok(Vec::new()) // gave up
     }
 
     /// Query patch info from modded firmware

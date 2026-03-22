@@ -1,6 +1,7 @@
 // MonsGeek M1 V5 HE Linux Driver - Shared Library
 // Protocol definitions, device registry, and HID communication
 
+pub mod anim;
 pub mod audio_reactive;
 pub mod bpf_loader;
 pub mod device_loader;

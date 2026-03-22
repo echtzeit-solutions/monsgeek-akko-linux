@@ -210,6 +210,11 @@ impl NotificationStore {
     pub fn is_empty(&self) -> bool {
         self.notifications.is_empty()
     }
+
+    /// Get a notification by ID.
+    pub fn get(&self, id: u64) -> Option<&Notification> {
+        self.notifications.get(&id)
+    }
 }
 
 /// Render one frame: evaluate each key's active notification at the current time.

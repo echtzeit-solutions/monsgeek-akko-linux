@@ -891,6 +891,8 @@ pub mod patch_info {
     pub const CAP_CONSUMER_REDIRECT: u16 = 1 << 4;
     /// Capability: Speed gate NOP (dongle USB speed check bypassed)
     pub const CAP_SPEED_GATE_NOP: u16 = 1 << 5;
+    /// Capability: On-device animation engine (0xEA)
+    pub const CAP_ANIM_ENGINE: u16 = 1 << 6;
 
     pub fn capability_names(caps: u16) -> Vec<&'static str> {
         let mut names = Vec::new();
@@ -911,6 +913,9 @@ pub mod patch_info {
         }
         if caps & CAP_SPEED_GATE_NOP != 0 {
             names.push("speed_gate_nop");
+        }
+        if caps & CAP_ANIM_ENGINE != 0 {
+            names.push("anim_engine");
         }
         names
     }
