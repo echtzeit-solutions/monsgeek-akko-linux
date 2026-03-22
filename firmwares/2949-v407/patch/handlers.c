@@ -63,6 +63,60 @@ extern volatile uint8_t g_if1_hid_desc[];  /* standalone IF1 HID descriptor @ SR
 #define LED_COUNT     82
 #define MATRIX_LEN    96      /* 16 cols × 6 rows; row-major (pos = row*16+col) */
 
+/* ── On-device animation engine ─────────────────────────────────────── */
+
+#define ANIM_MAX_KF   8
+#define ANIM_MAX_DEFS 8
+
+#define ANIM_FLAG_ONE_SHOT  0x01
+#define ANIM_FLAG_RAINBOW   0x04
+
+/* Easing IDs (wire format) */
+#define EASE_HOLD           0
+#define EASE_LINEAR         1
+#define EASE_INOUT_QUAD     2
+#define EASE_IN_QUAD        3
+#define EASE_OUT_QUAD       4
+#define EASE_IN_EXPO        5
+#define EASE_OUT_EXPO       6
+
+typedef struct {
+    uint16_t t_ticks;   /* absolute time in 5ms ticks (200Hz) */
+    uint8_t  r, g, b;   /* RGB888 (unpacked from RGB565 on receive) */
+    uint8_t  easing;
+} anim_keyframe_t;      /* 6 bytes */
+
+typedef struct {
+    anim_keyframe_t kf[ANIM_MAX_KF];   /* 48B */
+    uint16_t duration_ticks;            /* total cycle length */
+    uint16_t elapsed_ticks;             /* current playback position */
+    uint8_t  num_kf;                    /* 0 = def unused */
+    uint8_t  flags;                     /* bit0: one-shot, bit2: rainbow */
+    int8_t   priority;                  /* higher wins key conflicts */
+    uint8_t  _pad;
+} anim_def_t;                           /* 56 bytes */
+
+typedef struct {
+    uint8_t anim_id;        /* 0xFF = no animation, 0-7 = def index */
+    uint8_t phase_offset;   /* stagger: value × 8 ticks (40ms granularity) */
+} key_anim_t;               /* 2 bytes */
+
+typedef struct {
+    uint32_t frame_count;     /* total blend calls (monotonic, for sync) */
+    uint8_t  active_count;    /* nonzero defs (fast skip when idle) */
+    uint8_t  _pad[3];
+} anim_engine_t;              /* 8 bytes */
+
+static anim_def_t   anim_defs[ANIM_MAX_DEFS];   /* 56×8 = 448B */
+static key_anim_t   key_table[LED_COUNT];        /* 82×2 = 164B */
+static anim_engine_t anim_engine;                /* 8B */
+/* Total new BSS: 620B */
+
+/* Per-LED RGB overlay: additive, saturating. 0 = no overlay for that channel.
+ * Shared by both anim_tick() and led_overlay_memcpy_and_blend(). */
+static uint8_t overlay_buf[LED_COUNT * 3];  /* 82×3 = 246 bytes */
+static uint8_t overlay_active;              /* non-zero if any overlay pixel set */
+
 
 /* ── Battery HID report descriptor (appended to IF1) ─────────────────── */
 
@@ -448,6 +502,197 @@ int handle_hid_setup(otg_dev_handle_t *udev) {
     return 0;   /* passthrough to original handler */
 }
 
+/* ── Animation engine math helpers ────────────────────────────────────── */
+
+/* Integer easing: t is 0-255 fixed-point, returns 0-255.
+ * Cortex-M4 single-cycle multiply keeps all of these fast. */
+static inline uint8_t ease_apply(uint8_t easing, uint8_t t) {
+    switch (easing) {
+    case EASE_HOLD:
+        return 0;
+    case EASE_IN_QUAD:
+        /* t^2 / 255 */
+        return (uint8_t)(((uint16_t)t * t) >> 8);
+    case EASE_OUT_QUAD: {
+        /* 1 - (1-t)^2 */
+        uint8_t inv = 255 - t;
+        return (uint8_t)(255 - (((uint16_t)inv * inv) >> 8));
+    }
+    case EASE_INOUT_QUAD:
+        if (t < 128) {
+            return (uint8_t)(((uint16_t)t * t * 2) >> 8);
+        } else {
+            uint8_t inv = 255 - t;
+            return (uint8_t)(255 - (((uint16_t)inv * inv * 2) >> 8));
+        }
+    case EASE_IN_EXPO:
+        /* Approximate 2^(10*(t/255-1)): use t^3/255^2 (steep curve) */
+        return (uint8_t)(((uint32_t)t * t * t) >> 16);
+    case EASE_OUT_EXPO: {
+        /* 1 - (1-t)^3/255^2 */
+        uint8_t inv = 255 - t;
+        return (uint8_t)(255 - (((uint32_t)inv * inv * inv) >> 16));
+    }
+    default: /* EASE_LINEAR and unknown */
+        return t;
+    }
+}
+
+/* Linear interpolation: a + ((b-a) * t) >> 8, t in 0-255 */
+static inline uint8_t lerp8(uint8_t a, uint8_t b, uint8_t t) {
+    return (uint8_t)((int16_t)a + ((((int16_t)b - (int16_t)a) * (int16_t)t) >> 8));
+}
+
+/* HSV→RGB (h,s,v all 0-255) */
+static void hsv_to_rgb(uint8_t h, uint8_t s, uint8_t v,
+                        uint8_t *r, uint8_t *g, uint8_t *b) {
+    uint8_t region = h / 43, remainder = (h % 43) * 6;
+    uint8_t p = (uint8_t)((v * (255 - s)) >> 8);
+    uint8_t q = (uint8_t)((v * (255 - ((s * remainder) >> 8))) >> 8);
+    uint8_t t = (uint8_t)((v * (255 - ((s * (255 - remainder)) >> 8))) >> 8);
+    switch (region) {
+        case 0: *r=v; *g=t; *b=p; break;
+        case 1: *r=q; *g=v; *b=p; break;
+        case 2: *r=p; *g=v; *b=t; break;
+        case 3: *r=p; *g=q; *b=v; break;
+        case 4: *r=t; *g=p; *b=v; break;
+        default:*r=v; *g=p; *b=q; break;
+    }
+}
+
+/* Evaluate a definition at local time t_local (in ticks).
+ * Writes RGB result to *out_r, *out_g, *out_b. */
+static void anim_evaluate(const anim_def_t *def, uint16_t t_local,
+                           uint8_t *out_r, uint8_t *out_g, uint8_t *out_b) {
+    /* Rainbow mode: hue from time, brightness from keyframes */
+    if (def->flags & ANIM_FLAG_RAINBOW) {
+        /* Compute brightness from keyframes */
+        uint8_t bri = 255;
+        if (def->num_kf >= 2) {
+            /* Find segment */
+            uint8_t seg = 0;
+            for (uint8_t i = 0; i < def->num_kf - 1; i++) {
+                if (t_local < def->kf[i + 1].t_ticks) { seg = i; goto found_bri; }
+            }
+            seg = def->num_kf - 1;
+found_bri:
+            if (seg < def->num_kf - 1) {
+                uint16_t dt = def->kf[seg + 1].t_ticks - def->kf[seg].t_ticks;
+                if (dt > 0) {
+                    uint8_t frac = (uint8_t)(((uint32_t)(t_local - def->kf[seg].t_ticks) * 255) / dt);
+                    uint8_t eased = ease_apply(def->kf[seg].easing, frac);
+                    bri = lerp8(def->kf[seg].r, def->kf[seg + 1].r, eased); /* r = brightness in rainbow */
+                } else {
+                    bri = def->kf[seg].r;
+                }
+            } else {
+                bri = def->kf[seg].r;
+            }
+        } else if (def->num_kf == 1) {
+            bri = def->kf[0].r;
+        }
+        /* Hue sweeps 0-255 over duration */
+        uint8_t hue = (def->duration_ticks > 0)
+            ? (uint8_t)(((uint32_t)t_local * 255) / def->duration_ticks)
+            : 0;
+        hsv_to_rgb(hue, 255, bri, out_r, out_g, out_b);
+        return;
+    }
+
+    /* Normal keyframe mode: find segment, interpolate RGB */
+    if (def->num_kf == 0) { *out_r = *out_g = *out_b = 0; return; }
+    if (def->num_kf == 1) {
+        *out_r = def->kf[0].r; *out_g = def->kf[0].g; *out_b = def->kf[0].b;
+        return;
+    }
+
+    /* Find surrounding keyframes */
+    uint8_t seg = 0;
+    for (uint8_t i = 0; i < def->num_kf - 1; i++) {
+        if (t_local < def->kf[i + 1].t_ticks) { seg = i; goto found_seg; }
+    }
+    seg = def->num_kf - 1;
+found_seg:
+    if (seg >= def->num_kf - 1) {
+        /* At or past last keyframe */
+        *out_r = def->kf[seg].r; *out_g = def->kf[seg].g; *out_b = def->kf[seg].b;
+        return;
+    }
+
+    uint16_t dt = def->kf[seg + 1].t_ticks - def->kf[seg].t_ticks;
+    if (dt == 0) {
+        *out_r = def->kf[seg].r; *out_g = def->kf[seg].g; *out_b = def->kf[seg].b;
+        return;
+    }
+
+    /* Compute fractional position 0-255 */
+    uint8_t frac = (uint8_t)(((uint32_t)(t_local - def->kf[seg].t_ticks) * 255) / dt);
+    uint8_t eased = ease_apply(def->kf[seg].easing, frac);
+
+    *out_r = lerp8(def->kf[seg].r, def->kf[seg + 1].r, eased);
+    *out_g = lerp8(def->kf[seg].g, def->kf[seg + 1].g, eased);
+    *out_b = lerp8(def->kf[seg].b, def->kf[seg + 1].b, eased);
+}
+
+/* Tick the animation engine. Called from led_overlay_memcpy_and_blend
+ * which runs at ~100Hz (LED DMA refresh rate, measured). Each call = 1 tick.
+ * The daemon converts ms→ticks at 10ms/tick to match this rate. */
+static void anim_tick(void) {
+    if (anim_engine.active_count == 0)
+        return;
+
+    /* Advance elapsed for active defs */
+    for (int d = 0; d < ANIM_MAX_DEFS; d++) {
+        if (anim_defs[d].num_kf == 0)
+            continue;
+        anim_defs[d].elapsed_ticks++;
+    }
+
+    /* Evaluate each assigned key */
+    uint8_t any_active = 0;
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (key_table[i].anim_id >= ANIM_MAX_DEFS)
+            continue;
+
+        anim_def_t *def = &anim_defs[key_table[i].anim_id];
+        if (def->num_kf == 0) {
+            key_table[i].anim_id = 0xFF; /* def was cancelled */
+            continue;
+        }
+        any_active = 1;
+
+        uint16_t phase = (uint16_t)key_table[i].phase_offset * 8;
+        uint8_t r, g, b;
+
+        if (def->flags & ANIM_FLAG_ONE_SHOT) {
+            int32_t local_t = (int32_t)def->elapsed_ticks - (int32_t)phase;
+            if (local_t < 0) {
+                r = def->kf[0].r; g = def->kf[0].g; b = def->kf[0].b;
+            } else if (local_t >= (int32_t)def->duration_ticks) {
+                uint8_t last = def->num_kf - 1;
+                r = def->kf[last].r; g = def->kf[last].g; b = def->kf[last].b;
+            } else {
+                anim_evaluate(def, (uint16_t)local_t, &r, &g, &b);
+            }
+        } else {
+            /* Looping */
+            if (def->duration_ticks == 0) {
+                r = def->kf[0].r; g = def->kf[0].g; b = def->kf[0].b;
+            } else {
+                uint16_t t = (uint16_t)((def->elapsed_ticks + phase) % def->duration_ticks);
+                anim_evaluate(def, t, &r, &g, &b);
+            }
+        }
+
+        overlay_buf[i * 3 + 0] = r;
+        overlay_buf[i * 3 + 1] = g;
+        overlay_buf[i * 3 + 2] = b;
+    }
+
+    if (any_active)
+        overlay_active = 1;
+}
+
 /* ── WS2812 encoding for SPI scanout ─────────────────────────────────────
  * Matches firmware ws2812_set_pixel(): each byte expands to 8 SPI bytes;
  * 1 bit → 0xF0 (long high), 0 bit → 0xC0 (short high). MSB first (byte 0 =
@@ -482,7 +727,7 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[3]  = 0xCA;           /* magic hi */
     buf[4]  = 0xFE;           /* magic lo */
     buf[5]  = 1;              /* patch version */
-    buf[6]  = 0x0F;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) + consumer_fix(3) */
+    buf[6]  = 0x4F;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) + consumer_fix(3) + anim_engine(6) */
     buf[7]  = 0x00;           /* capabilities hi */
     buf[8]  = 'M';
     buf[9]  = 'O';
@@ -569,9 +814,9 @@ static int handle_patch_info(volatile uint8_t *buf) {
  * Row-major: static_led_pos_tbl[row*16+col] → WS2812 strip index (0–81).
  * 0xFF = no LED (gap for wide keys / empty slots). */
 
-/* Per-LED RGB overlay: additive, saturating. 0 = no overlay for that channel. */
-static uint8_t overlay_buf[LED_COUNT * 3];  /* 82×3 = 246 bytes in .bss */
-static uint8_t overlay_active;              /* non-zero if any overlay pixel set */
+/* Per-LED RGB overlay: additive, saturating. 0 = no overlay for that channel.
+ * overlay_buf and overlay_active defined above (near anim structs) for
+ * visibility to both anim_tick() and led_overlay_memcpy_and_blend(). */
 
 /* Decode one color byte from WS2812 SPI encoding (8 SPI bytes → 1 data byte).
  * Each SPI byte's bit 4 carries one data bit (0xF0 → 1, 0xC0 → 0). */
@@ -587,6 +832,12 @@ static inline uint8_t decode_ws2812_byte(volatile uint8_t *p) {
  * Copies frame→DMA then applies the additive overlay. */
 void led_overlay_memcpy_and_blend(void *dst, const void *src, uint32_t len) {
     memcpy(dst, src, len);
+
+    /* Count frames (monotonic, for sync) */
+    anim_engine.frame_count++;
+
+    /* Tick the animation engine */
+    anim_tick();
 
     if (!overlay_active)
         return;
@@ -638,7 +889,12 @@ static int handle_led_stream(volatile uint8_t *buf) {
     }
 
     if (page == 0xFE) {
-        /* Clear overlay */
+        /* Clear overlay + all animations */
+        for (int i = 0; i < ANIM_MAX_DEFS; i++)
+            anim_defs[i].num_kf = 0;
+        for (int i = 0; i < LED_COUNT; i++)
+            key_table[i].anim_id = 0xFF;
+        anim_engine.active_count = 0;
         for (int i = 0; i < LED_COUNT * 3; i++)
             overlay_buf[i] = 0;
         overlay_active = 0;
@@ -676,6 +932,245 @@ static int handle_led_stream(volatile uint8_t *buf) {
     return 0;  /* unknown page, passthrough */
 }
 
+/* ── Animation command handler (0xEA) ──────────────────────────────────── */
+
+/* Unpack RGB565 to RGB888 */
+static inline void unpack_rgb565(uint16_t c565, uint8_t *r, uint8_t *g, uint8_t *b) {
+    *r = (uint8_t)(((c565 >> 8) & 0xF8) | ((c565 >> 13) & 0x07));
+    *g = (uint8_t)(((c565 >> 3) & 0xFC) | ((c565 >> 9)  & 0x03));
+    *b = (uint8_t)(((c565 << 3) & 0xF8) | ((c565 >> 2)  & 0x07));
+}
+
+static void anim_recount_active(void) {
+    uint8_t count = 0;
+    for (int i = 0; i < ANIM_MAX_DEFS; i++) {
+        if (anim_defs[i].num_kf > 0) count++;
+    }
+    anim_engine.active_count = count;
+}
+
+/* Auto-clean zombie defs: num_kf > 0 but no keys assigned.
+ * Call ONLY after ASSIGN (when key ownership may have changed),
+ * NOT after DEF (which creates defs before keys are assigned). */
+static void anim_cleanup_zombies(void) {
+    for (int d = 0; d < ANIM_MAX_DEFS; d++) {
+        if (anim_defs[d].num_kf == 0)
+            continue;
+        uint8_t has_key = 0;
+        for (int k = 0; k < LED_COUNT; k++) {
+            if (key_table[k].anim_id == d) { has_key = 1; break; }
+        }
+        if (!has_key) {
+            anim_defs[d].num_kf = 0;
+            anim_defs[d].elapsed_ticks = 0;
+        }
+    }
+    anim_recount_active();
+}
+
+static void anim_cancel_def(uint8_t def_id) {
+    if (def_id >= ANIM_MAX_DEFS) return;
+
+    /* Zero the definition */
+    anim_defs[def_id].num_kf = 0;
+    anim_defs[def_id].elapsed_ticks = 0;
+
+    /* Clear key_table entries pointing to this def + zero their overlay */
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (key_table[i].anim_id == def_id) {
+            key_table[i].anim_id = 0xFF;
+            overlay_buf[i * 3 + 0] = 0;
+            overlay_buf[i * 3 + 1] = 0;
+            overlay_buf[i * 3 + 2] = 0;
+        }
+    }
+
+    anim_recount_active();
+
+    /* If no animations remain, check if overlay can be deactivated */
+    if (anim_engine.active_count == 0) {
+        uint8_t any = 0;
+        for (int i = 0; i < LED_COUNT * 3; i++) {
+            if (overlay_buf[i]) { any = 1; break; }
+        }
+        if (!any) overlay_active = 0;
+    }
+}
+
+static int handle_anim_cmd(volatile uint8_t *buf) {
+    uint8_t sub = buf[3];
+
+    if (sub <= 0x07) {
+        /* ── ANIM_ASSIGN ─────────────────────────────────────────── */
+        uint8_t def_id = sub;
+        if (anim_defs[def_id].num_kf == 0) goto done; /* def not loaded */
+
+        uint8_t count = buf[4];
+        if (count > 30) count = 30;
+
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t matrix_idx   = buf[5 + i * 2];
+            uint8_t phase_offset = buf[5 + i * 2 + 1];
+            if (matrix_idx >= MATRIX_LEN) continue;
+            uint8_t strip_idx = static_led_pos_tbl[matrix_idx];
+            if (strip_idx >= LED_COUNT) continue;
+
+            /* Priority check: only replace if new def has >= priority */
+            uint8_t cur_id = key_table[strip_idx].anim_id;
+            if (cur_id < ANIM_MAX_DEFS && anim_defs[cur_id].num_kf > 0) {
+                if (anim_defs[def_id].priority < anim_defs[cur_id].priority)
+                    continue; /* current has higher priority */
+            }
+
+            key_table[strip_idx].anim_id = def_id;
+            key_table[strip_idx].phase_offset = phase_offset;
+        }
+        anim_cleanup_zombies();
+        goto done;
+    }
+
+    if (sub >= 0x08 && sub <= 0x0F) {
+        /* ── ANIM_DEF ────────────────────────────────────────────── */
+        uint8_t def_id = sub & 0x07;
+        anim_def_t *def = &anim_defs[def_id];
+
+        uint8_t num_kf = buf[4];
+        if (num_kf > ANIM_MAX_KF) num_kf = ANIM_MAX_KF;
+
+        def->flags = buf[5];
+        def->priority = (int8_t)buf[6];
+        def->duration_ticks = (uint16_t)(buf[7] | ((uint16_t)buf[8] << 8));
+        def->elapsed_ticks = 0;
+
+        /* Unpack up to 4 keyframes from this packet */
+        uint8_t kf_in_pkt = (num_kf > 4) ? 4 : num_kf;
+        for (uint8_t i = 0; i < kf_in_pkt; i++) {
+            uint8_t off = 9 + i * 5;
+            def->kf[i].t_ticks = (uint16_t)(buf[off] | ((uint16_t)buf[off + 1] << 8));
+            uint16_t c565 = (uint16_t)(buf[off + 2] | ((uint16_t)buf[off + 3] << 8));
+            unpack_rgb565(c565, &def->kf[i].r, &def->kf[i].g, &def->kf[i].b);
+            def->kf[i].easing = buf[off + 4];
+        }
+
+        /* Only set num_kf now: if num_kf > 4, more KFs come via DEF_EXT */
+        def->num_kf = (num_kf <= 4) ? num_kf : 0; /* 0 = pending ext */
+        if (num_kf <= 4) {
+            def->num_kf = num_kf;
+            anim_recount_active();
+        } else {
+            /* Store expected count in _pad so DEF_EXT knows */
+            def->_pad = num_kf;
+        }
+        goto done;
+    }
+
+    if (sub >= 0x10 && sub <= 0x17) {
+        /* ── ANIM_DEF_EXT ────────────────────────────────────────── */
+        uint8_t def_id = sub & 0x07;
+        anim_def_t *def = &anim_defs[def_id];
+
+        uint8_t num_kf = def->_pad; /* stored by ANIM_DEF */
+        if (num_kf > ANIM_MAX_KF) num_kf = ANIM_MAX_KF;
+
+        /* Unpack KFs 4-7 */
+        for (uint8_t i = 4; i < num_kf; i++) {
+            uint8_t off = 4 + (i - 4) * 5;
+            def->kf[i].t_ticks = (uint16_t)(buf[off] | ((uint16_t)buf[off + 1] << 8));
+            uint16_t c565 = (uint16_t)(buf[off + 2] | ((uint16_t)buf[off + 3] << 8));
+            unpack_rgb565(c565, &def->kf[i].r, &def->kf[i].g, &def->kf[i].b);
+            def->kf[i].easing = buf[off + 4];
+        }
+
+        def->num_kf = num_kf;
+        def->_pad = 0;
+        anim_recount_active();
+        goto done;
+    }
+
+    if (sub == 0xF0) {
+        /* ── ANIM_QUERY ──────────────────────────────────────────── */
+        /* Response layout (host reads from cmd_buf+2, so resp[N] = buf[N+2]):
+         *   buf[3]    = 0xF0 (sub-command echo for disambiguation)
+         *   buf[4]    = active_count
+         *   buf[5..8] = frame_count (u32 LE, for sync)
+         *   buf[9]    = overlay_active
+         *   buf[10..57]= per-def status (8 × 6 bytes)
+         *     [0] num_kf, [1] flags, [2] priority, [3] key_count,
+         *     [4..5] duration_ticks (u16 LE) */
+        buf[3] = 0xF0;  /* sub echo — driver verifies to reject stale responses */
+        buf[4] = anim_engine.active_count;
+        uint32_t fc = anim_engine.frame_count;
+        buf[5] = (uint8_t)(fc & 0xFF);
+        buf[6] = (uint8_t)((fc >> 8) & 0xFF);
+        buf[7] = (uint8_t)((fc >> 16) & 0xFF);
+        buf[8] = (uint8_t)((fc >> 24) & 0xFF);
+        buf[9] = overlay_active;
+
+        for (int d = 0; d < ANIM_MAX_DEFS; d++) {
+            uint8_t base = 10 + d * 6;
+            buf[base + 0] = anim_defs[d].num_kf;
+            buf[base + 1] = anim_defs[d].flags;
+            buf[base + 2] = (uint8_t)anim_defs[d].priority;
+            /* Count keys assigned to this def */
+            uint8_t kc = 0;
+            for (int k = 0; k < LED_COUNT; k++) {
+                if (key_table[k].anim_id == d) kc++;
+            }
+            buf[base + 3] = kc;
+            buf[base + 4] = (uint8_t)(anim_defs[d].duration_ticks & 0xFF);
+            buf[base + 5] = (uint8_t)(anim_defs[d].duration_ticks >> 8);
+        }
+        goto done;
+    }
+
+    if (sub >= 0xF1 && sub <= 0xF8) {
+        /* ── ANIM_QUERY_KEYS ─────────────────────────────────────── */
+        /* Returns key assignments for one def.
+         *   buf[3] = sub (echo for disambiguation from QUERY status)
+         *   buf[4] = count
+         *   buf[5..] = (strip_idx, phase_offset) × count, max 28 */
+        uint8_t def_id = sub - 0xF1;
+        buf[3] = sub;  /* echo sub-command so driver can verify */
+        uint8_t count = 0;
+        for (int k = 0; k < LED_COUNT && count < 28; k++) {
+            if (key_table[k].anim_id == def_id) {
+                buf[5 + count * 2]     = (uint8_t)k;
+                buf[5 + count * 2 + 1] = key_table[k].phase_offset;
+                count++;
+            }
+        }
+        buf[4] = count;
+        goto done;
+    }
+
+    if (sub == 0xFE) {
+        /* ── ANIM_CANCEL ─────────────────────────────────────────── */
+        anim_cancel_def(buf[4]);
+        goto done;
+    }
+
+    if (sub == 0xFF) {
+        /* ── ANIM_CLEAR ──────────────────────────────────────────── */
+        for (int i = 0; i < ANIM_MAX_DEFS; i++)
+            anim_defs[i].num_kf = 0;
+        for (int i = 0; i < LED_COUNT; i++) {
+            key_table[i].anim_id = 0xFF;
+            overlay_buf[i * 3 + 0] = 0;
+            overlay_buf[i * 3 + 1] = 0;
+            overlay_buf[i * 3 + 2] = 0;
+        }
+        overlay_active = 0;
+        anim_engine.active_count = 0;
+        goto done;
+    }
+
+    return 0; /* unknown sub-command, passthrough */
+
+done:
+    buf[0] = 0;
+    return 1;
+}
+
 /* ── USB connect init (patches config descriptors before enumeration) ──── */
 
 int handle_usb_connect(void) {
@@ -684,6 +1179,11 @@ int handle_usb_connect(void) {
      * so statics from the previous run persist as garbage.
      * Uses linker-provided __patch_bss_start/__patch_bss_end symbols. */
     zero_patch_bss();
+
+    /* key_table uses 0xFF as "unassigned" sentinel, but zero_patch_bss sets
+     * everything to 0 which means "assigned to def 0".  Fix it. */
+    for (int i = 0; i < LED_COUNT; i++)
+        key_table[i].anim_id = 0xFF;
 
     log_entry(LOG_USB_CONNECT, (const uint8_t *)0, 0);
 
@@ -801,6 +1301,8 @@ int handle_vendor_cmd(void) {
         return handle_led_stream(cmd_buf);
     case 0xE9:
         return handle_log_read(cmd_buf);
+    case 0xEA:
+        return handle_anim_cmd(cmd_buf);
     default:
         return 0;   /* passthrough to original firmware */
     }
