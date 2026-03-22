@@ -578,7 +578,7 @@ static void anim_evaluate(const anim_def_t *def, uint16_t t_local,
 found_bri:
             if (seg < def->num_kf - 1) {
                 uint16_t dt = def->kf[seg + 1].t_ticks - def->kf[seg].t_ticks;
-                if (dt > 0) {
+                if (dt > 0 && t_local >= def->kf[seg].t_ticks) {
                     uint8_t frac = (uint8_t)(((uint32_t)(t_local - def->kf[seg].t_ticks) * 255) / dt);
                     uint8_t eased = ease_apply(def->kf[seg].easing, frac);
                     bri = lerp8(def->kf[seg].r, def->kf[seg + 1].r, eased); /* r = brightness in rainbow */
@@ -620,7 +620,7 @@ found_seg:
     }
 
     uint16_t dt = def->kf[seg + 1].t_ticks - def->kf[seg].t_ticks;
-    if (dt == 0) {
+    if (dt == 0 || t_local < def->kf[seg].t_ticks) {
         *out_r = def->kf[seg].r; *out_g = def->kf[seg].g; *out_b = def->kf[seg].b;
         return;
     }
@@ -1006,7 +1006,7 @@ static int handle_anim_cmd(volatile uint8_t *buf) {
         if (anim_defs[def_id].num_kf == 0) goto done; /* def not loaded */
 
         uint8_t count = buf[4];
-        if (count > 30) count = 30;
+        if (count > 29) count = 29;  /* max 29: buf[5 + 28*2 + 1] = buf[62] */
 
         for (uint8_t i = 0; i < count; i++) {
             uint8_t matrix_idx   = buf[5 + i * 2];
@@ -1035,11 +1035,14 @@ static int handle_anim_cmd(volatile uint8_t *buf) {
         anim_def_t *def = &anim_defs[def_id];
 
         uint8_t num_kf = buf[4];
+        if (num_kf == 0) goto done;  /* need at least 1 keyframe */
         if (num_kf > ANIM_MAX_KF) num_kf = ANIM_MAX_KF;
 
         def->flags = buf[5];
         def->priority = (int8_t)buf[6];
         def->duration_ticks = (uint16_t)(buf[7] | ((uint16_t)buf[8] << 8));
+        if (def->duration_ticks == 0)
+            def->duration_ticks = 1;  /* prevent div-by-zero in tick modulo */
         def->elapsed_ticks = 0;
 
         /* Unpack up to 4 keyframes from this packet */

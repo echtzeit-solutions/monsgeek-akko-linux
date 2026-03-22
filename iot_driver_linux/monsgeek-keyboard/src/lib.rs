@@ -1606,9 +1606,9 @@ impl KeyboardInterface {
     /// Assign keys to an animation definition.
     ///
     /// `keys` is a slice of `(matrix_idx, phase_offset)` pairs.
-    /// Chunked automatically for packets > 30 entries.
+    /// Chunked automatically for packets > 29 entries.
     pub fn anim_assign(&self, def_id: u8, keys: &[(u8, u8)]) -> Result<(), KeyboardError> {
-        for chunk in keys.chunks(30) {
+        for chunk in keys.chunks(29) {
             let mut data = vec![0u8; 2 + chunk.len() * 2];
             data[0] = def_id & 0x07;
             data[1] = chunk.len() as u8;
