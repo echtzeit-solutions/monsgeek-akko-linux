@@ -341,8 +341,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Notification Commands ===
         #[cfg(feature = "notify")]
-        Some(Commands::NotifyDaemon { fps, power_budget }) => {
-            commands::notify::daemon(&ctx, fps, power_budget).await?;
+        Some(Commands::NotifyDaemon { power_budget }) => {
+            commands::notify::daemon(&ctx, power_budget).await?;
         }
         #[cfg(feature = "notify")]
         Some(Commands::Notify {
@@ -371,6 +371,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "notify")]
         Some(Commands::NotifyClear) => {
             commands::notify::clear().await?;
+        }
+        Some(Commands::AnimStatus) => {
+            commands::with_keyboard(&ctx, |kb| {
+                match iot_driver::anim::query_status(kb) {
+                    Ok(snap) => println!("{snap}"),
+                    Err(e) => eprintln!("Error: {e}"),
+                }
+                Ok(())
+            })?;
         }
     }
 

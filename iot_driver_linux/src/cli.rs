@@ -508,9 +508,6 @@ pub enum Commands {
     #[cfg(feature = "notify")]
     #[command(visible_alias = "nd")]
     NotifyDaemon {
-        /// Render frames per second (1-60)
-        #[arg(long, default_value = "30")]
-        fps: u32,
         /// LED power budget in milliamps (0 = unlimited)
         #[arg(long, default_value = "400")]
         power_budget: u32,
@@ -562,6 +559,9 @@ pub enum Commands {
     /// Clear all notifications
     #[cfg(feature = "notify")]
     NotifyClear,
+
+    /// Query animation engine status (running defs, frame count)
+    AnimStatus,
 }
 
 /// Dongle commands
