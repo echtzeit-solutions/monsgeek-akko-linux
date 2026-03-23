@@ -667,7 +667,7 @@ static void anim_tick(void) {
         if (def->flags & ANIM_FLAG_ONE_SHOT) {
             int32_t local_t = (int32_t)def->elapsed_ticks - (int32_t)phase;
             if (local_t < 0) {
-                r = def->kf[0].r; g = def->kf[0].g; b = def->kf[0].b;
+                r = 0; g = 0; b = 0;  /* not started yet — black */
             } else if (local_t >= (int32_t)def->duration_ticks) {
                 uint8_t last = def->num_kf - 1;
                 r = def->kf[last].r; g = def->kf[last].g; b = def->kf[last].b;
