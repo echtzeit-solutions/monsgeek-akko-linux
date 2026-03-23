@@ -1123,7 +1123,8 @@ static int handle_anim_cmd(volatile uint8_t *buf) {
             buf[base + 4] = (uint8_t)(anim_defs[d].duration_ticks & 0xFF);
             buf[base + 5] = (uint8_t)(anim_defs[d].duration_ticks >> 8);
         }
-        goto done;
+        buf[0] = 0;  /* consumed — but preserve buf[3] sub-echo */
+        return 1;
     }
 
     if (sub >= 0xF1 && sub <= 0xF8) {
@@ -1143,7 +1144,8 @@ static int handle_anim_cmd(volatile uint8_t *buf) {
             }
         }
         buf[4] = count;
-        goto done;
+        buf[0] = 0;  /* consumed — but preserve buf[3] sub-echo */
+        return 1;
     }
 
     if (sub == 0xFE) {
