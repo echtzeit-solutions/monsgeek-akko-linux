@@ -173,12 +173,14 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                     ns.selected_effect -= 1;
                     ns.selected_keyframe = 0;
                 }
+                app.notify_recompute_preview();
             }
             Down | Char('j') => {
                 if ns.selected_effect + 1 < ns.effect_names.len() {
                     ns.selected_effect += 1;
                     ns.selected_keyframe = 0;
                 }
+                app.notify_recompute_preview();
             }
             Enter => {
                 ns.focus = NotifyFocus::KeyframeList;
@@ -186,21 +188,9 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                 ns.selected_field = 0;
             }
             Char('p') => {
-                // Play/stop on-device preview via animation engine (slot 7)
-                let ns = &mut app.notify;
-                if ns.preview_on_hardware {
-                    // Stop preview — cancel def 7
-                    ns.preview_on_hardware = false;
-                    if let Some(ref kb) = app.keyboard {
-                        let _ = kb.anim_cancel(7);
-                    }
-                    app.notify.slot_info.lock().unwrap().clear(7);
-                    app.status_msg = "Preview stopped".to_string();
-                } else {
-                    // Start preview: compile + program to QWERTY row
-                    app.notify_recompute_preview();
-                    app.notify_program_preview();
-                }
+                // Always program preview to keyboard
+                app.notify_recompute_preview();
+                app.notify_program_preview();
             }
             Char('s') => {
                 app.notify_toggle_daemon();
@@ -233,6 +223,13 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                 } else {
                     format!("Power budget: {}mA", ns.power_budget)
                 };
+            }
+            Char('c') => {
+                if let Some(ref kb) = app.keyboard {
+                    let _ = kb.anim_clear();
+                    app.status_msg = "Cleared all animations".to_string();
+                    app.notify.preview_on_hardware = false;
+                }
             }
             _ => {}
         },
@@ -753,7 +750,7 @@ fn render_notify_left(f: &mut Frame, app: &App, area: Rect) {
         ),
         dirty,
         Span::styled(
-            "  [p]play [s]service [w]save [<>]pwr",
+            "  [p]play [s]service [w]save [c]clear [<>]pwr",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -942,7 +939,14 @@ fn render_notify_right(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     render_preview_grid(f, app, chunks[0]);
-    render_brightness_sparkline(f, app, chunks[1]);
+    render_animation_curve(
+        f,
+        chunks[1],
+        app.notify.resolved.as_ref(),
+        "Brightness",
+        0.0,
+        0.0,
+    );
     render_anim_status(f, app, chunks[2]);
 }
 
@@ -1035,39 +1039,27 @@ fn render_anim_status(f: &mut Frame, app: &App, area: Rect) {
         );
         y += 1;
 
-        // Brightness envelope sparkline (2 rows high)
-        // Uses the cached resolved effect from the slot info.
-        let keys_for_spark = snap.keys.get(&d.id);
+        // Animation curve (2 rows high) — uses same widget as brightness preview
         if y + 1 < max_y && d.duration_ticks > 0 {
-            let bar_w = inner.width as usize;
             let dur_ticks = d.duration_ticks as f64;
             let resolved = slot_entry.as_ref().map(|e| &e.resolved);
+            let now_ticks = interp_frames % dur_ticks;
 
-            let mut spark = vec![0u64; bar_w];
-            if let Some(resolved) = resolved {
-                if let Some(keys) = keys_for_spark {
-                    // For each column (= wall-clock time offset from now),
-                    // compute max brightness across all keys at that moment.
-                    let now_ticks = interp_frames % dur_ticks;
-                    for (col, cell) in spark.iter_mut().enumerate() {
-                        let wall_ticks = now_ticks + (col as f64 / bar_w as f64) * dur_ticks;
-                        let mut max_lum: u64 = 0;
-                        for k in keys {
-                            let key_t_ms = (wall_ticks + (k.phase_offset as f64) * 8.0) % dur_ticks
-                                * crate::anim::MS_PER_TICK;
-                            let rgb = resolved.evaluate(key_t_ms);
-                            let lum = (rgb.r as u64 + rgb.g as u64 + rgb.b as u64) / 3;
-                            max_lum = max_lum.max(lum);
-                        }
-                        *cell = max_lum * 8 / 255;
-                    }
-                }
-            }
-
-            let sparkline = Sparkline::default()
-                .data(&spark)
-                .style(Style::default().fg(Color::Cyan));
-            f.render_widget(sparkline, Rect::new(inner.x, y, inner.width, 2));
+            let curve_area = Rect::new(inner.x, y, inner.width, 2);
+            render_animation_curve(
+                f,
+                // No border for inline engine curves — render directly
+                Rect::new(
+                    curve_area.x,
+                    curve_area.y,
+                    curve_area.width,
+                    curve_area.height,
+                ),
+                resolved,
+                "",
+                now_ticks,
+                dur_ticks,
+            );
             y += 2;
         }
 
@@ -1188,29 +1180,82 @@ fn render_preview_grid(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_brightness_sparkline(f: &mut Frame, app: &App, area: Rect) {
-    let ns = &app.notify;
-
-    // Compute brightness curve: 64 samples across one cycle
-    let data: Vec<u64> = if let Some(ref resolved) = ns.resolved {
-        let dur = resolved.duration_ms.max(1.0);
-        (0..64)
-            .map(|i| {
-                let t = (i as f64 / 64.0) * dur;
-                let rgb = resolved.evaluate(t);
-                // Max channel as brightness proxy
-                let b = rgb.r.max(rgb.g).max(rgb.b);
-                (b as f64 / 255.0 * 64.0) as u64
-            })
-            .collect()
+/// Render an animation curve with interpolated colors.
+/// Each column samples the resolved effect at that time offset and renders
+/// a bar whose height = brightness and color = the actual RGB color.
+/// `phase_offset_ticks` shifts the time for each column (0 for simple preview).
+/// `time_offset_ticks` is the current playback position (0 for static view).
+fn render_animation_curve(
+    f: &mut Frame,
+    area: Rect,
+    resolved: Option<&ResolvedEffect>,
+    title: &str,
+    time_offset_ticks: f64,
+    dur_ticks: f64,
+) {
+    let inner = if title.is_empty() {
+        area
     } else {
-        vec![0; 64]
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        inner
     };
 
-    let sparkline = Sparkline::default()
-        .block(Block::default().borders(Borders::ALL).title("Brightness"))
-        .data(&data)
-        .max(64)
-        .style(Style::default().fg(Color::Cyan));
-    f.render_widget(sparkline, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let Some(resolved) = resolved else {
+        return;
+    };
+
+    let w = inner.width as usize;
+    let h = inner.height as usize;
+
+    // Use ticks if provided, otherwise use duration_ms directly
+    let use_ticks = dur_ticks > 0.0;
+
+    // Unicode block characters for sub-cell resolution (eighths)
+    const BLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    for col in 0..w {
+        let t_ms = if use_ticks {
+            let wall_ticks = time_offset_ticks + (col as f64 / w as f64) * dur_ticks;
+            (wall_ticks % dur_ticks) * crate::anim::MS_PER_TICK
+        } else {
+            (col as f64 / w as f64) * resolved.duration_ms.max(1.0)
+        };
+
+        let rgb = resolved.evaluate(t_ms);
+        let brightness = rgb.r.max(rgb.g).max(rgb.b) as f64 / 255.0;
+        let color = Color::Rgb(rgb.r, rgb.g, rgb.b);
+
+        // Height in sub-cells (eighths of a cell)
+        let bar_eighths = (brightness * (h * 8) as f64).round() as usize;
+
+        // Render bottom-up
+        for row in 0..h {
+            let cell_bottom = row * 8; // eighths from bottom
+            let fill = bar_eighths.saturating_sub(cell_bottom).min(8);
+            let ch = BLOCKS[fill];
+            let y = inner.y + (h - 1 - row) as u16;
+            let x = inner.x + col as u16;
+
+            let style = if fill == 8 {
+                // Full block: color the background
+                Style::default().bg(color).fg(color)
+            } else if fill > 0 {
+                // Partial block: colored foreground
+                Style::default().fg(color)
+            } else {
+                Style::default()
+            };
+
+            f.render_widget(
+                Paragraph::new(ch.to_string()).style(style),
+                Rect::new(x, y, 1, 1),
+            );
+        }
+    }
 }

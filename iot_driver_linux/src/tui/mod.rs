@@ -1910,11 +1910,12 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
         }
     }
 
-    // Cleanup - stop magnetism reporting
-    if app.depth_monitoring {
-        if let Some(ref keyboard) = app.keyboard {
+    // Cleanup - stop magnetism reporting and clear all animations
+    if let Some(ref keyboard) = app.keyboard {
+        if app.depth_monitoring {
             let _ = keyboard.stop_magnetism_report();
         }
+        let _ = keyboard.anim_clear();
     }
     disable_raw_mode()?;
     stdout()
