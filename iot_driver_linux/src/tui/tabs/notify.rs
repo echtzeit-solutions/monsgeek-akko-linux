@@ -585,23 +585,15 @@ impl App {
     /// Poll animation engine status periodically.
     /// Polls every 500ms on the notify tab, or every 2s on other tabs if overlay is active.
     pub(in crate::tui) fn poll_anim_status(&mut self) {
-        let has_patch = self
-            .patch_info
-            .as_ref()
-            .is_some_and(|p| p.capabilities.contains(&"anim_engine"));
-        if !has_patch {
+        if self.keyboard.is_none() {
             return;
         }
         let interval = if self.tab == 4 {
-            self.anim_poll_interval // 500ms on notify tab
-        } else if self
-            .anim_snapshot
-            .as_ref()
-            .is_some_and(|s| s.overlay_active())
-        {
-            Duration::from_secs(2) // 2s if overlay active on other tabs
+            self.anim_poll_interval
+        } else if self.anim_snapshot.is_some() {
+            Duration::from_secs(2)
         } else {
-            return; // don't poll if not on notify tab and no overlay
+            return; // don't poll if not on notify tab and no snapshot yet
         };
         if self.last_anim_poll.elapsed() < interval {
             return;
@@ -966,13 +958,8 @@ fn render_anim_status(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let Some(snap) = snap else {
-        let msg = if app.notify.daemon_running {
-            "Daemon running (no anim engine)"
-        } else {
-            "No animation engine"
-        };
         f.render_widget(
-            Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new("(connecting...)").style(Style::default().fg(Color::DarkGray)),
             inner,
         );
         return;
