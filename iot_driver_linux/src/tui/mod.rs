@@ -1294,6 +1294,28 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         continue;
                     }
 
+                    // Alt-1..5 tab shortcuts
+                    if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+                        let tab_idx = match key.code {
+                            KeyCode::Char('1') => Some(0),
+                            KeyCode::Char('2') => Some(1),
+                            KeyCode::Char('3') => Some(2),
+                            KeyCode::Char('4') => Some(3),
+                            KeyCode::Char('5') => Some(4),
+                            _ => None,
+                        };
+                        if let Some(idx) = tab_idx {
+                            if idx < app.tab_count() {
+                                app.tab = idx;
+                                app.selected = 0;
+                                app.trigger_scroll = 0;
+                                app.scroll_state = ScrollViewState::new();
+                                app.auto_load_tab();
+                            }
+                            continue;
+                        }
+                    }
+
                     match key.code {
                         // Help toggle
                         KeyCode::Char('?') | KeyCode::F(1) => {
@@ -1310,34 +1332,13 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             #[cfg(not(feature = "notify"))]
                             break;
                         }
-                        KeyCode::Tab => {
-                            // When notify tab has inner focus, Tab switches focus instead
+                        // Tab/BackTab: navigate within current tab
+                        KeyCode::Tab | KeyCode::BackTab => {
                             #[cfg(feature = "notify")]
-                            if app.tab == 4 && app.notify.focus != NotifyFocus::EffectList {
+                            if app.tab == 4 {
                                 handle_notify_input(&mut app, key.code);
-                            } else {
-                                app.tab = (app.tab + 1) % app.tab_count();
-                                app.selected = 0;
-                                app.trigger_scroll = 0;
-                                app.scroll_state = ScrollViewState::new();
-                                app.auto_load_tab();
                             }
-                            #[cfg(not(feature = "notify"))]
-                            {
-                                app.tab = (app.tab + 1) % app.tab_count();
-                                app.selected = 0;
-                                app.trigger_scroll = 0;
-                                app.scroll_state = ScrollViewState::new();
-                                app.auto_load_tab();
-                            }
-                        }
-                        KeyCode::BackTab => {
-                            let n = app.tab_count();
-                            app.tab = if app.tab == 0 { n - 1 } else { app.tab - 1 };
-                            app.selected = 0;
-                            app.trigger_scroll = 0;
-                            app.scroll_state = ScrollViewState::new();
-                            app.auto_load_tab();
+                            // Other tabs: no-op for now (can add widget focus later)
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
@@ -1928,10 +1929,10 @@ fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Title
-            Constraint::Length(3), // Tabs
+            Constraint::Length(1), // Title
+            Constraint::Length(1), // Tabs
             Constraint::Min(10),   // Content
-            Constraint::Length(3), // Status bar
+            Constraint::Length(1), // Status bar
         ])
         .split(f.area());
 
@@ -1947,8 +1948,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+        .alignment(Alignment::Center);
     f.render_widget(title, chunks[0]);
 
     // Tabs
@@ -1960,11 +1960,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Tabs [Tab/Shift+Tab]"),
-        );
+        .divider("│");
     f.render_widget(tabs, chunks[1]);
 
     // Store areas for mouse hit testing (using interior mutability)
@@ -2046,9 +2042,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             conn_status, profile_str, battery_str, app.status_msg, monitoring_str
         )
     };
-    let status = Paragraph::new(status_text)
-        .style(Style::default().fg(status_color))
-        .block(Block::default().borders(Borders::ALL));
+    let status = Paragraph::new(status_text).style(Style::default().fg(status_color));
     f.render_widget(status, chunks[3]);
 
     // Help popup (renders on top)

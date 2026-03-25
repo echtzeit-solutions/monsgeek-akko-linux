@@ -115,6 +115,7 @@ pub async fn run_with_cancel(
     let engine = AnimEngine::new(Arc::clone(&kb));
     let has_anim = engine.is_available();
     if has_anim {
+        engine.clear().ok();
         info!("Animation engine detected — using on-device playback");
     } else {
         info!("No animation engine — using streaming fallback");

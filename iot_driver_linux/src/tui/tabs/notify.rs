@@ -164,10 +164,53 @@ fn extract_var_default(def: &EffectDef, var_name: &str) -> Option<String> {
 
 pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
     use KeyCode::*;
+
+    // Global notify hotkeys (work from any focus, unless editing)
+    if !app.notify.editing {
+        match key {
+            Char('s') => {
+                app.notify_toggle_daemon();
+                return;
+            }
+            Char('c') => {
+                if let Some(ref kb) = app.keyboard {
+                    let _ = kb.anim_clear();
+                    app.status_msg = "Cleared all animations".to_string();
+                    app.notify.preview_on_hardware = false;
+                }
+                return;
+            }
+            Char('p') => {
+                let ns = &mut app.notify;
+                if ns.preview_on_hardware {
+                    ns.preview_on_hardware = false;
+                    if let Some(ref kb) = app.keyboard {
+                        let _ = kb.anim_cancel(7);
+                    }
+                    app.notify.slot_info.lock().unwrap().clear(7);
+                    app.status_msg = "Preview stopped".to_string();
+                } else {
+                    app.notify_recompute_preview();
+                    app.notify_program_preview();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     let ns = &mut app.notify;
 
     match ns.focus {
         NotifyFocus::EffectList => match key {
+            Tab => {
+                ns.focus = NotifyFocus::KeyframeList;
+                ns.selected_keyframe = 0;
+                ns.selected_field = 0;
+            }
+            BackTab => {
+                ns.focus = NotifyFocus::VarEdit;
+            }
             Up | Char('k') => {
                 if ns.selected_effect > 0 {
                     ns.selected_effect -= 1;
@@ -186,14 +229,6 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                 ns.focus = NotifyFocus::KeyframeList;
                 ns.selected_keyframe = 0;
                 ns.selected_field = 0;
-            }
-            Char('p') => {
-                // Always program preview to keyboard
-                app.notify_recompute_preview();
-                app.notify_program_preview();
-            }
-            Char('s') => {
-                app.notify_toggle_daemon();
             }
             Char('w') => {
                 if let Some(ref lib) = app.notify.effects {
@@ -223,13 +258,6 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                 } else {
                     format!("Power budget: {}mA", ns.power_budget)
                 };
-            }
-            Char('c') => {
-                if let Some(ref kb) = app.keyboard {
-                    let _ = kb.anim_clear();
-                    app.status_msg = "Cleared all animations".to_string();
-                    app.notify.preview_on_hardware = false;
-                }
             }
             _ => {}
         },
@@ -279,9 +307,11 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                 }
             }
             Tab => {
-                // Jump to variable editing
                 ns.focus = NotifyFocus::VarEdit;
                 ns.selected_var = 0;
+            }
+            BackTab => {
+                ns.focus = NotifyFocus::EffectList;
             }
             Char('a') => {
                 // Add keyframe after current
@@ -414,8 +444,11 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
             _ => {}
         },
         NotifyFocus::VarEdit => match key {
-            Esc => {
+            Esc | BackTab => {
                 ns.focus = NotifyFocus::KeyframeList;
+            }
+            Tab => {
+                ns.focus = NotifyFocus::EffectList;
             }
             Up | Char('k') => {
                 if ns.selected_var > 0 {
