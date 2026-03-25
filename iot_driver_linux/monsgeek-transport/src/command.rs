@@ -1655,6 +1655,16 @@ pub enum ParsedResponse {
     PatchInfo {
         data: Vec<u8>,
     },
+    // Animation engine (0xEA) responses
+    AnimStatus {
+        active_count: u8,
+        frame_count: u32,
+        defs: Vec<AnimDefStatusRaw>,
+    },
+    AnimKeys {
+        def_id: u8,
+        count: u8,
+    },
     /// Empty/stale buffer - all zeros or starts with 0x00 with no meaningful data
     Empty,
     /// Response we don't have a parser for yet - key for protocol discovery
@@ -1775,6 +1785,29 @@ pub enum ParsedCommand {
     PairingCmd {
         action: u8,
         channel: u8,
+    },
+    // Animation engine (0xEA)
+    AnimDefine {
+        def_id: u8,
+        num_kf: u8,
+        flags: u8,
+        priority: i8,
+        duration_ticks: u16,
+    },
+    AnimDefineExt {
+        def_id: u8,
+    },
+    AnimAssignKeys {
+        def_id: u8,
+        count: u8,
+    },
+    AnimCancel {
+        def_id: u8,
+    },
+    AnimClear,
+    AnimQuery,
+    AnimQueryKeys {
+        def_id: u8,
     },
     /// Command we don't have a parser for yet
     Unknown {
@@ -1910,6 +1943,29 @@ pub fn try_parse_response(data: &[u8]) -> ParsedResponse {
         cmd::GET_PATCH_INFO => ParsedResponse::PatchInfo {
             data: data[1..].to_vec(),
         },
+        cmd::ANIM_CMD => {
+            let sub = data.get(1).copied().unwrap_or(0);
+            match sub {
+                0xF0 if data.len() >= 56 => AnimQueryResponse::from_data(data)
+                    .map(|r| ParsedResponse::AnimStatus {
+                        active_count: r.active_count,
+                        frame_count: r.frame_count,
+                        defs: r.defs,
+                    })
+                    .unwrap_or_else(|_| ParsedResponse::Unknown {
+                        cmd,
+                        data: data.to_vec(),
+                    }),
+                0xF1..=0xF8 => ParsedResponse::AnimKeys {
+                    def_id: sub - 0xF1,
+                    count: data.get(2).copied().unwrap_or(0),
+                },
+                _ => ParsedResponse::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                },
+            }
+        }
         cmd::GET_MULTI_MAGNETISM => {
             let subcmd = data.get(1).copied().unwrap_or(0);
             let page = data.get(3).copied().unwrap_or(0);
@@ -2110,6 +2166,37 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
             action: data.get(1).copied().unwrap_or(0),
             channel: data.get(2).copied().unwrap_or(0),
         },
+
+        cmd::ANIM_CMD => {
+            let sub = data.get(1).copied().unwrap_or(0);
+            match sub {
+                0x00..=0x07 => ParsedCommand::AnimAssignKeys {
+                    def_id: sub,
+                    count: data.get(2).copied().unwrap_or(0),
+                },
+                0x08..=0x0F => ParsedCommand::AnimDefine {
+                    def_id: sub & 0x07,
+                    num_kf: data.get(2).copied().unwrap_or(0),
+                    flags: data.get(3).copied().unwrap_or(0),
+                    priority: data.get(4).copied().unwrap_or(0) as i8,
+                    duration_ticks: u16::from_le_bytes([
+                        data.get(5).copied().unwrap_or(0),
+                        data.get(6).copied().unwrap_or(0),
+                    ]),
+                },
+                0x10..=0x17 => ParsedCommand::AnimDefineExt { def_id: sub & 0x07 },
+                0xF0 => ParsedCommand::AnimQuery,
+                0xF1..=0xF8 => ParsedCommand::AnimQueryKeys { def_id: sub - 0xF1 },
+                0xFE => ParsedCommand::AnimCancel {
+                    def_id: data.get(2).copied().unwrap_or(0),
+                },
+                0xFF => ParsedCommand::AnimClear,
+                _ => ParsedCommand::Unknown {
+                    cmd,
+                    data: data.to_vec(),
+                },
+            }
+        }
 
         _ => ParsedCommand::Unknown {
             cmd,
