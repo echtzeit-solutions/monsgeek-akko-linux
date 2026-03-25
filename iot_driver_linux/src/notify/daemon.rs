@@ -81,7 +81,7 @@ fn startup_animation(engine: &AnimEngine) {
     // Total duration: animation (40 ticks) + max stagger (~20 ticks for diagonal)
     if engine
         .kb()
-        .anim_define(0, fw_flags::ONE_SHOT, -128, 40, &keyframes)
+        .anim_define(7, fw_flags::ONE_SHOT, -128, 40, &keyframes)
         .is_err()
     {
         return;
@@ -98,7 +98,7 @@ fn startup_animation(engine: &AnimEngine) {
         }
     }
 
-    let _ = engine.kb().anim_assign(0, &keys);
+    let _ = engine.kb().anim_assign(7, &keys);
 }
 
 /// Program a notification into the firmware animation engine.
