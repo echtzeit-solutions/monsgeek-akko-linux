@@ -170,6 +170,11 @@ impl AnimEngine {
             .is_some_and(|p| p.has_anim_engine())
     }
 
+    /// Get the Arc-wrapped keyboard interface (for spawning async tasks).
+    pub fn kb_arc(&self) -> Arc<KeyboardInterface> {
+        Arc::clone(&self.kb)
+    }
+
     /// Query the current animation engine state (status only, no key lists).
     pub fn query(&self) -> Result<EngineSnapshot, String> {
         self.kb

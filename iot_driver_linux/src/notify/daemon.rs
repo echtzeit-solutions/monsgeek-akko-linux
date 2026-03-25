@@ -101,6 +101,13 @@ fn startup_animation(engine: &AnimEngine) {
     }
 
     let _ = engine.kb().anim_assign(7, &keys);
+
+    // Cancel after animation completes: max_phase(20)*8 + duration(40) = 200 ticks ≈ 2s
+    let kb = engine.kb_arc();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let _ = kb.anim_cancel(7);
+    });
 }
 
 /// Program a notification into the firmware animation engine.
