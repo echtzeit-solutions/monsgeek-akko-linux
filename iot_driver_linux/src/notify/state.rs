@@ -182,13 +182,20 @@ impl NotificationStore {
 
     /// List all active notifications as (id, key_str, source, effect_name, priority).
     pub fn list(&self) -> Vec<(u64, String, String, String, i32)> {
+        let labels = crate::effect::preview::build_labels();
         self.notifications
             .values()
             .map(|n| {
                 let key_str = n
                     .matrix_indices
                     .iter()
-                    .map(|i| i.to_string())
+                    .filter_map(|&i| {
+                        labels
+                            .get(i)
+                            .map(|l| l.trim())
+                            .filter(|l| !l.is_empty())
+                            .or(Some("?"))
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 (
