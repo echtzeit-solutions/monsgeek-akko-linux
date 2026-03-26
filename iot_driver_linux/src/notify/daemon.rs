@@ -222,14 +222,25 @@ pub async fn run_with_cancel(
 
         // Periodic sync: verify firmware state matches daemon expectations.
         // Catches keyboard sleep/wake (firmware resets, daemon still thinks slots are active).
-        if has_anim && last_sync.elapsed() >= sync_interval && !programmed.is_empty() {
+        if has_anim && last_sync.elapsed() >= sync_interval {
             last_sync = std::time::Instant::now();
             if let Ok(Some(status)) = engine.kb().anim_query() {
-                let fw_active = status.active_count;
-                let expected = programmed.len() as u8;
-                if fw_active == 0 && expected > 0 {
-                    // Firmware lost all animations (sleep/wake reset)
-                    log.push("sync: firmware reset detected, reprogramming");
+                // Build set of def IDs the daemon thinks are active
+                let expected: std::collections::HashSet<u8> = (0..8u8)
+                    .filter(|&s| slots.slots[s as usize].is_some())
+                    .collect();
+                // Build set of def IDs the firmware reports as active
+                let actual: std::collections::HashSet<u8> =
+                    status.defs.iter().map(|d| d.id).collect();
+
+                if expected != actual {
+                    // Mismatch: clear firmware and reprogram
+                    engine.clear().ok();
+                    log.push(format!(
+                        "sync: mismatch (fw={} daemon={}), reprogramming",
+                        actual.len(),
+                        expected.len()
+                    ));
                     slots = AnimSlotManager::new();
                     programmed.clear();
                     slot_info.lock().unwrap().clear_all();
