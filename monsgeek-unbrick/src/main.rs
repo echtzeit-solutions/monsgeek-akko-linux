@@ -75,20 +75,22 @@ fn run() -> Result<()> {
     println!("  3) Flash stock firmware v402 (device 2679) — full image with calibration");
     println!("  4) Deep reset (factory reset + erase calibration data — requires recalibration)");
     println!("  5) Flash a custom firmware file");
-    println!("  6) Read device info");
-    println!("  7) Dump flash to file (for diagnosis)");
+    println!("  6) Flash a custom file INCLUDING bootloader (for corrupted bootloader recovery)");
+    println!("  7) Read device info");
+    println!("  8) Dump flash to file (for diagnosis)");
     println!();
 
-    let choice = prompt("Choice [1-7]")?;
+    let choice = prompt("Choice [1-8]")?;
 
     match choice.trim() {
         "1" => cmd_factory_reset(&dev)?,
         "2" => cmd_flash_stock_v407(&dev)?,
         "3" => cmd_flash_stock_v402(&dev)?,
         "4" => cmd_deep_reset(&dev)?,
-        "5" => cmd_flash_custom(&dev)?,
-        "6" => cmd_info(&dev, &id_data)?,
-        "7" => cmd_dump(&dev)?,
+        "5" => cmd_flash_custom(&dev, false)?,
+        "6" => cmd_flash_custom(&dev, true)?,
+        "7" => cmd_info(&dev, &id_data)?,
+        "8" => cmd_dump(&dev)?,
         _ => println!("Invalid choice."),
     }
 
@@ -276,22 +278,32 @@ fn cmd_deep_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_flash_custom(dev: &dfuse::DfuSeDevice) -> Result<()> {
+fn cmd_flash_custom(dev: &dfuse::DfuSeDevice, include_bootloader: bool) -> Result<()> {
     let path_str = prompt("Path to firmware file")?;
     let path = PathBuf::from(path_str.trim());
 
-    let images = firmware::load_firmware(&path, None)
+    let images = firmware::load_firmware(&path, None, include_bootloader)
         .with_context(|| format!("Failed to load {}", path.display()))?;
+
+    let has_bootloader_seg = images.iter().any(|img| img.address < flash_map::FIRMWARE_START);
 
     println!("\nFirmware: {}", path.display());
     for (i, img) in images.iter().enumerate() {
+        let is_bl = img.address < flash_map::FIRMWARE_START;
         println!(
-            "  segment {}: 0x{:08X}..0x{:08X} ({} bytes)",
+            "  segment {}: 0x{:08X}..0x{:08X} ({} bytes){}",
             i,
             img.address,
             img.address + img.data.len() as u32,
-            img.data.len()
+            img.data.len(),
+            if is_bl { " [BOOTLOADER]" } else { "" },
         );
+    }
+
+    if has_bootloader_seg {
+        println!("\n  WARNING: This will overwrite the bootloader region!");
+        println!("  Only proceed if you have a known-good 256KB flash dump");
+        println!("  from the same board model. A bad bootloader = permanent brick.");
     }
 
     if !confirm("\nFlash these segments?")? {
@@ -300,13 +312,19 @@ fn cmd_flash_custom(dev: &dfuse::DfuSeDevice) -> Result<()> {
     }
 
     for (i, img) in images.iter().enumerate() {
+        let is_bootloader = img.address < flash_map::FIRMWARE_START;
         println!(
-            "Flashing segment {} (0x{:08X}, {} bytes)...",
+            "Flashing segment {} (0x{:08X}, {} bytes){}...",
             i,
             img.address,
-            img.data.len()
+            img.data.len(),
+            if is_bootloader { " [BOOTLOADER]" } else { "" },
         );
-        dev.write_data(img.address, &img.data)?;
+        if is_bootloader {
+            dev.write_data_force(img.address, &img.data)?;
+        } else {
+            dev.write_data(img.address, &img.data)?;
+        }
     }
 
     println!("\nDone! Unplug device, disconnect BOOT0, replug.");

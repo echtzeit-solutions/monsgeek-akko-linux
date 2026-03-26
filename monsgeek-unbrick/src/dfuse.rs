@@ -203,6 +203,17 @@ impl DfuSeDevice {
     pub fn write_data(&self, addr: u32, data: &[u8]) -> Result<()> {
         let len = data.len() as u32;
         crate::flash_map::validate_write_address(addr, len)?;
+        self.write_data_inner(addr, data)
+    }
+
+    /// Write without bootloader protection — for restoring corrupted bootloaders.
+    /// Caller is responsible for ensuring the data is a valid bootloader image.
+    pub fn write_data_force(&self, addr: u32, data: &[u8]) -> Result<()> {
+        self.write_data_inner(addr, data)
+    }
+
+    fn write_data_inner(&self, addr: u32, data: &[u8]) -> Result<()> {
+        let len = data.len() as u32;
 
         // Erase pages
         let pages: Vec<u32> = crate::flash_map::pages_to_erase(addr, len).collect();

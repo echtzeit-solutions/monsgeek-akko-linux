@@ -8,7 +8,15 @@ pub struct FirmwareImage {
 }
 
 /// Load a firmware file. Supports raw .bin and DfuSe .dfu formats.
-pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareImage>> {
+///
+/// If `include_bootloader` is true, a 256KB flash dump will include the
+/// bootloader region (0x08000000-0x08004FFF) in the output. This is needed
+/// to restore a board whose bootloader has been corrupted.
+pub fn load_firmware(
+    path: &Path,
+    address: Option<u32>,
+    include_bootloader: bool,
+) -> Result<Vec<FirmwareImage>> {
     let data = std::fs::read(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
 
@@ -21,9 +29,9 @@ pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareIm
         return parse_dfuse(&data);
     }
 
-    // Full 256KB flash dump? Split into segments, skipping bootloader.
+    // Full 256KB flash dump? Split into segments.
     if data.len() as u32 == crate::flash_map::FLASH_SIZE {
-        return split_flash_dump(&data);
+        return split_flash_dump(&data, include_bootloader);
     }
 
     // Raw .bin — require explicit or default address
@@ -37,13 +45,22 @@ pub fn load_firmware(path: &Path, address: Option<u32>) -> Result<Vec<FirmwareIm
 }
 
 /// Split a full 256KB flash dump into writable segments, skipping the bootloader
-/// and any trailing erased (0xFF) regions.
-fn split_flash_dump(data: &[u8]) -> Result<Vec<FirmwareImage>> {
+/// (unless `include_bootloader` is true) and any trailing erased (0xFF) regions.
+fn split_flash_dump(data: &[u8], include_bootloader: bool) -> Result<Vec<FirmwareImage>> {
     use crate::flash_map::*;
+
+    let mut images = Vec::new();
+
+    if include_bootloader {
+        let boot_size = (FIRMWARE_START - BOOTLOADER_START) as usize;
+        images.push(FirmwareImage {
+            address: BOOTLOADER_START,
+            data: data[..boot_size].to_vec(),
+        });
+    }
 
     let boot_size = (FIRMWARE_START - BOOTLOADER_START) as usize;
     let writable = &data[boot_size..];
-    let writable_start = FIRMWARE_START;
 
     // Find last non-0xFF byte to avoid writing huge erased tails
     let last_used = writable
@@ -52,20 +69,26 @@ fn split_flash_dump(data: &[u8]) -> Result<Vec<FirmwareImage>> {
         .map(|i| i + 1)
         .unwrap_or(0);
 
-    if last_used == 0 {
+    if last_used == 0 && images.is_empty() {
         bail!("flash dump is entirely erased (all 0xFF) after bootloader");
     }
 
-    // Round up to page boundary
-    let len = ((last_used as u32 + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE * FLASH_PAGE_SIZE) as usize;
-    let len = len.min(writable.len());
+    if last_used > 0 {
+        // Round up to page boundary
+        let len = ((last_used as u32 + FLASH_PAGE_SIZE - 1)
+            / FLASH_PAGE_SIZE
+            * FLASH_PAGE_SIZE) as usize;
+        let len = len.min(writable.len());
 
-    validate_write_address(writable_start, len as u32)?;
+        validate_write_address(FIRMWARE_START, len as u32)?;
 
-    Ok(vec![FirmwareImage {
-        address: writable_start,
-        data: writable[..len].to_vec(),
-    }])
+        images.push(FirmwareImage {
+            address: FIRMWARE_START,
+            data: writable[..len].to_vec(),
+        });
+    }
+
+    Ok(images)
 }
 
 /// Parse a DfuSe container file.
