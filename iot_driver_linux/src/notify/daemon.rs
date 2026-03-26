@@ -210,12 +210,31 @@ pub async fn run_with_cancel(
     let mut slots = AnimSlotManager::new();
     let mut programmed: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let mut prev_state_count: usize = 0;
+    let mut last_sync = std::time::Instant::now();
+    let sync_interval = std::time::Duration::from_secs(3);
 
     while running.load(Ordering::SeqCst) {
         // Wait for either: D-Bus wake signal or timer tick (expiry/waves)
         tokio::select! {
             _ = wake.notified() => {}
             _ = timer.tick() => {}
+        }
+
+        // Periodic sync: verify firmware state matches daemon expectations.
+        // Catches keyboard sleep/wake (firmware resets, daemon still thinks slots are active).
+        if has_anim && last_sync.elapsed() >= sync_interval && !programmed.is_empty() {
+            last_sync = std::time::Instant::now();
+            if let Ok(Some(status)) = engine.kb().anim_query() {
+                let fw_active = status.active_count;
+                let expected = programmed.len() as u8;
+                if fw_active == 0 && expected > 0 {
+                    // Firmware lost all animations (sleep/wake reset)
+                    log.push("sync: firmware reset detected, reprogramming");
+                    slots = AnimSlotManager::new();
+                    programmed.clear();
+                    slot_info.lock().unwrap().clear_all();
+                }
+            }
         }
 
         let mut store_guard = store.lock().await;
