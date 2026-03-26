@@ -75,12 +75,13 @@ fn run() -> Result<()> {
     println!("  3) Flash stock firmware v402 (device 2679) — full image with calibration");
     println!("  4) Deep reset (factory reset + erase calibration data — requires recalibration)");
     println!("  5) Flash a custom firmware file");
-    println!("  6) Flash a custom file INCLUDING bootloader (for corrupted bootloader recovery)");
-    println!("  7) Read device info");
-    println!("  8) Dump flash to file (for diagnosis)");
+    println!("  6) FULL RECOVERY — restore bootloader + firmware v402 (for corrupted bootloader)");
+    println!("  7) Flash a custom file INCLUDING bootloader");
+    println!("  8) Read device info");
+    println!("  9) Dump flash to file (for diagnosis)");
     println!();
 
-    let choice = prompt("Choice [1-8]")?;
+    let choice = prompt("Choice [1-9]")?;
 
     match choice.trim() {
         "1" => cmd_factory_reset(&dev)?,
@@ -88,9 +89,10 @@ fn run() -> Result<()> {
         "3" => cmd_flash_stock_v402(&dev)?,
         "4" => cmd_deep_reset(&dev)?,
         "5" => cmd_flash_custom(&dev, false)?,
-        "6" => cmd_flash_custom(&dev, true)?,
-        "7" => cmd_info(&dev, &id_data)?,
-        "8" => cmd_dump(&dev)?,
+        "6" => cmd_full_recovery(&dev)?,
+        "7" => cmd_flash_custom(&dev, true)?,
+        "8" => cmd_info(&dev, &id_data)?,
+        "9" => cmd_dump(&dev)?,
         _ => println!("Invalid choice."),
     }
 
@@ -275,6 +277,56 @@ fn cmd_deep_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
 
     println!("\nDone! Unplug device, disconnect BOOT0, replug.");
     println!("IMPORTANT: You must run calibration in the Monsgeek app before keys will work.");
+    Ok(())
+}
+
+fn cmd_full_recovery(dev: &dfuse::DfuSeDevice) -> Result<()> {
+    println!("\nFULL RECOVERY — restores bootloader + firmware + calibration from a");
+    println!("known-good M1 V5 HE board (v402, device 2679).");
+    println!();
+    println!("  Bootloader:  0x{:08X}–0x{:08X} (20KB)", flash_map::BOOTLOADER_START, flash_map::BOOTLOADER_END);
+    println!("  Firmware:    0x{:08X}+ (from embedded v402 image)", flash_map::FIRMWARE_START);
+    println!();
+    println!("  WARNING: This overwrites the bootloader! Only use if your bootloader");
+    println!("  is corrupted and the board only works in ROM DFU mode (BOOT0).");
+    println!("  The bootloader image is from a different board and may differ from your");
+    println!("  original, but uses the same chip and flash layout.");
+
+    if !confirm("\nProceed with full recovery?")? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Write bootloader (first 20KB)
+    let boot_size = (flash_map::FIRMWARE_START - flash_map::BOOTLOADER_START) as usize;
+    let boot_data = &FLASH_V402[..boot_size];
+    println!(
+        "\nRestoring bootloader to 0x{:08X} ({} bytes)...",
+        flash_map::BOOTLOADER_START,
+        boot_data.len(),
+    );
+    dev.write_data_force(flash_map::BOOTLOADER_START, boot_data)?;
+
+    // Write firmware + data (everything after bootloader, trimmed)
+    let writable = &FLASH_V402[boot_size..];
+    let last_used = writable.iter().rposition(|&b| b != 0xFF).map(|i| i + 1).unwrap_or(0);
+    let len = ((last_used as u32 + flash_map::FLASH_PAGE_SIZE - 1)
+        / flash_map::FLASH_PAGE_SIZE
+        * flash_map::FLASH_PAGE_SIZE) as usize;
+    let fw_data = &writable[..len];
+
+    println!(
+        "Flashing firmware + data to 0x{:08X} ({} bytes = {}KB)...",
+        flash_map::FIRMWARE_START,
+        fw_data.len(),
+        fw_data.len() / 1024,
+    );
+    dev.write_data(flash_map::FIRMWARE_START, fw_data)?;
+
+    println!("\nDone! Unplug device, disconnect BOOT0, replug.");
+    println!("The keyboard should boot normally with v402 firmware.");
+    println!("You can then update to the latest firmware via the MonsGeek app.");
+    println!("For best results, recalibrate afterward.");
     Ok(())
 }
 
