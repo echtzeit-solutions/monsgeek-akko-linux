@@ -11,6 +11,10 @@ use std::path::PathBuf;
 const FIRMWARE_V407: &[u8] =
     include_bytes!("../../firmwares/2949-v407/firmware_reconstructed.bin");
 
+/// Stock v408 firmware code (device 2949), embedded at compile time.
+const FIRMWARE_V408: &[u8] =
+    include_bytes!("../../firmwares/2949-v408/firmware_2949_v408.bin");
+
 /// Full 256KB flash dump from a working M1 V5 TMR running v402 (device 2679).
 /// Contains firmware, config, keymaps, and calibration data.
 const FLASH_V402: &[u8] = include_bytes!("../../firmwares/2679-v402/flash_256k.bin");
@@ -48,7 +52,7 @@ fn append_log(msg: &str) -> std::io::Result<()> {
 }
 
 fn run() -> Result<()> {
-    println!("MonsGeek Keyboard Recovery Tool v0.4.0");
+    println!("MonsGeek Keyboard Recovery Tool v0.5.0");
     println!("======================================\n");
 
     let dev = try_open_device()?;
@@ -72,27 +76,29 @@ fn run() -> Result<()> {
     println!("What would you like to do?");
     println!("  1) Factory reset (erase settings, keymaps, macros — keeps firmware + calibration)");
     println!("  2) Flash stock firmware v407 (device 2949) + reference calibration");
-    println!("  3) Flash stock firmware v402 (device 2679) — full image with calibration");
-    println!("  4) Deep reset (factory reset + erase calibration data — requires recalibration)");
-    println!("  5) Flash a custom firmware file");
-    println!("  6) FULL RECOVERY — restore bootloader + firmware v402 (for corrupted bootloader)");
-    println!("  7) Flash a custom file INCLUDING bootloader");
-    println!("  8) Read device info");
-    println!("  9) Dump flash to file (for diagnosis)");
+    println!("  3) Flash stock firmware v408 (device 2949) + reference calibration");
+    println!("  4) Flash stock firmware v402 (device 2679) — full image with calibration");
+    println!("  5) Deep reset (factory reset + erase calibration data — requires recalibration)");
+    println!("  6) Flash a custom firmware file");
+    println!("  7) FULL RECOVERY — restore bootloader + firmware v402 (for corrupted bootloader)");
+    println!("  8) Flash a custom file INCLUDING bootloader");
+    println!("  9) Read device info");
+    println!("  0) Dump flash to file (for diagnosis)");
     println!();
 
-    let choice = prompt("Choice [1-9]")?;
+    let choice = prompt("Choice [0-9]")?;
 
     match choice.trim() {
         "1" => cmd_factory_reset(&dev)?,
-        "2" => cmd_flash_stock_v407(&dev)?,
-        "3" => cmd_flash_stock_v402(&dev)?,
-        "4" => cmd_deep_reset(&dev)?,
-        "5" => cmd_flash_custom(&dev, false)?,
-        "6" => cmd_full_recovery(&dev)?,
-        "7" => cmd_flash_custom(&dev, true)?,
-        "8" => cmd_info(&dev, &id_data)?,
-        "9" => cmd_dump(&dev)?,
+        "2" => cmd_flash_stock(&dev, "v407", FIRMWARE_V407)?,
+        "3" => cmd_flash_stock(&dev, "v408", FIRMWARE_V408)?,
+        "4" => cmd_flash_stock_v402(&dev)?,
+        "5" => cmd_deep_reset(&dev)?,
+        "6" => cmd_flash_custom(&dev, false)?,
+        "7" => cmd_full_recovery(&dev)?,
+        "8" => cmd_flash_custom(&dev, true)?,
+        "9" => cmd_info(&dev, &id_data)?,
+        "0" => cmd_dump(&dev)?,
         _ => println!("Invalid choice."),
     }
 
@@ -174,10 +180,12 @@ fn cmd_factory_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_flash_stock_v407(dev: &dfuse::DfuSeDevice) -> Result<()> {
-    println!("\nThis will flash stock firmware v407 (device 2949), erase user data,");
+fn cmd_flash_stock(dev: &dfuse::DfuSeDevice, version: &str, firmware: &[u8]) -> Result<()> {
+    println!(
+        "\nThis will flash stock firmware {version} (device 2949), erase user data,"
+    );
     println!("and write reference calibration from a known-good M1 V5 TMR board.");
-    println!("  Firmware:    {} bytes", FIRMWARE_V407.len());
+    println!("  Firmware:    {} bytes", firmware.len());
     println!("  Calibration: from reference board (may need recalibration for best results)");
     if !confirm("Proceed?")? {
         println!("Aborted.");
@@ -187,9 +195,9 @@ fn cmd_flash_stock_v407(dev: &dfuse::DfuSeDevice) -> Result<()> {
     println!(
         "Flashing firmware to 0x{:08X} ({} bytes)...",
         flash_map::FIRMWARE_START,
-        FIRMWARE_V407.len()
+        firmware.len()
     );
-    dev.write_data(flash_map::FIRMWARE_START, FIRMWARE_V407)?;
+    dev.write_data(flash_map::FIRMWARE_START, firmware)?;
 
     println!("Erasing user data (config, keymaps, macros)...");
     dev.write_data(flash_map::CONFIG_START, flash_map::USER_DATA_ERASE)?;
