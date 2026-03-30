@@ -63,6 +63,9 @@ pub(in crate::tui) struct NotifyTabState {
     /// Daemon activity log (shared ring buffer).
     pub daemon_log: Option<crate::notify::log::DaemonLog>,
 
+    /// tui-logger widget state for scrollable log panel.
+    pub log_state: tui_logger::TuiWidgetState,
+
     pub dirty: bool,
 }
 
@@ -92,6 +95,9 @@ impl Default for NotifyTabState {
             power_budget: 400,
             slot_info: Arc::new(std::sync::Mutex::new(crate::anim::SlotInfo::default())),
             daemon_log: None,
+            log_state: tui_logger::TuiWidgetState::new()
+                .set_default_display_level(log::LevelFilter::Off)
+                .set_level_for_target("notify", log::LevelFilter::Info),
             dirty: false,
         }
     }
@@ -628,13 +634,10 @@ impl App {
         if self.keyboard.is_none() {
             return;
         }
-        let interval = if self.tab == 4 {
-            self.anim_poll_interval
-        } else if self.anim_snapshot.is_some() {
-            Duration::from_secs(2)
-        } else {
-            return; // don't poll if not on notify tab and no snapshot yet
-        };
+        if self.tab != 4 {
+            return; // only poll on notify tab — background polls prevent keyboard sleep
+        }
+        let interval = self.anim_poll_interval;
         if self.last_anim_poll.elapsed() < interval {
             return;
         }
@@ -727,7 +730,7 @@ impl App {
 // Rendering
 // ============================================================================
 
-pub(in crate::tui) fn render_notify(f: &mut Frame, app: &App, area: Rect) {
+pub(in crate::tui) fn render_notify(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -960,13 +963,14 @@ fn render_keyframe_editor(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(var_block, inner_chunks[1]);
 }
 
-fn render_notify_right(f: &mut Frame, app: &App, area: Rect) {
+fn render_notify_right(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(8), // Preview grid
             Constraint::Length(4), // Sparkline
-            Constraint::Min(4),    // Engine + log (merged)
+            Constraint::Min(4),    // Engine status
+            Constraint::Length(8), // Daemon log (tui-logger)
         ])
         .split(area);
 
@@ -980,6 +984,21 @@ fn render_notify_right(f: &mut Frame, app: &App, area: Rect) {
         0.0,
     );
     render_anim_status(f, app, chunks[2]);
+    render_daemon_log(f, app, chunks[3]);
+}
+
+fn render_daemon_log(f: &mut Frame, app: &mut App, area: Rect) {
+    let widget = tui_logger::TuiLoggerWidget::default()
+        .block(Block::default().borders(Borders::ALL).title("Log"))
+        .style(Style::default().fg(Color::DarkGray))
+        .output_timestamp(Some("%M:%S".to_string()))
+        .output_level(None)
+        .output_target(false)
+        .output_file(false)
+        .output_line(false)
+        .output_separator(' ')
+        .state(&app.notify.log_state);
+    f.render_widget(widget, area);
 }
 
 fn render_anim_status(f: &mut Frame, app: &App, area: Rect) {
@@ -1124,41 +1143,6 @@ fn render_anim_status(f: &mut Frame, app: &App, area: Rect) {
                     Paragraph::new(Line::from(vec![
                         Span::styled(phase_label, Style::default().fg(Color::DarkGray)),
                         Span::styled(keys_str, Style::default().fg(Color::Cyan)),
-                    ])),
-                    Rect::new(inner.x, y, inner.width, 1),
-                );
-                y += 1;
-            }
-        }
-    }
-
-    // ── Daemon log (tail) ──
-    if let Some(ref dlog) = app.notify.daemon_log {
-        let entries = dlog.entries();
-        if !entries.is_empty() && y < max_y {
-            // Separator
-            if y < max_y {
-                f.render_widget(
-                    Paragraph::new("─ log ─").style(Style::default().fg(Color::DarkGray)),
-                    Rect::new(inner.x, y, inner.width, 1),
-                );
-                y += 1;
-            }
-            let visible = (max_y - y) as usize;
-            let start = entries.len().saturating_sub(visible);
-            for e in &entries[start..] {
-                if y >= max_y {
-                    break;
-                }
-                let secs = e.elapsed_ms / 1000;
-                let ms = e.elapsed_ms % 1000;
-                f.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            format!("{secs:3}.{ms:03} "),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::raw(&e.msg),
                     ])),
                     Rect::new(inner.x, y, inner.width, 1),
                 );
