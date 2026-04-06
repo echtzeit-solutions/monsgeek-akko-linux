@@ -114,81 +114,78 @@ The reconstructed firmware (`firmware_reconstructed.bin`, 132,736 bytes):
 - **Key strings**: "MonsGeek Keyboard", "M1 V5 HE BT1", "Keyboard Config"
 - The encrypted `resources/x1` file (62,817 bytes) is decompressed/decrypted by the updater before transfer — the captured firmware is the plaintext image
 
-## x1 encryption analysis
+## x1 format (SOLVED)
 
-### File format
+### Decoding
 
-The `resources/x1` file (62,817 bytes) consists of two parts:
+The `resources/x1` file is **NOT encrypted**. It is raw deflate with a 203-byte (0xCB)
+junk header inserted after the first byte of the deflate stream.
 
-| Offset | Size | Entropy | Description |
-|--------|------|---------|-------------|
-| 0 | 148 bytes | 6.68 bits/byte | **Header** — structured metadata, lower entropy |
-| 148 | 62,669 bytes | 7.99 bits/byte | **Body** — encrypted compressed firmware |
+**Decode algorithm:**
+```python
+import zlib
 
-The body size (62,669 bytes) **exactly matches** the output of `flate2 1.1.2` / `miniz_oxide 0.8.8` deflate compression at level 1. This confirms:
+HEADER_SKIP = 0xCB  # 203
 
+def decode_x1(data: bytes) -> bytes:
+    """Decode x1 firmware blob → bootloader + firmware + trailer."""
+    # Byte 0 is the deflate stream's first byte (always 0xEC = dynamic Huffman).
+    # Bytes 1..202 are junk metadata — discarded by the updater.
+    # Bytes 203+ are the rest of the deflate stream.
+    wrapped = data[:1] + data[HEADER_SKIP:]
+    return zlib.decompressobj(-15).decompress(wrapped)
 ```
-x1 = header(148) + encrypt(deflate_level1(firmware))
+
+**Decompressed layout:**
 ```
+Offset 0x0000: Bootloader (20KB = 0x5000 bytes)
+               ARM vector table at offset 0, SP=0x20004EB0
+Offset 0x5000: Firmware (starts with "AT32F405 8KMKB  " chip ID header)
+               Size varies per version (v407=132736B, v408=132864B)
+End - N bytes: Trailer (v407=768B, v408=2019B, purpose unknown)
+```
+
+**One-liner to extract firmware from x1:**
+```bash
+python3 -c "import zlib; d=open('resources/x1','rb').read(); \
+  open('firmware.bin','wb').write(zlib.decompressobj(-15).decompress(d[:1]+d[0xCB:])[0x5000:])"
+```
+
+Note: the trailing bytes after the firmware in the decompressed blob are included in
+the output. To get exact firmware size, compare with the known size from the 0x8F
+version query, or trim trailing 0xFF bytes.
+
+### Why earlier analysis concluded "AES-encrypted"
+
+The x1 body (bytes 148+) has entropy 7.99 bits/byte — near-maximum, consistent with
+either encryption OR high-ratio compression. The `aes-0.8.4` crate (fixslice32) IS
+compiled into `ry_upgrade.exe`, but is used only for the zip export feature
+(`保存文件` ZipCrypto password), not for x1 decoding.
+
+The critical mistake: we tried `zlib.decompress(x1[offset:], -15)` at offsets 0-259,
+which **skips** bytes. The correct operation **preserves byte 0** and concatenates:
+`data[:1] + data[0xCB:]`. Without byte 0 (the deflate block header 0xEC), the stream
+is invalid. The junk header (bytes 1-202) acts as a simple obfuscation layer that
+makes naive "skip N bytes and decompress" attempts fail.
+
+### AESANDUH
+
+The string `AESANDUH` at file offset `0xB55C71` in `ry_upgrade.exe` is a **false
+positive** — coincidental ASCII alignment in Slint UI font glyph data, not a crypto
+key. Verified by examining surrounding byte patterns (font metrics and outline
+coordinates).
 
 ### Firmware distribution formats
 
-Rongyuan distributes firmware in two formats:
+Rongyuan distributes firmware in three formats:
 
-| Format | Header bytes | Description |
+| Format | First bytes | Description |
 |--------|-------------|-------------|
-| **Raw deflate** | `EC BD xx xx` | Plain compressed firmware, no encryption. Served via API for older/some devices. Decompresses directly with `zlib.decompress(data, -15)`. |
-| **Encrypted x1** | `EC 8C C2 F1...` | Used inside `ry_upgrade.exe` bundles. 148-byte header + AES-encrypted deflate body. |
+| **Raw deflate** | `EC BD xx xx` | Plain compressed bootloader+firmware. Served via API. Decompresses directly with `zlib.decompress(data, -15)`. |
+| **x1 bundle** | `EC xx xx xx` | Same deflate stream but with 202 junk bytes inserted after byte 0. Used inside `ry_upgrade.exe` zip bundles. Decode: `data[:1] + data[0xCB:]` then deflate. |
+| **ZIP package** | `PK\x03\x04` | Older devices. ZIP with `firmwareFile.bin` + optional `firmwareOledFile.bin`. |
 
-Examples of raw deflate firmware files (all decompress successfully):
-- `2116_v300.bin` (51,027 B) → 126,240 B firmware
-- `2450_ry5088_gk75_dm_8k_002.bin` (55,286 B) → 131,580 B firmware
-- `3198_v804.bin` (149,230 B) → 256,084 B firmware
-
-ZIP-packaged firmware (older devices, unencrypted):
-- `2454_ry5088_nj81cp_8k_8k.bin` — ZIP with `firmwareFile.bin` + `firmwareOledFile.bin`
-
-### Encryption details (partially reverse-engineered)
-
-**Crate versions in the binary** (from embedded Rust source paths):
-- `aes-0.8.4` — AES cipher (`src/soft/fixslice32.rs`, 32-bit bitsliced implementation)
-- `zip-2.2.0` — ZIP library with `src/aes_ctr.rs` (WinZip AES-CTR variant)
-- `flate2-1.1.2` / `miniz_oxide-0.8.8` — deflate compression
-- `rand-0.8.5` / `rand_chacha-0.3.1` — random number generation
-- `zeroize-1.8.1` — secure memory wiping
-
-**Critically absent** (zero occurrences in binary):
-- `pbkdf2` — no password-based key derivation
-- `hmac` — no HMAC authentication
-- `sha1`, `sha2`, `sha256` — no hash functions
-- `constant_time_eq` — no constant-time comparison
-- `md5`, `digest`, `crypto_common` — no cryptographic hash infrastructure
-
-This means the zip crate's **standard WinZip AES pipeline** (PBKDF2-HMAC-SHA1, 1000 iterations) **is NOT used**. The AES key must be directly embedded in the binary or derived through simple byte manipulation — not from a password via any standard KDF.
-
-**String of interest**: `AESANDUH` at file offset `0xB55C71` (.rdata section, RVA `0xB56C71`). Appears exactly once. Its role is unknown — it does NOT work as a direct AES key (padded/repeated to 16 or 32 bytes) or as a PBKDF2 password.
-
-### What was tried (and failed)
-
-| Approach | Details | Result |
-|----------|---------|--------|
-| WinZip AES (PBKDF2-HMAC-SHA1) | 42 password candidates × 2 offsets × 2 key sizes | No pwd_verify match |
-| Direct AES-CTR (WinZip variant) | AESANDUH padded/repeated to 16/32 bytes | Decrypted output is not deflate |
-| Direct AES-CTR (NIST variant) | Big-endian counter, start 0 and 1 | Same |
-| Header bytes as AES key | x1[0:16], x1[0:32], x1[1:17], x1[-16:], x1[-32:] | No valid deflate |
-| Hash-derived keys | MD5/SHA256 of AESANDUH and variants | No valid deflate |
-| Simple transformations | All 256 single-byte XOR, bit reverse, nibble swap, NOT | No valid deflate at any offset |
-| Multi-byte XOR | "AESANDUH" repeated, position-dependent XOR | No valid deflate |
-| Raw deflate at offsets 0-300 | With various wbits settings | Only trivial matches |
-| Alternative compression | LZMA, bzip2, gzip wrappers | All fail |
-
-### Next steps
-
-The AES key is embedded somewhere in the 20 MB binary but not derivable from strings alone. Recommended approaches:
-
-1. **Frida runtime hooking** — Hook `aes::Aes128::new()` or `aes::Aes256::new()` while the app decrypts x1 to capture the raw key bytes. Infrastructure exists: `frida_attach.py` + `hook_hid.js`.
-2. **Ghidra cross-reference analysis** — Find code that references the AESANDUH string address (RVA `0xB56C71`) and trace how the AES key is constructed. Ghidra project exists at `ghidra_project/`.
-3. **Memory dump** — Run the app, let it decrypt x1, then dump process memory to find the plaintext deflate stream or the AES round keys.
+All formats decompress to: `bootloader(0x5000) + firmware + trailer`.
 
 ## How to run
 
