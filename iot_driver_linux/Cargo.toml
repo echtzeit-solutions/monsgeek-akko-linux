@@ -53,6 +53,8 @@ ratatui = { version = "0.30", features = ["crossterm_0_28"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 throbber-widgets-tui = "0.10"
 tui-scrollview = "0.6"
+tui-logger = { version = "0.18", features = ["crossterm"] }
+log = "0.4"
 
 # Audio reactive mode
 cpal = { version = "0.15", features = ["jack"] }
