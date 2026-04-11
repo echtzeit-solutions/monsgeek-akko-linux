@@ -1,11 +1,14 @@
 name: Release monsgeek-unbrick
 
 on:
+  push:
+    tags:
+      - 'unbrick-v*'
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.1.0)"
-        required: true
+        description: "Release version (e.g. 0.5.0) — only needed for manual trigger"
+        required: false
         type: string
 
 env:
@@ -17,6 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Extract version from tag: unbrick-v0.5.0 → 0.5.0
+            echo "version=${GITHUB_REF_NAME#unbrick-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Rust + Windows cross target
         uses: dtolnay/rust-toolchain@stable
@@ -39,30 +52,23 @@ jobs:
       - name: Rename binary
         run: |
           cp monsgeek-unbrick/target/x86_64-pc-windows-gnu/release/monsgeek-unbrick.exe \
-             monsgeek-unbrick-v${{ inputs.version }}.exe
+             monsgeek-unbrick-v${{ steps.version.outputs.version }}.exe
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: unbrick-v${{ inputs.version }}
-          name: "monsgeek-unbrick v${{ inputs.version }}"
+          tag_name: unbrick-v${{ steps.version.outputs.version }}
+          name: "monsgeek-unbrick v${{ steps.version.outputs.version }}"
+          generate_release_notes: true
           body: |
-            ## MonsGeek Keyboard Recovery Tool v${{ inputs.version }}
+            ## MonsGeek Keyboard Recovery Tool v${{ steps.version.outputs.version }}
 
             Double-click the .exe on a Windows machine with the keyboard in DFU mode (BOOT0 bridged to 3.3V).
 
-            **Features:**
-            - Factory reset (erase all user data: config, keymaps, FN layers, macros, userpics)
-            - Flash stock firmware v407 (device 2949) with reference calibration
-            - Flash stock firmware v402 (device 2679) — complete image with calibration
-            - Deep reset (also erase calibration — for when keys don't respond after factory reset)
-            - Flash custom firmware file (supports .bin, .dfu, and 256KB flash dumps)
-            - Device info with calibration status diagnostics
-            - Dump full flash to file (for remote diagnosis)
-            - Read-back verification after every write
-            - Auto WinUSB driver installation
+            **Recovery options:** factory reset, flash stock v407/v408/v402, deep reset,
+            custom firmware, full bootloader recovery, device info, flash dump.
 
             No installation required — single standalone .exe.
-          files: monsgeek-unbrick-v${{ inputs.version }}.exe
+          files: monsgeek-unbrick-v${{ steps.version.outputs.version }}.exe
           draft: false
           prerelease: false
