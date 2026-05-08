@@ -21,6 +21,7 @@ pub const DONGLE_PIDS: &[u16] = &[
     0x5038, // M1 V5 HE dongle
     0x503A, // Legacy dongle variant
     0x503D, // Legacy dongle variant
+    0x502B, // M1 V5 TMR dongle
 ];
 
 /// Check if PID represents a 2.4GHz dongle
