@@ -2,6 +2,7 @@ mod dfuse;
 mod driver;
 mod firmware;
 mod flash_map;
+mod upload;
 mod winusb;
 
 use anyhow::{Context, Result};
@@ -52,8 +53,15 @@ fn append_log(msg: &str) -> std::io::Result<()> {
 }
 
 fn run() -> Result<()> {
-    println!("MonsGeek Keyboard Recovery Tool v0.5.0");
+    println!("MonsGeek Keyboard Recovery Tool v0.6.0");
     println!("======================================\n");
+
+    // Hidden dev-only self-test: exercises WinHTTP + BCrypt upload of the
+    // embedded 256KB image without needing a keyboard attached.
+    #[cfg(debug_assertions)]
+    if std::env::args().any(|a| a == "--selftest-upload") {
+        return selftest_upload();
+    }
 
     let dev = try_open_device()?;
 
@@ -84,21 +92,23 @@ fn run() -> Result<()> {
     println!("  8) Flash a custom file INCLUDING bootloader");
     println!("  9) Read device info");
     println!("  0) Dump flash to file (for diagnosis)");
+    println!("  U) Upload current firmware to developers for analysis (helps support your board)");
     println!();
 
-    let choice = prompt("Choice [0-9]")?;
+    let choice = prompt("Choice [0-9 or U]")?;
 
-    match choice.trim() {
+    match choice.trim().to_ascii_lowercase().as_str() {
         "1" => cmd_factory_reset(&dev)?,
-        "2" => cmd_flash_stock(&dev, "v407", FIRMWARE_V407)?,
-        "3" => cmd_flash_stock(&dev, "v408", FIRMWARE_V408)?,
-        "4" => cmd_flash_stock_v402(&dev)?,
+        "2" => cmd_flash_stock(&dev, "v407", FIRMWARE_V407, &id_data)?,
+        "3" => cmd_flash_stock(&dev, "v408", FIRMWARE_V408, &id_data)?,
+        "4" => cmd_flash_stock_v402(&dev, &id_data)?,
         "5" => cmd_deep_reset(&dev)?,
-        "6" => cmd_flash_custom(&dev, false)?,
-        "7" => cmd_full_recovery(&dev)?,
-        "8" => cmd_flash_custom(&dev, true)?,
+        "6" => cmd_flash_custom(&dev, false, &id_data)?,
+        "7" => cmd_full_recovery(&dev, &id_data)?,
+        "8" => cmd_flash_custom(&dev, true, &id_data)?,
         "9" => cmd_info(&dev, &id_data)?,
         "0" => cmd_dump(&dev)?,
+        "u" => cmd_upload(&dev, &id_data)?,
         _ => println!("Invalid choice."),
     }
 
@@ -180,7 +190,13 @@ fn cmd_factory_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_flash_stock(dev: &dfuse::DfuSeDevice, version: &str, firmware: &[u8]) -> Result<()> {
+fn cmd_flash_stock(
+    dev: &dfuse::DfuSeDevice,
+    version: &str,
+    firmware: &[u8],
+    id_data: &[u8],
+) -> Result<()> {
+    offer_pre_overwrite_upload(dev, id_data)?;
     println!(
         "\nThis will flash stock firmware {version} (device 2949), erase user data,"
     );
@@ -219,7 +235,8 @@ fn cmd_flash_stock(dev: &dfuse::DfuSeDevice, version: &str, firmware: &[u8]) -> 
     Ok(())
 }
 
-fn cmd_flash_stock_v402(dev: &dfuse::DfuSeDevice) -> Result<()> {
+fn cmd_flash_stock_v402(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
+    offer_pre_overwrite_upload(dev, id_data)?;
     let boot_size = (flash_map::FIRMWARE_START - flash_map::BOOTLOADER_START) as usize;
     let writable = &FLASH_V402[boot_size..];
 
@@ -288,7 +305,8 @@ fn cmd_deep_reset(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_full_recovery(dev: &dfuse::DfuSeDevice) -> Result<()> {
+fn cmd_full_recovery(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
+    offer_pre_overwrite_upload(dev, id_data)?;
     println!("\nFULL RECOVERY — restores bootloader + firmware + calibration from a");
     println!("known-good M1 V5 HE board (v402, device 2679).");
     println!();
@@ -338,7 +356,12 @@ fn cmd_full_recovery(dev: &dfuse::DfuSeDevice) -> Result<()> {
     Ok(())
 }
 
-fn cmd_flash_custom(dev: &dfuse::DfuSeDevice, include_bootloader: bool) -> Result<()> {
+fn cmd_flash_custom(
+    dev: &dfuse::DfuSeDevice,
+    include_bootloader: bool,
+    id_data: &[u8],
+) -> Result<()> {
+    offer_pre_overwrite_upload(dev, id_data)?;
     let path_str = prompt("Path to firmware file")?;
     let path = PathBuf::from(path_str.trim());
 
@@ -505,6 +528,19 @@ fn cmd_dump(dev: &dfuse::DfuSeDevice) -> Result<()> {
         PathBuf::from(path_str)
     };
 
+    let data = read_full_flash(dev)?;
+
+    std::fs::write(&path, &data)
+        .with_context(|| format!("Failed to write {}", path.display()))?;
+    println!("\nSaved to: {}", path.display());
+    println!("You can share this file for diagnosis.");
+
+    Ok(())
+}
+
+/// Read the full flash (256KB) in 2KB chunks with progress. Shared by the
+/// dump-to-file and upload commands.
+fn read_full_flash(dev: &dfuse::DfuSeDevice) -> Result<Vec<u8>> {
     let total = (flash_map::FLASH_END - flash_map::BOOTLOADER_START) as usize;
     println!(
         "Reading 0x{:08X}–0x{:08X} ({total} bytes = {}KB)...",
@@ -513,7 +549,6 @@ fn cmd_dump(dev: &dfuse::DfuSeDevice) -> Result<()> {
         total / 1024
     );
 
-    // Read in 2KB chunks with progress
     let chunk_size = 2048usize;
     let total_chunks = (total + chunk_size - 1) / chunk_size;
     let mut data = Vec::with_capacity(total);
@@ -536,12 +571,72 @@ fn cmd_dump(dev: &dfuse::DfuSeDevice) -> Result<()> {
         data.len(),
         data.len() / 1024
     );
+    Ok(data)
+}
 
-    std::fs::write(&path, &data)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
-    println!("\nSaved to: {}", path.display());
-    println!("You can share this file for diagnosis.");
+/// Offer to upload the original firmware before a destructive flash overwrites
+/// it. One y/N; declining proceeds straight to the flash. Its own failures are
+/// swallowed inside `cmd_upload`, so this never blocks recovery.
+fn offer_pre_overwrite_upload(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
+    println!("\nThis option OVERWRITES your current firmware.");
+    if confirm("Upload your ORIGINAL firmware to the developers first? (optional)")? {
+        cmd_upload(dev, id_data)?;
+    }
+    Ok(())
+}
 
+/// Read the full flash and upload it for variant analysis. Shows an explicit
+/// consent screen first (the dump includes custom macros/keymaps).
+fn cmd_upload(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
+    println!("\nUpload your keyboard's full 256KB flash to the developers for analysis.");
+    println!("This helps catalog board variants (e.g. 2679 vs 2949) and improve recovery.\n");
+    println!("  WHAT IS SENT: the COMPLETE flash image, which INCLUDES your custom");
+    println!("  keymaps and any MACROS you recorded (these may contain text you typed),");
+    println!("  plus the chip ID string, dump size, and a SHA-256 checksum.");
+    println!("  Nothing is sent unless you type 'y' below.\n");
+    if !confirm("Upload full flash dump now?")? {
+        println!("Skipped — nothing was uploaded.");
+        return Ok(());
+    }
+
+    let data = read_full_flash(dev)?;
+    let chip_id: String = id_data
+        .iter()
+        .take_while(|&&b| b >= 0x20 && b < 0x7F)
+        .map(|&b| b as char)
+        .collect();
+
+    println!("Uploading {} bytes...", data.len());
+    match upload::upload_dump(chip_id.trim(), &data) {
+        Ok(200) | Ok(201) | Ok(409) => {
+            println!("\nUpload complete. Thank you — this helps us support your board!");
+        }
+        Ok(code) => {
+            println!(
+                "\nServer responded with HTTP {code}; the upload may not have been stored. \
+                 Continuing."
+            );
+        }
+        Err(e) => {
+            println!("\nUpload failed ({e}). This does NOT affect recovery — continuing.");
+            let _ = append_log(&format!("upload failed: {e:#}"));
+        }
+    }
+    Ok(())
+}
+
+/// Dev-only self-test: upload the embedded 256KB image (a known 2679 dump)
+/// without a keyboard. Exercises WinHTTP + BCrypt against `$MONSGEEK_UPLOAD_URL`.
+#[cfg(debug_assertions)]
+fn selftest_upload() -> Result<()> {
+    println!(
+        "[selftest] uploading embedded image ({} bytes)...",
+        FLASH_V402.len()
+    );
+    match upload::upload_dump("AT32F405 8KMKB", FLASH_V402) {
+        Ok(code) => println!("[selftest] HTTP {code}"),
+        Err(e) => println!("[selftest] upload error: {e:#}"),
+    }
     Ok(())
 }
 
