@@ -21,6 +21,18 @@ For firmware update checking/downloading from the RongYuan API:
 cargo build --release --features firmware-api
 ```
 
+### Audio-reactive mode and JACK
+
+Audio-reactive lighting uses [`cpal`](https://crates.io/crates/cpal), which
+defaults to the **ALSA** backend on Linux — no extra system packages required.
+
+JACK support is opt-in. Build with the `jack` feature only if you want it (it
+requires the JACK development library, e.g. `libjack-jackd2-dev` on Debian/Ubuntu):
+
+```bash
+cargo build --release --features jack
+```
+
 ## Supported Devices
 
 | Device | VID:PID | Bootloader |

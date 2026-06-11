@@ -57,7 +57,9 @@ tui-logger = { version = "0.18", features = ["crossterm"] }
 log = "0.4"
 
 # Audio reactive mode
-cpal = { version = "0.15", features = ["jack"] }
+# Default backend is ALSA on Linux (no extra system deps). JACK support is
+# opt-in via the `jack` feature, since jack-sys requires the JACK dev library.
+cpal = { version = "0.15" }
 spectrum-analyzer = "1.4"
 
 # Screen color reactive mode (PipeWire screencast)
@@ -104,6 +106,9 @@ firmware-api-async = ["dep:reqwest"]
 bpf = ["dep:aya"]
 notify = ["dep:zbus"]
 screen-capture = ["dep:ashpd", "dep:pipewire"]
+# Opt-in JACK audio backend for audio-reactive mode (requires libjack-dev /
+# jack pkg-config). Without it, cpal uses ALSA on Linux.
+jack = ["cpal/jack"]
 
 [build-dependencies]
 tonic-build = "0.12"
