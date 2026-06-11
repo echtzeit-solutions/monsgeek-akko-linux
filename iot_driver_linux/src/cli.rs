@@ -508,9 +508,6 @@ pub enum Commands {
     #[cfg(feature = "notify")]
     #[command(visible_alias = "nd")]
     NotifyDaemon {
-        /// LED power budget in milliamps (0 = unlimited)
-        #[arg(long, default_value = "400")]
-        power_budget: u32,
         /// Print daemon activity to stderr
         #[arg(long, short)]
         verbose: bool,

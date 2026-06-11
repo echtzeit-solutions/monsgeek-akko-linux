@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use super::keymap::MATRIX_LEN;
-use crate::effect::{ResolvedEffect, Rgb};
+use crate::effect::ResolvedEffect;
 
 /// A notification posted to the daemon.
 #[derive(Debug, Clone)]
@@ -28,22 +28,6 @@ impl Notification {
             Some(ttl) => self.created.elapsed() >= ttl,
             None => false,
         }
-    }
-
-    /// Evaluate the effect for a specific key at the current time,
-    /// accounting for per-key stagger delay.
-    pub fn evaluate_at(&self, matrix_idx: usize) -> Rgb {
-        let elapsed_ms = self.created.elapsed().as_secs_f64() * 1000.0;
-        let offset = self
-            .stagger_offsets
-            .get(&matrix_idx)
-            .copied()
-            .unwrap_or(0.0);
-        let key_elapsed = elapsed_ms - offset;
-        if key_elapsed < 0.0 {
-            return Rgb::BLACK;
-        }
-        self.resolved.evaluate(key_elapsed)
     }
 }
 
@@ -222,20 +206,6 @@ impl NotificationStore {
     pub fn get(&self, id: u64) -> Option<&Notification> {
         self.notifications.get(&id)
     }
-}
-
-/// Render one frame: evaluate each key's active notification at the current time.
-pub fn render_frame(store: &NotificationStore) -> [(u8, u8, u8); MATRIX_LEN] {
-    let mut frame = [(0u8, 0u8, 0u8); MATRIX_LEN];
-
-    for (idx, pixel) in frame.iter_mut().enumerate() {
-        if let Some(notif) = store.active_for_key(idx) {
-            let rgb = notif.evaluate_at(idx);
-            *pixel = (rgb.r, rgb.g, rgb.b);
-        }
-    }
-
-    frame
 }
 
 #[cfg(test)]

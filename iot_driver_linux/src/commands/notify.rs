@@ -4,7 +4,7 @@ use super::CommandResult;
 
 /// Run the notification daemon.
 #[cfg(feature = "notify")]
-pub async fn daemon(ctx: &super::CmdCtx, power_budget: u32, verbose: bool) -> CommandResult {
+pub async fn daemon(ctx: &super::CmdCtx, verbose: bool) -> CommandResult {
     let kb = super::led_stream::open_with_patch_check(ctx)?;
 
     let patch = kb.get_patch_info()?.unwrap();
@@ -13,7 +13,7 @@ pub async fn daemon(ctx: &super::CmdCtx, power_budget: u32, verbose: bool) -> Co
         patch.name, patch.version, patch.capabilities
     );
 
-    iot_driver::notify::daemon::run(kb, power_budget, verbose)
+    iot_driver::notify::daemon::run(kb, verbose)
         .await
         .map_err(|e| -> Box<dyn std::error::Error> { e })?;
     Ok(())

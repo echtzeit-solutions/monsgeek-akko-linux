@@ -54,9 +54,6 @@ pub(in crate::tui) struct NotifyTabState {
     // Labels for preview grid
     pub labels: Vec<String>,
 
-    /// LED power budget in mA (0 = unlimited, step 100)
-    pub power_budget: u32,
-
     /// Shared slot info: daemon writes effect name + resolved, TUI reads for display/sparklines.
     pub slot_info: crate::anim::SharedSlotInfo,
 
@@ -92,7 +89,6 @@ impl Default for NotifyTabState {
             notifications: Vec::new(),
             last_notif_poll: Instant::now(),
             labels: crate::effect::preview::build_labels(),
-            power_budget: 400,
             slot_info: Arc::new(std::sync::Mutex::new(crate::anim::SlotInfo::default())),
             daemon_log: None,
             log_state: tui_logger::TuiWidgetState::new()
@@ -250,24 +246,6 @@ pub(in crate::tui) fn handle_notify_input(app: &mut App, key: KeyCode) {
                         Err(e) => app.status_msg = format!("Save failed: {e}"),
                     }
                 }
-            }
-            Right | Char('>') | Char('.') => {
-                let ns = &mut app.notify;
-                ns.power_budget = ns.power_budget.saturating_add(100);
-                app.status_msg = if ns.power_budget == 0 {
-                    "Power budget: unlimited".to_string()
-                } else {
-                    format!("Power budget: {}mA", ns.power_budget)
-                };
-            }
-            Left | Char('<') | Char(',') => {
-                let ns = &mut app.notify;
-                ns.power_budget = ns.power_budget.saturating_sub(100);
-                app.status_msg = if ns.power_budget == 0 {
-                    "Power budget: unlimited".to_string()
-                } else {
-                    format!("Power budget: {}mA", ns.power_budget)
-                };
             }
             _ => {}
         },
@@ -570,14 +548,11 @@ impl App {
             let cancel = Arc::clone(&running);
             let tx = self.gen_sender();
 
-            let power_budget = self.notify.power_budget;
             let labels = Arc::clone(&self.notify.slot_info);
             let log = crate::notify::log::DaemonLog::new(false);
             self.notify.daemon_log = Some(log.clone());
             let handle = tokio::spawn(async move {
-                let result =
-                    crate::notify::daemon::run_with_cancel(kb, power_budget, running, labels, log)
-                        .await;
+                let result = crate::notify::daemon::run_with_cancel(kb, running, labels, log).await;
                 tx.send(AsyncResult::NotifyDaemonStopped(
                     result.map_err(|e| e.to_string()),
                 ));
@@ -770,22 +745,13 @@ fn render_notify_left(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::raw("")
     };
-    let power_str = if ns.power_budget == 0 {
-        "unlimited".to_string()
-    } else {
-        format!("{}mA", ns.power_budget)
-    };
     let daemon_line = Line::from(vec![
         Span::raw("Daemon: "),
         daemon_status,
         hw_preview,
-        Span::styled(
-            format!("  pwr:{power_str}"),
-            Style::default().fg(Color::DarkGray),
-        ),
         dirty,
         Span::styled(
-            "  [p]play [s]service [w]save [c]clear [<>]pwr",
+            "  [p]play [s]service [w]save [c]clear",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
