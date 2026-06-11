@@ -1258,10 +1258,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             KeyCode::Backspace => {
                                 app.hex_input.pop();
                             }
-                            KeyCode::Char(c) if c.is_ascii_hexdigit() => {
-                                if app.hex_input.len() < 6 {
-                                    app.hex_input.push(c.to_ascii_uppercase());
-                                }
+                            KeyCode::Char(c)
+                                if c.is_ascii_hexdigit() && app.hex_input.len() < 6 =>
+                            {
+                                app.hex_input.push(c.to_ascii_uppercase());
                             }
                             _ => {}
                         }
