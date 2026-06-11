@@ -117,6 +117,30 @@ static anim_engine_t anim_engine;                /* 8B */
 static uint8_t overlay_buf[LED_COUNT * 3];  /* 82×3 = 246 bytes */
 static uint8_t overlay_active;              /* non-zero if any overlay pixel set */
 
+/* Forward declaration for power state reporting (defined after ep2_send_if_ready) */
+static void send_power_state(uint8_t state);
+
+/* ── Power state reporting via EP2 ────────────────────────────────────── */
+
+/* Power state sub-codes — sent as byte[1] with byte[0]=0x00.
+ * This keeps all power events in the WAKE notification namespace (0x00),
+ * avoiding clashes with PROFILE_CHANGE (0x01) and other notification types.
+ * Wire format: [0x00, sub, 0x00, 0x00] where sub = state code below. */
+#define PWR_STATE_WAKE  0x00   /* [00,00,...] = wake (backward-compatible all-zeros) */
+#define PWR_STATE_IDLE  0x01   /* [00,01,...] = entering idle sleep */
+#define PWR_STATE_DEEP  0x02   /* [00,02,...] = entering deep sleep */
+#define PWR_STATE_NONE  0xFF   /* no pending event */
+
+/* Queued power state event.  Set by the blend hook (runs every scan cycle),
+ * sent by ep2_send_if_ready on USB, or drained by handle_vendor_cmd for
+ * wireless (where EP2 doesn't exist and events travel via RF response). */
+static uint8_t pending_power_event;   /* PWR_STATE_NONE when empty */
+
+/* Set to 1 by wireless_sleep_before_hook / usb_suspend_before_hook when
+ * the firmware is about to enter a blocking sleep loop.  Cleared by the
+ * blend hook on the first scan cycle after wake. */
+static uint8_t sleeping_flag;
+
 
 /* ── Battery HID report descriptor (appended to IF1) ─────────────────── */
 
@@ -185,6 +209,14 @@ static inline int ep2_send_if_ready(void *buf, uint32_t len) {
     rpt->ep2_tx_ready = 0;
     usb_ep2_in_transmit(buf, len);
     return 1;
+}
+
+static void send_power_state(uint8_t state) {
+    static uint8_t pkt[4] __attribute__((aligned(4)));
+    pkt[0] = 0x00;    /* notification type: WAKE namespace */
+    pkt[1] = state;   /* sub-code: wake/idle/deep */
+    pkt[2] = 0; pkt[3] = 0;
+    ep2_send_if_ready(pkt, 4);
 }
 
 /* ── Diagnostics (readable via 0xE7 patch info) ──────────────────────── */
@@ -836,6 +868,40 @@ void led_overlay_memcpy_and_blend(void *dst, const void *src, uint32_t len) {
     /* Count frames (monotonic, for sync) */
     anim_engine.frame_count++;
 
+    /* ── Power state transition detection ─────────────────────────
+     * Runs every scan cycle in ALL modes.  Detects sleep/wake by
+     * monitoring flags set by power_sleep_manager / wireless_sleep_loop /
+     * usb_suspend_handler.
+     *
+     * Main loop order:
+     *   power_sleep_manager()    ← sets sleep_request + idle_counter
+     *   wireless_sleep_loop()    ← BLOCKS if sleep_request, clears on wake
+     *   ...
+     *   memcpy → THIS HOOK       ← runs after wireless sleep returns
+     *   ...
+     *   usb_suspend_handler()    ← BLOCKS on USB suspend (runs AFTER us)
+     *
+     * We use a "before" hook on wireless_sleep_loop to set sleeping_flag=1
+     * when it's about to enter its blocking loop.  When it returns and
+     * this blend hook runs, sleeping_flag is still 1 → we detect wake.
+     *
+     * Events sent via EP2 immediately (USB) and queued for
+     * handle_vendor_cmd (wireless, next RF command from dongle). */
+    {
+        if (sleeping_flag != 0) {
+            /* wireless_sleep_loop (or usb_suspend_handler) just returned.
+             * Reset animation engine — firmware may have reconfigured LEDs
+             * and our BSS statics survived but are stale. */
+            sleeping_flag = 0;
+            for (int i = 0; i < LED_COUNT; i++)
+                key_table[i].anim_id = 0xFF;
+            anim_engine.active_count = 0;
+            overlay_active = 0;
+            pending_power_event = PWR_STATE_WAKE;
+            send_power_state(PWR_STATE_WAKE);
+        }
+    }
+
     /* Tick the animation engine */
     anim_tick();
 
@@ -1179,6 +1245,59 @@ done:
 
 /* ── USB connect init (patches config descriptors before enumeration) ──── */
 
+/* ── Sleep entry "before" hooks ────────────────────────────────────────
+ * Called before wireless_sleep_loop / usb_suspend_handler.  Check whether
+ * the function will actually enter its blocking loop (same conditions the
+ * firmware checks) and set sleeping_flag so the blend hook detects wake.
+ *
+ * wireless_sleep_loop enters if: connection_mode != 6 && sleep_request != 0
+ *   && timer_state[5] == 0 && TMR flag not set.
+ *   We approximate: connection_mode != 6 && sleep_request != 0.
+ *
+ * usb_suspend_handler enters its deep-suspend loop if: connection_mode == 6
+ *   && suspend counter (offset 0x1d) > 0x31 && SOF frame unchanged.
+ *   We approximate: just set the flag; usb_suspend_handler exits quickly if
+ *   conditions aren't met, and the blend hook runs right after anyway. */
+
+void wireless_sleep_before_hook(void) {
+    volatile kbd_state_t *kbd = (volatile kbd_state_t *)&g_kbd_state;
+
+    /* Same early-exit conditions as wireless_sleep_loop:
+     * return if connection_mode == 6 (USB) or sleep_request == 0 */
+    if (*(volatile uint8_t *)&g_connection_mode == 6)
+        return;
+    if (kbd->state_flag_2a == 0)  /* sleep_request, offset 0x2a */
+        return;
+
+    /* Will enter blocking sleep loop — send sleep event NOW (before
+     * we block) and set flag for wake detection. */
+    uint8_t state = kbd->deep_sleep_request ? PWR_STATE_DEEP : PWR_STATE_IDLE;
+    pending_power_event = state;
+    send_power_state(state);
+    sleeping_flag = 1;
+}
+
+void usb_suspend_before_hook(void) {
+    /* usb_suspend_handler only does anything on USB (mode 6).
+     * Its deep-suspend path requires ~50 outer loop cycles with no SOF
+     * frame changes.  Counter at kbd_state+0x1d; when > 0x31 AND
+     * kbd_state+0x1c == 0x14, the handler enters its blocking loop.
+     * Note: control_word at 0x1c is a 4-byte field in the struct, but
+     * the firmware accesses bytes 0x1c and 0x1d independently. */
+    volatile uint8_t *kbs = (volatile uint8_t *)&g_kbd_state;
+
+    if (*(volatile uint8_t *)&g_connection_mode != 6)
+        return;
+
+    /* When suspend counter (byte 0x1d) exceeds 0x31 (50 cycles ≈ 1s),
+     * usb_suspend_handler enters its blocking low-power loop. */
+    if (kbs[0x1d] > 0x31) {
+        pending_power_event = PWR_STATE_DEEP;
+        send_power_state(PWR_STATE_DEEP);
+        sleeping_flag = 1;
+    }
+}
+
 int handle_usb_connect(void) {
     /* Zero PATCH_SRAM .bss — stock crt0 only initializes the firmware's own
      * .bss region, not ours.  SRAM survives soft reboot (flash + reset)
@@ -1190,6 +1309,10 @@ int handle_usb_connect(void) {
      * everything to 0 which means "assigned to def 0".  Fix it. */
     for (int i = 0; i < LED_COUNT; i++)
         key_table[i].anim_id = 0xFF;
+
+    /* pending_power_event = 0 after BSS zero = PWR_STATE_WAKE, which would
+     * cause a spurious drain.  Set to NONE. */
+    pending_power_event = PWR_STATE_NONE;
 
     log_entry(LOG_USB_CONNECT, (const uint8_t *)0, 0);
 
@@ -1213,6 +1336,9 @@ int handle_usb_connect(void) {
     memcpy(extended_rdesc, (void *)&g_if1_report_desc, IF1_RDESC_LEN);
     for (int i = 0; i < (int)BATTERY_RDESC_LEN; i++)
         extended_rdesc[IF1_RDESC_LEN + i] = battery_rdesc[i];
+
+    /* Notify host of wake from deep sleep (USB re-enumeration) */
+    send_power_state(PWR_STATE_WAKE);
 
     return 0;   /* passthrough */
 }
@@ -1252,6 +1378,16 @@ static int handle_log_read(volatile uint8_t *buf) {
 
 int handle_vendor_cmd(void) {
     volatile uint8_t *cmd_buf = (volatile uint8_t *)&g_vendor_cmd_buffer;
+
+    /* ── Drain queued power state event (set by blend hook) ──── */
+    /* In wireless mode, ep2_send_if_ready fails (no USB).  The event
+     * sits in pending_power_event until the dongle forwards a vendor
+     * command via RF, which triggers this handler.  We send the event
+     * here so the host sees it in the command response cycle. */
+    if (pending_power_event != PWR_STATE_NONE) {
+        send_power_state(pending_power_event);
+        pending_power_event = PWR_STATE_NONE;
+    }
 
     /* ── Battery Input report on charge state change ─────────────── */
     {

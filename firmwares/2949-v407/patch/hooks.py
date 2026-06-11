@@ -60,6 +60,20 @@ HOOKS = [
         mode="before",
         displace=4,                # push {r4-r12,lr} — 4 bytes, safe
     ),
+    Hook(
+        name="wireless_sleep",
+        target=0x08016B80,         # wireless_sleep_loop
+        handler="wireless_sleep_before_hook",
+        mode="before",
+        displace=4,                # push {r3-r11,lr} — 4 bytes (wide Thumb2), safe
+    ),
+    Hook(
+        name="usb_suspend",
+        target=0x0801430C,         # usb_suspend_handler
+        handler="usb_suspend_before_hook",
+        mode="before",
+        displace=4,                # push {r3-r11,lr} — 4 bytes (wide Thumb2), safe
+    ),
     # LED overlay: BL-patch the frame→DMA memcpy so our blend function runs every frame.
     # No hook needed — rgb_led_animate and led_render_frame run normally.
 ]
