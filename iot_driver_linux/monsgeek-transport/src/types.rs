@@ -95,8 +95,12 @@ pub enum VendorEvent {
     MagnetismStop,
 
     // === Profile & Settings Notifications ===
-    /// Keyboard wake from sleep (0x00 - all zeros payload)
+    /// Keyboard wake from sleep (0x00 - all zeros payload, or power state 0x00)
     Wake,
+    /// Keyboard entering idle sleep (power state 0x01)
+    Sleep,
+    /// Keyboard entering deep sleep (power state 0x02)
+    DeepSleep,
     /// Profile changed via Fn+F9..F12 (0x01)
     ProfileChange {
         /// New profile number (0-3)

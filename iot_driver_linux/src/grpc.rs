@@ -85,6 +85,8 @@ fn vendor_event_to_bytes(event: &VendorEvent) -> Vec<u8> {
         VendorEvent::MagnetismStart => vec![REPORT_ID, 0x0F, 0x01, 0x00],
         VendorEvent::MagnetismStop => vec![REPORT_ID, 0x0F, 0x00, 0x00],
         VendorEvent::Wake => vec![REPORT_ID, 0x00, 0x00, 0x00],
+        VendorEvent::Sleep => vec![REPORT_ID, 0x00, 0x01, 0x00],
+        VendorEvent::DeepSleep => vec![REPORT_ID, 0x00, 0x02, 0x00],
         VendorEvent::ProfileChange { profile } => vec![REPORT_ID, 0x01, *profile, 0x00],
         VendorEvent::SettingsAck { started } => {
             vec![REPORT_ID, 0x0F, if *started { 0x01 } else { 0x00 }, 0x00]

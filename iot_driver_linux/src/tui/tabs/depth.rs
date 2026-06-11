@@ -371,6 +371,12 @@ impl App {
             VendorEvent::Wake => {
                 self.status_msg = "Keyboard wake".to_string();
             }
+            VendorEvent::Sleep => {
+                self.status_msg = "Keyboard idle sleep".to_string();
+            }
+            VendorEvent::DeepSleep => {
+                self.status_msg = "Keyboard deep sleep".to_string();
+            }
             VendorEvent::ProfileChange { profile } => {
                 self.info.profile = profile;
                 self.status_msg = format!("Profile {} (via Fn key)", profile + 1);

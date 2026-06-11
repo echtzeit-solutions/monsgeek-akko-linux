@@ -26,8 +26,9 @@ use crate::types::{TimestampedEvent, VendorEvent};
 /// defined here. For example, `0x05` is `SET_LEDONOFF` as a command but
 /// `LED_EFFECT_SPEED` as a notification.
 pub mod notif {
-    /// Wake notification (all zeros)
-    pub const WAKE: u8 = 0x00;
+    /// Power state notification (byte[0]=0x00, byte[1]=sub-code)
+    /// Sub-codes: 0x00=wake, 0x01=idle sleep, 0x02=deep sleep
+    pub const POWER_STATE: u8 = 0x00;
     /// Profile changed via Fn+F9..F12
     pub const PROFILE_CHANGE: u8 = 0x01;
     /// Keyboard function (Win lock, WASD swap, etc.)
@@ -368,8 +369,11 @@ fn parse_event_payload(payload: &[u8], original_data: &[u8]) -> VendorEvent {
     let value = payload.get(1).copied().unwrap_or(0);
 
     match notif_type {
-        // Wake notification: type 0x00 with all zeros
-        notif::WAKE if payload.iter().skip(1).all(|&b| b == 0) => VendorEvent::Wake,
+        // Power state notification: type 0x00, sub-code in byte[1]
+        // 0x00=wake (or legacy all-zeros), 0x01=idle sleep, 0x02=deep sleep
+        notif::POWER_STATE if payload.len() >= 2 && payload[1] == 0x01 => VendorEvent::Sleep,
+        notif::POWER_STATE if payload.len() >= 2 && payload[1] == 0x02 => VendorEvent::DeepSleep,
+        notif::POWER_STATE if payload.iter().skip(1).all(|&b| b == 0) => VendorEvent::Wake,
 
         // Profile changed via Fn+F9..F12
         notif::PROFILE_CHANGE => VendorEvent::ProfileChange { profile: value },
@@ -524,5 +528,30 @@ mod tests {
             }
             _ => panic!("Expected MouseReport"),
         }
+    }
+
+    #[test]
+    fn test_parse_power_state_wake() {
+        // USB format: [05, 00, 00, 00, 00] = wake (all zeros after report ID)
+        let event = parse_usb_event(&[0x05, 0x00, 0x00, 0x00, 0x00]);
+        assert!(matches!(event, VendorEvent::Wake));
+
+        // Without report ID (raw payload)
+        let event = parse_usb_event(&[0x00, 0x00, 0x00, 0x00]);
+        assert!(matches!(event, VendorEvent::Wake));
+    }
+
+    #[test]
+    fn test_parse_power_state_sleep() {
+        // USB format: [05, 00, 01, 00, 00] = idle sleep
+        let event = parse_usb_event(&[0x05, 0x00, 0x01, 0x00, 0x00]);
+        assert!(matches!(event, VendorEvent::Sleep));
+    }
+
+    #[test]
+    fn test_parse_power_state_deep_sleep() {
+        // USB format: [05, 00, 02, 00, 00] = deep sleep
+        let event = parse_usb_event(&[0x05, 0x00, 0x02, 0x00, 0x00]);
+        assert!(matches!(event, VendorEvent::DeepSleep));
     }
 }
