@@ -223,7 +223,7 @@ fn find_device_path(vid: u16, pid: u16) -> Result<Vec<u16>> {
             let mut required_size: u32 = 0;
             SetupDiGetDeviceInterfaceDetailW(
                 devinfo,
-                &mut iface_data,
+                &iface_data,
                 ptr::null_mut(),
                 0,
                 &mut required_size,
@@ -239,7 +239,7 @@ fn find_device_path(vid: u16, pid: u16) -> Result<Vec<u16>> {
 
             if SetupDiGetDeviceInterfaceDetailW(
                 devinfo,
-                &mut iface_data,
+                &iface_data,
                 detail,
                 required_size,
                 ptr::null_mut(),

@@ -271,7 +271,7 @@ mod tests {
 
         // Wired and wireless share device ID 2949, so by_id has 1 entry
         // but by_vid_pid has 2 entries (0x5030 + 0x503A)
-        assert!(registry.len() >= 1);
+        assert!(!registry.is_empty());
 
         // Find wired variant
         let profile = registry.find_by_vid_pid(0x3151, 0x5030).unwrap();

@@ -69,7 +69,7 @@ fn run() -> Result<()> {
     let id_data = dev.read_data(flash_map::FIRMWARE_START, 32)?;
     let id_str: String = id_data
         .iter()
-        .take_while(|&&b| b >= 0x20 && b < 0x7F)
+        .take_while(|&&b| (0x20..0x7F).contains(&b))
         .map(|&b| b as char)
         .collect();
 
@@ -246,8 +246,7 @@ fn cmd_flash_stock_v402(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> 
         .rposition(|&b| b != 0xFF)
         .map(|i| i + 1)
         .unwrap_or(0);
-    let len = ((last_used as u32 + flash_map::FLASH_PAGE_SIZE - 1)
-        / flash_map::FLASH_PAGE_SIZE
+    let len = ((last_used as u32).div_ceil(flash_map::FLASH_PAGE_SIZE)
         * flash_map::FLASH_PAGE_SIZE) as usize;
     let data = &writable[..len];
 
@@ -336,8 +335,7 @@ fn cmd_full_recovery(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
     // Write firmware + data (everything after bootloader, trimmed)
     let writable = &FLASH_V402[boot_size..];
     let last_used = writable.iter().rposition(|&b| b != 0xFF).map(|i| i + 1).unwrap_or(0);
-    let len = ((last_used as u32 + flash_map::FLASH_PAGE_SIZE - 1)
-        / flash_map::FLASH_PAGE_SIZE
+    let len = ((last_used as u32).div_ceil(flash_map::FLASH_PAGE_SIZE)
         * flash_map::FLASH_PAGE_SIZE) as usize;
     let fw_data = &writable[..len];
 
@@ -417,7 +415,7 @@ fn cmd_flash_custom(
 fn cmd_info(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
     let id_str: String = id_data
         .iter()
-        .take_while(|&&b| b >= 0x20 && b < 0x7F)
+        .take_while(|&&b| (0x20..0x7F).contains(&b))
         .map(|&b| b as char)
         .collect();
 
@@ -550,7 +548,7 @@ fn read_full_flash(dev: &dfuse::DfuSeDevice) -> Result<Vec<u8>> {
     );
 
     let chunk_size = 2048usize;
-    let total_chunks = (total + chunk_size - 1) / chunk_size;
+    let total_chunks = total.div_ceil(chunk_size);
     let mut data = Vec::with_capacity(total);
 
     for i in 0..total_chunks {
@@ -602,7 +600,7 @@ fn cmd_upload(dev: &dfuse::DfuSeDevice, id_data: &[u8]) -> Result<()> {
     let data = read_full_flash(dev)?;
     let chip_id: String = id_data
         .iter()
-        .take_while(|&&b| b >= 0x20 && b < 0x7F)
+        .take_while(|&&b| (0x20..0x7F).contains(&b))
         .map(|&b| b as char)
         .collect();
 

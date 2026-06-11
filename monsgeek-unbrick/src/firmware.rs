@@ -75,8 +75,7 @@ fn split_flash_dump(data: &[u8], include_bootloader: bool) -> Result<Vec<Firmwar
 
     if last_used > 0 {
         // Round up to page boundary
-        let len = ((last_used as u32 + FLASH_PAGE_SIZE - 1)
-            / FLASH_PAGE_SIZE
+        let len = ((last_used as u32).div_ceil(FLASH_PAGE_SIZE)
             * FLASH_PAGE_SIZE) as usize;
         let len = len.min(writable.len());
 

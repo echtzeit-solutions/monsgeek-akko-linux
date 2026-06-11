@@ -228,7 +228,7 @@ impl DfuSeDevice {
         // Set address and write in chunks
         self.set_address(addr)?;
 
-        let total_chunks = (data.len() + TRANSFER_SIZE - 1) / TRANSFER_SIZE;
+        let total_chunks = data.len().div_ceil(TRANSFER_SIZE);
         for (i, chunk) in data.chunks(TRANSFER_SIZE).enumerate() {
             // DfuSe: block number starts at 2 for data
             let block = (i as u16) + 2;
@@ -280,7 +280,7 @@ impl DfuSeDevice {
         // set_address leaves us in DfuDnloadIdle — UPLOAD requires DfuIdle
         self.abort()?;
         let mut result = Vec::with_capacity(len);
-        let total_chunks = (len + TRANSFER_SIZE - 1) / TRANSFER_SIZE;
+        let total_chunks = len.div_ceil(TRANSFER_SIZE);
 
         for i in 0..total_chunks {
             let block = (i as u16) + 2;

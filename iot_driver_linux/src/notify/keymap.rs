@@ -548,7 +548,7 @@ mod tests {
         let range = parse_key_target("#10..#20").unwrap().indices;
         // Only non-empty keys in index range 10..=20
         assert!(!range.is_empty());
-        assert!(range.iter().all(|&i| i >= 10 && i <= 20));
+        assert!(range.iter().all(|&i| (10..=20).contains(&i)));
     }
 
     #[test]
