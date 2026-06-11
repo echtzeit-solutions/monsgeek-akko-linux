@@ -16,6 +16,7 @@ pub const DONGLE_PIDS: &[u16] = &[
     0x503A, // Legacy dongle variant
     0x503D, // Legacy dongle variant
     0x502B, // M1 V5 TMR dongle
+    0x5006, // Attack Shark K86 dongle
 ];
 
 /// Known Bluetooth PIDs (BLE HID connections via HOGP)
