@@ -1062,6 +1062,11 @@ impl App {
 pub async fn run(device_selector: Option<String>) -> io::Result<()> {
     use crossterm::event::KeyModifiers;
 
+    // Initialize tui-logger for notify daemon log widget
+    tui_logger::init_logger(log::LevelFilter::Info).ok();
+    tui_logger::set_default_level(log::LevelFilter::Off);
+    tui_logger::set_level_for_target("notify", log::LevelFilter::Info);
+
     // Setup terminal
     enable_raw_mode()?;
     stdout()

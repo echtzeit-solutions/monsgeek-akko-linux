@@ -48,6 +48,9 @@ impl DaemonLog {
             eprintln!("[{secs:4}.{ms:03}] {msg}");
         }
 
+        // Emit to tui-logger for the TUI log widget
+        log::info!(target: "notify", "{msg}");
+
         // Non-blocking: try_lock to avoid stalling the daemon loop
         if let Ok(mut inner) = self.inner.try_lock() {
             if inner.entries.len() >= MAX_ENTRIES {
