@@ -38,8 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create command context from CLI flags
-    let printer_config =
-        commands::create_printer_config(cli.monitor, cli.hex, cli.all, cli.filter.as_deref())?;
+    let printer_config = commands::create_printer_config(
+        cli.monitor,
+        cli.hex,
+        cli.all,
+        cli.filter.as_deref(),
+        cli.record.as_deref(),
+    )?;
     let ctx = CmdCtx::new(printer_config.clone(), cli.device);
 
     match cli.command {
@@ -304,6 +309,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // === Utility Commands ===
         Some(Commands::List) => {
             commands::utility::list()?;
+        }
+        Some(Commands::Probe { output }) => {
+            commands::probe::run(&ctx, output.as_deref())?;
         }
         Some(Commands::Raw { cmd: cmd_str }) => {
             commands::utility::raw(&cmd_str, &ctx)?;

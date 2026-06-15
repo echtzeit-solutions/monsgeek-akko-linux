@@ -37,6 +37,9 @@ use crossterm::style::Stylize;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::fmt::Write;
+use std::fs::File;
+use std::io::{BufWriter, Write as IoWrite};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -152,6 +155,9 @@ pub struct PrinterConfig {
     pub format: OutputFormat,
     /// Show Debug-derived full struct fields (vs compact single-line)
     pub show_debug: bool,
+    /// When set, decoded traffic is written here as JSONL instead of stderr.
+    /// Set via [`PrinterConfig::with_output_file`], which also forces JSON format.
+    pub output_file: Option<Arc<Mutex<BufWriter<File>>>>,
 }
 
 impl Default for PrinterConfig {
@@ -162,6 +168,7 @@ impl Default for PrinterConfig {
             filter: PacketFilter::All,
             format: OutputFormat::Text,
             show_debug: false,
+            output_file: None,
         }
     }
 }
@@ -195,6 +202,18 @@ impl PrinterConfig {
     pub fn with_format(mut self, format: OutputFormat) -> Self {
         self.format = format;
         self
+    }
+
+    /// Record decoded traffic to a file as JSONL (one packet per line).
+    ///
+    /// Opens/creates (truncating) the file and forces [`OutputFormat::Json`] so
+    /// output is machine-parseable. While set, output goes to the file instead
+    /// of stderr, which keeps the TUI (rendered to stdout) intact.
+    pub fn with_output_file(mut self, path: &Path) -> std::io::Result<Self> {
+        let file = File::create(path)?;
+        self.output_file = Some(Arc::new(Mutex::new(BufWriter::new(file))));
+        self.format = OutputFormat::Json;
+        Ok(self)
     }
 }
 
@@ -249,6 +268,20 @@ impl Printer {
     /// Check if all HID reports should be shown
     pub fn show_all_hid(&self) -> bool {
         self.config.show_all_hid
+    }
+
+    /// Emit one output line: to the record file (JSONL) if configured, else stderr.
+    ///
+    /// Flushes after every line so the file stays valid JSONL even if the
+    /// process is interrupted mid-capture.
+    fn emit(&self, line: &str) {
+        if let Some(file) = &self.config.output_file {
+            let mut w = file.lock();
+            let _ = writeln!(w, "{line}");
+            let _ = w.flush();
+        } else {
+            eprintln!("{line}");
+        }
     }
 
     /// Update command context for stateful response parsing
@@ -355,7 +388,7 @@ impl Printer {
                     direction: "CMD".to_string(),
                     data: format!("{:02x?}", data),
                 };
-                eprintln!("{}", serde_json::to_string(&decoded).unwrap());
+                self.emit(&serde_json::to_string(&decoded).unwrap());
             }
         }
     }
@@ -453,7 +486,7 @@ impl Printer {
                         direction: "RSP".to_string(),
                         data: display,
                     };
-                    eprintln!("{}", serde_json::to_string(&decoded).unwrap());
+                    self.emit(&serde_json::to_string(&decoded).unwrap());
                 }
             }
             return;
@@ -538,7 +571,7 @@ impl Printer {
                     direction: "RSP".to_string(),
                     data: format!("{:?}", parsed),
                 };
-                eprintln!("{}", serde_json::to_string(&decoded).unwrap());
+                self.emit(&serde_json::to_string(&decoded).unwrap());
             }
         }
     }
@@ -575,7 +608,7 @@ impl Printer {
                     timestamp: timestamp.unwrap_or(0.0),
                     event: format!("{:?}", event),
                 };
-                eprintln!("{}", serde_json::to_string(&decoded).unwrap());
+                self.emit(&serde_json::to_string(&decoded).unwrap());
             }
         }
     }
@@ -639,7 +672,7 @@ impl Printer {
                     timestamp,
                     event: format!("{}:{:02x?}", report_type, data),
                 };
-                eprintln!("{}", serde_json::to_string(&packet).unwrap());
+                self.emit(&serde_json::to_string(&packet).unwrap());
             }
         }
     }
@@ -664,7 +697,7 @@ impl Printer {
                     timestamp,
                     data: format!("{:02x?}", data),
                 };
-                eprintln!("{}", serde_json::to_string(&packet).unwrap());
+                self.emit(&serde_json::to_string(&packet).unwrap());
             }
         }
     }
@@ -766,7 +799,7 @@ impl Printer {
                     timestamp,
                     data: format!("{} {:02x?}", request_name, data),
                 };
-                eprintln!("{}", serde_json::to_string(&packet).unwrap());
+                self.emit(&serde_json::to_string(&packet).unwrap());
             }
         }
     }

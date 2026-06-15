@@ -23,6 +23,7 @@ pub mod led_stream;
 pub mod macros;
 #[cfg(feature = "notify")]
 pub mod notify;
+pub mod probe;
 pub mod query;
 pub mod reactive;
 pub mod set;
@@ -81,7 +82,7 @@ fn resolve_model_name(device_id: Option<u32>, vid: u16, pid: u16) -> Option<Stri
 /// - Try parse as index (usize)
 /// - Try match transport name ("usb", "dongle", "bt")
 /// - Otherwise treat as HID path prefix
-fn resolve_device(
+pub(crate) fn resolve_device(
     discovery: &HidDiscovery,
     selector: Option<&str>,
 ) -> Result<monsgeek_transport::DiscoveredDevice, Box<dyn std::error::Error>> {
@@ -336,14 +337,19 @@ pub fn setup_interrupt_handler() -> Arc<AtomicBool> {
     running
 }
 
-/// Create printer config from CLI flags
+/// Create printer config from CLI flags.
+///
+/// The printer is enabled when `--monitor` is set OR a `--record` file is given
+/// (recording implies monitoring). When recording, output is written to the
+/// file as JSONL and the format is forced to JSON.
 pub fn create_printer_config(
     monitor: bool,
     hex: bool,
     all_hid: bool,
     filter: Option<&str>,
+    record: Option<&std::path::Path>,
 ) -> Result<Option<PrinterConfig>, Box<dyn std::error::Error>> {
-    if !monitor {
+    if !monitor && record.is_none() {
         return Ok(None);
     }
 
@@ -352,10 +358,14 @@ pub fn create_printer_config(
         None => PacketFilter::All,
     };
 
-    Ok(Some(
-        PrinterConfig::default()
-            .with_hex(hex)
-            .with_all_hid(all_hid)
-            .with_filter(filter),
-    ))
+    let mut config = PrinterConfig::default()
+        .with_hex(hex)
+        .with_all_hid(all_hid)
+        .with_filter(filter);
+
+    if let Some(path) = record {
+        config = config.with_output_file(path)?;
+    }
+
+    Ok(Some(config))
 }

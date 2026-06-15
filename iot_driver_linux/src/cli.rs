@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub monitor: bool,
 
+    /// Record decoded traffic to a JSONL file (implies --monitor)
+    #[arg(long, global = true, value_name = "FILE")]
+    pub record: Option<std::path::PathBuf>,
+
     /// Use pcap file instead of real device (passive replay)
     #[arg(long = "file", global = true, value_name = "FILE")]
     pub pcap_file: Option<PathBuf>,
@@ -472,6 +476,14 @@ pub enum Commands {
     /// List all HID devices
     #[command(visible_alias = "ls")]
     List,
+
+    /// Generate a GitHub-ready diagnostic report (Markdown)
+    #[command(visible_alias = "diag")]
+    Probe {
+        /// Also write the report to this file (still printed to stdout)
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
 
     /// Send raw command byte (hex)
     #[command(visible_aliases = ["cmd", "hex"])]

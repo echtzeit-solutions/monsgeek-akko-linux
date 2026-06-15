@@ -45,6 +45,24 @@ pub fn is_bluetooth_pid(pid: u16) -> bool {
     BLUETOOTH_PIDS.contains(&pid)
 }
 
+/// Heuristic: does this device's USB product string look like a 2.4GHz dongle?
+///
+/// Used as a fallback for dongles whose PID is not yet in [`DONGLE_PIDS`], so
+/// new receivers are classified as `HidDongle` instead of `HidWired`. The PID
+/// list remains the authoritative fast path; this only kicks in for unknown
+/// PIDs. Protocol-level confirmation (a `GET_DONGLE_INFO` response) is the
+/// ground truth before adding a PID to the list — see the `probe` command.
+///
+/// Observed strings: dongle = "MonsGeek 2.4G Wireless Keyboard"; wired =
+/// "Monsgeek Keyboard" / "Monsgeek Multi-modes Keyboard".
+pub fn looks_like_dongle(product: Option<&str>) -> bool {
+    let Some(p) = product else { return false };
+    let p = p.to_ascii_lowercase();
+    ["wireless", "2.4g", "dongle", "receiver"]
+        .iter()
+        .any(|needle| p.contains(needle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +89,17 @@ mod tests {
     fn test_wired_pids_not_bluetooth() {
         assert!(!is_bluetooth_pid(0x5030)); // M1 V5 wired
         assert!(!is_bluetooth_pid(0x5038)); // M1 V5 dongle
+    }
+
+    #[test]
+    fn test_looks_like_dongle() {
+        // Real product strings observed on the bus
+        assert!(looks_like_dongle(Some("MonsGeek 2.4G Wireless Keyboard")));
+        assert!(looks_like_dongle(Some("Akko Wireless Dongle")));
+        assert!(looks_like_dongle(Some("USB Receiver")));
+        // Wired keyboards must not match
+        assert!(!looks_like_dongle(Some("Monsgeek Keyboard")));
+        assert!(!looks_like_dongle(Some("Monsgeek Multi-modes Keyboard")));
+        assert!(!looks_like_dongle(None));
     }
 }

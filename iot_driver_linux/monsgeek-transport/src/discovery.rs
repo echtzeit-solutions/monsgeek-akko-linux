@@ -216,7 +216,13 @@ impl DeviceDiscovery for HidDiscovery {
                 continue;
             }
 
-            let is_dongle = device_registry::is_dongle_pid(pid);
+            // Authoritative PID list first; fall back to a product-string
+            // heuristic so dongles with an unrecognized PID are still treated
+            // as receivers (and surfaced by `probe`) instead of wired.
+            let is_dongle = device_registry::is_dongle_pid(pid)
+                || (!is_bluetooth
+                    && !device_registry::is_bluetooth_pid(pid)
+                    && device_registry::looks_like_dongle(device_info.product_string()));
             let transport_type = if is_bluetooth {
                 TransportType::Bluetooth
             } else if is_dongle {
