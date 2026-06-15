@@ -138,7 +138,7 @@ if [ "$INCLUDE_ELECTRON" = true ]; then
     ELECTRON_BUNDLE=""
 
     # Look in refactored directories
-    for dir in "$DRIVER_EXTRACT/unbundled" "$DRIVER_EXTRACT/refactored-v3/src"; do
+    for dir in "$DRIVER_EXTRACT/unbundled" "$DRIVER_EXTRACT/refactored/src"; do
         if [ -d "$dir" ]; then
             ELECTRON_BUNDLE=$(find "$dir" -name "deobfuscated.js" -o -name "main.jsx" 2>/dev/null | head -1)
             [ -n "$ELECTRON_BUNDLE" ] && break
@@ -220,7 +220,7 @@ MATRICES_FILE="$DATA_DIR/led_matrices.json"
 MATRICES_SCRIPT="$DRIVER_EXTRACT/extract-matrices.js"
 
 if [ -f "$MATRICES_SCRIPT" ]; then
-    if [ -d "$DRIVER_EXTRACT/refactored-v3/src/utils" ]; then
+    if [ -d "$DRIVER_EXTRACT/refactored/src/utils" ]; then
         echo "Extracting matrices from device utility classes..."
         node "$MATRICES_SCRIPT"
         echo ""
