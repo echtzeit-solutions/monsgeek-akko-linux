@@ -317,9 +317,12 @@ function normalizeDevice(raw, source) {
     if (raw.keyLayout) {
         const keyCount = parseKeyCount(raw.keyLayout);
         if (keyCount) device.keyCount = keyCount;
-        // Store raw layout name
+        // Store layout name. The reference is "$ref:<alias>.<LayoutName>" where
+        // the alias varies between webapp bundles (e.g. "KeyLayout" historically,
+        // "h" in newer builds). Strip the "$ref:<alias>." prefix generically so
+        // we keep the canonical member name (e.g. "Common82_M1_V5_TMR").
         if (typeof raw.keyLayout === 'string') {
-            device.keyLayoutName = raw.keyLayout.replace('$ref:KeyLayout.', '');
+            device.keyLayoutName = raw.keyLayout.replace(/^\$ref:[^.]*\./, '');
         }
     }
 

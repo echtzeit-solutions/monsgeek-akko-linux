@@ -1,23 +1,196 @@
 {
   "version": 1,
-  "generatedAt": "2026-03-06T23:09:21.395Z",
+  "generatedAt": "2026-06-15T13:39:15.998Z",
   "source": "webapp",
-  "sourceFile": "index.d9e0258a.js",
+  "sourceFile": "index.cd092454.js",
   "deviceArrays": [
-    "supportHelpDev",
-    "supportMouseDev",
-    "supportMsCh585Dev",
-    "supportRY5088Dev",
-    "SupportTestDev",
-    "SupportWangBaDev",
-    "supportYC300Dev",
-    "supportYC3121Dev",
-    "supportYC3123Dev",
-    "SupportMsWangBaDev"
+    "xt",
+    "WL",
+    "GL",
+    "e3",
+    "v3",
+    "Ef",
+    "w3",
+    "b3",
+    "x3",
+    "Nb",
+    "C3",
+    "S3",
+    "K3",
+    "D3",
+    "L3"
   ],
-  "deviceCount": 447,
-  "keyLayoutCount": 162,
+  "deviceCount": 624,
+  "keyLayoutCount": 0,
   "devices": [
+    {
+      "id": -120,
+      "vid": 12625,
+      "pid": 20553,
+      "name": "helpYc3123",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -119,
+      "vid": 12625,
+      "pid": 20551,
+      "name": "helpRy5088",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -118,
+      "vid": 17235,
+      "pid": 32776,
+      "name": "helpWh6051f",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -117,
+      "vid": 12625,
+      "pid": 20567,
+      "name": "helpRY6602",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -116,
+      "vid": 12625,
+      "pid": 16406,
+      "name": "helpRY5088_YC3121",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -115,
+      "vid": 1130,
+      "pid": 302,
+      "name": "helpRy5088",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -114,
+      "vid": 1121,
+      "pid": 16385,
+      "name": "YzwHelp",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -113,
+      "vid": 12625,
+      "pid": 20557,
+      "name": "helpRy6609",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -112,
+      "vid": 12625,
+      "pid": 20481,
+      "name": "helpYc3123",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -111,
+      "vid": 12625,
+      "pid": 16430,
+      "name": "helpDongle",
+      "displayName": "help",
+      "type": "dongle",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -110,
+      "vid": 12625,
+      "pid": 16427,
+      "name": "helpMouse8K",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -109,
+      "vid": 12625,
+      "pid": 16421,
+      "name": "helpMouse",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -108,
+      "vid": 12625,
+      "pid": 20542,
+      "name": "helpDgCH585",
+      "displayName": "help",
+      "type": "dongle",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": -107,
+      "vid": 12625,
+      "pid": 20539,
+      "name": "helpMSCH585",
+      "displayName": "help",
+      "type": "keyboard",
+      "company": null,
+      "sources": [
+        "webapp"
+      ]
+    },
     {
       "id": -106,
       "vid": 12625,
@@ -53,6 +226,47 @@
       "sources": [
         "webapp"
       ]
+    },
+    {
+      "id": 790,
+      "vid": 12625,
+      "pid": 16405,
+      "name": "yc500_5108bplus_uk_soc",
+      "displayName": "5108B Plus",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_MG108B",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 847,
+      "vid": 12625,
+      "pid": 16437,
+      "name": "yc3121_mod007bv3he_soc_8k",
+      "displayName": "MOD007B V3 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "magnetism": true,
+      "hasLightLayout": true
     },
     {
       "id": 853,
@@ -181,19 +395,40 @@
       "noMagneticSwitch": true
     },
     {
-      "id": 1023,
+      "id": 1104,
       "vid": 12625,
       "pid": 16405,
-      "name": "yc500_5108bplus_uk_soc",
-      "displayName": "5108B Plus",
+      "name": "yc3121_mu02_soc",
+      "displayName": "MU02",
       "type": "keyboard",
       "company": "akko",
       "sources": [
         "webapp"
       ],
-      "keyCount": 108,
-      "keyLayoutName": "Common108_MG108B",
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
       "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 1105,
+      "vid": 12625,
+      "pid": 16408,
+      "name": "yc500_yz68_dm",
+      "displayName": "YZ68",
+      "type": "keyboard",
+      "company": "YUNZII",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_RT68",
+      "layer": 2,
       "fnSysLayer": {
         "win": 1,
         "mac": 1
@@ -487,26 +722,6 @@
       "hasLightLayout": true
     },
     {
-      "id": 1637,
-      "vid": 12625,
-      "pid": 16437,
-      "name": "yc3121_mod007bv3he_soc_8k",
-      "displayName": "MOD007B V3 HE",
-      "type": "keyboard",
-      "company": "akko",
-      "sources": [
-        "webapp"
-      ],
-      "keyCount": 82,
-      "keyLayoutName": "Common82_SG9000",
-      "fnSysLayer": {
-        "win": 1,
-        "mac": 1
-      },
-      "magnetism": true,
-      "hasLightLayout": true
-    },
-    {
       "id": 1643,
       "vid": 12625,
       "pid": 16422,
@@ -628,6 +843,18 @@
         "webapp"
       ],
       "layer": 8
+    },
+    {
+      "id": 1759,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "common_dangle",
+      "displayName": "APEX",
+      "type": "dongle",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 1815,
@@ -789,6 +1016,18 @@
       "noMagneticSwitch": true
     },
     {
+      "id": 1929,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g182_hwtzc28_3395_1k_8k",
+      "displayName": "StarBlaze-1",
+      "type": "dongle",
+      "company": "StarBlaze",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
       "id": 1933,
       "vid": 12625,
       "pid": 16405,
@@ -836,27 +1075,6 @@
       "layer": 8
     },
     {
-      "id": 1991,
-      "vid": 12625,
-      "pid": 16405,
-      "name": "yc3121_mu02_soc",
-      "displayName": "MU02",
-      "type": "keyboard",
-      "company": "akko",
-      "sources": [
-        "webapp"
-      ],
-      "keyCount": 82,
-      "keyLayoutName": "Common82_SG9000",
-      "layer": 4,
-      "fnSysLayer": {
-        "win": 1,
-        "mac": 1
-      },
-      "hasLightLayout": true,
-      "noMagneticSwitch": true
-    },
-    {
       "id": 1996,
       "vid": 12625,
       "pid": 16405,
@@ -876,6 +1094,18 @@
       },
       "hasLightLayout": true,
       "noMagneticSwitch": true
+    },
+    {
+      "id": 2014,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "mouse_pan1080_g86e_3950_1k_8k",
+      "displayName": "G68",
+      "type": "dongle",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 2036,
@@ -1393,8 +1623,8 @@
       "keyLayoutName": "Common61_gk06",
       "layer": 4,
       "fnSysLayer": {
-        "win": 1,
-        "mac": 1
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -1746,6 +1976,18 @@
       "hasLightLayout": true,
       "hasSideLight": true,
       "hotSwap": true
+    },
+    {
+      "id": 2361,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_g16b_3395_1k_8k",
+      "displayName": "ZX1",
+      "type": "dongle",
+      "company": "SecretGearZX",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 2367,
@@ -2268,6 +2510,28 @@
       "fnSysLayer": {
         "win": 2,
         "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 2465,
+      "vid": 12625,
+      "pid": 20521,
+      "name": "ry5088_x82he68_dm_8k",
+      "displayName": "HE68 Mag",
+      "type": "keyboard",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_K80X68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -3141,8 +3405,8 @@
       "keyLayoutName": "Common61_gk06",
       "layer": 4,
       "fnSysLayer": {
-        "win": 1,
-        "mac": 1
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -3910,7 +4174,7 @@
         "webapp"
       ],
       "keyCount": 82,
-      "keyLayoutName": "Common82_SG9000_v3",
+      "keyLayoutName": "Common82_M1_V5_TMR",
       "layer": 4,
       "fnSysLayer": {
         "win": 2,
@@ -3990,6 +4254,30 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hotSwap": true
+    },
+    {
+      "id": 2684,
+      "vid": 12625,
+      "pid": 20512,
+      "name": "dangle_pan1080_g182_zc21_3311",
+      "displayName": "MS955WB",
+      "type": "dongle",
+      "company": "GamingMouse",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 2686,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g182_zc28_3395_b",
+      "displayName": "MS955WB PRO",
+      "type": "dongle",
+      "company": "GamingMouse",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 2688,
@@ -4248,6 +4536,29 @@
       "hotSwap": true
     },
     {
+      "id": 2721,
+      "vid": 12625,
+      "pid": 20528,
+      "name": "ry5088_veekosk0038_8k_8k",
+      "displayName": "Verve68",
+      "type": "keyboard",
+      "company": "MonsGeek",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_K80X68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "hotSwap": true
+    },
+    {
       "id": 2723,
       "vid": 12625,
       "pid": 20521,
@@ -4438,6 +4749,31 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true
+    },
+    {
+      "id": 2745,
+      "vid": 12625,
+      "pid": 20552,
+      "name": "ry5088_zhiwan_h10_1m_8k_hitbox",
+      "displayName": "EasySMX H10",
+      "type": "hitBoxKeyboard",
+      "company": "EasySMX",
+      "sources": [
+        "webapp"
+      ],
+      "keyLayoutName": "CommonHitBox",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "magnetism": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0,
+          "max": 2.8
+        }
+      }
     },
     {
       "id": 2746,
@@ -5172,7 +5508,8 @@
       "keyLayoutName": "Common99_k980",
       "layer": 4,
       "fnSysLayer": {
-        "win": 1
+        "win": 1,
+        "mac": 1
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -5485,14 +5822,22 @@
       ],
       "keyCount": 68,
       "keyLayoutName": "Common68_K80X68",
-      "layer": 2,
+      "layer": 4,
       "fnSysLayer": {
         "win": 2,
         "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.005,
+          "default": 2
+        }
+      }
     },
     {
       "id": 2816,
@@ -5592,8 +5937,8 @@
       "keyLayoutName": "Common82_M1_V5_TMR",
       "layer": 2,
       "fnSysLayer": {
-        "win": 1,
-        "mac": 1
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -7406,12 +7751,12 @@
       "sources": [
         "webapp"
       ],
-      "keyCount": 98,
+      "keyCount": 82,
       "keyLayoutName": "Common82_M1_V5_TMR",
       "layer": 2,
       "fnSysLayer": {
-        "win": 1,
-        "mac": 1
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -7571,6 +7916,18 @@
       "hotSwap": true
     },
     {
+      "id": 2965,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g63b_3950_hwt_1k_8k",
+      "displayName": "Havit M5 Pro Super light",
+      "type": "dongle",
+      "company": "GamingMouse",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
       "id": 2966,
       "vid": 12625,
       "pid": 20528,
@@ -7658,6 +8015,31 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hotSwap": true
+    },
+    {
+      "id": 2970,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_g15_yj_zc68_3395_screen",
+      "displayName": "G15",
+      "type": "mouse",
+      "company": "SNX",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 2971,
+      "vid": 12625,
+      "pid": 20544,
+      "name": "commonDgCh585",
+      "displayName": "G15",
+      "type": "dongle",
+      "company": "SNX",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 2972,
@@ -8496,6 +8878,18 @@
       "noMagneticSwitch": true
     },
     {
+      "id": 3042,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_g68b_8k",
+      "displayName": "G68B",
+      "type": "dongle",
+      "company": "DNS",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
       "id": 3043,
       "vid": 12625,
       "pid": 20521,
@@ -9125,6 +9519,18 @@
       "hotSwap": true
     },
     {
+      "id": 3080,
+      "vid": 12625,
+      "pid": 20554,
+      "name": "yc3123q_zhiwan_h10_oled_hitbox",
+      "displayName": "EasySMX H10 Screen",
+      "type": "hitBoxScreen",
+      "company": "EasySMX",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
       "id": 3081,
       "vid": 12625,
       "pid": 20538,
@@ -9225,6 +9631,19 @@
       "hasLightLayout": true
     },
     {
+      "id": 3090,
+      "vid": 14154,
+      "pid": 41744,
+      "name": "ry6601_g11yjzc683311_1k_1k",
+      "displayName": "VK M5 Lite",
+      "type": "mouse",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
       "id": 3091,
       "vid": 12625,
       "pid": 20521,
@@ -9311,6 +9730,29 @@
       "fnSysLayer": {
         "win": 1,
         "mac": 1
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3099,
+      "vid": 12625,
+      "pid": 20521,
+      "name": "ry5088_akko_k0038_1m_8k_3099",
+      "displayName": "Verve68",
+      "type": "keyboard",
+      "company": "MonsGeek",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_K80X68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -9672,6 +10114,234 @@
       "noMagneticSwitch": true
     },
     {
+      "id": 3149,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_xh_wg14e_3311_1k_1k",
+      "displayName": "WG14E",
+      "type": "mouse",
+      "company": "Fantech",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3150,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_xh_wg14_3950_1k_8k",
+      "displayName": "WG14P",
+      "type": "mouse",
+      "company": "Fantech",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3164,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_zj_v72_3395_1k_8k",
+      "displayName": "IO1.1ProMax v7.2",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3169,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_ndb_lw101_3950_8k_8k_3m",
+      "displayName": "LW101",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3170,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_ndb_lw101_3395_8k_8k_3m",
+      "displayName": "LW101",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3172,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_g15_zc61_3311_screen",
+      "displayName": "G15",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3173,
+      "vid": 12625,
+      "pid": 20555,
+      "name": "dangle_ry6601_g15_zc61_3311_screen",
+      "displayName": "G15",
+      "type": "dongle",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3181,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_ndb_f2_3950_8k_8k_3m",
+      "displayName": "F2",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3182,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_ndb_f2_3395_8k_8k_3m",
+      "displayName": "F2",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3188,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_zj_v3plus_s205_1k_2k",
+      "displayName": "CosmosSK V3Plus",
+      "type": "mouse",
+      "company": "IO1.1PRO",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3191,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_g182_zc28_3950_8k_8k",
+      "displayName": "KY-M1068",
+      "type": "dongle",
+      "company": "KEYCEO",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3197,
+      "vid": 14621,
+      "pid": 4136,
+      "name": "mouse_ry6608_qfn48_lxl_gpw_3950_8k_8k_3m",
+      "displayName": "Dragonfly 3 Ultra",
+      "type": "mouse",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3198,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zmd_x87_8k_8k_3m",
+      "displayName": "S87 Pro",
+      "type": "keyboard",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3202,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_m511_3395_3m_8k_8k",
+      "displayName": "M511",
+      "type": "mouse",
+      "company": "KYSONASpaceSeries",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3214,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_g27_3395_8k_8k",
+      "displayName": "G27",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3229,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_gpw3_3311_1k_1k",
+      "displayName": "Dragonfly 3 SE",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3235,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_m706_s203_3m_1k_1k",
+      "displayName": "M706",
+      "type": "mouse",
+      "company": "KEYBOARD2",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
       "id": 3236,
       "vid": 12625,
       "pid": 20521,
@@ -9715,6 +10385,111 @@
       "noMagneticSwitch": true
     },
     {
+      "id": 3247,
+      "vid": 14154,
+      "pid": 41552,
+      "name": "ry6609_fengqi_x78_8k_8k_3m",
+      "displayName": "VK 75 Max",
+      "type": "keyboard",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 80,
+      "keyLayoutName": "Common80_X78VK75Max",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3253,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_g11_3395_8k_8k",
+      "displayName": "G11-ZC68-3395",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3258,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_nbd_lm103_3395_8k_8k_3m",
+      "displayName": "LM103",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3262,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_zcx_g398_3311_1k_1k",
+      "displayName": "G398",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8,
+      "hasLightLayout": true
+    },
+    {
+      "id": 3263,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_5075v3_8k_8k_3m",
+      "displayName": "5075 V3",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_5075B",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3265,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_5087v3_8k_8k_3m",
+      "displayName": "5087 V3",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_5087SV3",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
       "id": 3269,
       "vid": 14574,
       "pid": 1,
@@ -9727,10 +10502,10 @@
       ],
       "keyCount": 68,
       "keyLayoutName": "Common68_K80X68",
-      "layer": 2,
+      "layer": 4,
       "fnSysLayer": {
-        "win": 1,
-        "mac": 1
+        "win": 2,
+        "mac": 2
       },
       "magnetism": true,
       "hasLightLayout": true,
@@ -9759,6 +10534,63 @@
       "hasLightLayout": true,
       "hasSideLight": true,
       "hotSwap": true
+    },
+    {
+      "id": 3272,
+      "vid": 14621,
+      "pid": 4100,
+      "name": "mouse_ry6608_lxl_gpw_3395_8k_8k",
+      "displayName": "Dragonfly 3 Pro Max",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3276,
+      "vid": 14154,
+      "pid": 41575,
+      "name": "ry6609_nbd_mk25073_3m_8k_8k",
+      "displayName": "VK 87 V2",
+      "type": "keyboard",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25073",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3280,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zmd_x87_8k_8k_3m",
+      "displayName": "X87S",
+      "type": "keyboard",
+      "company": "EWEADNV",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
     },
     {
       "id": 3299,
@@ -9809,26 +10641,521 @@
       }
     },
     {
+      "id": 3303,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_xmg_m11_3311_1k_1k_3m",
+      "displayName": "Click Lite",
+      "type": "mouse",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3304,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_xmg_m11_3950_8k_8k_3m",
+      "displayName": "Click",
+      "type": "mouse",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3309,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_yyx_r3_3395_3m_1k_8k",
+      "displayName": "R3",
+      "type": "mouse",
+      "company": "AttackShark",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3310,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_yyx_r3_3395_3m_1k_8k",
+      "displayName": "R3",
+      "type": "mouse",
+      "company": "AttackShark",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3324,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_osd_m70_3311_3m_1k_1k",
+      "displayName": "M70",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8,
+      "hasLightLayout": true
+    },
+    {
+      "id": 3325,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_osd_rf620_3311_3m_1k_1k",
+      "displayName": "RF620",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8,
+      "hasLightLayout": true
+    },
+    {
+      "id": 3330,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_mg108b_soc",
+      "displayName": "MG108B",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_MG108B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3347,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_g62_3950_d_screen_8k",
+      "displayName": "AJ159 APEX",
+      "type": "dongle",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3349,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_fq_x128b_8k_8k_3m",
+      "displayName": "X128B",
+      "type": "keyboard",
+      "company": "VGNNEON",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3351,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_lj_xs98_8k_soc",
+      "displayName": "XS98",
+      "type": "keyboard",
+      "company": "ROYALAXE",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_xl98",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3352,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_zj_v3plus_s205_1k_1k",
+      "displayName": "CosmosSK V3Plus",
+      "type": "mouse",
+      "company": "IO1.1PRO",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3354,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_zmd_s87_1k_1k_3m",
+      "displayName": "GMK80",
+      "type": "keyboard",
+      "company": "MKB",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3395,
+      "vid": 14154,
+      "pid": 41768,
+      "name": "mouse_ry6608_g11yjzc68_3950_8k_8k",
+      "displayName": "VK M5 PRO",
+      "type": "mouse",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3396,
+      "vid": 14154,
+      "pid": 41769,
+      "name": "dangle_ry6608_g11yjzc68_3950_8k_8k",
+      "displayName": "VK M5 PRO",
+      "type": "dongle",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3405,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_akko_5108s_v5_3m_8k_8k",
+      "displayName": "5108 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_5108V5",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3407,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_g62zc213311_screen_1k_1k",
+      "displayName": "AJ159P MC PRO",
+      "type": "mouse",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3408,
+      "vid": 12625,
+      "pid": 20555,
+      "name": "dangle_ry6601_dfn10_g62zc211k_screen_1k",
+      "displayName": "AJ159P MC PRO",
+      "type": "dongle",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3412,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_jhtw_8008_3m_8k_8k",
+      "displayName": "VK87",
+      "type": "keyboard",
+      "company": "ilovbee",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_jhtw_8008",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3419,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_nbd_mk25072_3m_1k_1k",
+      "displayName": "MK25072",
+      "type": "keyboard",
+      "company": "MageGee",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 21,
+      "keyLayoutName": "Common21_MK25072",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
       "id": 3429,
       "vid": 14574,
       "pid": 9,
       "name": "ry5088_fun68_uk_dm_8k",
-      "displayName": "FUN68 UK",
+      "displayName": "FUN68 ISO",
       "type": "keyboard",
       "company": "MonsGeek",
       "sources": [
         "webapp"
       ],
-      "keyCount": 69,
-      "keyLayoutName": "Common69_MOD68UK",
-      "layer": 2,
+      "keyCount": 68,
+      "keyLayoutName": "Common68_fun68_uk",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3438,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_sg_9089_3m_8k_8k",
+      "displayName": "X87Ultra",
+      "type": "keyboard",
+      "company": "AttackShark",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3442,
+      "vid": 12625,
+      "pid": 20512,
+      "name": "pan1080_g18_2aj_3311_zc21_screen_1k",
+      "displayName": "AJ179P MC PRO",
+      "type": "dongle",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3444,
+      "vid": 14574,
+      "pid": 3,
+      "name": "ry6609_akko_5087_v5_3m_8k_8k",
+      "displayName": "5087 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HE",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3445,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zmd_x98v3_meta98_8k_8k_3m",
+      "displayName": "S98",
+      "type": "keyboard",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_3MRGB209",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3447,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_kk_qk75_3m_1k",
+      "displayName": "QK75",
+      "type": "keyboard",
+      "company": "凯酷",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 75,
+      "keyLayoutName": "Common75_QK75",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3448,
+      "vid": 14574,
+      "pid": 3,
+      "name": "ry6609_akko_5075_v5_3m_8k_8k",
+      "displayName": "5075 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3453,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_jy_m682_3395_3m_1k_8k",
+      "displayName": "KSNJupiterPRO",
+      "type": "mouse",
+      "company": "KYSONASpaceSeries",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3456,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_mhx_mk1064_3m_1k_1k",
+      "displayName": "MK1064",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 64,
+      "keyLayoutName": "Common64_MK1064",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3457,
+      "vid": 14574,
+      "pid": 6,
+      "name": "ry5088_akko_hitbox_1m_8k",
+      "displayName": "FUNBOX",
+      "type": "hitBoxKeyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyLayoutName": "CommonHitBoxAkko",
+      "layer": 4,
       "fnSysLayer": {
         "win": 1,
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0,
+          "max": 2.8
+        }
+      }
+    },
+    {
+      "id": 3458,
+      "vid": 12625,
+      "pid": 20554,
+      "name": "yc3123q_zhiwan_h10_oled_hitbox",
+      "displayName": "FUNBOX",
+      "type": "hitBoxScreen",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ]
     },
     {
       "id": 3460,
@@ -9877,13 +11204,1927 @@
       "hotSwap": true
     },
     {
+      "id": 3477,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_sg_9093_a_3m_8k_8k",
+      "displayName": "R86UItra",
+      "type": "keyboard",
+      "company": "AttackShark",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 79,
+      "keyLayoutName": "Common79_SG9093",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3480,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g62_g18_ajazz_new_lcd_screen_8k",
+      "displayName": "AJAZZ APEX",
+      "type": "dongle",
+      "company": "AJAZZMOUSE",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3482,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_xxy_mkgp82_3m_8k_8k",
+      "displayName": "MKGP82",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_K242",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3485,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "ry6608_qfn48_yyx_r3_3395_8k_8k_3m",
+      "displayName": "R3",
+      "type": "mouse",
+      "company": "AttackShark",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3492,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zdm_m101_3m_8k_8k",
+      "displayName": "M101",
+      "type": "keyboard",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 100,
+      "keyLayoutName": "Common100_ZDM_M101",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3493,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_zdm_m101_b_3m_1k_1k",
+      "displayName": "M101",
+      "type": "keyboard",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 100,
+      "keyLayoutName": "Common100_ZDM_M101",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3494,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_g15_yj_zc68_3950_screen_8k_8k",
+      "displayName": "G15-3950",
+      "type": "mouse",
+      "company": "SNX",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3495,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_dj_ak8753c_2m_1k_1k",
+      "displayName": "ADXMK1926",
+      "type": "keyboard",
+      "company": "ADX",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 79,
+      "keyLayoutName": "Common79_ADXMK1926",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3497,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_m706b_3311_3m_1k",
+      "displayName": "Gemirels706",
+      "type": "mouse",
+      "company": "Gemirels",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3502,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zmd_s872_8k_8k_3m",
+      "displayName": "X87S",
+      "type": "keyboard",
+      "company": "EWEADNV",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3517,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_xcq_xm02_3395_8k_8k",
+      "displayName": "Falcon 3 Pro Max",
+      "type": "mouse",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3521,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_qn_nj80_ap800_8k_8k",
+      "displayName": "NJ80-AP800",
+      "type": "keyboard",
+      "company": "Keydous",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 80,
+      "keyLayoutName": "Common80_NJ80",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3522,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_afd_fk2115_aj68_8k_8k",
+      "displayName": "AJ68",
+      "type": "keyboard",
+      "company": "Keydous",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_AJ68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3525,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_xxy_st_mks98_3m_8k_8k",
+      "displayName": "ST-MKS98",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 97,
+      "keyLayoutName": "Common97_MKS98",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3528,
+      "vid": 14505,
+      "pid": 21,
+      "name": "ry6609_fl_k2401f_3m_8k_8k",
+      "displayName": "NX98PRO",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 101,
+      "keyLayoutName": "Common101_K2401",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3529,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_hf_kf800_walker_75_3m_8k_8k",
+      "displayName": "WALKER 75",
+      "type": "keyboard",
+      "company": "PIIFOXDRIVER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_ER75PRO",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3533,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_sp_ak1980w_3m_1k_1k",
+      "displayName": "AK1980W",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_AK1980W",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3543,
+      "vid": 14574,
+      "pid": 5,
+      "name": "ry6602_akko_5108_v5_3m_1k_1k",
+      "displayName": "5108 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_5108V5",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3546,
+      "vid": 14621,
+      "pid": 4104,
+      "name": "mouse_ry6608_qfn48_vgn_xm150_3395_8k_8k_3m",
+      "displayName": "Dragonfly Y2 Pro Max V2",
+      "type": "mouse",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3553,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_keb_m607_b_3395_1k_8k_3m",
+      "displayName": "KSN Mercury PRO",
+      "type": "mouse",
+      "company": "KYSONASpaceSeries",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3559,
+      "vid": 14621,
+      "pid": 4117,
+      "name": "mouse_ry6608_qfn48_ag1_3395_8k_8k_3m",
+      "displayName": "Dragonfly F1 V2 Pro Max",
+      "type": "mouse",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3565,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms302_3311_1k_1k_3m",
+      "displayName": "NDIY-N1",
+      "type": "mouse",
+      "company": "NDIY",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3569,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_dj_ak8753c_2m_1k_1k",
+      "displayName": "MK100",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 100,
+      "keyLayoutName": "Common100_MK100",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3573,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_fq_ak_x159e_3m_1k_1k",
+      "displayName": "TH80 V2",
+      "type": "keyboard",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 79,
+      "keyLayoutName": "Common79_TH80V2",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3579,
+      "vid": 14574,
+      "pid": 5,
+      "name": "ry6602_akko_5087_v5_1k_1k_3m",
+      "displayName": "5087 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_5087SV3",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3581,
+      "vid": 14154,
+      "pid": 41584,
+      "name": "ry6609_nbd_mk25073_vk_3m_8k_8k",
+      "displayName": "VK 87 Max V2",
+      "type": "keyboard",
+      "company": "VKMS",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25073",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3582,
+      "vid": 14574,
+      "pid": 5,
+      "name": "ry6602_akko_5075_v5_3m_1k_1k",
+      "displayName": "5075 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3583,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_hc_qn_aj100_b_3m_8k_8k",
+      "displayName": "AJ100",
+      "type": "keyboard",
+      "company": "Keydous",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_AJ100",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3586,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms306light_3311_1k_3m",
+      "displayName": "Zero 1",
+      "type": "mouse",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3621,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g63b_3950_hwt_1k_8k",
+      "displayName": "Havit M5 Pro Super light",
+      "type": "dongle",
+      "company": "GamingMouse",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3622,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g182_hwtzc28_3395_1k_8k",
+      "displayName": "StarBlaze-1",
+      "type": "dongle",
+      "company": "StarBlaze",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3623,
+      "vid": 12625,
+      "pid": 20512,
+      "name": "dangle_pan1080_g182_zc21_3311",
+      "displayName": "MS955WB",
+      "type": "dongle",
+      "company": "GamingMouse",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3624,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_hc_gv10m_b_8k_8k_3m",
+      "displayName": "GV10M-8K",
+      "type": "keyboard",
+      "company": "GVSTONE",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 104,
+      "keyLayoutName": "Common104_GV10M_Knob",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3642,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms306zero1_3311_1k_3m",
+      "displayName": "Zero 1",
+      "type": "mouse",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3644,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms302v3_3311_1k_1k_3m",
+      "displayName": "NDIY-N1",
+      "type": "mouse",
+      "company": "NDIY",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3647,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_afd_fk52a3s87_8k_8k",
+      "displayName": "S87",
+      "type": "keyboard",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_FK52A3S87",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3652,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_qfn48_xmg_m37_3395_8k_8k_3m",
+      "displayName": "MG616",
+      "type": "mouse",
+      "company": "KUSkillKorp",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3653,
+      "vid": 12625,
+      "pid": 20538,
+      "name": "mouse_ry6608_sxj_s19_3395_8k_8k",
+      "displayName": "HONGYU X7 PRO",
+      "type": "mouse",
+      "company": "HONGYU",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3654,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_k2518_3m",
+      "displayName": "TX87",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3655,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_k2518_8k",
+      "displayName": "TX87PRO",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3658,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_akko_air01_uk_3m_1k_1k",
+      "displayName": "Air01 UK",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 84,
+      "keyLayoutName": "Common84_Air01UK",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3659,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_yj_g63_3311_1k_1k",
+      "displayName": "G63",
+      "type": "mouse",
+      "company": "SNX",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3667,
+      "vid": 12625,
+      "pid": 20487,
+      "name": "dangle_pan1080_g72_3950_1k_8k",
+      "displayName": "G72",
+      "type": "dongle",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ]
+    },
+    {
+      "id": 3671,
+      "vid": 14505,
+      "pid": 23,
+      "name": "ry6602_k2519_3m",
+      "displayName": "TX108",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_X113C",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3672,
+      "vid": 14505,
+      "pid": 21,
+      "name": "ry6609_k2519_8k",
+      "displayName": "TX108PRO",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_X113C",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3673,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_fq_ak_x159d_3m_1k_1k",
+      "displayName": "TH80 V3 MAX",
+      "type": "keyboard",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 79,
+      "keyLayoutName": "Common79_TH80V2",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3674,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_fq_ak_x160d_3m_1k_1k",
+      "displayName": "TH65 Max",
+      "type": "keyboard",
+      "company": "EPOMAKER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 66,
+      "keyLayoutName": "Common66_AK_X160D",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3679,
+      "vid": 14505,
+      "pid": 0,
+      "name": "ry5088_fl_k247_1m_8k",
+      "displayName": "T80HE",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_K242",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3686,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "ry6601_qfn48_yj_g53_3104_led_1k_1k_3m",
+      "displayName": "IFYOO-G53",
+      "type": "mouse",
+      "company": "IFYOO",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8,
+      "hasLightLayout": true
+    },
+    {
+      "id": 3687,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_tk75_v7_us_8k_8k_3m",
+      "displayName": "TK75-V7",
+      "type": "keyboard",
+      "company": "gamakay2",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_DK82US",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3688,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_tk75_v7_uk_8k_8k_3m",
+      "displayName": "TK75-V7",
+      "type": "keyboard",
+      "company": "gamakay2",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_JK_TK75",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3689,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms305_zero3_3311_1k_1k_3m",
+      "displayName": "Zero 3",
+      "type": "mouse",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3698,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms302_v4_s205_1k_1k",
+      "displayName": "XINMENG-M1",
+      "type": "mouse",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3700,
+      "vid": 12625,
+      "pid": 20547,
+      "name": "mouse_ry6601_qfn48_ms305_zero3_3311_1k_1k_3m",
+      "displayName": "Zero 3",
+      "type": "mouse",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3710,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_dyh_yk68_pro_3m_1k_1k",
+      "displayName": "YK68 Pro",
+      "type": "keyboard",
+      "company": "咪星人",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_K80AWQ68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3715,
+      "vid": 9642,
+      "pid": 16409,
+      "name": "mouse_ry6608_qfn48_spk9618_3395_8k_8k_3m",
+      "displayName": "SPK9618",
+      "type": "mouse",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3716,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_yc_bj87_3m_8k_8k",
+      "displayName": "BJ87",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3718,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_mhx_skypad_3m_1k",
+      "displayName": "SKY-PAD",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 21,
+      "keyLayoutName": "Common21_SKYPAD",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3720,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_dyhbt_ck75se_3m_1k_1k",
+      "displayName": "CK75SE",
+      "type": "keyboard",
+      "company": "COOLKILLER",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 80,
+      "keyLayoutName": "Common80_CK75SE",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3721,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_lj_xl98v2_8k_8k_3m",
+      "displayName": "XL98-V2",
+      "type": "keyboard",
+      "company": "ROYALAXE",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_xl98",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3722,
+      "vid": 12625,
+      "pid": 20528,
+      "name": "ry5088_akko_fun60_b_uk_3m_8k_1k",
+      "displayName": "FUN60 PRO ISO",
+      "type": "keyboard",
+      "company": "MonsGeek",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 61,
+      "keyLayoutName": "Common61_gk06uk",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.01
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "firePress": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "fireLift": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        }
+      }
+    },
+    {
+      "id": 3723,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_yx_k48_3m_1k_1k",
+      "displayName": "K48",
+      "type": "keyboard",
+      "company": "KEYBOARD2",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 66,
+      "keyLayoutName": "Common66_K48",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3726,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_zdm_s98_max_3m_8k_8k",
+      "displayName": "S98 Max",
+      "type": "keyboard",
+      "company": "XinMengK65Keyboard",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 95,
+      "keyLayoutName": "Common95_S98",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3731,
+      "vid": 14505,
+      "pid": 21,
+      "name": "ry6609_fl_k245_nx87pro_3m_8k_8k",
+      "displayName": "NX87PRO",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3732,
+      "vid": 14505,
+      "pid": 23,
+      "name": "ry6602_fl_k245_nx87_3m_1k_1k",
+      "displayName": "NX87",
+      "type": "keyboard",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3739,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_akko_5108s_v5_3m_8k_8k",
+      "displayName": "5108 V5",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_5108V5",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3740,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_xj_vm71_3m_1k_1k",
+      "displayName": "VM71",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 71,
+      "keyLayoutName": "Common71_XJ_VM71",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3741,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_xj_vm87_3m_1k_1k",
+      "displayName": "VM87",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_MK25022B",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3744,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_hyh_yg102b_3m_1k_1k",
+      "displayName": "YG102C",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 98,
+      "keyLayoutName": "Common98_YG102C",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3750,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_xz_jimicoco_q5_3m_1k_1k",
+      "displayName": "Bladesage Q5",
+      "type": "keyboard",
+      "company": "BladesageQ5",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 87,
+      "keyLayoutName": "Common87_BladesageQ5",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3762,
+      "vid": 14505,
+      "pid": 25,
+      "name": "mouse_ry6608_qfn48_fl_g75_3950_8k_8k_3m",
+      "displayName": "G75",
+      "type": "mouse",
+      "company": "腹灵",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3764,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_kk_g75_3m_1k",
+      "displayName": "G75",
+      "type": "keyboard",
+      "company": "凯酷",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_GK68",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3765,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_wa_kiboom_phantom81_v4_3m_1k",
+      "displayName": "Kiboom phantom81 V4",
+      "type": "keyboard",
+      "company": "KiiBoom",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_woao_kiiboom",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "hasSideLight": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3773,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5108_v5_he_3m_8k_8k",
+      "displayName": "5108 V5 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_5108V5",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3775,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_kk_k19_1k_8k_8k_3m",
+      "displayName": "K19-8K",
+      "type": "keyboard",
+      "company": "凯酷",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 19,
+      "keyLayoutName": "Common19_YZ19_V2",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3779,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5075_v5_he_3m_8k_8k",
+      "displayName": "5075 V5 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3782,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5087_v5_he_3m_8k_8k_ry1049es",
+      "displayName": "5087 V5 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HE",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3784,
+      "vid": 14621,
+      "pid": 4143,
+      "name": "mouse_ry6608_qfn48_vgn_ag1_dragonfly_f1_v2_ultra_3950_8k_8k_3m",
+      "displayName": "Dragonfly F1 V2 Ultra",
+      "type": "mouse",
+      "company": "VGN",
+      "sources": [
+        "webapp"
+      ],
+      "layer": 8
+    },
+    {
+      "id": 3785,
+      "vid": 12625,
+      "pid": 20528,
+      "name": "ry5088_akko_5075_uk_tmr_3m_8k_8k",
+      "displayName": "5075 V5 HE TMR",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 83,
+      "keyLayoutName": "Common83_mod007sv3he_uk",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.4,
+          "step": 0.005,
+          "default": 2.5
+        },
+        "firePress": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005,
+          "default": 1.5
+        },
+        "fireLift": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005,
+          "default": 1.5
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.005,
+          "default": 0.3
+        }
+      }
+    },
+    {
+      "id": 3787,
+      "vid": 12625,
+      "pid": 20556,
+      "name": "ry6609_nbd_mk26013_3m_8k_8k",
+      "displayName": "MK26013",
+      "type": "keyboard",
+      "company": "rongyuan",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_MK26013",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3791,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5087_v5_he_tmr_3m_8k_8k",
+      "displayName": "5087 V5 HE TMR",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HE",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.01,
+          "default": 2
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "firePress": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "fireLift": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        }
+      }
+    },
+    {
+      "id": 3800,
+      "vid": 12625,
+      "pid": 20528,
+      "name": "ry5088_akko_5075_us_tmr_3m_8k_8k_ry1049es",
+      "displayName": "5075 V5 HE TMR",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 82,
+      "keyLayoutName": "Common82_SG9000",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.4,
+          "step": 0.005,
+          "default": 2
+        },
+        "firePress": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005
+        },
+        "fireLift": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005,
+          "default": 1.5
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.005,
+          "default": 0.3
+        }
+      }
+    },
+    {
+      "id": 3813,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5087_v5_he_tmr_us_b_3m_8k_8k",
+      "displayName": "5087 V5 HE TMR",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HETMR",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.4,
+          "step": 0.005,
+          "default": 2.5
+        },
+        "firePress": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005,
+          "default": 1.5
+        },
+        "fireLift": {
+          "min": 0.005,
+          "max": 2.5,
+          "step": 0.005,
+          "default": 1.5
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.005,
+          "default": 0.3
+        }
+      }
+    },
+    {
+      "id": 3815,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_mod68_he_3m_8k_8k",
+      "displayName": "MOD68 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_ROYALAXE_K80X68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.001,
+          "default": 2
+        }
+      }
+    },
+    {
+      "id": 3820,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_mod68_he_1m_8k_8k",
+      "displayName": "MOD68 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 68,
+      "keyLayoutName": "Common68_ROYALAXE_K80X68",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.001,
+          "default": 2
+        }
+      }
+    },
+    {
+      "id": 3825,
+      "vid": 12625,
+      "pid": 20566,
+      "name": "ry6602_xy_k71_v3_cr_f81_3m_1k_1k",
+      "displayName": "CR-F81",
+      "type": "keyboard",
+      "company": "ColorReco",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 81,
+      "keyLayoutName": "Common81_WU06",
+      "layer": 3,
+      "fnSysLayer": {
+        "win": 1,
+        "mac": 1
+      },
+      "hasLightLayout": true,
+      "noMagneticSwitch": true
+    },
+    {
+      "id": 3827,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5087_v5_he_uk_tmr_3m_8k_8k",
+      "displayName": "5087 V5 HE TMR ISO",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HEUK",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.01,
+          "default": 2
+        },
+        "deadzone": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "firePress": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "fireLift": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        }
+      }
+    },
+    {
+      "id": 3853,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_fun60_ultra_tmr_3m_8k_8k",
+      "displayName": "FUN60 Ultra TMR",
+      "type": "keyboard",
+      "company": "MonsGeek",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 61,
+      "keyLayoutName": "Common61_gk06",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.4,
+          "step": 0.005,
+          "default": 2
+        }
+      }
+    },
+    {
+      "id": 3869,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5108_v5_he_b_3m_8k_8k",
+      "displayName": "5108 V5 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 108,
+      "keyLayoutName": "Common108_5108V5HE",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true,
+      "travelSetting": {
+        "travel": {
+          "min": 0.1,
+          "max": 3.3,
+          "step": 0.001,
+          "default": 2
+        }
+      }
+    },
+    {
+      "id": 3900,
+      "vid": 14574,
+      "pid": 1,
+      "name": "ry5088_akko_5087_v5_he_us_b_3m_8k_8k",
+      "displayName": "5087V5 HE",
+      "type": "keyboard",
+      "company": "akko",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 88,
+      "keyLayoutName": "Common88_5087V5HETMR",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
+      "id": 3906,
+      "vid": 12625,
+      "pid": 20528,
+      "name": "ry5088_fun60maxc_3m_8k",
+      "displayName": "FUN60 MAX",
+      "type": "keyboard",
+      "company": "MonsGeek",
+      "sources": [
+        "webapp"
+      ],
+      "keyCount": 61,
+      "keyLayoutName": "Common61_fun60maxc",
+      "layer": 4,
+      "fnSysLayer": {
+        "win": 2,
+        "mac": 2
+      },
+      "magnetism": true,
+      "hasLightLayout": true,
+      "hotSwap": true
+    },
+    {
       "id": 9997,
       "vid": 12625,
       "pid": 16422,
       "name": "mouse_r3_1k_8k",
       "displayName": "万能驱",
       "type": "mouse",
-      "company": "$ref:currentCompany.currentCompany",
+      "company": "$ref:Jn.currentCompany",
       "sources": [
         "webapp"
       ],
@@ -9896,7 +13137,7 @@
       "name": "commonMsCh585",
       "displayName": "万能驱",
       "type": "mouse",
-      "company": "$ref:currentCompany.currentCompany",
+      "company": "$ref:Jn.currentCompany",
       "sources": [
         "webapp"
       ],
@@ -9909,7 +13150,7 @@
       "name": "ry5088_fq_vk99_3m_8k",
       "displayName": "万能驱",
       "type": "keyboard",
-      "company": "$ref:currentCompany.currentCompany",
+      "company": "$ref:Jn.currentCompany",
       "sources": [
         "webapp"
       ],
@@ -9936,169 +13177,5 @@
         }
       }
     }
-  ],
-  "keyLayouts": {
-    "Special33": "特殊33键",
-    "Special29": "特殊29键",
-    "Special29_MMDKM29C_Knob": "特殊29键 旋钮",
-    "Special19_TK35_Knob": "特殊19键(TK35) 旋钮",
-    "Common17": "常规17键",
-    "Common61": "常规61键",
-    "Common61_gk06": "常规61键(gk06 alt fn menu ctrl)",
-    "Common61_H60_UK": "常规61键(gk06 uk)",
-    "Common61_sg9040": "常规61键(sg9040 alt menu ctrl fn)",
-    "Common66_X68": "常规66键(fn ctrl del pgup pgdn 空)",
-    "Common66_VN66": "常规66键(VN66 旋钮 pgup pgdn)",
-    "Common64_GK8145G": "常规64键(GK8145G shift del)",
-    "Common67": "常规67键(del pgup pgdn 空)",
-    "Common67_beat65": "常规67键(空 del pgup pgdn)",
-    "Common67_K67": "常规67键(~ del pgup pgdn)",
-    "Common67_KF068": "常规67键(旋钮 del pgup pgdn)",
-    "Common67_KF068_v2": "常规67键(k2506 MX-A 旋钮 del pgup pgdn) 机械轴",
-    "Common67_K2506": "常规67键(旋钮 pgup pgdn)",
-    "Common67_K2506_v2": "常规67键(旋钮 pgup pgdn) 机械轴",
-    "Common67_GK68": "常规67键(旋钮+ ins del pgup pgdn)",
-    "Common68_K2506_UK": "常规67键(旋钮 uk  pgup pgdn)",
-    "Common68_ZAP68": "常规68键(alt fn home del pgup pgdn)",
-    "Common68_MK636": "常规68键(INS DEL PGUP PGDOWN)",
-    "Common68_MK658": "Titan60",
-    "Common68_mk25033": "泰坦 NZO HUB Storm68",
-    "Common68_K80X68": "常规68键(home del pgup pgdn)",
-    "Common68_K80NS68": "常规68键(home end pgup pgdn)",
-    "Common68_FreeWolfF68": "常规68键(alt fn INS DEL PGUP PGDOWN)",
-    "Common68_FreeWolfF68_uk": "常规68键(INS DEL PGUP PGDOWN uk)",
-    "Common68_kiiboom68c": "常规68键(del pgup pgdn end)",
-    "Common68_yumi68": "常规68键(alt fn del pgup pgdn end)",
-    "Common68_GK68": "常规68键(旋钮 del pgup pgup)",
-    "Common68_Choc68": "常规68键(Choc68 ~ del pgup pgdn)",
-    "Common67_epomaker65": "常规68键(fn ctrl del pgup pgdn end)",
-    "Common68_ak680mcc": "常规68键(del end pgup pgdn)",
-    "Common68_K80AWQ68": "常规68键(alt fn ctrl INS DEL pgup pgdn)",
-    "Common68_K80A": "常规68键(K80A)",
-    "Common68_K2404": "常规68键(K2404 fn ctrl ins del pgup pgdn)",
-    "Common68_X68": "常规68键(X68 ins del pgup pgdn)",
-    "Common75_C75PRO": "常规75键(C75PRO 旋钮 home end pgup pgdn)",
-    "Common68_FUN68": "常规68键(monsgeek FUN68 Backquote del pgup pgdn)",
-    "Common79_MK25020": "常规79键(MK25020 旋钮 del pgup pgdn)",
-    "Common68_MK902": "常规68键(MK902)",
-    "Common68_MK902_2": "常规68键(MK902) 机械轴",
-    "Common68_kc68rt": "常规68键(kc68rt)",
-    "Common69_MOD68UK": "常规69键(MOD68UK)",
-    "Common69_MU01UK": "常规69键(MU01UK)",
-    "Common80_FQ_X78": "峰奇X78 79+1",
-    "Common79_VKMAG75": "峰奇X78 VKMAG75 79 旋钮",
-    "Common79_VKMAG75_V2": "峰奇X78 VKMAG75 79 开放旋钮 机械轴 ",
-    "Common79_SG9047": "常规79键 (sg9047 带屏 del pgup pgdn)",
-    "Common79_AK8752": "常规79键 (AK8752 带屏 del pgup pgdn)",
-    "Common80_MK25023": "常规80键(jp)",
-    "Common80_mk25023a": "常规80键(旋钮 del pgup pgdn)",
-    "Common80_k72x86": "常规80键(del 旋钮 home pgup pgdn)",
-    "Common80_FK51D2": "常规80键( 旋钮 ins pgup pgdn)",
-    "Common80_SG9045": "常规80键(DEL 旋钮 home pgup pgdn 屏)",
-    "Common80_GK75": "常规80键(旋钮 home del pgup)",
-    "Common81": "常规81键",
-    "Common81_NJ81CP": "常规81键(nj81 带屏 del pgup pgdn end)",
-    "Common81_beat75": "常规81键(beat75 del home end pgup pgdn)",
-    "Common81_beat75_v2": "常规81键(beat75 del home end pgup pgdn v2)",
-    "Common81_K982D": "常规81键(K982D 旋钮 home del end pgup pgdn)",
-    "Common81_K242": "常规81键(K242 旋钮 INS DEL PGUP PGDO)",
-    "Common81_K242UK": "常规81键(K242 旋钮 INS DEL PGUP PGDO Alt Fn)",
-    "Common81_K81JD": "常规81键(K81JD 旋钮 del pgup pgdn end)",
-    "Common81_GMK82JP": "常规81键(jp 変換 kana fn)",
-    "Common81_K2405": "常规81键(K2405 home end pgup pgdn)",
-    "Common81_DK82US": "常规81键(DK82US 旋钮 home pgup pgdn)",
-    "Common81_DK82US_v2": "常规81键(DK82US 旋钮 home pgup pgdn) 机械轴",
-    "Common81_DK82UK": "常规81键(DK82UK 旋钮 del pgup pgdn)",
-    "Common81_JK82": "常规81键(JK82 旋钮 ins pgup pgdn)",
-    "Common81_KF210": "常规81键(Rt pgup pgdn del)",
-    "Common81_TOP75CyberMax": "常规81键(旋钮 del home pgup pgdn) 机械轴",
-    "Common81_AGK75B": "常规81键(del home end pgup pgdn)",
-    "Common81_MK830": "常规81键(FN CTRL DEL HOME PGUP PGDN)",
-    "Common81_MK830_v2": "常规81键(FN CTRL DEL HOME PGUP PGDN) 机械轴",
-    "Common82_K239UK": "常规82键(K242 旋钮 uk INS DEL PGUP PGDO)",
-    "Common82_SG9000": "常规82键(SG9000 del 旋钮 home pgup pgdn end)",
-    "Common82_SG9000_v3": "常规82键(SG9000_v2 del 旋钮 home pgup pgdn end)",
-    "Common82_M1_V5_TMR": "常规82键(M1 V5 TMR 旋钮 AudioVolumeDown VolumeBrightnessToggle3 AudioVolumeUp)",
-    "Common82_SG9000_v2": "常规82键(SG9000 旋钮 home pgup pgdn end) 机械轴",
-    "Common82_K2505": "常规82键(K2505 旋钮 带屏 prtsc ins del pgup pgdn)",
-    "Common83_K2505UK": "常规82键(K2505UK 旋钮 带屏 prtsc ins del pgup pgdn)",
-    "Common82_M1_V5_UK": "常规82键(M1 V5 UK 旋钮 AudioVolumeDown VolumeBrightnessToggle3 AudioVolumeUp)",
-    "Common82_NBD_IK75": "常规82键(IK75 del 旋钮 ins end pgup pgdn)",
-    "Common82_NBD_IK75_v2": "常规82键(mk25037)",
-    "Common82_NBD_IK75_v3": "常规82键(mk825-RT75 磁轴)",
-    "Common82_GK8640": "常规82键(GK8640 prints del INS pgup pgdn )",
-    "Common82_MK25032": "常规82键(GK8640 屏 del INS pgup pgdn )",
-    "Common82_MK825": "常规82键(MK825 INS end pgup pgdn )",
-    "Common83_K2405UK": "常规83键(K2405UK INS DEL HOME END PGUP PGDN)",
-    "Common83_KF810": "常规83键(KF810)",
-    "Common83_SG9015": "常规83键(SG9015 INS HOME PGUP PGDOWN END )",
-    "Common83_mod007sv3he_uk": "常规83键 Common82_SG9000  uk",
-    "Common82_MOD007V5HE": "常规82键(MOD007V5HE) 最右侧一排从上到下 Home Del PgUp PgDn",
-    "Common83_MK231UK": "常规83键 Common82_SG9000 旋钮 uk",
-    "Common83_MG75S": "常规83键(MG75S ins home pgup pgdn end)",
-    "Common83_mineral01": "常规83键(mineral01)alt fn del home end pgup pgdn 空",
-    "Common83_K235": "常规83键(prtsc scrlk ins pgup del pgdn)",
-    "Common82_K2405B": "常规83键(prtsc scrlk ins pgup del pgdn---k2405b)",
-    "Common87_EPOMAKER_X87A_HE75Mag": "常规87键(EPOMAKER X87A HE75 Mag)",
-    "Common84_mk610": "常规84键(mk610)",
-    "Common84_x110_Deep80": "常规81键(x110 Deep80)",
-    "Common84_sg9035": "常规84键(带屏+旋钮)",
-    "Common84_K860": "常规84键(左旋钮+右旋钮 del home pgup pgdn end)",
-    "Common84_SY857": "常规84键(del home end pgup pgdn)",
-    "Common84_SN001": "常规81键(SN001 del 旋钮 +屏)",
-    "Common84_MK21T": "常规84键(MK21T 1)屏 旋钮 2)ins home paup)",
-    "Common84_C84": "常规84键(C84 del home pgup pgdn end)",
-    "Common85_KF850": "常规85键(KF850 prtsc scrlk ins del pgup pgdn)",
-    "Common87": "常规87键",
-    "Common87_MonsGeek_M3V5": "常规87键(MonsGeek M3V5)",
-    "Common87_MK25022B": "常规87键(MK25022B)",
-    "Common87_MK25022B_2": "常规87键(MK25022B) 机械轴",
-    "Common87_5087SV3": "常规87键(5087SV3  常规87  添加一个计算器)",
-    "Common87_SG8967": "常规87键(常规87 旋钮 alt fn menu ctrl)",
-    "Common87_GV8M": "常规87键(85键+prints+旋钮+旋钮按键)",
-    "Common87_GV8M_Knob": "常规87键(85键+prints+旋钮+旋钮按键 2个)",
-    "Common87_C87P": "常规87键(C87P prtsc scrlk pause ins home pgup pgdn end del)",
-    "Common88_X107": "常规88键",
-    "Common89_SG8967": "常规89键 带屏旋钮",
-    "Common89_SG8967_v2": "常规89键 带屏旋钮(机械轴)",
-    "Common90_Hammerwolf": "常规90键(Hammerwolf)",
-    "Common91_MK25022": "常规91键(jp版本)",
-    "Common93_KF107": "常规93键 带屏旋钮",
-    "Common97": "常规97键",
-    "Common98_MonsGeek_M2V5": "常规98键(MonsGeek M2V5)",
-    "Common98_C98": "常规98键(C98) del pgup pgdn end 旋钮",
-    "Common98_SG9012": "常规98键(旋钮 del home pgup pgdn)",
-    "Common98_MK806B": "常规98键(FN CTRL DEL INS PGUP PGDN)",
-    "Common98_xl98": "常规98键(alt fn ctrl del ins pgup pgdn)",
-    "Common98_MK812": "常规98键(ins pgup pgdn 旋钮)",
-    "Common98_C98Pro": "常规98键(C98Pro del 旋钮)",
-    "Common108_F108": "常规108键(F108 音量减少 音量增加 静音 计算器)",
-    "Common99_k980": "常规99键",
-    "Common99_DK986": "常规99键(del home end + 数字键 )",
-    "Common100": "常规100键",
-    "Common101_FF101": "常规101键(FF101) alt ctrl fn mute u- u+",
-    "Common104": "常规104键",
-    "Common102_SG9009": "常规102键(del home pgup pgdn)",
-    "Common104_knob": "常规104键+旋钮",
-    "Common104_Knob_VKMS_VK99": "常规104键+旋钮 (VKMS VK99 版本)",
-    "Common104_Knob_NJ98CP": "常规104键+旋钮 (NJ98CP 版本)",
-    "Common104_GV10M": "常规104键+旋钮 (GV10M)",
-    "Common104_GV10M_Knob": "常规104键+3个旋钮 (GV10M)",
-    "Common104_MK826": "常规104键 MK826",
-    "Common98_Y98": "常规98键 Y98",
-    "Common108": "常规108键",
-    "Common108_K2402": "常规108键(K2402) 计算器 u- u+ mute",
-    "Common108_K2402V2": "常规108键(K2402 R_win->menu) 计算器 u- u+ mute",
-    "Common108_MG108B": "常规108键(MG108B) alt win fn ctrl 计算器 mute u- u+ ",
-    "Common108_PL108W": "常规108键 alt fn menu ctrl u- u+ mute 计算器",
-    "Common108_MK921": "常规108键(MK921) alt win fn ctrl u- u+ mute 计算器",
-    "Common102": "常规102键",
-    "Common102_k77_dark102": "常规102键(k77) home pageup pagedown end  pause scrolllock printscreen delete",
-    "Common82_PC75B_PIusS": "常规82键(PC75B) home pgup pgdn end",
-    "Common97_5098B": "常规97键(5098B) del home end",
-    "Common82_KF304": "常规82键(KF304) del home end pgup pgdn",
-    "Common82_FK304B": "常规82键(KF304B) ins del pgup pgdn",
-    "Common68_GBL_KB001": "常规68(KB001) ins del pgup pgdn",
-    "Unknown": "未知/还没加"
-  }
+  ]
 }
