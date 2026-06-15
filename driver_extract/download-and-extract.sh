@@ -80,7 +80,6 @@ if [ "$CLEAN_BUILD" = true ]; then
     rm -rf "$SCRIPT_DIR/extracted"
     rm -rf "$SCRIPT_DIR/unbundled"
     rm -rf "$SCRIPT_DIR/refactored"
-    rm -rf "$SCRIPT_DIR/refactored-v2"
     echo "Cleaned."
     echo ""
 fi
@@ -277,7 +276,7 @@ run_webcrack() {
 run_refactor() {
     echo "=== Step 6: Running Babel refactorer ==="
 
-    REFACTORED_DIR="$SCRIPT_DIR/refactored-v2"
+    REFACTORED_DIR="$SCRIPT_DIR/refactored"
     rm -rf "$REFACTORED_DIR"
 
     echo "Input: $DEOBFUSCATED_FILE"
@@ -407,7 +406,7 @@ print_summary() {
     echo "  • Downloads:    $SCRIPT_DIR/downloads/"
     echo "  • Extracted:    $SCRIPT_DIR/extracted/"
     echo "  • Unbundled:    $SCRIPT_DIR/unbundled/"
-    echo "  • Refactored:   $SCRIPT_DIR/refactored-v2/"
+    echo "  • Refactored:   $SCRIPT_DIR/refactored/"
     echo ""
 
     if [ -d "$REFACTORED_DIR/src/devices" ]; then

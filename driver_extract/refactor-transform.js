@@ -481,7 +481,7 @@ traverse(ast, {
                 relativePath: `./src/devices/${safename}.js`,
                 ast: t.cloneNode(init, true),
                 nodePath,
-                deps,
+                deps: [], // resolved later, after all extractions are known
             });
             state.variablesToRemove.add(name);
             state.stats.devices++;

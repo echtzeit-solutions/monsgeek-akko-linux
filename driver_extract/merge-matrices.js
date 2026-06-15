@@ -23,7 +23,7 @@ const DATA_DIR = path.join(__dirname, '../data');
 const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
 const MATRICES_FILE = path.join(DATA_DIR, 'led_matrices.json');
 const OUTPUT_FILE = path.join(DATA_DIR, 'device_matrices.json');
-const SVG_DIR = path.join(__dirname, 'refactored-v3/src/assets/svg');
+const SVG_DIR = path.join(__dirname, 'refactored/src/assets/svg');
 
 // HID code to key name
 const HID_TO_KEY = {

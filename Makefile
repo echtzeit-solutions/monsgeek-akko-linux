@@ -228,26 +228,18 @@ update-device-db-full:
 install-data:
 	@test -f data/devices.json || \
 		{ echo "Error: Device data not found. Run 'make update-device-db' first."; exit 1; }
+	@test -f data/device_matrices.json || \
+		{ echo "Error: data/device_matrices.json not found. Run 'make update-device-db' first."; exit 1; }
 	@echo "Installing device data..."
 	$(INSTALL) -d $(DATA_DIR)
 	$(INSTALL) -m 644 data/devices.json $(DATA_DIR)/devices.json
-	@if [ -f data/key_layouts.json ]; then \
-		$(INSTALL) -m 644 data/key_layouts.json $(DATA_DIR)/key_layouts.json; \
-	fi
-	@if [ -f data/key_codes.json ]; then \
-		$(INSTALL) -m 644 data/key_codes.json $(DATA_DIR)/key_codes.json; \
-	fi
-	@if [ -f data/led_matrices.json ]; then \
-		$(INSTALL) -m 644 data/led_matrices.json $(DATA_DIR)/led_matrices.json; \
-	fi
+	$(INSTALL) -m 644 data/device_matrices.json $(DATA_DIR)/device_matrices.json
 	@echo "Device data installed to $(DATA_DIR)"
 
 ## Uninstall device data files
 uninstall-data:
 	rm -f $(DATA_DIR)/devices.json
-	rm -f $(DATA_DIR)/key_layouts.json
-	rm -f $(DATA_DIR)/key_codes.json
-	rm -f $(DATA_DIR)/led_matrices.json
+	rm -f $(DATA_DIR)/device_matrices.json
 	-rmdir $(DATA_DIR) 2>/dev/null || true
 	@echo "Device data uninstalled."
 

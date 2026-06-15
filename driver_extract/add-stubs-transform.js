@@ -296,5 +296,5 @@ function processDevicesDirectory(devicesDir) {
 }
 
 // Main
-const devicesDir = process.argv[2] || path.join(__dirname, 'refactored-v2/src/devices');
+const devicesDir = process.argv[2] || path.join(__dirname, 'refactored/src/devices');
 processDevicesDirectory(devicesDir);

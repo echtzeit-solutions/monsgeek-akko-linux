@@ -177,22 +177,24 @@ cd driver_extract
 # extracted/PLUGINSDIR/app/resources/app/dist/
 ```
 
-### Step 2: Unbundle and deobfuscate the JavaScript
+### Step 2: Download, unbundle, and refactor the Electron driver
 
 ```bash
-# Install webcrack (JS unbundler/deobfuscator)
-npm install -g webcrack
-
-# Run extraction pipeline
-./extract-all.sh
+# One command: download the Akko Cloud driver, extract, deobfuscate, refactor
+cd driver_extract
+./download-and-extract.sh --version v4
 ```
 
 This runs:
-1. **webcrack** - Unbundles the Vite/Rollup bundle, deobfuscates variable names
-2. **refactor-bundle.js** - AST-based extraction of:
-   - Device definitions (VID/PID, key counts, features)
-   - Protocol commands (FEA_CMD_* constants)
-   - HID communication classes
+1. Download + NSIS unpack of the Akko Cloud driver installer
+2. **webcrack** - Unbundles the Vite/Rollup bundle, deobfuscates variable names
+3. **refactor-transform.js** - AST-based extraction into `refactored/`:
+   - Device classes with `defaultMatrix` (key matrix) → `refactored/src/utils/`
+   - Device definitions, protocol classes, components, SVG assets
+
+The key-matrix data is then produced from `refactored/` by
+`extract-matrices.js` → `data/led_matrices.json` and `merge-matrices.js` →
+`data/device_matrices.json` (run together via `make update-device-db-full`).
 
 ### Step 3: Analyze the protocol
 
@@ -229,8 +231,11 @@ monsgeek-m1-v5-tmr/
 │       └── driver.proto       # gRPC service definition
 │
 ├── driver_extract/            # Electron app extraction tools
-│   ├── extract-all.sh         # Main extraction script
-│   ├── refactor-bundle.js     # AST-based JS analyzer
+│   ├── download-and-extract.sh # Download + unpack + webcrack + refactor
+│   ├── refactor-transform.js  # AST refactorer → refactored/ (src/utils, devices, svg)
+│   ├── extract-devices.js     # refactored/electron bundle → devices.json
+│   ├── extract-matrices.js    # refactored/src/utils → led_matrices.json
+│   ├── merge-matrices.js      # devices + led_matrices → device_matrices.json
 │   └── extracted/             # Extracted app contents
 │
 ├── webapp_source/             # Extracted web app JS

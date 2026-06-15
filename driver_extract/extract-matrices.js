@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const UTILS_DIR = path.join(__dirname, 'refactored-v3/src/utils');
+const UTILS_DIR = path.join(__dirname, 'refactored/src/utils');
 const OUTPUT_FILE = path.join(__dirname, '../data/led_matrices.json');
 
 // Parse defaultMatrix from JS file content
