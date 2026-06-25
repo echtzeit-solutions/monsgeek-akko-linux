@@ -5,8 +5,11 @@
 // Strategy:
 // 1. Device has ledMatrix directly in devices.json
 // 2. Try exact match: device.name matches utility class name
-// 3. Try layout match: find another device with same keyLayoutName that has ledMatrix
-// 4. Try similar name: fuzzy match on device name
+// 3. Try driver-class alias: device.name -> driver class (from main.jsx switch) -> matrix.
+//    Many models reuse another model's class (e.g. tac75he -> RY5088_mgk_fun75_8k_dm), so
+//    their authoritative matrix lives under a different class name.
+// 4. Try layout match: find another device with same keyLayoutName that has ledMatrix
+// 5. Try similar name: fuzzy match on device name
 //
 // Non-analog detection:
 // 1. SVG diff: Calibration SVG vs KeyMappings SVG per layout — keys in KeyMappings
@@ -160,12 +163,21 @@ function main() {
 
   const devices = devicesData.devices;
   const matrices = matricesData.devices;
+  // device name -> driver class name (from the main.jsx switch); resolves models that
+  // reuse another class's defaultMatrix. Empty if extract-matrices.js predates this.
+  const nameToClass = matricesData.nameToClass || {};
 
   // Build lookup tables
   const matrixByClassName = new Map();
   for (const [className, info] of Object.entries(matrices)) {
     matrixByClassName.set(className.toLowerCase(), info.matrix);
   }
+
+  // Resolve a device's matrix via its driver class (name -> class -> matrix).
+  const matrixForDevice = (dev) => {
+    const className = (nameToClass[dev.name] || dev.name).toLowerCase();
+    return matrixByClassName.get(className) || null;
+  };
 
   // Build layout -> matrix mapping
   // First pass: from devices that have ledMatrix directly
@@ -178,12 +190,12 @@ function main() {
     }
   }
 
-  // Second pass: from devices that match utility class names (exact match)
+  // Second pass: from devices resolvable to a driver-class matrix (direct or aliased)
   for (const dev of devices) {
     if (dev.keyLayoutName && !layoutToMatrix.has(dev.keyLayoutName)) {
-      const className = dev.name.toLowerCase();
-      if (matrixByClassName.has(className)) {
-        layoutToMatrix.set(dev.keyLayoutName, matrixByClassName.get(className));
+      const matrix = matrixForDevice(dev);
+      if (matrix) {
+        layoutToMatrix.set(dev.keyLayoutName, matrix);
       }
     }
   }
@@ -196,6 +208,7 @@ function main() {
     byMethod: {
       ledMatrixDirect: 0,
       exactName: 0,
+      driverClass: 0,
       layoutFallback: 0,
       similarName: 0,
       unmatched: 0,
@@ -215,16 +228,21 @@ function main() {
       matchMethod = 'ledMatrixDirect';
     }
 
-    // Method 2: Exact class name match
+    // Method 2/3: Direct class name match, or alias via the name->class switch.
+    // `driverClass` covers models that reuse another model's class (and matrix).
     if (!matrix) {
-      const className = dev.name.toLowerCase();
-      if (matrixByClassName.has(className)) {
-        matrix = matrixByClassName.get(className);
-        matchMethod = 'exactName';
+      const resolved = matrixForDevice(dev);
+      if (resolved) {
+        matrix = resolved;
+        const aliasClass = nameToClass[dev.name];
+        matchMethod =
+          aliasClass && aliasClass.toLowerCase() !== dev.name.toLowerCase()
+            ? 'driverClass'
+            : 'exactName';
       }
     }
 
-    // Method 3: Layout fallback - find matrix for same keyLayoutName
+    // Method 4: Layout fallback - find matrix for same keyLayoutName
     if (!matrix && dev.keyLayoutName) {
       if (layoutToMatrix.has(dev.keyLayoutName)) {
         matrix = layoutToMatrix.get(dev.keyLayoutName);
@@ -232,7 +250,7 @@ function main() {
       }
     }
 
-    // Method 4: Similar name match (fuzzy)
+    // Method 5: Similar name match (fuzzy)
     if (!matrix) {
       const devNameParts = dev.name.toLowerCase().split('_').filter(p => p.length > 2);
       for (const [className, classMatrix] of matrixByClassName.entries()) {

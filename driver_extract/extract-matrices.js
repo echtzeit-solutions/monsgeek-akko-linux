@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const UTILS_DIR = path.join(__dirname, 'refactored/src/utils');
+const MAIN_JSX = path.join(__dirname, 'refactored/src/main.jsx');
 const OUTPUT_FILE = path.join(__dirname, '../data/led_matrices.json');
 
 // Parse defaultMatrix from JS file content
@@ -51,6 +52,24 @@ function getChipFamily(filename, baseClass) {
   return 'unknown';
 }
 
+// Parse the device-name -> driver-class switch from main.jsx.
+// e.g. `case "ry5088_akko_tac75he_8k_dm": return new RY5088_mgk_fun75_8k_dm(g);`
+// Many devices reuse another model's class (and thus its defaultMatrix); without
+// this alias map a merge by name alone falls back to a generic layout.
+function extractNameToClass() {
+  const map = {};
+  let content;
+  try {
+    content = fs.readFileSync(MAIN_JSX, 'utf8');
+  } catch {
+    console.warn(`main.jsx not found at ${MAIN_JSX} — name->class aliases unavailable`);
+    return map;
+  }
+  const re = /case\s+"([^"]+)":\s*return new (\w+)\(/g;
+  for (let m; (m = re.exec(content)) !== null; ) map[m[1]] = m[2];
+  return map;
+}
+
 // Main extraction
 function main() {
   const files = fs.readdirSync(UTILS_DIR).filter(f => f.endsWith('.js'));
@@ -81,6 +100,8 @@ function main() {
     };
   }
 
+  const nameToClass = extractNameToClass();
+
   // Create output
   const output = {
     version: 1,
@@ -88,7 +109,9 @@ function main() {
     stats: {
       totalDevices: stats.extracted,
       byChipFamily: stats.byFamily,
+      nameToClassEntries: Object.keys(nameToClass).length,
     },
+    nameToClass,
     devices: matrices,
   };
 
