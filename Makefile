@@ -123,7 +123,7 @@ install-systemd:
 	@echo "Systemd service installed. BPF loader will auto-start on device plug-in."
 
 ## Install driver + udev rules (standard install)
-install: install-driver install-udev
+install: install-driver install-udev install-data
 	@echo ""
 	@echo "Installation complete!"
 	@echo "Run '$(DRIVER_BIN) --help' to get started."
@@ -132,7 +132,7 @@ install: install-driver install-udev
 	@echo "  make bpf && sudo make install-bpf install-systemd"
 
 ## Install everything (driver + BPF + systemd)
-install-all: install-driver install-udev install-bpf install-systemd
+install-all: install-driver install-udev install-data install-bpf install-systemd
 	@echo ""
 	@echo "Full installation complete!"
 
@@ -224,17 +224,11 @@ update-device-db-full:
 	@echo "Updating device database (webapp + electron)..."
 	./scripts/update-device-db.sh --electron
 
-## Install device data files (requires sudo)
+## Install device data files (requires sudo). Interactive: offers to refresh the
+## database from the vendor driver first (default Yes), falling back to committed
+## assets. Set SKIP_REFRESH=1 to install committed assets without prompting.
 install-data:
-	@test -f data/devices.json || \
-		{ echo "Error: Device data not found. Run 'make update-device-db' first."; exit 1; }
-	@test -f data/device_matrices.json || \
-		{ echo "Error: data/device_matrices.json not found. Run 'make update-device-db' first."; exit 1; }
-	@echo "Installing device data..."
-	$(INSTALL) -d $(DATA_DIR)
-	$(INSTALL) -m 644 data/devices.json $(DATA_DIR)/devices.json
-	$(INSTALL) -m 644 data/device_matrices.json $(DATA_DIR)/device_matrices.json
-	@echo "Device data installed to $(DATA_DIR)"
+	@DATA_DIR="$(DATA_DIR)" INSTALL="$(INSTALL)" ./scripts/install-data.sh
 
 ## Uninstall device data files
 uninstall-data:
@@ -323,7 +317,7 @@ help:
 	@echo "Device database targets:"
 	@echo "  update-device-db      Fetch and extract device data from webapp"
 	@echo "  update-device-db-full Also include Electron driver (slower)"
-	@echo "  install-data          Install device data to $(DATA_DIR)"
+	@echo "  install-data          Install device data to $(DATA_DIR) (prompts to refresh first; SKIP_REFRESH=1 to skip)"
 	@echo "  uninstall-data        Remove installed device data"
 	@echo ""
 	@echo "Integration test targets:"

@@ -111,10 +111,16 @@ sudo zypper install pipewire-devel clang-devel
 git clone https://github.com/echtzeit-solutions/monsgeek-akko-linux.git
 cd monsgeek-akko-linux
 
-# Build and install driver + udev rules
+# Build and install driver + udev rules + device database
 make driver
 sudo make install
 ```
+
+`make install` also installs the device database (key matrices, names, LED maps) and
+offers to refresh it from the vendor driver first (default Yes) so newly-released models
+are picked up; it falls back to the committed database if you decline, are offline, or
+lack the extractor tools. To install the committed database without prompting:
+`sudo make install SKIP_REFRESH=1`.
 
 Then unplug and replug your keyboard.
 
