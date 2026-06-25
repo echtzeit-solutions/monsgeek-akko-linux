@@ -58,6 +58,32 @@ use monsgeek_keyboard::{
 };
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
 
+/// Resolve `(array_dim, display_count)` for a device.
+///
+/// `array_dim` sizes per-key firmware buffers and depth tracking; it MUST cover every
+/// scan position, so it's inflated to `matrix_size` (highest occupied index + 1, incl.
+/// empty grid cells). `display_count` is the human "number of keys": the vendor logical
+/// count from the DB, falling back to the matrix's physical/analog count, then the scan
+/// size, so unknown devices still show something sensible.
+fn resolve_key_counts(
+    db_key_count: u8,
+    matrix: Option<&crate::device_loader::JsonDeviceMatrix>,
+) -> (u8, u8) {
+    let mut array_dim = db_key_count;
+    let mut display = db_key_count;
+    if let Some(m) = matrix {
+        let matrix_size = m.matrix_size() as u8;
+        if array_dim == 0 || (array_dim < matrix_size && matrix_size > 0) {
+            array_dim = matrix_size;
+        }
+        if display == 0 {
+            let analog = m.analog_key_count() as u8;
+            display = if analog > 0 { analog } else { matrix_size };
+        }
+    }
+    (array_dim, display)
+}
+
 /// Application state
 struct App {
     /// Device selector from --device flag (index, transport name, or HID path)
@@ -74,7 +100,12 @@ struct App {
     device_generation: u64,
     device_name: String,
     transport_name: &'static str,
+    /// Firmware scan-grid dimension (matrix_size): sizes per-key buffers and depth
+    /// tracking. Includes empty scan cells — NOT the human key count.
     key_count: u8,
+    /// Human-facing key count shown in the UI (vendor logical count, e.g. 83), distinct
+    /// from `key_count`/`matrix_size` (the padded scan dimension, e.g. 90).
+    display_key_count: u8,
     has_sidelight: bool,
     has_magnetism: bool,
     matrix_size: usize,
@@ -176,6 +207,7 @@ impl App {
             device_name: String::new(),
             transport_name: "",
             key_count: 0,
+            display_key_count: 0,
             has_sidelight: false,
             has_magnetism: false,
             matrix_size: 0,
@@ -343,7 +375,7 @@ impl App {
             .filter(|r| r.len() >= 5 && r[0] == cmd::GET_USB_VERSION)
             .map(|r| u32::from_le_bytes([r[1], r[2], r[3], r[4]]) as i32);
 
-        let mut key_count = devices::key_count_with_id(device_id, vid, pid);
+        let db_key_count = devices::key_count_with_id(device_id, vid, pid);
         let has_magnetism = devices::has_magnetism_with_id(device_id, vid, pid);
         let device_info = devices::get_device_info_with_id(device_id, vid, pid);
         let has_sidelight = device_info
@@ -365,12 +397,7 @@ impl App {
         let registry = crate::profile_registry();
         let matrix_db: Option<&crate::device_loader::JsonDeviceMatrix> =
             device_id.and_then(|id| registry.get_device_matrix(id));
-        if let Some(matrix) = matrix_db {
-            let matrix_size = matrix.matrix_size() as u8;
-            if key_count == 0 || (key_count < matrix_size && matrix_size > 0) {
-                key_count = matrix_size;
-            }
-        }
+        let (key_count, display_key_count) = resolve_key_counts(db_key_count, matrix_db);
 
         let mut kb = KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
 
@@ -412,6 +439,7 @@ impl App {
         self.device_name = device_name;
         self.transport_name = transport_type_name(transport_info.transport_type);
         self.key_count = key_count;
+        self.display_key_count = display_key_count;
         self.has_sidelight = has_sidelight;
         self.has_magnetism = has_magnetism;
         self.matrix_size = matrix_size;
@@ -524,7 +552,7 @@ impl App {
                     .filter(|r| r.len() >= 5 && r[0] == cmd::GET_USB_VERSION)
                     .map(|r| u32::from_le_bytes([r[1], r[2], r[3], r[4]]) as i32);
 
-                let mut key_count = devices::key_count_with_id(device_id, vid, pid);
+                let db_key_count = devices::key_count_with_id(device_id, vid, pid);
                 let has_magnetism = devices::has_magnetism_with_id(device_id, vid, pid);
                 let device_info = devices::get_device_info_with_id(device_id, vid, pid);
                 let has_sidelight = device_info
@@ -544,12 +572,7 @@ impl App {
 
                 let registry = crate::profile_registry();
                 let matrix_db = device_id.and_then(|id| registry.get_device_matrix(id));
-                if let Some(matrix) = matrix_db {
-                    let matrix_size = matrix.matrix_size() as u8;
-                    if key_count == 0 || (key_count < matrix_size && matrix_size > 0) {
-                        key_count = matrix_size;
-                    }
-                }
+                let (key_count, display_key_count) = resolve_key_counts(db_key_count, matrix_db);
 
                 let mut kb =
                     KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
@@ -588,6 +611,7 @@ impl App {
                 self.device_name = device_name;
                 self.transport_name = transport_type_name(transport_info.transport_type);
                 self.key_count = key_count;
+                self.display_key_count = display_key_count;
                 self.has_sidelight = has_sidelight;
                 self.has_magnetism = has_magnetism;
                 self.matrix_size = matrix_size;
@@ -2129,4 +2153,52 @@ fn render_device_picker(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(Color::Cyan)),
     );
     f.render_widget(list, popup_area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_key_counts;
+    use crate::device_loader::JsonDeviceMatrix;
+
+    /// Sparse matrix with the last occupied position at index 89 (matrix_size 90),
+    /// 90 non-zero cells, of which 2 are non-analog (encoder) → 88 analog switches.
+    fn sample_matrix() -> JsonDeviceMatrix {
+        JsonDeviceMatrix {
+            name: "test".into(),
+            display_name: "Test".into(),
+            key_layout_name: None,
+            key_count: 88,
+            match_method: "driverClass".into(),
+            matrix: vec![1u8; 90],
+            key_names: vec![None; 90],
+            non_analog_positions: Some(vec![88, 89]),
+        }
+    }
+
+    #[test]
+    fn db_count_drives_display_array_dim_follows_matrix() {
+        let m = sample_matrix();
+        // The DB (vendor logical) count is shown as-is; the array dimension is inflated
+        // to the full scan grid so per-key buffers cover every position. This is the
+        // TAC75 case: show 83, but size firmware arrays to 90.
+        let (array_dim, display) = resolve_key_counts(83, Some(&m));
+        assert_eq!(array_dim, 90);
+        assert_eq!(display, 83);
+    }
+
+    #[test]
+    fn unknown_db_falls_back_to_analog_count() {
+        let m = sample_matrix();
+        // No DB entry → display the physical/analog switch count (non-zero minus encoder),
+        // never the padded scan dimension.
+        let (array_dim, display) = resolve_key_counts(0, Some(&m));
+        assert_eq!(array_dim, 90);
+        assert_eq!(display, 88);
+    }
+
+    #[test]
+    fn no_matrix_keeps_db_count() {
+        assert_eq!(resolve_key_counts(82, None), (82, 82));
+        assert_eq!(resolve_key_counts(0, None), (0, 0));
+    }
 }

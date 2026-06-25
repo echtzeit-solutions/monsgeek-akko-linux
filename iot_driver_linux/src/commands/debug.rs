@@ -88,7 +88,7 @@ pub fn test_transport(ctx: &CmdCtx) -> CommandResult {
     println!("\n--- Testing Keyboard Interface ---");
     with_keyboard(ctx, |keyboard| {
         println!(
-            "  Opened keyboard: {} keys, magnetism={}",
+            "  Opened keyboard: {} matrix positions, magnetism={}",
             keyboard.key_count(),
             keyboard.has_magnetism()
         );

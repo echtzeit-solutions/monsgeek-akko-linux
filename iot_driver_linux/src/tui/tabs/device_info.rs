@@ -765,7 +765,7 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
         ListItem::new(Line::from(vec![
             Span::raw("Key Count:      "),
             Span::styled(
-                format!("{}", app.key_count),
+                format!("{}", app.display_key_count),
                 Style::default().fg(Color::Green),
             ),
         ])),
