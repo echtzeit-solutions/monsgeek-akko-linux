@@ -59,6 +59,11 @@ pub(in crate::tui) enum InfoTag {
     SleepIdle24g,
     SleepDeepBt,
     SleepDeep24g,
+    // Audio-reactive (←/→ cycle, like LED mode/profile)
+    AudioReactive,
+    AudioDevice,
+    AudioVizMode,
+    AudioVizStyle,
 }
 
 impl App {
@@ -706,6 +711,9 @@ pub(in crate::tui) fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
 }
 
 pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rect) {
+    // Enumerate capture sources once (for the audio-reactive rows below).
+    super::audio::ensure_sources_loaded(app);
+
     let info = &app.info;
     let loading = &app.loading;
     let spinner = app.spinner_char();
@@ -1395,10 +1403,65 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
         }
     }
 
+    // ── Audio Reactive (←/→ cycle, like LED mode/profile) ──────────────
+    let audio_val = |s: String| Span::styled(format!("< {s} >"), Style::default().fg(Color::Cyan));
+    items.push((
+        InfoTag::Separator,
+        ListItem::new(Line::from(Span::styled(
+            "── Audio Reactive ──",
+            Style::default().fg(Color::DarkGray),
+        ))),
+    ));
+    items.push((
+        InfoTag::AudioReactive,
+        ListItem::new(Line::from(vec![
+            Span::raw("Audio:          "),
+            audio_val(if app.audio.is_running() { "On" } else { "Off" }.to_string()),
+        ])),
+    ));
+    items.push((
+        InfoTag::AudioDevice,
+        ListItem::new(Line::from(vec![
+            Span::raw("Audio Source:   "),
+            audio_val(
+                app.audio
+                    .selected_source_desc()
+                    .unwrap_or("(none)")
+                    .to_string(),
+            ),
+        ])),
+    ));
+    items.push((
+        InfoTag::AudioVizMode,
+        ListItem::new(Line::from(vec![
+            Span::raw("Audio Mode:     "),
+            audio_val(app.audio.mode.name().to_string()),
+        ])),
+    ));
+    items.push((
+        InfoTag::AudioVizStyle,
+        ListItem::new(Line::from(vec![
+            Span::raw("Audio Style:    "),
+            audio_val(app.audio.style.to_string()),
+        ])),
+    ));
+
     // Store tags and build list items
     app.info_tags = items.iter().map(|(tag, _)| *tag).collect();
     let list_items: Vec<ListItem> = items.into_iter().map(|(_, item)| item).collect();
     let max_idx = list_items.len().saturating_sub(1);
+
+    // When audio is running, reserve a bottom panel for the live level meter.
+    let list_area = if app.audio.is_running() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(8), Constraint::Length(10)])
+            .split(area);
+        super::audio::render_meter(f, app, chunks[1]);
+        chunks[0]
+    } else {
+        area
+    };
 
     let list = List::new(list_items)
         .block(
@@ -1417,5 +1480,5 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
     app.selected = app.selected.min(max_idx);
     let mut state = ListState::default();
     state.select(Some(app.selected));
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, list_area, &mut state);
 }

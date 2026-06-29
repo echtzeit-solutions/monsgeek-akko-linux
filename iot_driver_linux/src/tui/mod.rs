@@ -8,6 +8,7 @@ mod tabs;
 use help::render_help_popup;
 use shared::*;
 
+use tabs::audio::AudioTabState;
 use tabs::depth::{get_key_label, render_depth_monitor};
 use tabs::device_info::{render_device_info, HexColorTarget, InfoTag};
 
@@ -184,6 +185,8 @@ struct App {
     // Notify tab state (feature-gated)
     #[cfg(feature = "notify")]
     notify: NotifyTabState,
+    // Audio-reactive state (shown in the Device Info tab)
+    audio: AudioTabState,
     // Animation engine status (periodic query + interpolation)
     anim_snapshot: Option<crate::anim::EngineSnapshot>,
     anim_snapshot_time: Instant, // when the last snapshot was received
@@ -275,6 +278,7 @@ impl App {
             info_tags: Vec::new(),
             #[cfg(feature = "notify")]
             notify: NotifyTabState::default(),
+            audio: AudioTabState::default(),
             // Animation engine
             anim_snapshot: None,
             anim_snapshot_time: Instant::now(),
@@ -1117,7 +1121,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
     // Set up async event stream
     let mut event_stream = EventStream::new();
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
-    let mut last_tab = 0usize;
+    let mut last_tick_ms = 100u64;
 
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
@@ -1499,6 +1503,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step); }
                                     InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step); }
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
+                                    InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
+                                    InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
+                                    InfoTag::AudioVizMode => tabs::audio::cycle_mode(&mut app),
+                                    InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     _ => {}
                                 }
                             }
@@ -1568,6 +1576,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step); }
                                     InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step); }
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
+                                    InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
+                                    InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
+                                    InfoTag::AudioVizMode => tabs::audio::cycle_mode(&mut app),
+                                    InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     _ => {}
                                 }
                             }
@@ -1602,6 +1614,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 InfoTag::FirmwareCheck => app.check_firmware(),
                                 InfoTag::LedColorHex => app.start_hex_input(HexColorTarget::MainLed),
                                 InfoTag::SideColorHex => app.start_hex_input(HexColorTarget::SideLed),
+                                InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
                                 _ => {}
                             }
                         }
@@ -1899,12 +1912,17 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
 
             // Handle tick updates
             _ = tick_interval.tick() => {
-                // Adjust tick rate: 30fps on notify tab, 10fps otherwise
-                #[cfg(feature = "notify")]
-                if app.tab != last_tab {
-                    last_tab = app.tab;
-                    let ms = if app.tab == 4 { 16 } else { 100 };
-                    tick_interval = tokio::time::interval(Duration::from_millis(ms));
+                // Fast tick (~60fps) when an animated panel needs it: the notify
+                // tab, or the audio level meter (Device Info tab while running).
+                let want_ms = {
+                    let mut fast = app.tab == 0 && app.audio.is_running();
+                    #[cfg(feature = "notify")]
+                    { fast = fast || app.tab == 4; }
+                    if fast { 16 } else { 100 }
+                };
+                if want_ms != last_tick_ms {
+                    last_tick_ms = want_ms;
+                    tick_interval = tokio::time::interval(Duration::from_millis(want_ms));
                     tick_interval.reset();
                 }
 
