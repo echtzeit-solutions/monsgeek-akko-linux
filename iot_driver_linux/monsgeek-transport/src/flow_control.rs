@@ -52,7 +52,10 @@ enum FlowState {
     /// The `query_lock` serializes command-response cycles — without it,
     /// concurrent callers interleave their sends/reads and get echo mismatches.
     Simple {
-        command_delay_ms: u64,
+        /// Gap between a query's send and read (device response settle time).
+        read_gap_ms: u64,
+        /// Spacing after a fire-and-forget write (back-to-back burst safety).
+        write_spacing_ms: u64,
         query_lock: std::sync::Mutex<()>,
     },
     /// Dongle: serialized worker, adaptive timing, response cache
@@ -190,11 +193,14 @@ impl FlowControlTransport {
                 }
             }
             TransportType::Bluetooth => FlowState::Simple {
-                command_delay_ms: 150,
+                // BLE is slower and rarely used; keep the conservative legacy gap.
+                read_gap_ms: 150,
+                write_spacing_ms: 150,
                 query_lock: std::sync::Mutex::new(()),
             },
             _ => FlowState::Simple {
-                command_delay_ms: timing::DEFAULT_DELAY_MS,
+                read_gap_ms: timing::WIRED_READ_GAP_MS,
+                write_spacing_ms: timing::WIRED_WRITE_SPACING_MS,
                 query_lock: std::sync::Mutex::new(()),
             },
         };
@@ -220,11 +226,12 @@ impl FlowControlTransport {
     ) -> Result<Vec<u8>, TransportError> {
         match &self.flow {
             FlowState::Simple {
-                command_delay_ms,
+                read_gap_ms,
                 query_lock,
+                ..
             } => {
                 let _guard = query_lock.lock().unwrap();
-                self.simple_query(cmd_byte, data, checksum, *command_delay_ms, false)
+                self.simple_query(cmd_byte, data, checksum, *read_gap_ms, false)
             }
             FlowState::Dongle { request_tx, .. } => {
                 self.dongle_dispatch(request_tx, cmd_byte, data, checksum, false, false)
@@ -241,11 +248,12 @@ impl FlowControlTransport {
     ) -> Result<Vec<u8>, TransportError> {
         match &self.flow {
             FlowState::Simple {
-                command_delay_ms,
+                read_gap_ms,
                 query_lock,
+                ..
             } => {
                 let _guard = query_lock.lock().unwrap();
-                self.simple_query(cmd_byte, data, checksum, *command_delay_ms, true)
+                self.simple_query(cmd_byte, data, checksum, *read_gap_ms, true)
             }
             FlowState::Dongle { request_tx, .. } => {
                 self.dongle_dispatch(request_tx, cmd_byte, data, checksum, true, false)
@@ -262,13 +270,14 @@ impl FlowControlTransport {
     ) -> Result<(), TransportError> {
         match &self.flow {
             FlowState::Simple {
-                command_delay_ms,
+                write_spacing_ms,
                 query_lock,
+                ..
             } => {
                 let _guard = query_lock.lock().unwrap();
                 self.inner.send_report(cmd_byte, data, checksum)?;
-                if *command_delay_ms > 0 {
-                    std::thread::sleep(Duration::from_millis(*command_delay_ms));
+                if *write_spacing_ms > 0 {
+                    std::thread::sleep(Duration::from_millis(*write_spacing_ms));
                 }
                 Ok(())
             }

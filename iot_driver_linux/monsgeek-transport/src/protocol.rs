@@ -547,6 +547,15 @@ pub mod timing {
     pub const SEND_RETRIES: usize = 3;
     /// Default delay after HID command (ms) - for wired devices
     pub const DEFAULT_DELAY_MS: u64 = 100;
+    /// Wired query read-gap (ms): wait after sending a query before reading, so
+    /// the device has computed the response and loaded the report buffer (read
+    /// too soon → stale/previous response). Retried up to [`QUERY_RETRIES`], so
+    /// it can be small.
+    pub const WIRED_READ_GAP_MS: u64 = 10;
+    /// Wired write spacing (ms): delay after a fire-and-forget write. Near-zero;
+    /// only relevant for back-to-back flash-write bursts, which add their own
+    /// per-iteration spacing. Realtime streaming bypasses this entirely (delay 0).
+    pub const WIRED_WRITE_SPACING_MS: u64 = 5;
     /// Short delay for fast operations (ms)
     pub const SHORT_DELAY_MS: u64 = 50;
     /// Minimum delay for streaming (ms)

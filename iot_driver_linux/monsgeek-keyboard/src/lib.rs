@@ -1149,6 +1149,20 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    /// Send a raw command with **no** inter-command flow-control delay, for
+    /// high-rate streaming (audio visualizer, screen color). Plain
+    /// [`send_raw_cmd`] sleeps `DEFAULT_DELAY_MS` (100ms) after every send —
+    /// fine for config commands, but it caps streaming at ~10Hz. The device
+    /// renders these every main-loop pass (hundreds of Hz), so the only pacing
+    /// should be the caller's frame loop.
+    ///
+    /// [`send_raw_cmd`]: Self::send_raw_cmd
+    pub fn send_raw_cmd_fast(&self, cmd_byte: u8, data: &[u8]) -> Result<(), KeyboardError> {
+        self.transport
+            .send_command_with_delay(cmd_byte, data, ChecksumType::Bit7, 0)?;
+        Ok(())
+    }
+
     // === Key Matrix (Key Remapping) ===
 
     /// Get key matrix (key remappings) for a profile
