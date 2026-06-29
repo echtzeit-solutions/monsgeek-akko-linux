@@ -29,6 +29,10 @@ pub struct AudioState {
     pub running: AtomicBool,
     /// Sample rate from audio device
     pub sample_rate: AtomicU32,
+    /// Measured FFT-thread update rate (Hz), refreshed ~1×/sec. Diagnostic.
+    pub fft_hz: AtomicU32,
+    /// Measured keyboard send rate (Hz) from the viz loop, ~1×/sec. Diagnostic.
+    pub tx_hz: AtomicU32,
 }
 
 impl Default for AudioState {
@@ -38,6 +42,8 @@ impl Default for AudioState {
             peaks: Mutex::new([0.0; NUM_BANDS]),
             running: AtomicBool::new(false),
             sample_rate: AtomicU32::new(44100),
+            fft_hz: AtomicU32::new(0),
+            tx_hz: AtomicU32::new(0),
         }
     }
 }
@@ -126,10 +132,22 @@ impl AudioCapture {
             let mut smoothed_bands = [0.0f32; NUM_BANDS];
             let process_interval = Duration::from_millis(16);
             let mut loop_count = 0u32;
+            let mut rate_count = 0u32;
+            let mut rate_start = Instant::now();
 
             while fft_state.running.load(Ordering::SeqCst) {
                 let start = Instant::now();
                 loop_count += 1;
+
+                // Diagnostic: measure actual FFT update rate once per second.
+                rate_count += 1;
+                if rate_start.elapsed() >= Duration::from_secs(1) {
+                    let hz =
+                        (rate_count as f64 / rate_start.elapsed().as_secs_f64()).round() as u32;
+                    fft_state.fft_hz.store(hz, Ordering::Relaxed);
+                    rate_count = 0;
+                    rate_start = Instant::now();
+                }
 
                 let (samples, buf_len): (Vec<f32>, usize) = match fft_buffer.lock() {
                     Ok(buffer) => {
@@ -386,11 +404,22 @@ pub fn run_viz_loop(
 ) {
     let frame_duration = Duration::from_millis(audio_viz::UPDATE_INTERVAL_MS);
     let mut frame_count = 0u32;
+    let mut rate_count = 0u32;
+    let mut rate_start = Instant::now();
 
     running.store(true, Ordering::SeqCst);
 
     while running.load(Ordering::SeqCst) && audio_state.is_running() {
         let frame_start = Instant::now();
+
+        // Diagnostic: measure actual keyboard send rate once per second.
+        rate_count += 1;
+        if rate_start.elapsed() >= Duration::from_secs(1) {
+            let hz = (rate_count as f64 / rate_start.elapsed().as_secs_f64()).round() as u32;
+            audio_state.tx_hz.store(hz, Ordering::Relaxed);
+            rate_count = 0;
+            rate_start = Instant::now();
+        }
 
         let bands = audio_state.get_bands();
         let levels = bands_to_viz_levels(&bands, config.sensitivity);

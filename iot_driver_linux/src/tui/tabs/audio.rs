@@ -238,9 +238,16 @@ fn reapply_mode(app: &mut App, led_mode: u8) {
 
 /// Render the live level meter (8 horizontal bars). Only meaningful while running.
 pub(in crate::tui) fn render_meter(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Audio Level Meter");
+    use std::sync::atomic::Ordering;
+    let title = match app.audio.run.as_ref() {
+        Some(run) => format!(
+            "Audio Level Meter — FFT {}Hz · TX {}Hz",
+            run.capture.state.fft_hz.load(Ordering::Relaxed),
+            run.capture.state.tx_hz.load(Ordering::Relaxed),
+        ),
+        None => "Audio Level Meter".to_string(),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
 

@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use libpulse_binding::callbacks::ListResult;
 use libpulse_binding::context::{Context, FlagSet, State as ContextState};
+use libpulse_binding::def::BufferAttr;
 use libpulse_binding::mainloop::standard::{IterateResult, Mainloop};
 use libpulse_binding::operation::{Operation, State as OpState};
 use libpulse_binding::sample::{Format, Spec};
@@ -193,6 +194,18 @@ pub fn open_record(source: &str) -> Result<Simple, String> {
     if !spec.is_valid() {
         return Err("Invalid PulseAudio sample spec".into());
     }
+    // Request small fragments so the monitor advances smoothly. The server
+    // default can be very large (~hundreds of ms), which makes the captured
+    // audio — and thus the visualizer — only advance a few times per second.
+    // ~10ms of mono f32.
+    let frag = (SAMPLE_RATE / 100) * 4;
+    let attr = BufferAttr {
+        maxlength: frag * 4,
+        tlength: u32::MAX,
+        prebuf: u32::MAX,
+        minreq: u32::MAX,
+        fragsize: frag,
+    };
     Simple::new(
         None,     // default server
         APP_NAME, // application name
@@ -200,8 +213,8 @@ pub fn open_record(source: &str) -> Result<Simple, String> {
         Some(source), // source name
         STREAM_NAME,  // stream description
         &spec,
-        None, // default channel map
-        None, // default buffering attributes
+        None,        // default channel map
+        Some(&attr), // small fragments for low-latency capture
     )
     .map_err(|e| format!("Failed to open PulseAudio source '{source}': {e}"))
 }
