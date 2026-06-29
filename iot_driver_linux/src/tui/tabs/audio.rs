@@ -28,12 +28,15 @@ pub(in crate::tui) fn is_music_mode(led_mode: u8) -> bool {
     led_mode == MUSIC_BARS || led_mode == MUSIC_PATTERNS
 }
 
-/// Highest valid style index for a music mode (Bars: 0-2, Patterns: 0-4).
+/// Highest valid style index. Per firmware RE (`led_effect_audio_viz`
+/// @ 0x08009E68) both MusicBars (22) and MusicPatterns (20) dispatch to the
+/// same renderer with exactly 3 styles (0,1,2); the option byte's upper nibble
+/// above 2 is ignored.
 fn style_max(led_mode: u8) -> u8 {
-    match led_mode {
-        MUSIC_BARS => 2,
-        MUSIC_PATTERNS => 4,
-        _ => 0,
+    if is_music_mode(led_mode) {
+        2
+    } else {
+        0
     }
 }
 

@@ -1106,69 +1106,43 @@ pub mod firmware_update {
 /// Music mode visualization options
 /// Used with SET_LEDPARAM to configure the visualization style
 pub mod music_viz {
-    /// Visualization style for MusicBars mode (22 / LightMusicFollow2)
-    /// The option value is stored in the upper nibble of the option byte
+    /// Visualizer style for the music LED modes — MusicBars (22 /
+    /// LightMusicFollow2) and MusicPatterns (20 / LightMusicFollow3).
+    ///
+    /// Per firmware RE, both modes dispatch to the **same** renderer
+    /// (`led_effect_audio_viz` @ 0x08009E68) with exactly **three** styles,
+    /// chosen from the **upper nibble** of the SET_LEDPARAM option byte. Values
+    /// above 2 are ignored by the firmware. (MusicBars vs MusicPatterns are not
+    /// distinguished in the v407 render path — only the style differs.)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
-    pub enum BarsStyle {
-        /// Vertical bars rising from bottom (竖直)
-        Upright = 0,
-        /// Separated/split frequency bands (分离)
-        Separate = 1,
-        /// Horizontal crossing pattern (横断)
-        Intersect = 2,
+    pub enum Style {
+        /// 0: 16 independent per-column bars (full spectrum). Webapp: "Upright" (竖直).
+        FullSpectrum = 0,
+        /// 1: adjacent bands merged into 8 wide columns. Webapp: "Separate" (分离).
+        MergedWide = 1,
+        /// 2: 8 merged columns, mirrored/centred grouping. Webapp: "Intersect" (横断).
+        MirroredCenter = 2,
     }
 
-    impl BarsStyle {
+    impl Style {
+        /// Number of valid styles (indices 0..COUNT).
+        pub const COUNT: u8 = 3;
+
         pub fn from_u8(value: u8) -> Option<Self> {
             match value {
-                0 => Some(Self::Upright),
-                1 => Some(Self::Separate),
-                2 => Some(Self::Intersect),
+                0 => Some(Self::FullSpectrum),
+                1 => Some(Self::MergedWide),
+                2 => Some(Self::MirroredCenter),
                 _ => None,
             }
         }
 
         pub fn name(&self) -> &'static str {
             match self {
-                Self::Upright => "Upright",
-                Self::Separate => "Separate",
-                Self::Intersect => "Intersect",
-            }
-        }
-    }
-
-    /// Pattern selection for MusicPatterns mode (20 / LightMusicFollow3)
-    /// The option value is stored in the upper nibble of the option byte
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    #[repr(u8)]
-    pub enum PatternsStyle {
-        Pattern1 = 0,
-        Pattern2 = 1,
-        Pattern3 = 2,
-        Pattern4 = 3,
-        Pattern5 = 4,
-    }
-
-    impl PatternsStyle {
-        pub fn from_u8(value: u8) -> Option<Self> {
-            match value {
-                0 => Some(Self::Pattern1),
-                1 => Some(Self::Pattern2),
-                2 => Some(Self::Pattern3),
-                3 => Some(Self::Pattern4),
-                4 => Some(Self::Pattern5),
-                _ => None,
-            }
-        }
-
-        pub fn name(&self) -> &'static str {
-            match self {
-                Self::Pattern1 => "Pattern 1",
-                Self::Pattern2 => "Pattern 2",
-                Self::Pattern3 => "Pattern 3",
-                Self::Pattern4 => "Pattern 4",
-                Self::Pattern5 => "Pattern 5",
+                Self::FullSpectrum => "Full Spectrum",
+                Self::MergedWide => "Merged Wide",
+                Self::MirroredCenter => "Mirrored Center",
             }
         }
     }

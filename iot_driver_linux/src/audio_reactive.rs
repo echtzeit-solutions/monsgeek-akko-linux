@@ -396,8 +396,9 @@ pub fn run_viz_loop(
         let levels = bands_to_viz_levels(&bands, config.sensitivity);
         let report = audio_viz::build_report(&levels);
         // Send the cmd payload (bytes after the leading command byte, through the
-        // last band); the transport re-frames + checksums it. Mirrors screen_capture.
-        let _ = keyboard.send_raw_cmd(cmd::SET_AUDIO_VIZ, &report[1..24]);
+        // last band); the transport re-frames + checksums it. Use the no-delay
+        // path — the default 100ms flow-control delay would cap us at ~10Hz.
+        let _ = keyboard.send_raw_cmd_fast(cmd::SET_AUDIO_VIZ, &report[1..24]);
 
         // Debug output every ~5 seconds (only if RUST_LOG is set)
         frame_count += 1;

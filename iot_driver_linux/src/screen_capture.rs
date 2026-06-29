@@ -126,8 +126,8 @@ fn run_screen_color_loop(
             let _ = std::io::stdout().flush();
 
             let report = screen_color::build_report(r, g, b);
-            // Use send_raw_cmd with the screen color data
-            let _ = keyboard.send_raw_cmd(cmd::SET_SCREEN_COLOR, &report[1..8]);
+            // No-delay streaming send (the default flow-control delay would cap us).
+            let _ = keyboard.send_raw_cmd_fast(cmd::SET_SCREEN_COLOR, &report[1..8]);
             last_color = (r, g, b);
         }
 

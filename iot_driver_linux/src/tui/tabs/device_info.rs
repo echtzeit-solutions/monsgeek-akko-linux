@@ -1418,11 +1418,14 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
                 ),
             ])),
         ));
+        let style_name = crate::protocol::music_viz::Style::from_u8(app.audio.style)
+            .map(|s| s.name())
+            .unwrap_or("?");
         items.push((
             InfoTag::AudioVizStyle,
             ListItem::new(Line::from(vec![
                 Span::raw("Audio Style:    "),
-                audio_val(app.audio.style.to_string()),
+                audio_val(format!("{} {style_name}", app.audio.style)),
             ])),
         ));
     }
