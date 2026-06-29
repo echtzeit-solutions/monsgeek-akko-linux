@@ -21,17 +21,20 @@ For firmware update checking/downloading from the RongYuan API:
 cargo build --release --features firmware-api
 ```
 
-### Audio-reactive mode and JACK
+### Audio-reactive mode and PulseAudio
 
-Audio-reactive lighting uses [`cpal`](https://crates.io/crates/cpal), which
-defaults to the **ALSA** backend on Linux — no extra system packages required.
-
-JACK support is opt-in. Build with the `jack` feature only if you want it (it
-requires the JACK development library, e.g. `libjack-jackd2-dev` on Debian/Ubuntu):
+Audio-reactive lighting captures system audio natively via PulseAudio (using
+[`libpulse-binding`](https://crates.io/crates/libpulse-binding)), which works
+transparently on PipeWire through its pulse server. Building requires the
+libpulse client dev package:
 
 ```bash
-cargo build --release --features jack
+sudo apt install libpulse-dev   # Debian/Ubuntu
 ```
+
+By default it captures the **monitor** of your default output sink (so it reacts
+to whatever is playing); pick another source with `audio --device <name>` (see
+`audio-test` for candidates).
 
 ## Supported Devices
 
