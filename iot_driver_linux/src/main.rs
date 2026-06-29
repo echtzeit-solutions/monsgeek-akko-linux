@@ -246,16 +246,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // === Audio/Reactive Commands ===
         Some(Commands::Audio {
             mode,
-            hue,
+            style,
             sensitivity,
+            device,
         }) => {
-            commands::reactive::audio(&ctx, mode.as_str(), hue, sensitivity)?;
+            commands::reactive::audio(&ctx, mode.led_mode(), style, sensitivity, device)?;
         }
         Some(Commands::AudioTest) => {
             commands::reactive::audio_test()?;
         }
-        Some(Commands::AudioLevels) => {
-            commands::reactive::audio_levels()?;
+        Some(Commands::AudioLevels { device }) => {
+            commands::reactive::audio_levels(device)?;
         }
         #[cfg(feature = "screen-capture")]
         Some(Commands::Screen { fps }) => {

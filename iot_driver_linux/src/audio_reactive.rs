@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::protocol::cmd;
+use crate::protocol::{audio_viz, cmd};
 use monsgeek_keyboard::KeyboardInterface;
 
 /// Number of frequency bands to analyze
@@ -18,9 +18,6 @@ const NUM_BANDS: usize = 8;
 
 /// FFT sample size (must be power of 2)
 const FFT_SIZE: usize = 1024;
-
-/// Target FPS for RGB updates (limited by HID bandwidth - 7 pages × ~13ms = ~91ms/frame max)
-const TARGET_FPS: u32 = 10;
 
 /// Audio reactive state shared between threads
 pub struct AudioState {
@@ -83,9 +80,12 @@ impl AudioCapture {
         let state = Arc::new(AudioState::default());
         let host = cpal::default_host();
 
-        // Auto-detect monitor source for system audio
-        if let Ok(monitor) = get_pulseaudio_monitor() {
-            std::env::set_var("PULSE_SOURCE", &monitor);
+        // Auto-detect monitor source for system audio, unless the user picked a
+        // specific device (then we honour their choice without forcing PULSE_SOURCE).
+        if config.device.is_none() {
+            if let Ok(monitor) = get_pulseaudio_monitor() {
+                std::env::set_var("PULSE_SOURCE", &monitor);
+            }
         }
 
         // Suppress ALSA warnings about unavailable plugins (mostly works)
@@ -95,13 +95,20 @@ impl AudioCapture {
         // Note: ALSA enumeration will still print some warnings to stderr
         eprintln!("(Ignoring ALSA warnings below - they're harmless)");
 
-        let audio_device = find_audio_device(&host)?;
+        let audio_device = find_audio_device(&host, config.device.as_deref())?;
+        let device_name = audio_device
+            .name()
+            .unwrap_or_else(|_| "Unknown".to_string());
         let audio_config = audio_device
             .default_input_config()
             .map_err(|e| format!("Failed to get audio config: {e}"))?;
 
         let sample_rate = audio_config.sample_rate().0;
         state.sample_rate.store(sample_rate, Ordering::SeqCst);
+        println!(
+            "Audio input: {device_name} ({sample_rate} Hz, {} ch)",
+            audio_config.channels()
+        );
 
         let sample_buffer: Arc<Mutex<Vec<f32>>> =
             Arc::new(Mutex::new(Vec::with_capacity(FFT_SIZE * 2)));
@@ -200,74 +207,42 @@ impl AudioCapture {
 /// Audio reactive mode configuration
 #[derive(Clone)]
 pub struct AudioConfig {
-    /// Color mode: "spectrum" (rainbow), "solid" (single color pulse), "gradient"
-    pub color_mode: String,
-    /// Base hue for solid mode (0-360)
-    pub base_hue: f32,
+    /// Music-visualizer LED mode byte: MusicBars (22) or MusicPatterns (20).
+    /// The keyboard renders the bars on-device; we only stream band levels.
+    pub led_mode: u8,
+    /// Style variant within the mode (MusicBars: 0-2, MusicPatterns: 0-4).
+    pub style: u8,
     /// Sensitivity multiplier (0.5 - 2.0)
     pub sensitivity: f32,
     /// Smoothing factor (0.0 = instant, 0.9 = very smooth)
     pub smoothing: f32,
+    /// Capture device name (exact or case-insensitive substring); None = auto-detect monitor source
+    pub device: Option<String>,
 }
 
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            color_mode: "spectrum".to_string(),
-            base_hue: 0.0,
+            led_mode: cmd::LedMode::MusicBars.as_u8(),
+            style: 0,
             sensitivity: 1.0,
             smoothing: 0.3,
+            device: None,
         }
     }
 }
 
-use monsgeek_keyboard::led::RgbColor;
-
-/// Convert HSV to (r, g, b) tuple via RgbColor::from_hsv.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let c = RgbColor::from_hsv(h, s, v);
-    (c.r, c.g, c.b)
-}
-
-/// Map frequency bands to per-key RGB colors
-fn bands_to_colors(
-    bands: &[f32; NUM_BANDS],
-    key_count: usize,
-    config: &AudioConfig,
-) -> Vec<(u8, u8, u8)> {
-    let mut colors = Vec::with_capacity(key_count);
-
-    // Calculate average energy for overall brightness
-    let avg_energy: f32 = bands.iter().sum::<f32>() / NUM_BANDS as f32;
-
-    for i in 0..key_count {
-        // Map key position to a frequency band
-        let band_idx = (i * NUM_BANDS / key_count).min(NUM_BANDS - 1);
-        let band_value = bands[band_idx] * config.sensitivity;
-        let intensity = band_value.min(1.0);
-
-        let (r, g, b) = match config.color_mode.as_str() {
-            "solid" => {
-                // Pulse single color based on overall energy
-                let v = (avg_energy * config.sensitivity).min(1.0);
-                hsv_to_rgb(config.base_hue, 1.0, v)
-            }
-            "gradient" => {
-                // Gradient from base_hue, intensity affects saturation
-                let hue = (config.base_hue + (i as f32 * 360.0 / key_count as f32)) % 360.0;
-                hsv_to_rgb(hue, 0.5 + intensity * 0.5, intensity)
-            }
-            _ => {
-                // "spectrum" - rainbow colors mapped to frequency bands
-                let hue = (band_idx as f32 * 360.0 / NUM_BANDS as f32) % 360.0;
-                hsv_to_rgb(hue, 1.0, intensity)
-            }
-        };
-
-        colors.push((r, g, b));
+/// Expand the analyzed [`NUM_BANDS`] normalized magnitudes (0.0-1.0) into the
+/// keyboard's 16 audio-viz levels (0-[`audio_viz::MAX_LEVEL`]). Each analysis
+/// band maps to two adjacent device bands.
+fn bands_to_viz_levels(bands: &[f32; NUM_BANDS], sensitivity: f32) -> [u8; audio_viz::NUM_BANDS] {
+    let mut levels = [0u8; audio_viz::NUM_BANDS];
+    for (i, level) in levels.iter_mut().enumerate() {
+        let band = bands[i * NUM_BANDS / audio_viz::NUM_BANDS];
+        let v = (band * sensitivity).clamp(0.0, 1.0);
+        *level = (v * audio_viz::MAX_LEVEL as f32).round() as u8;
     }
-
-    colors
+    levels
 }
 
 /// Analyze audio samples and extract frequency bands
@@ -383,8 +358,12 @@ pub fn list_audio_devices() -> Vec<String> {
     devices
 }
 
-/// Run audio reactive mode (blocking)
-/// This starts audio capture in a background thread and runs the RGB update loop
+/// Run audio reactive mode (blocking).
+///
+/// Starts audio capture in a background thread, switches the keyboard to its
+/// native music-visualizer mode (MusicBars/MusicPatterns), and streams band
+/// levels over `SET_AUDIO_VIZ` (0x0D) — the firmware renders the bars on-device.
+/// No per-key SET_USERPIC streaming (no flash wear).
 pub fn run_audio_reactive(
     keyboard: &KeyboardInterface,
     config: AudioConfig,
@@ -395,15 +374,16 @@ pub fn run_audio_reactive(
     // Start audio capture (creates stream and FFT processing thread)
     let audio_capture = AudioCapture::start(config.clone())?;
 
-    println!("Audio capture started, setting LED mode...");
+    println!("Audio capture started, enabling music visualizer...");
 
-    // Set LED mode to per-key colors (LightUserPicture with layer 0)
-    let _ =
-        keyboard.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
+    // Switch the keyboard into its native audio-viz mode (brightness/speed max).
+    keyboard
+        .set_music_viz_mode(config.led_mode, config.style, 4, 4, false)
+        .map_err(|e| format!("Failed to set music visualizer mode: {e}"))?;
     thread::sleep(Duration::from_millis(200));
 
-    // Run the RGB rendering loop
-    run_rgb_loop(keyboard, &audio_capture.state, &config, running)?;
+    // Stream band levels until stopped.
+    run_viz_loop(keyboard, &audio_capture.state, &config, running);
 
     // Stop audio capture
     audio_capture.stop();
@@ -412,15 +392,15 @@ pub fn run_audio_reactive(
     Ok(())
 }
 
-/// RGB rendering loop - reads from AudioState and sends colors to keyboard
-pub fn run_rgb_loop(
+/// Visualizer loop — reads spectrum bands from [`AudioState`] and streams them to
+/// the keyboard's on-device music visualizer via `SET_AUDIO_VIZ`.
+pub fn run_viz_loop(
     keyboard: &KeyboardInterface,
     audio_state: &Arc<AudioState>,
     config: &AudioConfig,
     running: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let key_count = keyboard.key_count() as usize;
-    let frame_duration = Duration::from_millis(1000 / TARGET_FPS as u64);
+) {
+    let frame_duration = Duration::from_millis(audio_viz::UPDATE_INTERVAL_MS);
     let mut frame_count = 0u32;
 
     running.store(true, Ordering::SeqCst);
@@ -428,42 +408,86 @@ pub fn run_rgb_loop(
     while running.load(Ordering::SeqCst) && audio_state.is_running() {
         let frame_start = Instant::now();
 
-        // Get current spectrum from audio thread
         let bands = audio_state.get_bands();
+        let levels = bands_to_viz_levels(&bands, config.sensitivity);
+        let report = audio_viz::build_report(&levels);
+        // Send the cmd payload (bytes after the leading command byte, through the
+        // last band); the transport re-frames + checksums it. Mirrors screen_capture.
+        let _ = keyboard.send_raw_cmd(cmd::SET_AUDIO_VIZ, &report[1..24]);
 
-        // Generate colors
-        let colors = bands_to_colors(&bands, key_count, config);
-
-        // Debug output every 5 seconds (only if RUST_LOG is set)
+        // Debug output every ~5 seconds (only if RUST_LOG is set)
         frame_count += 1;
-        if frame_count.is_multiple_of(TARGET_FPS * 5) && std::env::var("RUST_LOG").is_ok() {
+        if frame_count.is_multiple_of(audio_viz::UPDATE_RATE_HZ * 5)
+            && std::env::var("RUST_LOG").is_ok()
+        {
             let avg: f32 = bands.iter().sum::<f32>() / NUM_BANDS as f32;
-            let first_color = if colors.is_empty() {
-                (0, 0, 0)
-            } else {
-                colors[0]
-            };
-            eprintln!(
-                "[RGB] avg={:.2} bass={:.2} color0=({},{},{})",
-                avg, bands[1], first_color.0, first_color.1, first_color.2
-            );
+            eprintln!("[viz] avg={avg:.2} bass={:.2} levels={levels:?}", bands[1]);
         }
 
-        // Send to keyboard (repeat=1, layer=0 for real-time effects)
-        let _ = keyboard.set_per_key_colors_fast(&colors, 1, 0);
-
-        // Maintain target FPS
         let elapsed = frame_start.elapsed();
         if elapsed < frame_duration {
             thread::sleep(frame_duration - elapsed);
         }
     }
-
-    Ok(())
 }
 
-/// Find the best audio device for capture
-fn find_audio_device(host: &cpal::Host) -> Result<cpal::Device, String> {
+/// Select an input device by exact name, falling back to a case-insensitive
+/// substring match. Errors list the available devices when nothing (or more
+/// than one thing) matches.
+fn select_device_by_name(host: &cpal::Host, requested: &str) -> Result<cpal::Device, String> {
+    let req_lower = requested.to_lowercase();
+    let mut substring_matches: Vec<cpal::Device> = Vec::new();
+
+    for device in host
+        .input_devices()
+        .map_err(|e| format!("Failed to enumerate input devices: {e}"))?
+    {
+        let Ok(name) = device.name() else { continue };
+        if name == requested {
+            return Ok(device);
+        }
+        if name.to_lowercase().contains(&req_lower) {
+            substring_matches.push(device);
+        }
+    }
+
+    match substring_matches.len() {
+        1 => Ok(substring_matches.into_iter().next().unwrap()),
+        0 => Err(format!(
+            "No audio input device matches '{requested}'. Available devices:\n{}",
+            available_devices_list()
+        )),
+        _ => {
+            let names: Vec<String> = substring_matches
+                .iter()
+                .filter_map(|d| d.name().ok())
+                .collect();
+            Err(format!(
+                "'{requested}' is ambiguous, matches {} devices:\n  - {}",
+                names.len(),
+                names.join("\n  - ")
+            ))
+        }
+    }
+}
+
+/// Format the available input devices as an indented bullet list for error messages.
+fn available_devices_list() -> String {
+    let devices = list_audio_devices();
+    if devices.is_empty() {
+        "  (none found)".to_string()
+    } else {
+        format!("  - {}", devices.join("\n  - "))
+    }
+}
+
+/// Find the best audio device for capture. When `requested` is set, select that
+/// device by name; otherwise auto-detect a monitor/loopback source.
+fn find_audio_device(host: &cpal::Host, requested: Option<&str>) -> Result<cpal::Device, String> {
+    if let Some(name) = requested {
+        return select_device_by_name(host, name);
+    }
+
     // On Linux with PipeWire/PulseAudio, try to use the monitor source
     // This is done by setting PULSE_SOURCE environment variable
     if let Ok(monitor) = get_pulseaudio_monitor() {
@@ -525,52 +549,10 @@ fn get_pulseaudio_monitor() -> Result<String, String> {
     Err("No monitor source found".to_string())
 }
 
-/// Run a simple rainbow animation to test RGB without audio
-pub fn run_rainbow_test(
-    keyboard: &KeyboardInterface,
-    running: Arc<AtomicBool>,
-) -> Result<(), String> {
-    println!("Starting rainbow test mode...");
-
-    // Set LED mode to per-key colors (LightUserPicture with layer 0)
-    let _ =
-        keyboard.set_led_with_option(cmd::LedMode::UserPicture.as_u8(), 4, 0, 0, 0, 0, false, 0);
-    std::thread::sleep(Duration::from_millis(200));
-
-    let key_count = keyboard.key_count() as usize;
-    let frame_duration = Duration::from_millis(1000 / 30); // 30 FPS
-    let mut hue_offset = 0.0f32;
-
-    running.store(true, Ordering::SeqCst);
-
-    while running.load(Ordering::SeqCst) {
-        let frame_start = Instant::now();
-
-        // Generate rainbow colors across keys
-        let mut colors = Vec::with_capacity(key_count);
-        for i in 0..key_count {
-            let hue = (hue_offset + (i as f32 * 360.0 / key_count as f32)) % 360.0;
-            colors.push(hsv_to_rgb(hue, 1.0, 1.0));
-        }
-
-        let _ = keyboard.set_per_key_colors_fast(&colors, 1, 0);
-
-        hue_offset = (hue_offset + 5.0) % 360.0;
-
-        let elapsed = frame_start.elapsed();
-        if elapsed < frame_duration {
-            std::thread::sleep(frame_duration - elapsed);
-        }
-    }
-
-    println!("Rainbow test stopped");
-    Ok(())
-}
-
 /// Simple test function to verify audio capture works
 pub fn test_audio_capture() -> Result<(), String> {
     let host = cpal::default_host();
-    let device = find_audio_device(&host)?;
+    let device = find_audio_device(&host, None)?;
     let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
 
     println!("Audio device: {name}");
@@ -587,20 +569,22 @@ pub fn test_audio_capture() -> Result<(), String> {
 }
 
 /// Test audio capture by printing audio levels for a few seconds
-pub fn test_audio_levels() -> Result<(), String> {
+pub fn test_audio_levels(requested_device: Option<&str>) -> Result<(), String> {
     use std::io::Write;
 
     let host = cpal::default_host();
 
-    // Auto-detect monitor source
-    if let Ok(monitor) = get_pulseaudio_monitor() {
-        println!("Found monitor source: {monitor}");
-        std::env::set_var("PULSE_SOURCE", &monitor);
-    } else {
-        println!("No monitor source found, using default input");
+    // Auto-detect monitor source unless the user picked a specific device
+    if requested_device.is_none() {
+        if let Ok(monitor) = get_pulseaudio_monitor() {
+            println!("Found monitor source: {monitor}");
+            std::env::set_var("PULSE_SOURCE", &monitor);
+        } else {
+            println!("No monitor source found, using default input");
+        }
     }
 
-    let device = find_audio_device(&host)?;
+    let device = find_audio_device(&host, requested_device)?;
     let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
     println!("Using device: {name}");
 

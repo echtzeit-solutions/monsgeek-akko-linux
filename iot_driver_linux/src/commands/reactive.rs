@@ -3,7 +3,13 @@
 use super::{setup_interrupt_handler, CmdCtx, CommandResult};
 
 /// Run audio reactive LED mode
-pub fn audio(ctx: &CmdCtx, color_mode: &str, hue: f32, sensitivity: f32) -> CommandResult {
+pub fn audio(
+    ctx: &CmdCtx,
+    led_mode: u8,
+    style: u8,
+    sensitivity: f32,
+    device: Option<String>,
+) -> CommandResult {
     let keyboard = super::open_keyboard(ctx).map_err(|e| format!("Failed to open device: {e}"))?;
 
     println!(
@@ -15,10 +21,11 @@ pub fn audio(ctx: &CmdCtx, color_mode: &str, hue: f32, sensitivity: f32) -> Comm
     let running = setup_interrupt_handler();
 
     let config = iot_driver::audio_reactive::AudioConfig {
-        color_mode: color_mode.to_string(),
-        base_hue: hue,
+        led_mode,
+        style,
         sensitivity,
         smoothing: 0.3,
+        device,
     };
 
     if let Err(e) = iot_driver::audio_reactive::run_audio_reactive(&keyboard, config, running) {
@@ -44,8 +51,8 @@ pub fn audio_test() -> CommandResult {
 }
 
 /// Show real-time audio levels
-pub fn audio_levels() -> CommandResult {
-    if let Err(e) = iot_driver::audio_reactive::test_audio_levels() {
+pub fn audio_levels(device: Option<String>) -> CommandResult {
+    if let Err(e) = iot_driver::audio_reactive::test_audio_levels(device.as_deref()) {
         eprintln!("Audio levels test failed: {e}");
     }
     Ok(())

@@ -414,24 +414,31 @@ pub enum Commands {
     Modes,
 
     // === Audio Commands ===
-    /// Run audio reactive LED mode
+    /// Run audio reactive LED mode (native on-device music visualizer)
     Audio {
-        /// Color mode: spectrum, solid, gradient
-        #[arg(value_enum, short, long, default_value = "spectrum")]
+        /// Visualizer: bars (MusicBars) or patterns (MusicPatterns)
+        #[arg(value_enum, short, long, default_value = "bars")]
         mode: AudioMode,
-        /// Base hue for solid mode (0-360)
+        /// Style variant within the mode (bars: 0-2, patterns: 0-4)
         #[arg(long, default_value = "0")]
-        hue: f32,
+        style: u8,
         /// Sensitivity multiplier (0.5-2.0)
         #[arg(long, default_value = "1.0")]
         sensitivity: f32,
+        /// Capture device (exact name or case-insensitive substring); default auto-detects the system monitor source. See `audio-test` for candidates.
+        #[arg(short, long)]
+        device: Option<String>,
     },
 
     /// Test audio capture (list devices)
     AudioTest,
 
     /// Show real-time audio levels
-    AudioLevels,
+    AudioLevels {
+        /// Capture device (exact name or case-insensitive substring); default auto-detects the system monitor source.
+        #[arg(short, long)]
+        device: Option<String>,
+    },
 
     // === Screen Color Commands ===
     /// Run screen color reactive LED mode (streams average screen color to keyboard)
@@ -628,21 +635,19 @@ pub enum EffectCommands {
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
 pub enum AudioMode {
-    /// Rainbow frequency spectrum visualization
+    /// On-device frequency bars (MusicBars). Styles: 0=Upright, 1=Separate, 2=Intersect
     #[default]
-    Spectrum,
-    /// Single color pulse effect
-    Solid,
-    /// Gradient color effect
-    Gradient,
+    Bars,
+    /// On-device music patterns (MusicPatterns). Styles: 0-4
+    Patterns,
 }
 
 impl AudioMode {
-    pub fn as_str(&self) -> &'static str {
+    /// LED mode byte for this visualizer (MusicBars=22 / MusicPatterns=20).
+    pub fn led_mode(&self) -> u8 {
         match self {
-            AudioMode::Spectrum => "spectrum",
-            AudioMode::Solid => "solid",
-            AudioMode::Gradient => "gradient",
+            AudioMode::Bars => iot_driver::protocol::cmd::LedMode::MusicBars.as_u8(),
+            AudioMode::Patterns => iot_driver::protocol::cmd::LedMode::MusicPatterns.as_u8(),
         }
     }
 }

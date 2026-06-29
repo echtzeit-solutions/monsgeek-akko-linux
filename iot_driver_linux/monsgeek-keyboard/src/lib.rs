@@ -971,6 +971,44 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    /// Select a music-visualizer LED mode (MusicBars / MusicPatterns) with a
+    /// style variant.
+    ///
+    /// These modes carry the style in the **upper nibble** of the option byte
+    /// (`option = style << 4 | dazzle`), which neither [`set_led_with_option`]
+    /// nor [`set_led_params`] can express — they only set the dazzle flag for
+    /// non-UserPicture modes. The host then streams band levels via
+    /// `SET_AUDIO_VIZ` (0x0D); the firmware renders the bars on-device.
+    ///
+    /// [`set_led_with_option`]: Self::set_led_with_option
+    /// [`set_led_params`]: Self::set_led_params
+    pub fn set_music_viz_mode(
+        &self,
+        mode: u8,
+        style: u8,
+        brightness: u8,
+        speed: u8,
+        dazzle: bool,
+    ) -> Result<(), KeyboardError> {
+        let dazzle_flag = if dazzle {
+            led::DAZZLE_ON
+        } else {
+            led::DAZZLE_OFF
+        };
+        let data = [
+            mode,
+            led::SPEED_MAX - speed.min(led::SPEED_MAX), // inverted in protocol
+            brightness.min(led::BRIGHTNESS_MAX),
+            (style << 4) | dazzle_flag,
+            0,
+            0,
+            0,
+        ];
+        self.transport
+            .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)?;
+        Ok(())
+    }
+
     /// Stream per-key colors for real-time effects
     ///
     /// # Arguments
