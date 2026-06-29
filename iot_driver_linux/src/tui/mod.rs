@@ -1503,9 +1503,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, -step); }
                                     InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, -step); }
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
-                                    InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
-                                    InfoTag::AudioVizMode => tabs::audio::cycle_mode(&mut app),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     _ => {}
                                 }
@@ -1576,9 +1574,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepIdle24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Idle24g, step); }
                                     InfoTag::SleepDeepBt => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::DeepBt, step); }
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
-                                    InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
-                                    InfoTag::AudioVizMode => tabs::audio::cycle_mode(&mut app),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     _ => {}
                                 }
@@ -1614,7 +1610,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 InfoTag::FirmwareCheck => app.check_firmware(),
                                 InfoTag::LedColorHex => app.start_hex_input(HexColorTarget::MainLed),
                                 InfoTag::SideColorHex => app.start_hex_input(HexColorTarget::SideLed),
-                                InfoTag::AudioReactive => tabs::audio::toggle(&mut app),
                                 _ => {}
                             }
                         }
@@ -1912,6 +1907,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
 
             // Handle tick updates
             _ = tick_interval.tick() => {
+                // Start/stop audio-reactive to follow the LED mode (music modes).
+                tabs::audio::reconcile(&mut app);
+
                 // Fast tick (~60fps) when an animated panel needs it: the notify
                 // tab, or the audio level meter (Device Info tab while running).
                 let want_ms = {

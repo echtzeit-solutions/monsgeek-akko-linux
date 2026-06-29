@@ -67,6 +67,8 @@ impl AudioState {
 /// Audio capture context — owns the capture + FFT threads and shared state.
 pub struct AudioCapture {
     pub state: Arc<AudioState>,
+    /// Human label of the resolved capture source (for callers to display).
+    pub source_label: String,
     capture_thread: Option<thread::JoinHandle<()>>,
     fft_thread: Option<thread::JoinHandle<()>>,
 }
@@ -85,7 +87,7 @@ impl AudioCapture {
         state
             .sample_rate
             .store(pulse::SAMPLE_RATE, Ordering::SeqCst);
-        println!("Audio input: {}", source.label());
+        let source_label = source.label();
 
         let sample_buffer: Arc<Mutex<Vec<f32>>> =
             Arc::new(Mutex::new(Vec::with_capacity(FFT_SIZE * 2)));
@@ -163,6 +165,7 @@ impl AudioCapture {
 
         Ok(Self {
             state,
+            source_label,
             capture_thread: Some(capture_thread),
             fft_thread: Some(fft_thread),
         })
@@ -354,6 +357,7 @@ pub fn run_audio_reactive(
     // Start audio capture (creates stream and FFT processing thread)
     let audio_capture = AudioCapture::start(config.clone())?;
 
+    println!("Audio input: {}", audio_capture.source_label);
     println!("Audio capture started, enabling music visualizer...");
 
     // Switch the keyboard into its native audio-viz mode (brightness/speed max).

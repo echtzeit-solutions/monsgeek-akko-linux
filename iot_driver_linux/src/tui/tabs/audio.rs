@@ -1,9 +1,10 @@
 //! Audio-reactive state for the Device Info tab.
 //!
-//! Exposes a capture-source selector, visualizer mode/style, and an enable
-//! toggle as Left/Right-cycled settings rows, plus a live level meter panel.
-//! Enabling drives the keyboard's native music visualizer (MusicBars /
-//! MusicPatterns) over `SET_AUDIO_VIZ` — no flash-wearing per-key streaming.
+//! Reactive mode is implied by the keyboard's LED mode: when it is MusicBars
+//! (22) or MusicPatterns (20), the host captures system audio and streams band
+//! levels over `SET_AUDIO_VIZ` so the firmware renders the bars on-device. The
+//! only extra controls are the capture **Source** and the visualizer **Style**;
+//! they (and the level meter) appear only while a music mode is selected.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -17,35 +18,22 @@ use ratatui::Frame;
 
 use super::super::App;
 use crate::audio_reactive::{run_viz_loop, AudioCapture, AudioConfig};
-use crate::protocol::cmd::LedMode;
 use crate::pulse::{self, SourceEntry};
 
-/// Visualizer mode selectable from the UI.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::tui) enum VizMode {
-    Bars,
-    Patterns,
+const MUSIC_BARS: u8 = 22;
+const MUSIC_PATTERNS: u8 = 20;
+
+/// Is this LED mode a host-streamed music visualizer?
+pub(in crate::tui) fn is_music_mode(led_mode: u8) -> bool {
+    led_mode == MUSIC_BARS || led_mode == MUSIC_PATTERNS
 }
 
-impl VizMode {
-    fn led_mode(self) -> u8 {
-        match self {
-            VizMode::Bars => LedMode::MusicBars.as_u8(),
-            VizMode::Patterns => LedMode::MusicPatterns.as_u8(),
-        }
-    }
-    pub(in crate::tui) fn name(self) -> &'static str {
-        match self {
-            VizMode::Bars => "Bars",
-            VizMode::Patterns => "Patterns",
-        }
-    }
-    /// Highest valid style index for this mode.
-    fn max_style(self) -> u8 {
-        match self {
-            VizMode::Bars => 2,
-            VizMode::Patterns => 4,
-        }
+/// Highest valid style index for a music mode (Bars: 0-2, Patterns: 0-4).
+fn style_max(led_mode: u8) -> u8 {
+    match led_mode {
+        MUSIC_BARS => 2,
+        MUSIC_PATTERNS => 4,
+        _ => 0,
     }
 }
 
@@ -69,27 +57,18 @@ impl Drop for AudioRun {
 }
 
 /// Audio-reactive state, held in [`App`].
+#[derive(Default)]
 pub(in crate::tui) struct AudioTabState {
     /// Capture sources; `None` until first enumerated.
     pub sources: Option<Vec<SourceEntry>>,
     pub selected: usize,
-    pub mode: VizMode,
     pub style: u8,
     pub error: Option<String>,
     run: Option<AudioRun>,
-}
-
-impl Default for AudioTabState {
-    fn default() -> Self {
-        Self {
-            sources: None,
-            selected: 0,
-            mode: VizMode::Bars,
-            style: 0,
-            error: None,
-            run: None,
-        }
-    }
+    /// LED mode the active run is streaming for (to detect Bars↔Patterns swaps).
+    active_mode: Option<u8>,
+    /// Last (mode, source) we attempted to start, to avoid retry spam on failure.
+    attempted: Option<(u8, usize)>,
 }
 
 impl AudioTabState {
@@ -129,14 +108,36 @@ pub(in crate::tui) fn ensure_sources_loaded(app: &mut App) {
     }
 }
 
-/// Toggle audio-reactive on/off using the current selection.
-pub(in crate::tui) fn toggle(app: &mut App) {
-    if app.audio.run.is_some() {
-        app.audio.run = None; // Drop stops capture + viz threads
-        app.status_msg = "Audio reactive stopped".to_string();
-    } else {
-        start(app);
+/// Reconcile the audio run with the current LED mode: start streaming when a
+/// music mode is selected, stop when it isn't, and re-apply on Bars↔Patterns
+/// swaps. Called every tick.
+pub(in crate::tui) fn reconcile(app: &mut App) {
+    let mode = app.info.led_mode;
+
+    if !is_music_mode(mode) {
+        if app.audio.run.is_some() {
+            app.audio.run = None;
+            app.status_msg = "Audio reactive stopped".to_string();
+        }
+        app.audio.active_mode = None;
+        app.audio.attempted = None;
+        return;
     }
+
+    if app.audio.run.is_some() {
+        if app.audio.active_mode != Some(mode) {
+            reapply_mode(app, mode);
+            app.audio.active_mode = Some(mode);
+        }
+        return;
+    }
+
+    // Want to run but aren't: attempt once per (mode, source) to avoid spam.
+    if app.audio.attempted == Some((mode, app.audio.selected)) {
+        return;
+    }
+    app.audio.attempted = Some((mode, app.audio.selected));
+    start(app, mode);
 }
 
 /// Cycle the selected capture source by `delta`, restarting if already running.
@@ -146,33 +147,30 @@ pub(in crate::tui) fn cycle_device(app: &mut App, delta: i32) {
         return;
     }
     app.audio.selected = (app.audio.selected as i32 + delta).rem_euclid(len as i32) as usize;
-    if app.audio.run.is_some() {
-        app.audio.run = None;
-        start(app);
-    }
-}
 
-/// Cycle the visualizer mode (Bars/Patterns), reapplying live if running.
-pub(in crate::tui) fn cycle_mode(app: &mut App) {
-    app.audio.mode = match app.audio.mode {
-        VizMode::Bars => VizMode::Patterns,
-        VizMode::Patterns => VizMode::Bars,
-    };
-    if app.audio.style > app.audio.mode.max_style() {
-        app.audio.style = 0;
+    let mode = app.info.led_mode;
+    if is_music_mode(mode) {
+        app.audio.run = None; // drop stops old capture
+        app.audio.attempted = Some((mode, app.audio.selected));
+        start(app, mode);
     }
-    reapply_mode(app);
 }
 
 /// Adjust the visualizer style by `delta` (wrapping within the mode), reapplying
 /// live if running.
 pub(in crate::tui) fn cycle_style(app: &mut App, delta: i32) {
-    let max = app.audio.mode.max_style() as i32 + 1;
+    let mode = app.info.led_mode;
+    let max = style_max(mode) as i32 + 1;
+    if max <= 1 {
+        return;
+    }
     app.audio.style = (app.audio.style as i32 + delta).rem_euclid(max) as u8;
-    reapply_mode(app);
+    if app.audio.run.is_some() {
+        reapply_mode(app, mode);
+    }
 }
 
-fn start(app: &mut App) {
+fn start(app: &mut App, led_mode: u8) {
     let Some(keyboard) = app.keyboard.clone() else {
         app.audio.error = Some("No keyboard connected".to_string());
         return;
@@ -189,7 +187,7 @@ fn start(app: &mut App) {
     };
 
     let config = AudioConfig {
-        led_mode: app.audio.mode.led_mode(),
+        led_mode,
         style: app.audio.style,
         sensitivity: 1.0,
         smoothing: 0.3,
@@ -204,7 +202,7 @@ fn start(app: &mut App) {
         }
     };
 
-    if let Err(e) = keyboard.set_music_viz_mode(config.led_mode, config.style, 4, 4, false) {
+    if let Err(e) = keyboard.set_music_viz_mode(led_mode, app.audio.style, 4, 4, false) {
         app.audio.error = Some(format!("Failed to set visualizer mode: {e}"));
     }
 
@@ -219,6 +217,7 @@ fn start(app: &mut App) {
 
     app.status_msg = format!("Audio reactive: {}", source.label());
     app.audio.error = None;
+    app.audio.active_mode = Some(led_mode);
     app.audio.run = Some(AudioRun {
         capture,
         running,
@@ -226,15 +225,11 @@ fn start(app: &mut App) {
     });
 }
 
-/// Apply the current mode/style to the keyboard if a run is active. The viz
-/// thread keeps streaming band data regardless; only the on-device render mode
-/// changes.
-fn reapply_mode(app: &mut App) {
-    if app.audio.run.is_none() {
-        return;
-    }
+/// Re-send the music mode + current style to the keyboard (used on style change
+/// or Bars↔Patterns swap). The viz thread keeps streaming bands.
+fn reapply_mode(app: &mut App, led_mode: u8) {
     if let Some(kb) = app.keyboard.clone() {
-        let _ = kb.set_music_viz_mode(app.audio.mode.led_mode(), app.audio.style, 4, 4, false);
+        let _ = kb.set_music_viz_mode(led_mode, app.audio.style, 4, 4, false);
     }
 }
 

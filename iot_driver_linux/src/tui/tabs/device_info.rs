@@ -59,10 +59,8 @@ pub(in crate::tui) enum InfoTag {
     SleepIdle24g,
     SleepDeepBt,
     SleepDeep24g,
-    // Audio-reactive (←/→ cycle, like LED mode/profile)
-    AudioReactive,
+    // Audio-reactive (shown only in a music LED mode; ←/→ cycle)
     AudioDevice,
-    AudioVizMode,
     AudioVizStyle,
 }
 
@@ -1403,48 +1401,31 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
         }
     }
 
-    // ── Audio Reactive (←/→ cycle, like LED mode/profile) ──────────────
-    let audio_val = |s: String| Span::styled(format!("< {s} >"), Style::default().fg(Color::Cyan));
-    items.push((
-        InfoTag::Separator,
-        ListItem::new(Line::from(Span::styled(
-            "── Audio Reactive ──",
-            Style::default().fg(Color::DarkGray),
-        ))),
-    ));
-    items.push((
-        InfoTag::AudioReactive,
-        ListItem::new(Line::from(vec![
-            Span::raw("Audio:          "),
-            audio_val(if app.audio.is_running() { "On" } else { "Off" }.to_string()),
-        ])),
-    ));
-    items.push((
-        InfoTag::AudioDevice,
-        ListItem::new(Line::from(vec![
-            Span::raw("Audio Source:   "),
-            audio_val(
-                app.audio
-                    .selected_source_desc()
-                    .unwrap_or("(none)")
-                    .to_string(),
-            ),
-        ])),
-    ));
-    items.push((
-        InfoTag::AudioVizMode,
-        ListItem::new(Line::from(vec![
-            Span::raw("Audio Mode:     "),
-            audio_val(app.audio.mode.name().to_string()),
-        ])),
-    ));
-    items.push((
-        InfoTag::AudioVizStyle,
-        ListItem::new(Line::from(vec![
-            Span::raw("Audio Style:    "),
-            audio_val(app.audio.style.to_string()),
-        ])),
-    ));
+    // ── Audio Reactive ── only when a music LED mode is active; the LED Mode
+    // row above already selects MusicBars/MusicPatterns (and thus turns it on).
+    if super::audio::is_music_mode(app.info.led_mode) {
+        let audio_val =
+            |s: String| Span::styled(format!("< {s} >"), Style::default().fg(Color::Cyan));
+        items.push((
+            InfoTag::AudioDevice,
+            ListItem::new(Line::from(vec![
+                Span::raw("Audio Source:   "),
+                audio_val(
+                    app.audio
+                        .selected_source_desc()
+                        .unwrap_or("(none)")
+                        .to_string(),
+                ),
+            ])),
+        ));
+        items.push((
+            InfoTag::AudioVizStyle,
+            ListItem::new(Line::from(vec![
+                Span::raw("Audio Style:    "),
+                audio_val(app.audio.style.to_string()),
+            ])),
+        ));
+    }
 
     // Store tags and build list items
     app.info_tags = items.iter().map(|(tag, _)| *tag).collect();
