@@ -159,16 +159,22 @@ Best for: real-time effects driven by the host — audio visualization, screen c
 | Host needed | Only during upload | Continuous |
 | Use case | Decorative animations | Real-time reactive effects |
 
-### Audio Reactive LEDs (Patched Firmware)
+### Audio Reactive LEDs
 
-Streams audio-reactive colors to the keyboard using system audio capture.
+Drives the keyboard's built-in music visualizer from system audio capture. The
+host computes the frequency spectrum and streams band levels via `SET_AUDIO_VIZ`
+(0x0D); the keyboard renders the bars on-device. Works on stock firmware — no
+patch required, no flash wear.
 
 ```bash
-iot_driver audio                       # Spectrum mode
-iot_driver audio --mode solid --hue 180  # Solid color pulse
-iot_driver audio-test                  # List audio devices
-iot_driver audio-levels                # Monitor audio levels
+iot_driver audio                       # MusicBars (default)
+iot_driver audio --mode patterns --style 2   # MusicPatterns, style 2
+iot_driver audio -d "Built-in"         # pick a capture device (substring match)
+iot_driver audio-test                  # list audio devices
+iot_driver audio-levels                # monitor audio levels
 ```
+
+Styles — bars: `0`=Upright, `1`=Separate, `2`=Intersect; patterns: `0`-`4`.
 
 ### Joystick Mapper
 
