@@ -117,6 +117,14 @@ fn run_screen_color_loop(
         if (r, g, b) != last_color {
             trace!("Screen color: RGB({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
 
+            // Live in-place readout of the calculated color being streamed:
+            // truecolor swatch + hex + rgb.
+            use std::io::Write;
+            print!(
+                "\r  Screen color: \x1b[48;2;{r};{g};{b}m      \x1b[0m  #{r:02X}{g:02X}{b:02X}  rgb({r:>3},{g:>3},{b:>3})  "
+            );
+            let _ = std::io::stdout().flush();
+
             let report = screen_color::build_report(r, g, b);
             // Use send_raw_cmd with the screen color data
             let _ = keyboard.send_raw_cmd(cmd::SET_SCREEN_COLOR, &report[1..8]);
@@ -129,6 +137,7 @@ fn run_screen_color_loop(
         }
     }
 
+    println!(); // end the in-place readout line
     Ok(())
 }
 
