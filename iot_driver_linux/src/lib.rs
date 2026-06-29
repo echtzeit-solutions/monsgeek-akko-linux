@@ -20,6 +20,7 @@ pub mod pcap_analyzer;
 pub mod power_supply;
 pub mod profile;
 pub mod protocol;
+pub mod pulse;
 #[cfg(feature = "screen-capture")]
 pub mod screen_capture;
 pub mod tui;

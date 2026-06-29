@@ -1,7 +1,6 @@
 // Audio Reactive LED Mode
 // Captures system audio and maps frequency spectrum to keyboard RGB colors
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
 use spectrum_analyzer::windows::hann_window;
 use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
@@ -11,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{audio_viz, cmd};
+use crate::pulse;
 use monsgeek_keyboard::KeyboardInterface;
 
 /// Number of frequency bands to analyze
@@ -64,119 +64,95 @@ impl AudioState {
     }
 }
 
-/// Audio capture context - holds the stream and shared state
+/// Audio capture context — owns the capture + FFT threads and shared state.
 pub struct AudioCapture {
     pub state: Arc<AudioState>,
-    _sample_buffer: Arc<Mutex<Vec<f32>>>,
-    _sample_rate: u32,
-    // Note: stream is stored as Box<dyn Any> because cpal::Stream is not Send
-    // It must be dropped on the same thread it was created
-    _stream: Box<dyn std::any::Any>,
+    capture_thread: Option<thread::JoinHandle<()>>,
+    fft_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl AudioCapture {
-    /// Start audio capture
+    /// Start capturing from the resolved PulseAudio source.
+    ///
+    /// Spawns a capture thread (blocking PulseAudio reads → ring buffer) and an
+    /// FFT thread (ring buffer → smoothed bands). Both stop on [`Self::stop`] or
+    /// when the capture is dropped.
     pub fn start(config: AudioConfig) -> Result<Self, String> {
         let state = Arc::new(AudioState::default());
-        let host = cpal::default_host();
 
-        // Auto-detect monitor source for system audio, unless the user picked a
-        // specific device (then we honour their choice without forcing PULSE_SOURCE).
-        if config.device.is_none() {
-            if let Ok(monitor) = get_pulseaudio_monitor() {
-                std::env::set_var("PULSE_SOURCE", &monitor);
-            }
-        }
-
-        // Suppress ALSA warnings about unavailable plugins (mostly works)
-        std::env::set_var("ALSA_DEBUG", "0");
-
-        // Suppress libasound stderr output - these warnings are harmless
-        // Note: ALSA enumeration will still print some warnings to stderr
-        eprintln!("(Ignoring ALSA warnings below - they're harmless)");
-
-        let audio_device = find_audio_device(&host, config.device.as_deref())?;
-        let device_name = audio_device
-            .name()
-            .unwrap_or_else(|_| "Unknown".to_string());
-        let audio_config = audio_device
-            .default_input_config()
-            .map_err(|e| format!("Failed to get audio config: {e}"))?;
-
-        let sample_rate = audio_config.sample_rate().0;
-        state.sample_rate.store(sample_rate, Ordering::SeqCst);
-        println!(
-            "Audio input: {device_name} ({sample_rate} Hz, {} ch)",
-            audio_config.channels()
-        );
+        let source = pulse::resolve_source(config.device.as_deref())?;
+        let simple = pulse::open_record(&source.name)?;
+        state
+            .sample_rate
+            .store(pulse::SAMPLE_RATE, Ordering::SeqCst);
+        println!("Audio input: {}", source.label());
 
         let sample_buffer: Arc<Mutex<Vec<f32>>> =
             Arc::new(Mutex::new(Vec::with_capacity(FFT_SIZE * 2)));
-        let sample_buffer_clone = Arc::clone(&sample_buffer);
-
-        let stream = audio_device
-            .build_input_stream(
-                &audio_config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut buffer) = sample_buffer_clone.lock() {
-                        buffer.extend_from_slice(data);
-                        if buffer.len() > FFT_SIZE * 4 {
-                            let drain_to = buffer.len() - FFT_SIZE * 2;
-                            buffer.drain(..drain_to);
-                        }
-                    }
-                },
-                |err| {
-                    eprintln!("Audio stream error: {err}");
-                },
-                None,
-            )
-            .map_err(|e| format!("Failed to build audio stream: {e}"))?;
-
-        stream
-            .play()
-            .map_err(|e| format!("Failed to start audio stream: {e}"))?;
         state.running.store(true, Ordering::SeqCst);
 
-        // Start FFT processing thread
-        let state_clone = Arc::clone(&state);
-        let buffer_clone = Arc::clone(&sample_buffer);
-        thread::spawn(move || {
+        // Capture thread: blocking PulseAudio reads → ring buffer.
+        let capture_state = Arc::clone(&state);
+        let capture_buffer = Arc::clone(&sample_buffer);
+        let capture_thread = thread::spawn(move || {
+            // ~6 ms of audio per read: low latency while still polling `running`.
+            const READ_SAMPLES: usize = 256;
+            let mut byte_buf = vec![0u8; READ_SAMPLES * 4];
+            while capture_state.running.load(Ordering::SeqCst) {
+                if simple.read(&mut byte_buf).is_err() {
+                    break;
+                }
+                if let Ok(mut buffer) = capture_buffer.lock() {
+                    buffer.extend(
+                        byte_buf
+                            .chunks_exact(4)
+                            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+                    );
+                    if buffer.len() > FFT_SIZE * 4 {
+                        let drain_to = buffer.len() - FFT_SIZE * 2;
+                        buffer.drain(..drain_to);
+                    }
+                }
+            }
+        });
+
+        // FFT thread: ring buffer → smoothed bands.
+        let smoothing = config.smoothing;
+        let fft_state = Arc::clone(&state);
+        let fft_buffer = Arc::clone(&sample_buffer);
+        let fft_thread = thread::spawn(move || {
             let mut smoothed_bands = [0.0f32; NUM_BANDS];
             let process_interval = Duration::from_millis(16);
             let mut loop_count = 0u32;
 
-            while state_clone.running.load(Ordering::SeqCst) {
+            while fft_state.running.load(Ordering::SeqCst) {
                 let start = Instant::now();
                 loop_count += 1;
 
-                let (samples, buf_len): (Vec<f32>, usize) = {
-                    if let Ok(buffer) = buffer_clone.lock() {
+                let (samples, buf_len): (Vec<f32>, usize) = match fft_buffer.lock() {
+                    Ok(buffer) => {
                         let len = buffer.len();
                         if len >= FFT_SIZE {
                             (buffer[len - FFT_SIZE..].to_vec(), len)
                         } else {
                             (vec![0.0; FFT_SIZE], len)
                         }
-                    } else {
-                        (vec![0.0; FFT_SIZE], 0)
                     }
+                    Err(_) => (vec![0.0; FFT_SIZE], 0),
                 };
 
-                // Debug: check audio data every 5 seconds (300 loops at ~60fps)
+                // Debug: check audio data every ~5 seconds
                 if loop_count.is_multiple_of(300) && std::env::var("RUST_LOG").is_ok() {
                     let max_sample = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
                     eprintln!("[Audio] buf={buf_len}, peak={max_sample:.3}");
                 }
 
-                let raw_bands = analyze_spectrum(&samples, sample_rate);
-
+                let raw_bands = analyze_spectrum(&samples, pulse::SAMPLE_RATE);
                 for i in 0..NUM_BANDS {
-                    smoothed_bands[i] = smoothed_bands[i] * config.smoothing
-                        + raw_bands[i] * (1.0 - config.smoothing);
+                    smoothed_bands[i] =
+                        smoothed_bands[i] * smoothing + raw_bands[i] * (1.0 - smoothing);
                 }
-
-                state_clone.set_bands(smoothed_bands);
+                fft_state.set_bands(smoothed_bands);
 
                 let elapsed = start.elapsed();
                 if elapsed < process_interval {
@@ -187,20 +163,31 @@ impl AudioCapture {
 
         Ok(Self {
             state,
-            _sample_buffer: sample_buffer,
-            _sample_rate: sample_rate,
-            _stream: Box::new(stream),
+            capture_thread: Some(capture_thread),
+            fft_thread: Some(fft_thread),
         })
     }
 
-    /// Stop audio capture
+    /// Signal the capture + FFT threads to stop (non-blocking).
     pub fn stop(&self) {
         self.state.stop();
     }
 
-    /// Get current spectrum bands
+    /// Get current spectrum bands.
     pub fn get_bands(&self) -> [f32; NUM_BANDS] {
         self.state.get_bands()
+    }
+}
+
+impl Drop for AudioCapture {
+    fn drop(&mut self) {
+        self.state.stop();
+        if let Some(h) = self.capture_thread.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.fft_thread.take() {
+            let _ = h.join();
+        }
     }
 }
 
@@ -341,21 +328,14 @@ fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
     bands
 }
 
-/// List available audio input devices
+/// List available capture sources as human labels (description + `[monitor]` tag
+/// + raw name). Returns an empty list if PulseAudio enumeration fails.
 pub fn list_audio_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    let mut devices = Vec::new();
-
-    // Try to find loopback/monitor devices first
-    if let Ok(input_devices) = host.input_devices() {
-        for device in input_devices {
-            if let Ok(name) = device.name() {
-                devices.push(name);
-            }
-        }
-    }
-
-    devices
+    pulse::list_sources()
+        .unwrap_or_default()
+        .iter()
+        .map(pulse::SourceEntry::label)
+        .collect()
 }
 
 /// Run audio reactive mode (blocking).
@@ -431,215 +411,45 @@ pub fn run_viz_loop(
     }
 }
 
-/// Select an input device by exact name, falling back to a case-insensitive
-/// substring match. Errors list the available devices when nothing (or more
-/// than one thing) matches.
-fn select_device_by_name(host: &cpal::Host, requested: &str) -> Result<cpal::Device, String> {
-    let req_lower = requested.to_lowercase();
-    let mut substring_matches: Vec<cpal::Device> = Vec::new();
-
-    for device in host
-        .input_devices()
-        .map_err(|e| format!("Failed to enumerate input devices: {e}"))?
-    {
-        let Ok(name) = device.name() else { continue };
-        if name == requested {
-            return Ok(device);
-        }
-        if name.to_lowercase().contains(&req_lower) {
-            substring_matches.push(device);
-        }
-    }
-
-    match substring_matches.len() {
-        1 => Ok(substring_matches.into_iter().next().unwrap()),
-        0 => Err(format!(
-            "No audio input device matches '{requested}'. Available devices:\n{}",
-            available_devices_list()
-        )),
-        _ => {
-            let names: Vec<String> = substring_matches
-                .iter()
-                .filter_map(|d| d.name().ok())
-                .collect();
-            Err(format!(
-                "'{requested}' is ambiguous, matches {} devices:\n  - {}",
-                names.len(),
-                names.join("\n  - ")
-            ))
-        }
-    }
-}
-
-/// Format the available input devices as an indented bullet list for error messages.
-fn available_devices_list() -> String {
-    let devices = list_audio_devices();
-    if devices.is_empty() {
-        "  (none found)".to_string()
-    } else {
-        format!("  - {}", devices.join("\n  - "))
-    }
-}
-
-/// Find the best audio device for capture. When `requested` is set, select that
-/// device by name; otherwise auto-detect a monitor/loopback source.
-fn find_audio_device(host: &cpal::Host, requested: Option<&str>) -> Result<cpal::Device, String> {
-    if let Some(name) = requested {
-        return select_device_by_name(host, name);
-    }
-
-    // On Linux with PipeWire/PulseAudio, try to use the monitor source
-    // This is done by setting PULSE_SOURCE environment variable
-    if let Ok(monitor) = get_pulseaudio_monitor() {
-        tracing::info!("Setting PULSE_SOURCE={}", monitor);
-        std::env::set_var("PULSE_SOURCE", &monitor);
-    }
-
-    // Try to find monitor/loopback devices in cpal's device list
-    if let Ok(devices) = host.input_devices() {
-        for device in devices {
-            if let Ok(name) = device.name() {
-                let name_lower = name.to_lowercase();
-                // PulseAudio/PipeWire monitor sources
-                if name_lower.contains("monitor") || name_lower.contains("loopback") {
-                    tracing::info!("Found monitor device: {}", name);
-                    return Ok(device);
-                }
-            }
-        }
-    }
-
-    // Try "pulse" device first (PulseAudio/PipeWire with PULSE_SOURCE set)
-    if let Ok(devices) = host.input_devices() {
-        for device in devices {
-            if let Ok(name) = device.name() {
-                if name == "pulse" || name == "pipewire" {
-                    tracing::info!("Using {} device with monitor source", name);
-                    return Ok(device);
-                }
-            }
-        }
-    }
-
-    // Fall back to default input device
-    host.default_input_device()
-        .ok_or_else(|| "No audio input device found".to_string())
-}
-
-/// Get the PulseAudio/PipeWire monitor source name
-fn get_pulseaudio_monitor() -> Result<String, String> {
-    // Run: pactl list sources short | grep monitor
-    let output = std::process::Command::new("pactl")
-        .args(["list", "sources", "short"])
-        .output()
-        .map_err(|e| format!("Failed to run pactl: {e}"))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 {
-            let source_name = parts[1];
-            if source_name.contains(".monitor") {
-                return Ok(source_name.to_string());
-            }
-        }
-    }
-
-    Err("No monitor source found".to_string())
-}
-
-/// Simple test function to verify audio capture works
+/// Resolve the default capture source and confirm it opens.
 pub fn test_audio_capture() -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = find_audio_device(&host, None)?;
-    let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-
-    println!("Audio device: {name}");
-
-    let config = device
-        .default_input_config()
-        .map_err(|e| format!("Config error: {e}"))?;
-
-    println!("Sample rate: {} Hz", config.sample_rate().0);
-    println!("Channels: {}", config.channels());
-    println!("Sample format: {:?}", config.sample_format());
-
+    let source = pulse::resolve_source(None)?;
+    println!("Capture source: {}", source.label());
+    println!("Format: {} Hz, mono f32", pulse::SAMPLE_RATE);
+    let _simple = pulse::open_record(&source.name)?;
+    println!("Stream opened OK.");
     Ok(())
 }
 
-/// Test audio capture by printing audio levels for a few seconds
+/// Capture from a source and print a per-second peak level meter for 5 seconds.
 pub fn test_audio_levels(requested_device: Option<&str>) -> Result<(), String> {
     use std::io::Write;
 
-    let host = cpal::default_host();
+    let source = pulse::resolve_source(requested_device)?;
+    println!("Using source: {}", source.label());
+    println!("Format: {} Hz, mono f32", pulse::SAMPLE_RATE);
 
-    // Auto-detect monitor source unless the user picked a specific device
-    if requested_device.is_none() {
-        if let Ok(monitor) = get_pulseaudio_monitor() {
-            println!("Found monitor source: {monitor}");
-            std::env::set_var("PULSE_SOURCE", &monitor);
-        } else {
-            println!("No monitor source found, using default input");
-        }
-    }
-
-    let device = find_audio_device(&host, requested_device)?;
-    let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-    println!("Using device: {name}");
-
-    let config = device
-        .default_input_config()
-        .map_err(|e| format!("Config error: {e}"))?;
-
-    let sample_rate = config.sample_rate().0;
-    println!(
-        "Sample rate: {} Hz, channels: {}",
-        sample_rate,
-        config.channels()
-    );
-
-    let callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let callback_count_clone = Arc::clone(&callback_count);
-    let max_sample = Arc::new(Mutex::new(0.0f32));
-    let max_sample_clone = Arc::clone(&max_sample);
-
-    let stream = device
-        .build_input_stream(
-            &config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                callback_count_clone.fetch_add(1, Ordering::Relaxed);
-                // Find max absolute sample value
-                let local_max = data.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                if let Ok(mut max) = max_sample_clone.lock() {
-                    if local_max > *max {
-                        *max = local_max;
-                    }
-                }
-            },
-            |err| {
-                eprintln!("Audio error: {err}");
-            },
-            None,
-        )
-        .map_err(|e| format!("Failed to build stream: {e}"))?;
-
-    stream.play().map_err(|e| format!("Failed to play: {e}"))?;
+    let simple = pulse::open_record(&source.name)?;
 
     println!("\nListening for 5 seconds...");
+    const READ_SAMPLES: usize = 882; // ~20 ms at 44.1 kHz
+    let mut byte_buf = vec![0u8; READ_SAMPLES * 4];
     for i in 0..5 {
-        std::thread::sleep(Duration::from_secs(1));
-        let callbacks = callback_count.load(Ordering::Relaxed);
-        let peak = *max_sample.lock().unwrap();
-        print!(
-            "  Second {}: {} callbacks, peak: {:.4}",
-            i + 1,
-            callbacks,
-            peak
-        );
-        // Visual level meter
+        let mut peak = 0.0f32;
+        let mut reads = 0u32;
+        let second_start = Instant::now();
+        while second_start.elapsed() < Duration::from_secs(1) {
+            simple
+                .read(&mut byte_buf)
+                .map_err(|e| format!("PulseAudio read failed: {e}"))?;
+            reads += 1;
+            for c in byte_buf.chunks_exact(4) {
+                let s = f32::from_le_bytes([c[0], c[1], c[2], c[3]]).abs();
+                peak = peak.max(s);
+            }
+        }
         let bars = (peak * 50.0).min(50.0) as usize;
-        print!(" [");
+        print!("  Second {}: {reads} reads, peak: {peak:.4} [", i + 1);
         for _ in 0..bars {
             print!("#");
         }
@@ -648,15 +458,7 @@ pub fn test_audio_levels(requested_device: Option<&str>) -> Result<(), String> {
         }
         println!("]");
         std::io::stdout().flush().ok();
-
-        // Reset peak for next second
-        *max_sample.lock().unwrap() = 0.0;
     }
-
-    drop(stream);
-    println!(
-        "\nDone. Total callbacks: {}",
-        callback_count.load(Ordering::Relaxed)
-    );
+    println!("\nDone.");
     Ok(())
 }
