@@ -153,9 +153,61 @@ fn run_screen_color_loop(
 pub mod pipewire_capture {
     use super::*;
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
-    use ashpd::desktop::PersistMode;
+    use ashpd::desktop::{PersistMode, Session};
 
     use crate::settings::Settings;
+
+    /// App identity reported to the XDG portal via the host Registry. KDE shows
+    /// this in the "sharing contents to …" picker/tray (instead of blank), and
+    /// the ScreenCast restore token is namespaced to it — so a stable id is what
+    /// makes the saved token actually match on later runs.
+    const APP_ID: &str = "com.monsgeek.iot_driver";
+
+    /// A live screencast session: held for the capture's lifetime so the portal
+    /// stream stays valid, and explicitly closed on teardown. Dropping the Rust
+    /// handle alone does NOT close the session (ashpd shares one cached D-Bus
+    /// connection), so leaving it open leaks the stream and breaks re-entry —
+    /// the next request restored a stale/black stream.
+    pub struct CaptureSession {
+        _screencast: Screencast<'static>,
+        session: Session<'static, Screencast<'static>>,
+    }
+
+    impl CaptureSession {
+        /// Close the portal session (releases the PipeWire node compositor-side).
+        pub async fn close(self) {
+            if let Err(e) = self.session.close().await {
+                tracing::debug!("screencast session close: {e}");
+            }
+        }
+    }
+
+    /// Tell the portal who we are, so the picker/tray show a name and the restore
+    /// token is keyed to a stable app id. Best-effort: older portals lack the
+    /// host Registry interface, in which case this is a harmless no-op.
+    async fn register_app_id(screencast: &Screencast<'_>) {
+        use std::collections::HashMap;
+
+        use ashpd::zbus::zvariant::Value;
+
+        // `screencast` derefs (ashpd Proxy → zbus Proxy) to the shared connection
+        // ashpd uses for the actual screencast request, which is exactly the
+        // connection the portal must associate the app id with.
+        let opts: HashMap<&str, Value> = HashMap::new();
+        let res = screencast
+            .connection()
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.host.portal.Registry"),
+                "Register",
+                &(APP_ID, opts),
+            )
+            .await;
+        if let Err(e) = res {
+            tracing::debug!("portal app-id Register unavailable: {e}");
+        }
+    }
 
     /// Start screen capture using XDG ScreenCast portal + PipeWire.
     ///
@@ -164,11 +216,19 @@ pub mod pipewire_capture {
     /// time, even across app restarts; the token returned by the compositor is
     /// saved back to `settings.toml`. (`PersistMode::Application` would be
     /// dropped by the compositor when the process exits, re-prompting next run.)
-    pub async fn start_capture(state: Arc<ScreenColorState>, fps: u32) -> Result<(), String> {
+    ///
+    /// Returns the [`CaptureSession`] — keep it alive while capturing and
+    /// `close()` it when done.
+    pub async fn start_capture(
+        state: Arc<ScreenColorState>,
+        fps: u32,
+    ) -> Result<CaptureSession, String> {
         // 1. Request screen cast via XDG portal
-        let screencast = Screencast::new()
+        let screencast: Screencast<'static> = Screencast::new()
             .await
             .map_err(|e| format!("Failed to create screencast portal: {e}"))?;
+
+        register_app_id(&screencast).await;
 
         let session = screencast
             .create_session()
@@ -225,7 +285,10 @@ pub mod pipewire_capture {
             }
         });
 
-        Ok(())
+        Ok(CaptureSession {
+            _screencast: screencast,
+            session,
+        })
     }
 
     /// Run PipeWire capture loop (blocking)
@@ -439,18 +502,19 @@ pub async fn run_screen_color_mode(
 
     // Start PipeWire capture (requests permission via portal)
     println!("Requesting screen capture permission...");
-    pipewire_capture::start_capture(state.clone(), fps).await?;
+    let capture = pipewire_capture::start_capture(state.clone(), fps).await?;
 
     // Give PipeWire time to start
     std::thread::sleep(Duration::from_millis(500));
 
     // Run the color streaming loop (blocking)
     println!("Streaming screen colors to keyboard...");
-    run_screen_color_loop(keyboard, &state, running, true)?;
+    let result = run_screen_color_loop(keyboard, &state, running, true);
 
     state.stop();
+    capture.close().await;
     println!("Screen color mode stopped");
-    Ok(())
+    result
 }
 
 /// Synchronous wrapper for running screen color mode
@@ -489,19 +553,25 @@ pub fn spawn_for_tui(
                 return;
             }
         };
-        // Portal + PipeWire setup is async; the capture itself runs on its own
-        // thread spawned inside start_capture, so the runtime can be dropped after.
-        if let Err(e) = rt.block_on(pipewire_capture::start_capture(thread_state.clone(), fps)) {
-            tracing::error!("screen capture: {e}");
-            thread_running.store(false, Ordering::SeqCst);
-            return;
-        }
-        drop(rt);
+        // Portal + PipeWire setup is async. Keep the runtime AND the returned
+        // session alive for the whole capture so the portal stream stays valid;
+        // close the session at the end so re-entering screen mode gets a fresh
+        // stream instead of a stale/black one.
+        let capture = match rt.block_on(pipewire_capture::start_capture(thread_state.clone(), fps))
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("screen capture: {e}");
+                thread_running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
 
         // Give PipeWire a moment to negotiate the format before streaming.
         std::thread::sleep(Duration::from_millis(300));
         let _ = run_screen_color_loop(&keyboard, &thread_state, thread_running, false);
         thread_state.stop();
+        rt.block_on(capture.close());
     });
 
     (state, running)

@@ -67,8 +67,6 @@ pub(in crate::tui) struct AudioTabState {
     pub style: u8,
     /// Target update rate (Hz) — CPU vs fidelity.
     pub update_hz: u32,
-    /// Use a solid color (the LED color) instead of the firmware rainbow cycle.
-    pub solid_color: bool,
     pub error: Option<String>,
     run: Option<AudioRun>,
     /// LED mode the active run is streaming for (to detect Bars↔Patterns swaps).
@@ -84,7 +82,6 @@ impl Default for AudioTabState {
             selected: 0,
             style: 0,
             update_hz: 50,
-            solid_color: false,
             error: None,
             run: None,
             active_mode: None,
@@ -276,11 +273,11 @@ fn start(app: &mut App, led_mode: u8) {
     });
 }
 
-/// Solid color (the LED color) when enabled, else None for the firmware rainbow.
+/// Visualizer color: the firmware rainbow cycle when the keyboard's **Dazzle**
+/// flag is on, else a solid color (the current LED color). Tying it to Dazzle
+/// reuses the existing flag instead of a separate audio toggle.
 fn viz_color(app: &App) -> Option<(u8, u8, u8)> {
-    app.audio
-        .solid_color
-        .then_some((app.info.led_r, app.info.led_g, app.info.led_b))
+    (!app.info.led_dazzle).then_some((app.info.led_r, app.info.led_g, app.info.led_b))
 }
 
 /// Re-send the music mode + current style/color to the keyboard (used on style,
@@ -291,11 +288,11 @@ fn reapply_mode(app: &mut App, led_mode: u8) {
     }
 }
 
-/// Toggle solid color vs the built-in rainbow, applied live if running.
-pub(in crate::tui) fn toggle_color(app: &mut App) {
-    app.audio.solid_color = !app.audio.solid_color;
+/// Reapply the music viz mode if one is active — call after the Dazzle flag or
+/// LED color changes (they select rainbow vs solid). No-op otherwise.
+pub(in crate::tui) fn reapply_if_active(app: &mut App) {
     let mode = app.info.led_mode;
-    if app.audio.run.is_some() {
+    if is_music_mode(mode) && app.audio.run.is_some() {
         reapply_mode(app, mode);
     }
 }

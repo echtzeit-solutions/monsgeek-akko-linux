@@ -63,7 +63,6 @@ pub(in crate::tui) enum InfoTag {
     AudioDevice,
     AudioVizStyle,
     AudioRate,
-    AudioColor,
     // Screen-reactive (shown only in ScreenSync mode; ←/→ cycle)
     ScreenRate,
     // UserPicture (mode 13): which stored picture layer to display (←/→ cycle)
@@ -1157,20 +1156,8 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
                 sel_span(format!("{} Hz", app.audio.update_hz)),
             ])),
         ));
-        items.push((
-            InfoTag::AudioColor,
-            ListItem::new(Line::from(vec![
-                Span::raw("Audio Color:    "),
-                sel_span(
-                    if app.audio.solid_color {
-                        "Solid (LED color)"
-                    } else {
-                        "Rainbow"
-                    }
-                    .to_string(),
-                ),
-            ])),
-        ));
+        // Color (rainbow vs solid) is tied to the Dazzle flag below — Dazzle on
+        // = rainbow, off = solid LED color.
     } else if super::screen::is_screen_mode(info.led_mode) {
         items.push((
             InfoTag::ScreenRate,

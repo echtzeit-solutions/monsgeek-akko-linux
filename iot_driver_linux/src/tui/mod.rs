@@ -1491,7 +1491,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::LedRed => { let r = RGB_SPINNER.decrement_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
                                     InfoTag::LedGreen => { let g = RGB_SPINNER.decrement_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
                                     InfoTag::LedBlue => { let b = RGB_SPINNER.decrement_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
-                                    InfoTag::LedDazzle => app.toggle_dazzle(),
+                                    InfoTag::LedDazzle => { app.toggle_dazzle(); tabs::audio::reapply_if_active(&mut app); }
                                     InfoTag::SideMode => app.set_side_mode(app.info.side_mode.saturating_sub(1)),
                                     InfoTag::SideBrightness => app.set_side_brightness(BRIGHTNESS_SPINNER.decrement_u8(app.info.side_brightness, coarse)),
                                     InfoTag::SideSpeed => {
@@ -1513,7 +1513,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, -1),
-                                    InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
                                     InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, -1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 3) % 4;
@@ -1569,7 +1568,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::LedRed => { let r = RGB_SPINNER.increment_u8(app.info.led_r, coarse); app.set_color(r, app.info.led_g, app.info.led_b); }
                                     InfoTag::LedGreen => { let g = RGB_SPINNER.increment_u8(app.info.led_g, coarse); app.set_color(app.info.led_r, g, app.info.led_b); }
                                     InfoTag::LedBlue => { let b = RGB_SPINNER.increment_u8(app.info.led_b, coarse); app.set_color(app.info.led_r, app.info.led_g, b); }
-                                    InfoTag::LedDazzle => app.toggle_dazzle(),
+                                    InfoTag::LedDazzle => { app.toggle_dazzle(); tabs::audio::reapply_if_active(&mut app); }
                                     InfoTag::SideMode => app.set_side_mode((app.info.side_mode + 1).min(cmd::LED_MODE_MAX)),
                                     InfoTag::SideBrightness => app.set_side_brightness(BRIGHTNESS_SPINNER.increment_u8(app.info.side_brightness, coarse)),
                                     InfoTag::SideSpeed => {
@@ -1591,7 +1590,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, 1),
-                                    InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
                                     InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, 1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 1) % 4;
