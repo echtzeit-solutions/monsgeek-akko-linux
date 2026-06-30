@@ -19,6 +19,16 @@ const NUM_BANDS: usize = 8;
 /// FFT sample size (must be power of 2)
 const FFT_SIZE: usize = 1024;
 
+/// AGC release per FFT frame (~2s time constant at the ~60Hz FFT rate). The
+/// loudness reference follows peaks instantly and decays slowly, so quiet
+/// passages render low instead of being renormalized to full scale every frame.
+const AGC_RELEASE: f32 = 0.992;
+/// Floor for the AGC reference, so near-silence isn't amplified to full scale.
+/// Tuned to the raw weighted-magnitude scale (loud music peaks ~2-7).
+const AGC_FLOOR: f32 = 0.3;
+/// Output shaping curve (<1 lifts low values for visibility).
+const LEVEL_CURVE: f32 = 0.7;
+
 /// Audio reactive state shared between threads
 pub struct AudioState {
     /// Current frequency band magnitudes (0.0 - 1.0)
@@ -126,10 +136,12 @@ impl AudioCapture {
 
         // FFT thread: ring buffer → smoothed bands.
         let smoothing = config.smoothing;
+        let sensitivity = config.sensitivity;
         let fft_state = Arc::clone(&state);
         let fft_buffer = Arc::clone(&sample_buffer);
         let fft_thread = thread::spawn(move || {
             let mut smoothed_bands = [0.0f32; NUM_BANDS];
+            let mut peak_ref = 0.0f32; // AGC loudness reference (peak follower)
             let process_interval = Duration::from_millis(16);
             let mut loop_count = 0u32;
             let mut rate_count = 0u32;
@@ -168,9 +180,22 @@ impl AudioCapture {
                 }
 
                 let raw_bands = analyze_spectrum(&samples, pulse::SAMPLE_RATE);
+
+                // AGC: a cross-frame peak follower (instant attack, slow release)
+                // gives an absolute-ish loudness reference, so quiet passages
+                // render low instead of being renormalized to full each frame.
+                let frame_max = raw_bands.iter().copied().fold(0.0f32, f32::max);
+                peak_ref = if frame_max > peak_ref {
+                    frame_max
+                } else {
+                    peak_ref * AGC_RELEASE
+                };
+                let reference = peak_ref.max(AGC_FLOOR);
+
                 for i in 0..NUM_BANDS {
-                    smoothed_bands[i] =
-                        smoothed_bands[i] * smoothing + raw_bands[i] * (1.0 - smoothing);
+                    let norm = (raw_bands[i] / reference * sensitivity).clamp(0.0, 1.0);
+                    let shaped = norm.powf(LEVEL_CURVE);
+                    smoothed_bands[i] = smoothed_bands[i] * smoothing + shaped * (1.0 - smoothing);
                 }
                 fft_state.set_bands(smoothed_bands);
 
@@ -240,15 +265,15 @@ impl Default for AudioConfig {
     }
 }
 
-/// Expand the analyzed [`NUM_BANDS`] normalized magnitudes (0.0-1.0) into the
-/// keyboard's 16 audio-viz levels (0-[`audio_viz::MAX_LEVEL`]). Each analysis
-/// band maps to two adjacent device bands.
-fn bands_to_viz_levels(bands: &[f32; NUM_BANDS], sensitivity: f32) -> [u8; audio_viz::NUM_BANDS] {
+/// Expand the analyzed [`NUM_BANDS`] normalized magnitudes (0.0-1.0, already
+/// AGC- and sensitivity-scaled) into the keyboard's 16 audio-viz levels
+/// (0-[`audio_viz::MAX_LEVEL`]). Each analysis band maps to two adjacent
+/// device bands.
+fn bands_to_viz_levels(bands: &[f32; NUM_BANDS]) -> [u8; audio_viz::NUM_BANDS] {
     let mut levels = [0u8; audio_viz::NUM_BANDS];
     for (i, level) in levels.iter_mut().enumerate() {
-        let band = bands[i * NUM_BANDS / audio_viz::NUM_BANDS];
-        let v = (band * sensitivity).clamp(0.0, 1.0);
-        *level = (v * audio_viz::MAX_LEVEL as f32).round() as u8;
+        let band = bands[i * NUM_BANDS / audio_viz::NUM_BANDS].clamp(0.0, 1.0);
+        *level = (band * audio_viz::MAX_LEVEL as f32).round() as u8;
     }
     levels
 }
@@ -323,29 +348,17 @@ fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
         }
     }
 
-    // Find max band value for dynamic normalization
+    // Silence detection on the absolute level.
     let max_band = bands.iter().fold(0.0f32, |a, b| f32::max(a, *b));
-
-    // Minimum threshold for "silence" detection
-    // Below this threshold, treat as silence (dark)
     const MIN_THRESHOLD: f32 = 0.0005;
-
     if max_band < MIN_THRESHOLD {
-        // Silence - return zeros
         return [0.0; NUM_BANDS];
     }
 
-    // Normalize to 0-1 range with dynamic range compression
-    // Use a reference level to make quiet audio still visible
-    let reference_level = max_band.max(0.01); // Minimum reference to avoid over-amplification
-
-    for band in bands.iter_mut() {
-        // Normalize against reference level
-        let normalized = *band / reference_level;
-        // Power curve for more dynamic range (0.5 = square root = more visible low values)
-        *band = normalized.powf(0.5).min(1.0);
-    }
-
+    // Return the raw (absolute) weighted magnitudes. The caller applies a
+    // cross-frame peak-follower AGC so quiet passages render low — normalizing
+    // here against this frame's own max would force the loudest band to full
+    // scale every frame, making quiet music look as loud as loud music.
     bands
 }
 
@@ -385,7 +398,7 @@ pub fn run_audio_reactive(
     thread::sleep(Duration::from_millis(200));
 
     // Stream band levels until stopped.
-    run_viz_loop(keyboard, &audio_capture.state, &config, running);
+    run_viz_loop(keyboard, &audio_capture.state, running);
 
     // Stop audio capture
     audio_capture.stop();
@@ -399,7 +412,6 @@ pub fn run_audio_reactive(
 pub fn run_viz_loop(
     keyboard: &KeyboardInterface,
     audio_state: &Arc<AudioState>,
-    config: &AudioConfig,
     running: Arc<AtomicBool>,
 ) {
     let frame_duration = Duration::from_millis(audio_viz::UPDATE_INTERVAL_MS);
@@ -422,7 +434,7 @@ pub fn run_viz_loop(
         }
 
         let bands = audio_state.get_bands();
-        let levels = bands_to_viz_levels(&bands, config.sensitivity);
+        let levels = bands_to_viz_levels(&bands);
         let report = audio_viz::build_report(&levels);
         // Send the cmd payload (bytes after the leading command byte, through the
         // last band); the transport re-frames + checksums it. Use the no-delay

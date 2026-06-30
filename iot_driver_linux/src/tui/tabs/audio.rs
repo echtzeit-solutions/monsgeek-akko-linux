@@ -213,9 +213,8 @@ fn start(app: &mut App, led_mode: u8) {
     let viz_state = Arc::clone(&capture.state);
     let viz_running = Arc::clone(&running);
     let viz_kb = Arc::clone(&keyboard);
-    let viz_config = config.clone();
     let viz = std::thread::spawn(move || {
-        run_viz_loop(&viz_kb, &viz_state, &viz_config, viz_running);
+        run_viz_loop(&viz_kb, &viz_state, viz_running);
     });
 
     app.status_msg = format!("Audio reactive: {}", source.label());
