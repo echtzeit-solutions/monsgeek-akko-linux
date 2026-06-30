@@ -125,3 +125,7 @@ name = "dongle_throughput_test"
 
 [[example]]
 name = "read_dongle"
+
+[[example]]
+name = "screencast_reentry_test"
+required-features = ["screen-capture"]

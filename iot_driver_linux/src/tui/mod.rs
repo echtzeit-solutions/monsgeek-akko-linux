@@ -1977,6 +1977,11 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
         }
     }
 
+    // Stop reactive modes while the alternate screen is still active, so they
+    // release the keyboard before the terminal is restored.
+    tabs::audio::shutdown_async(&mut app).await;
+    tabs::screen::shutdown_async(&mut app).await;
+
     // Cleanup - stop magnetism reporting and clear all animations
     if let Some(ref keyboard) = app.keyboard {
         if app.depth_monitoring {

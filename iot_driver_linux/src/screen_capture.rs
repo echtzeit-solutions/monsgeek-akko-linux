@@ -109,10 +109,10 @@ fn run_screen_color_loop(
     let update_interval = Duration::from_millis(screen_color::UPDATE_INTERVAL_MS);
     let mut last_color = (0u8, 0u8, 0u8);
 
-    running.store(true, Ordering::SeqCst);
-    state.running.store(true, Ordering::SeqCst);
-
-    while running.load(Ordering::SeqCst) && state.is_running() {
+    // `running` is the authoritative stop signal (cleared by `signal_stop`); do
+    // NOT force it back to `true` here or an in-flight stop would be lost. The
+    // PipeWire thread owns `state.running` and sets it on connect.
+    while running.load(Ordering::SeqCst) {
         let frame_start = Instant::now();
 
         let (r, g, b) = state.get_color();
@@ -160,25 +160,80 @@ pub mod pipewire_capture {
     /// App identity reported to the XDG portal via the host Registry. KDE shows
     /// this in the "sharing contents to …" picker/tray (instead of blank), and
     /// the ScreenCast restore token is namespaced to it — so a stable id is what
-    /// makes the saved token actually match on later runs.
+    /// makes the saved token actually match on later runs. It must match the
+    /// installed `<APP_ID>.desktop` (an independent project id — we are not the
+    /// vendor), or the portal rejects it with "App info not found".
     const APP_ID: &str = "solutions.echtzeit.akko_keyboard_driver";
 
-    /// A live screencast session: held for the capture's lifetime so the portal
-    /// stream stays valid, and explicitly closed on teardown. Dropping the Rust
-    /// handle alone does NOT close the session (ashpd shares one cached D-Bus
-    /// connection), so leaving it open leaks the stream and breaks re-entry —
-    /// the next request restored a stale/black stream.
-    pub struct CaptureSession {
-        _screencast: Screencast<'static>,
-        session: Session<'static, Screencast<'static>>,
+    /// Process-lifetime runtime that owns the ashpd/zbus D-Bus connection.
+    ///
+    /// ashpd caches its session-bus connection in a process-global `OnceLock`,
+    /// and zbus (built with the `tokio` feature) pins that connection's socket
+    /// reader task to whichever runtime is current when the connection is first
+    /// created. If each capture used a fresh runtime and dropped it on teardown
+    /// (as a per-thread `Runtime` does when the worker exits), the cached
+    /// connection would die with the first runtime and every later ScreenSync
+    /// entry would hang on the very first portal call. One never-dropped runtime
+    /// keeps the connection alive across re-entry. (Proven by
+    /// `examples/screencast_reentry_test.rs`.)
+    pub fn portal_runtime() -> &'static tokio::runtime::Runtime {
+        use std::sync::OnceLock;
+        static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        RT.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .thread_name("akko-portal")
+                .build()
+                .expect("build portal runtime")
+        })
     }
 
+    /// A live screencast session: held for the capture's lifetime so the portal
+    /// stream stays valid.
+    pub struct CaptureSession {
+        _screencast: Screencast<'static>,
+        /// Keeps the portal session (and thus the PipeWire stream) alive while
+        /// capturing; closed via [`CaptureSession::shutdown`] on teardown.
+        session: Session<'static, Screencast<'static>>,
+        /// PipeWire frame loop — stopped via `state`, then joined on teardown.
+        pipewire_thread: Option<std::thread::JoinHandle<()>>,
+        /// Shared capture state; cleared to stop the PipeWire loop.
+        state: Arc<ScreenColorState>,
+    }
+
+    /// Compositor-side teardown can lag behind dropping the session; a short
+    /// pause before re-opening with the restore token avoids stale/black streams.
+    pub const REENTRY_SETTLE_MS: u64 = 300;
+
+    /// Upper bound on waiting for the portal `Close` reply. The Close request is
+    /// sent on the first poll (stopping the recording); this only caps how long
+    /// we wait for the acknowledgement before giving up.
+    const CLOSE_TIMEOUT_MS: u64 = 1500;
+
     impl CaptureSession {
-        /// Close the portal session (releases the PipeWire node compositor-side).
-        pub async fn close(self) {
-            if let Err(e) = self.session.close().await {
-                tracing::debug!("screencast session close: {e}");
+        /// Full teardown shared by the CLI and TUI capture paths: stop+join the
+        /// PipeWire frame thread, then issue a bounded portal `Close` so the
+        /// compositor actually stops the screencast (otherwise the tray
+        /// "recording" indicator stays on and the session leaks, breaking
+        /// re-entry — merely dropping the handle does NOT close it, since ashpd
+        /// shares one cached D-Bus connection).
+        ///
+        /// MUST be driven on the **same runtime that created the ashpd/zbus
+        /// connection**. The `Close` request is sent on the first poll (so the
+        /// recording stops even if the reply is slow); the timeout only caps how
+        /// long we wait for that reply, so this can never hang.
+        pub async fn shutdown(mut self) {
+            self.state.stop();
+            if let Some(h) = self.pipewire_thread.take() {
+                let _ = h.join();
             }
+            let close = async {
+                if let Err(e) = self.session.close().await {
+                    tracing::debug!("screencast session close: {e}");
+                }
+            };
+            let _ = tokio::time::timeout(Duration::from_millis(CLOSE_TIMEOUT_MS), close).await;
         }
     }
 
@@ -276,10 +331,9 @@ pub mod pipewire_capture {
         let node_id = streams[0].pipe_wire_node_id();
         trace!("Got PipeWire node ID: {node_id}");
 
-        // 2. Connect to PipeWire and receive frames
-        // This runs in a blocking thread since pipewire-rs uses its own event loop
+        // 2. Connect to PipeWire and receive frames (blocking thread).
         let state_clone = state.clone();
-        std::thread::spawn(move || {
+        let pipewire_thread = std::thread::spawn(move || {
             if let Err(e) = run_pipewire_capture(node_id, state_clone, fps) {
                 tracing::error!("PipeWire capture error: {e}");
             }
@@ -288,6 +342,8 @@ pub mod pipewire_capture {
         Ok(CaptureSession {
             _screencast: screencast,
             session,
+            pipewire_thread: Some(pipewire_thread),
+            state,
         })
     }
 
@@ -485,6 +541,16 @@ pub mod pipewire_capture {
     }
 }
 
+/// Put the keyboard into its host-streamed ScreenSync LED mode (mode 21).
+///
+/// The brightness/speed/color params are fixed: the displayed color comes from
+/// the `SET_SCREEN_COLOR` stream, not from this LED-param command, so only the
+/// mode itself matters. Shared by the CLI ([`run_screen_color_mode`]) and TUI
+/// (`tabs::screen::start`) entry points.
+pub fn set_screen_sync_mode(keyboard: &KeyboardInterface) {
+    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
+}
+
 /// Run screen color reactive mode (async entry point)
 pub async fn run_screen_color_mode(
     keyboard: &KeyboardInterface,
@@ -493,8 +559,7 @@ pub async fn run_screen_color_mode(
 ) -> Result<(), String> {
     println!("Starting screen color mode ({fps}fps)...");
 
-    // Set LED mode to Screen Color (mode 21)
-    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
+    set_screen_sync_mode(keyboard);
     std::thread::sleep(Duration::from_millis(200));
 
     // Create shared state
@@ -511,72 +576,94 @@ pub async fn run_screen_color_mode(
     println!("Streaming screen colors to keyboard...");
     let result = run_screen_color_loop(keyboard, &state, running, true);
 
-    state.stop();
-    capture.close().await;
+    capture.shutdown().await;
     println!("Screen color mode stopped");
     result
 }
 
-/// Synchronous wrapper for running screen color mode
-pub fn run_screen_color_mode_sync(
-    keyboard: &KeyboardInterface,
+/// Handle returned by [`spawn_for_tui`] — shared state plus the worker thread.
+pub struct TuiScreenCapture {
+    pub(crate) state: Arc<ScreenColorState>,
+    /// Cleared by [`signal_stop`] to stop the keyboard streaming loop.
     running: Arc<AtomicBool>,
-    fps: u32,
-) -> Result<(), String> {
-    // Create a new tokio runtime for the async parts
-    let rt =
-        tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+    /// Populated if portal/PipeWire setup fails inside the worker thread.
+    pub(crate) error: Arc<Mutex<Option<String>>>,
+    thread: std::thread::JoinHandle<()>,
+}
 
-    rt.block_on(run_screen_color_mode(keyboard, running, fps))
+impl TuiScreenCapture {
+    /// True when the worker thread has exited (success or failure).
+    pub fn is_finished(&self) -> bool {
+        self.thread.is_finished()
+    }
+
+    /// Request the worker to stop (non-blocking).
+    pub fn signal_stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        self.state.stop();
+    }
+
+    /// Block until the worker exits. Only call from a blocking thread, and only
+    /// when [`is_finished`] is true unless shutting down the whole process.
+    pub fn join(self) {
+        let _ = self.thread.join();
+    }
 }
 
 /// Start screen-reactive mode for the TUI: spawn a background thread that runs
 /// the portal negotiation + PipeWire capture + the keyboard streaming loop, all
-/// silently (no stdout). Returns the shared [`ScreenColorState`] (for the live
-/// color preview) and the `running` flag (clear it to stop). The LED mode is
-/// assumed to already be ScreenSync (set by the caller).
-pub fn spawn_for_tui(
-    keyboard: Arc<KeyboardInterface>,
-    fps: u32,
-) -> (
-    Arc<ScreenColorState>,
-    Arc<AtomicBool>,
-    std::thread::JoinHandle<()>,
-) {
+/// silently (no stdout). The LED mode is assumed to already be ScreenSync
+/// (set by the caller).
+pub fn spawn_for_tui(keyboard: Arc<KeyboardInterface>, fps: u32) -> TuiScreenCapture {
     let state = Arc::new(ScreenColorState::default());
     let running = Arc::new(AtomicBool::new(true));
+    let error = Arc::new(Mutex::new(None));
 
     let thread_state = state.clone();
     let thread_running = running.clone();
-    let handle = std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                tracing::error!("screen capture: runtime: {e}");
-                thread_running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-        // Portal + PipeWire setup is async. Keep the runtime AND the returned
-        // session alive for the whole capture so the portal stream stays valid;
-        // close the session at the end so re-entering screen mode gets a fresh
-        // stream instead of a stale/black one.
+    let thread_error = error.clone();
+    let thread = std::thread::spawn(move || {
+        // Drive the async portal negotiation + teardown on the shared, process-
+        // lifetime portal runtime — NOT a per-capture runtime. The latter would
+        // be dropped when this worker exits, killing ashpd's cached D-Bus
+        // connection and making the next ScreenSync entry hang (see
+        // `portal_runtime`). The blocking streaming loop runs directly on this
+        // std thread, off the runtime's workers.
+        let rt = pipewire_capture::portal_runtime();
+
+        // Portal negotiation only needs `block_on`; the returned session is held
+        // (its background tasks run on the runtime's worker threads) so the
+        // PipeWire stream stays valid during streaming.
         let capture = match rt.block_on(pipewire_capture::start_capture(thread_state.clone(), fps))
         {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("screen capture: {e}");
+                *thread_error.lock().unwrap() = Some(e);
                 thread_running.store(false, Ordering::SeqCst);
                 return;
             }
         };
 
-        // Give PipeWire a moment to negotiate the format before streaming.
-        std::thread::sleep(Duration::from_millis(300));
-        let _ = run_screen_color_loop(&keyboard, &thread_state, thread_running, false);
-        thread_state.stop();
-        rt.block_on(capture.close());
+        // Let PipeWire negotiate the format before streaming; bail fast if the
+        // user already left ScreenSync.
+        if thread_running.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
+        if thread_running.load(Ordering::SeqCst) {
+            let _ = run_screen_color_loop(&keyboard, &thread_state, thread_running, false);
+        }
+
+        // Teardown on the shared runtime — the one that owns the ashpd/zbus
+        // connection — which we intentionally leave running for the next capture.
+        rt.block_on(capture.shutdown());
     });
 
-    (state, running, handle)
+    TuiScreenCapture {
+        state,
+        running,
+        error,
+        thread,
+    }
 }

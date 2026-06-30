@@ -9,6 +9,9 @@
 //! The capture path is gated behind the `screen-capture` Cargo feature (it pulls
 //! in `ashpd` + `pipewire`). Without it, selecting ScreenSync shows a hint.
 
+#[cfg(feature = "screen-capture")]
+use std::time::{Duration, Instant};
+
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -20,31 +23,14 @@ use super::super::App;
 /// ScreenSync LED mode (host-streamed average screen color).
 pub(in crate::tui) const SCREEN_SYNC: u8 = 21;
 
+/// Pause after tearing down a portal session before opening a new one in-process.
+#[cfg(feature = "screen-capture")]
+const REENTRY_COOLDOWN: Duration =
+    Duration::from_millis(crate::screen_capture::pipewire_capture::REENTRY_SETTLE_MS);
+
 /// Is this LED mode the host-streamed screen visualizer?
 pub(in crate::tui) fn is_screen_mode(led_mode: u8) -> bool {
     led_mode == SCREEN_SYNC
-}
-
-#[cfg(feature = "screen-capture")]
-struct ScreenRun {
-    state: std::sync::Arc<crate::screen_capture::ScreenColorState>,
-    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-#[cfg(feature = "screen-capture")]
-impl Drop for ScreenRun {
-    fn drop(&mut self) {
-        use std::sync::atomic::Ordering;
-        self.running.store(false, Ordering::SeqCst);
-        self.state.stop();
-        // Join so the portal session is fully closed before any re-entry starts
-        // a new one — otherwise the new restore races the old session teardown
-        // and the compositor hands back a stale/black stream.
-        if let Some(h) = self.thread.take() {
-            let _ = h.join();
-        }
-    }
 }
 
 /// Screen-reactive state, held in [`App`].
@@ -52,11 +38,11 @@ pub(in crate::tui) struct ScreenTabState {
     /// Capture rate (Hz) — CPU/USB traffic vs fidelity.
     pub rate_hz: u32,
     pub error: Option<String>,
-    /// Whether we've already tried to start for the current mode selection
-    /// (avoids retry spam when capture fails or the feature is absent).
-    attempted: bool,
+    /// Earliest time we may open a new portal session after the last teardown.
     #[cfg(feature = "screen-capture")]
-    run: Option<ScreenRun>,
+    reentry_after: Instant,
+    #[cfg(feature = "screen-capture")]
+    run: Option<crate::screen_capture::TuiScreenCapture>,
 }
 
 impl Default for ScreenTabState {
@@ -64,7 +50,8 @@ impl Default for ScreenTabState {
         Self {
             rate_hz: crate::settings::DEFAULT_RATE_HZ,
             error: None,
-            attempted: false,
+            #[cfg(feature = "screen-capture")]
+            reentry_after: Instant::now(),
             #[cfg(feature = "screen-capture")]
             run: None,
         }
@@ -82,7 +69,7 @@ impl ScreenTabState {
 
     #[cfg(feature = "screen-capture")]
     pub(in crate::tui) fn is_running(&self) -> bool {
-        self.run.is_some()
+        self.run.as_ref().is_some_and(|r| !r.is_finished())
     }
 
     #[cfg(not(feature = "screen-capture"))]
@@ -93,7 +80,10 @@ impl ScreenTabState {
     /// Current averaged screen color, if capturing.
     #[cfg(feature = "screen-capture")]
     fn color(&self) -> Option<(u8, u8, u8)> {
-        self.run.as_ref().map(|r| r.state.get_color())
+        self.run
+            .as_ref()
+            .filter(|r| !r.is_finished())
+            .map(|r| r.state.get_color())
     }
 
     #[cfg(not(feature = "screen-capture"))]
@@ -101,6 +91,60 @@ impl ScreenTabState {
         None
     }
 }
+
+/// Signal the capture worker to stop. Non-blocking — safe on the Tokio runtime.
+#[cfg(feature = "screen-capture")]
+fn request_stop(app: &mut App) {
+    if let Some(run) = &app.screen.run {
+        run.signal_stop();
+    }
+}
+
+/// Reap a finished worker thread. Only joins when the thread has already exited
+/// (instant); never blocks the runtime waiting for portal teardown.
+#[cfg(feature = "screen-capture")]
+fn try_reap_run(app: &mut App) {
+    let Some(run) = app.screen.run.take() else {
+        return;
+    };
+    if !run.is_finished() {
+        app.screen.run = Some(run);
+        return;
+    }
+    if let Some(err) = run.error.lock().unwrap().take() {
+        app.screen.error = Some(err);
+        app.status_msg = "Screen reactive failed".to_string();
+    }
+    run.join();
+    // Always pause before opening a new portal session — compositor teardown
+    // can lag behind the worker thread exit, and skipping this when the user
+    // has already switched back to ScreenSync races the restore token and
+    // leaves capture dead with no tray indicator.
+    app.screen.reentry_after = Instant::now() + REENTRY_COOLDOWN;
+}
+
+/// Stop screen capture if running. Call before restoring the terminal on quit.
+///
+/// We don't wait for the worker's full portal teardown here: the worker, once
+/// signalled, sends the bounded portal Close itself, and in any case process
+/// exit drops the shared D-Bus connection — which makes the compositor stop the
+/// screencast. So we only give the streaming loop a brief moment to stop
+/// touching the keyboard, then detach. Crucially we use NO `spawn_blocking`: an
+/// abandoned blocking task would stall the main runtime's shutdown, since
+/// `Runtime::drop` waits for its blocking pool to drain (that was the multi-
+/// second/indefinite quit hang).
+#[cfg(feature = "screen-capture")]
+pub(in crate::tui) async fn shutdown_async(app: &mut App) {
+    if let Some(run) = app.screen.run.take() {
+        run.signal_stop();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        drop(run); // detach; worker + process exit stop the recording
+        app.status_msg = "Screen reactive stopped".to_string();
+    }
+}
+
+#[cfg(not(feature = "screen-capture"))]
+pub(in crate::tui) async fn shutdown_async(_app: &mut App) {}
 
 /// Reconcile the screen run with the current LED mode: start capturing when
 /// ScreenSync is selected, stop when it isn't. Called every tick.
@@ -111,51 +155,53 @@ pub(in crate::tui) fn reconcile(app: &mut App) {
     {
         if !is_screen {
             if app.screen.run.is_some() {
-                app.screen.run = None;
-                app.status_msg = "Screen reactive stopped".to_string();
+                request_stop(app);
+                try_reap_run(app);
+                if app.screen.run.is_none() {
+                    app.status_msg = "Screen reactive stopped".to_string();
+                }
             }
-            app.screen.attempted = false;
             return;
         }
-        if app.screen.run.is_some() || app.screen.attempted {
+
+        try_reap_run(app);
+
+        // Only start a new capture when no prior run handle remains. A run can
+        // transition to "finished" just after `try_reap_run` checks it; using
+        // `is_running()` here would allow replacing that unreaped handle and
+        // skipping the mandatory re-entry cooldown.
+        if app.screen.run.is_some() {
             return;
         }
-        app.screen.attempted = true;
+        if Instant::now() < app.screen.reentry_after {
+            return;
+        }
+
         start(app);
     }
 
     #[cfg(not(feature = "screen-capture"))]
     {
-        if !is_screen {
-            app.screen.attempted = false;
-            app.screen.error = None;
-        } else if !app.screen.attempted {
-            app.screen.attempted = true;
+        if is_screen && app.screen.error.is_none() {
             app.screen.error =
                 Some("Screen reactive needs a build with --features screen-capture".to_string());
+        } else if !is_screen {
+            app.screen.error = None;
         }
     }
 }
 
 #[cfg(feature = "screen-capture")]
 fn start(app: &mut App) {
-    use crate::protocol::cmd;
-
     let Some(keyboard) = app.keyboard.clone() else {
         app.screen.error = Some("No keyboard connected".to_string());
         return;
     };
 
-    // Ensure the device is in ScreenSync mode before we start streaming colors.
-    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
+    crate::screen_capture::set_screen_sync_mode(&keyboard);
 
-    let (state, running, thread) =
-        crate::screen_capture::spawn_for_tui(keyboard, app.screen.rate_hz);
-    app.screen.run = Some(ScreenRun {
-        state,
-        running,
-        thread: Some(thread),
-    });
+    let capture = crate::screen_capture::spawn_for_tui(keyboard, app.screen.rate_hz);
+    app.screen.run = Some(capture);
     app.screen.error = None;
     app.status_msg = "Screen reactive: capturing screen".to_string();
 }
@@ -173,10 +219,10 @@ pub(in crate::tui) fn cycle_rate(app: &mut App, delta: i32) {
     crate::settings::Settings::update(|s| s.screen_rate_hz = app.screen.rate_hz);
 
     #[cfg(feature = "screen-capture")]
-    if is_screen_mode(app.info.led_mode) && app.screen.run.is_some() {
-        app.screen.run = None; // drop stops capture
-        app.screen.attempted = true;
-        start(app);
+    if is_screen_mode(app.info.led_mode) && app.screen.is_running() {
+        request_stop(app);
+        try_reap_run(app);
+        // reconcile() on the next tick restarts after REENTRY_COOLDOWN.
     }
     app.status_msg = format!("Screen rate: {} Hz", app.screen.rate_hz);
 }
@@ -194,7 +240,6 @@ pub(in crate::tui) fn render_preview(f: &mut Frame, app: &App, area: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    // Fill the panel with the captured color; overlay the rgb readout centered.
     let swatch_style = Style::default().bg(Color::Rgb(r, g, b));
     let blank = " ".repeat(inner.width as usize);
     let mid = inner.height as usize / 2;

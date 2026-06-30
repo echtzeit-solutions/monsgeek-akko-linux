@@ -135,6 +135,15 @@ pub(in crate::tui) fn ensure_sources_loaded(app: &mut App) {
     }
 }
 
+/// Stop audio capture if running. Call before restoring the terminal on quit.
+pub(in crate::tui) async fn shutdown_async(app: &mut App) {
+    if let Some(run) = app.audio.run.take() {
+        let _ = tokio::task::spawn_blocking(move || drop(run)).await;
+        app.audio.active_mode = None;
+        app.audio.attempted = None;
+    }
+}
+
 /// Reconcile the audio run with the current LED mode: start streaming when a
 /// music mode is selected, stop when it isn't, and re-apply on Bars↔Patterns
 /// swaps. Called every tick.
