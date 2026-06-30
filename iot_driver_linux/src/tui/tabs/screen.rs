@@ -29,6 +29,7 @@ pub(in crate::tui) fn is_screen_mode(led_mode: u8) -> bool {
 struct ScreenRun {
     state: std::sync::Arc<crate::screen_capture::ScreenColorState>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(feature = "screen-capture")]
@@ -37,6 +38,12 @@ impl Drop for ScreenRun {
         use std::sync::atomic::Ordering;
         self.running.store(false, Ordering::SeqCst);
         self.state.stop();
+        // Join so the portal session is fully closed before any re-entry starts
+        // a new one — otherwise the new restore races the old session teardown
+        // and the compositor hands back a stale/black stream.
+        if let Some(h) = self.thread.take() {
+            let _ = h.join();
+        }
     }
 }
 
@@ -142,8 +149,13 @@ fn start(app: &mut App) {
     // Ensure the device is in ScreenSync mode before we start streaming colors.
     let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
 
-    let (state, running) = crate::screen_capture::spawn_for_tui(keyboard, app.screen.rate_hz);
-    app.screen.run = Some(ScreenRun { state, running });
+    let (state, running, thread) =
+        crate::screen_capture::spawn_for_tui(keyboard, app.screen.rate_hz);
+    app.screen.run = Some(ScreenRun {
+        state,
+        running,
+        thread: Some(thread),
+    });
     app.screen.error = None;
     app.status_msg = "Screen reactive: capturing screen".to_string();
 }

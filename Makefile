@@ -9,6 +9,7 @@ SYSTEMD_DIR ?= /etc/systemd/system
 BIN_DIR ?= $(PREFIX)/bin
 LIB_DIR ?= $(PREFIX)/lib/akko
 DATA_DIR ?= $(PREFIX)/share/akko
+APP_DIR ?= $(PREFIX)/share/applications
 
 # Project directories
 DRIVER_DIR := iot_driver_linux
@@ -19,7 +20,7 @@ DRIVER_BIN := iot_driver
 LOADER_BIN := akko-loader
 
 .PHONY: all driver driver-debug bpf clean clean-driver clean-bpf \
-        install install-driver install-udev install-bpf install-systemd install-all \
+        install install-driver install-udev install-desktop install-bpf install-systemd install-all \
         uninstall uninstall-driver uninstall-bpf \
         test check fmt help \
         install-tray uninstall-tray run-tray \
@@ -122,8 +123,19 @@ install-systemd:
 	systemctl daemon-reload
 	@echo "Systemd service installed. BPF loader will auto-start on device plug-in."
 
+## Install the XDG desktop entry. Its app id (com.monsgeek.iot_driver) is what
+## the ScreenCast portal needs to register the app: KDE then shows a name in the
+## screen-share picker/tray, and the saved restore token is namespaced to it so
+## screen-reactive mode stops re-prompting. Without this file the portal rejects
+## the app id with "App info not found".
+install-desktop:
+	$(INSTALL) -D -m 644 $(DRIVER_DIR)/packaging/com.monsgeek.iot_driver.desktop \
+		$(APP_DIR)/com.monsgeek.iot_driver.desktop
+	-update-desktop-database $(APP_DIR) 2>/dev/null || true
+	@echo "Installed desktop entry to $(APP_DIR)"
+
 ## Install driver + udev rules (standard install)
-install: install-driver install-udev install-data
+install: install-driver install-udev install-desktop install-data
 	@echo ""
 	@echo "Installation complete!"
 	@echo "Run '$(DRIVER_BIN) --help' to get started."
@@ -132,7 +144,7 @@ install: install-driver install-udev install-data
 	@echo "  make bpf && sudo make install-bpf install-systemd"
 
 ## Install everything (driver + BPF + systemd)
-install-all: install-driver install-udev install-data install-bpf install-systemd
+install-all: install-driver install-udev install-desktop install-data install-bpf install-systemd
 	@echo ""
 	@echo "Full installation complete!"
 
@@ -140,6 +152,8 @@ install-all: install-driver install-udev install-data install-bpf install-system
 uninstall-driver:
 	rm -f $(BIN_DIR)/$(DRIVER_BIN)
 	rm -f $(UDEV_RULES_DIR)/99-monsgeek.rules
+	rm -f $(APP_DIR)/com.monsgeek.iot_driver.desktop
+	-update-desktop-database $(APP_DIR) 2>/dev/null || true
 	udevadm control --reload-rules
 	@echo "Driver uninstalled."
 
@@ -301,6 +315,7 @@ help:
 	@echo "  install-all     Install everything (driver + BPF + systemd)"
 	@echo "  install-driver  Install driver binary only"
 	@echo "  install-udev    Install udev rules only"
+	@echo "  install-desktop Install XDG desktop entry (needed for screen-share app name)"
 	@echo "  install-bpf     Install BPF loader"
 	@echo "  install-systemd Install systemd service for BPF auto-load"
 	@echo "  uninstall       Remove all installed files"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=MonsGeek Keyboard Driver
+GenericName=Keyboard LED Controller
+Comment=Control MonsGeek/Akko keyboard LEDs, macros, and screen/audio-reactive lighting
+Exec=iot_driver tui
+Icon=input-keyboard
+Terminal=true
+Categories=Utility;HardwareSettings;
+Keywords=keyboard;led;rgb;monsgeek;akko;

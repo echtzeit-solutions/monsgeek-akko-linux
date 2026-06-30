@@ -538,13 +538,17 @@ pub fn run_screen_color_mode_sync(
 pub fn spawn_for_tui(
     keyboard: Arc<KeyboardInterface>,
     fps: u32,
-) -> (Arc<ScreenColorState>, Arc<AtomicBool>) {
+) -> (
+    Arc<ScreenColorState>,
+    Arc<AtomicBool>,
+    std::thread::JoinHandle<()>,
+) {
     let state = Arc::new(ScreenColorState::default());
     let running = Arc::new(AtomicBool::new(true));
 
     let thread_state = state.clone();
     let thread_running = running.clone();
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
@@ -574,5 +578,5 @@ pub fn spawn_for_tui(
         rt.block_on(capture.close());
     });
 
-    (state, running)
+    (state, running, handle)
 }
