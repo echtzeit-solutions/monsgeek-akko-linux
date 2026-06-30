@@ -1223,6 +1223,25 @@ pub mod audio_viz {
         }
         bands
     }
+
+    /// Pack 16 band levels into the nibble format the firmware's **non-USB**
+    /// (2.4G dongle / Bluetooth) SET_AUDIO_VIZ branch expects: two bands per
+    /// byte (low nibble = even band, high nibble = odd band), starting at the
+    /// first payload byte. Levels are clamped to 5 — the firmware rejects nibble
+    /// values >= 6. Returns the 11-byte payload the firmware reads; send it with
+    /// **no** checksum so the checksum byte doesn't clobber a band.
+    ///
+    /// (The USB path instead reads 16 full bytes at payload offset +8 — see
+    /// [`build_report`]. The two transports use genuinely different wire layouts.)
+    pub fn pack_bands_nibbles(bands: &[u8; NUM_BANDS]) -> [u8; 11] {
+        let mut payload = [0u8; 11];
+        for (i, byte) in payload.iter_mut().enumerate() {
+            let lo = bands.get(i * 2).copied().unwrap_or(0).min(5);
+            let hi = bands.get(i * 2 + 1).copied().unwrap_or(0).min(5);
+            *byte = (hi << 4) | lo;
+        }
+        payload
+    }
 }
 
 /// Keyboard-initiated events (INT-IN endpoint / EP2)

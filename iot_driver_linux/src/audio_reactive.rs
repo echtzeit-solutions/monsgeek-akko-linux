@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::protocol::{audio_viz, cmd};
 use crate::pulse;
 use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_transport::{ChecksumType, Transport};
 
 /// Number of frequency bands to analyze. Matches the device's 16 audio-viz
 /// bands 1:1 (the firmware sums each adjacent pair into one of 8 columns, so
@@ -431,6 +432,15 @@ pub fn run_viz_loop(
     let mut rate_count = 0u32;
     let mut rate_start = Instant::now();
 
+    // The firmware decodes SET_AUDIO_VIZ differently per connection: USB reads
+    // 16 full bytes at payload +8; the dongle/BT (non-USB) path reads nibble-
+    // packed bands right after the command byte. Pick the matching wire format.
+    let packed = keyboard
+        .transport()
+        .device_info()
+        .transport_type
+        .is_wireless();
+
     running.store(true, Ordering::SeqCst);
 
     while running.load(Ordering::SeqCst) && audio_state.is_running() {
@@ -447,11 +457,22 @@ pub fn run_viz_loop(
 
         let bands = audio_state.get_bands();
         let levels = bands_to_viz_levels(&bands);
-        let report = audio_viz::build_report(&levels);
-        // Send the cmd payload (bytes after the leading command byte, through the
-        // last band); the transport re-frames + checksums it. Use the no-delay
-        // path — the default 100ms flow-control delay would cap us at ~10Hz.
-        let _ = keyboard.send_raw_cmd_fast(cmd::SET_AUDIO_VIZ, &report[1..24]);
+        // No-delay send either way — the default 100ms flow-control delay would
+        // cap streaming at ~10Hz; the frame loop does the pacing.
+        if packed {
+            // Dongle/BT: nibble-packed payload, no checksum (it would clobber a band).
+            let payload = audio_viz::pack_bands_nibbles(&levels);
+            let _ = keyboard.transport().send_command_with_delay(
+                cmd::SET_AUDIO_VIZ,
+                &payload,
+                ChecksumType::None,
+                0,
+            );
+        } else {
+            // USB: 16 full bytes; transport re-frames + checksums it.
+            let report = audio_viz::build_report(&levels);
+            let _ = keyboard.send_raw_cmd_fast(cmd::SET_AUDIO_VIZ, &report[1..24]);
+        }
 
         // Debug output every ~5 seconds (only if RUST_LOG is set)
         frame_count += 1;
