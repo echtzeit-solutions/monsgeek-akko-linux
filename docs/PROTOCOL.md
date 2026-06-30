@@ -414,7 +414,7 @@ Clear this context after receiving a response to avoid stale matches.
 | 0x0A | SET_KEYMATRIX | Set key mappings (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
 | 0x0B | SET_MACRO | Set macro definitions (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
 | 0x0C | SET_USERPIC | Set per-key RGB colors (static) | Bit7 |
-| 0x0D | SET_AUDIO_VIZ | Send 16 frequency bands for music mode | Bit7 |
+| 0x0D | SET_AUDIO_VIZ | Stream 16 frequency bands for music mode (USB/dongle differ — see [§5.6](#56-audio-visualizer-set_audio_viz-0x0d)) | Bit7 / none |
 | 0x0E | SET_SCREEN_COLOR | Send RGB for screen sync mode | Bit7 |
 | 0x10 | SET_FN | Set Fn layer configuration (chunked, see [Limits](#firmware-limits-chunked-set-commands)) | Bit7 |
 | 0x11 | SET_SLEEPTIME | Set sleep/deep sleep timeouts | Bit7 |
@@ -628,9 +628,9 @@ Byte 7: Blue
 | 17 | Rain Down | Rain downward |
 | 18 | Meteor | Meteor shower |
 | 19 | Reactive Off | React briefly then fade |
-| 20 | Music Patterns | Audio reactive (uses 0x0D) |
+| 20 | Music Patterns | Audio reactive — host streams 0x0D (see [§5.6](#56-audio-visualizer-set_audio_viz-0x0d); same renderer as 22) |
 | 21 | Screen Sync | Ambient RGB (uses 0x0E) |
-| 22 | Music Bars | Audio reactive bars (uses 0x0D) |
+| 22 | Music Bars | Audio reactive — host streams 0x0D (see [§5.6](#56-audio-visualizer-set_audio_viz-0x0d)) |
 | 23 | Train | Train pattern |
 | 24 | Fireworks | Fireworks effect |
 | 25 | Per-Key Color | Dynamic animation (GIF) |
@@ -723,6 +723,72 @@ enum MacroEvent {
 //   - delay_or_action & 0x7F = delay if < 128
 // Mouse move: [0xF9, delay_short, dx, dy]
 ```
+
+### 5.6 Audio Visualizer (SET_AUDIO_VIZ 0x0D)
+
+Host-streamed music visualizer. The host computes the FFT and streams band
+levels; the keyboard renders the bars on-device. No patched firmware required.
+
+**Enabling.** Set the LED mode (SET_LEDPARAM 0x07) to a music mode, then stream
+SET_AUDIO_VIZ at ~50Hz:
+
+| Mode | Name | LED-mode value |
+|------|------|----------------|
+| MusicBars | `LightMusicFollow2` | 22 |
+| MusicPatterns | `LightMusicFollow3` | 20 |
+
+> **Firmware note (v407):** both modes dispatch to the *same* renderer
+> (`led_effect_audio_viz` @ 0x08009E68) — they are visually identical; only the
+> **style** differs. The style is the **upper nibble of the SET_LEDPARAM option
+> byte** (`option = style << 4 | dazzle`). There are exactly **3 styles**
+> (values 0-2; ≥3 ignored):
+>
+> | Style | Behavior |
+> |-------|----------|
+> | 0 | 16 independent columns (full spectrum) |
+> | 1 | adjacent bands merged → 8 wide columns |
+> | 2 | 8 merged columns, mirrored/centred grouping |
+
+**Band data.** 16 frequency-band levels, each **0-6**. The renderer **sums each
+adjacent pair** into a column and clamps to **8** (≈5-6 LED rows). So a column
+fills completely when its two bands sum to ≥ 8 (e.g. two adjacent levels of 4).
+
+**Two wire formats — the layout differs by connection** (firmware
+`cmd_set_audio_viz` @ 0x08006E2C branches on `g_connection_mode`, `==6` = USB):
+
+*USB (wired):* 16 **full bytes**, one per band, at payload offset +8 (i.e. the
+same place GET-style reports put data). Send the standard 64-byte report:
+
+```
+Byte 0:    0x0D (command)
+Bytes 1-6: 0 (padding)
+Byte 7:    checksum (Bit7)
+Bytes 8-23: band[0..16], one byte each (0-6)
+```
+
+*Dongle / Bluetooth (non-USB):* bands are **nibble-packed**, 2 per byte (low
+nibble = even band, high nibble = odd band), starting **immediately after the
+command byte** (no padding). Nibble values must be **0-5** (the firmware rejects
+6+). Send with **no checksum** — the checksum byte would otherwise overwrite a
+band:
+
+```
+Byte 0:    0x0D (command)
+Byte 1:    (band1 << 4) | band0
+Byte 2:    (band3 << 4) | band2
+...
+Byte 8:    (band15 << 4) | band14
+Bytes 9+:  0
+```
+
+Sending the USB layout over the dongle (or vice-versa) makes the keyboard read
+the wrong bytes — the visible symptom is mirrored, smaller bars. The host must
+pick the format from the active transport.
+
+**Rate.** The device re-renders every main-loop pass (hundreds of Hz; WS2812
+frame ≈ 2.5ms for 82 LEDs), so refresh is bounded only by host send cadence.
+Stream with **no inter-command flow-control delay** (the default ~100ms wired
+delay caps streaming at ~10Hz). 50Hz is plenty.
 
 ---
 
@@ -1205,8 +1271,9 @@ assert chunk_index <= 9      for all chunked commands
 assert total_size <= 514     accumulated payload bytes
 ```
 
-`SET_AUDIO_VIZ` (0x0D) is safe — it reads a fixed 16-band array from
-byte offsets 1-48 with no index indirection.
+`SET_AUDIO_VIZ` (0x0D) is safe — it reads a fixed 16-band array with no index
+indirection (USB: full bytes at payload +8; dongle/BT: nibble-packed after the
+command byte — see [§5.6](#56-audio-visualizer-set_audio_viz-0x0d)).
 
 ---
 
