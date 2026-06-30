@@ -1509,6 +1509,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, -1),
+                                    InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 3) % 4;
                                         app.set_userpic_layer(n);
@@ -1585,6 +1586,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, 1),
+                                    InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 1) % 4;
                                         app.set_userpic_layer(n);

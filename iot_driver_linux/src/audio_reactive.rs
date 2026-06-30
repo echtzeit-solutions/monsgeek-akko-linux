@@ -380,9 +380,10 @@ pub fn run_audio_reactive(
     println!("Audio input: {}", audio_capture.source_label);
     println!("Audio capture started, enabling music visualizer...");
 
-    // Switch the keyboard into its native audio-viz mode (brightness/speed max).
+    // Switch the keyboard into its native audio-viz mode (rainbow; CLI doesn't
+    // expose a solid color).
     keyboard
-        .set_music_viz_mode(config.led_mode, config.style, 4, 4, false)
+        .set_music_viz_mode(config.led_mode, config.style, 4, None)
         .map_err(|e| format!("Failed to set music visualizer mode: {e}"))?;
     thread::sleep(Duration::from_millis(200));
 

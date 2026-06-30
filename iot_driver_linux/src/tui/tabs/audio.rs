@@ -67,6 +67,8 @@ pub(in crate::tui) struct AudioTabState {
     pub style: u8,
     /// Target update rate (Hz) — CPU vs fidelity.
     pub update_hz: u32,
+    /// Use a solid color (the LED color) instead of the firmware rainbow cycle.
+    pub solid_color: bool,
     pub error: Option<String>,
     run: Option<AudioRun>,
     /// LED mode the active run is streaming for (to detect Bars↔Patterns swaps).
@@ -82,6 +84,7 @@ impl Default for AudioTabState {
             selected: 0,
             style: 0,
             update_hz: 50,
+            solid_color: false,
             error: None,
             run: None,
             active_mode: None,
@@ -241,7 +244,7 @@ fn start(app: &mut App, led_mode: u8) {
         }
     };
 
-    if let Err(e) = keyboard.set_music_viz_mode(led_mode, app.audio.style, 4, 4, false) {
+    if let Err(e) = keyboard.set_music_viz_mode(led_mode, app.audio.style, 4, viz_color(app)) {
         app.audio.error = Some(format!("Failed to set visualizer mode: {e}"));
     }
 
@@ -263,11 +266,27 @@ fn start(app: &mut App, led_mode: u8) {
     });
 }
 
-/// Re-send the music mode + current style to the keyboard (used on style change
-/// or Bars↔Patterns swap). The viz thread keeps streaming bands.
+/// Solid color (the LED color) when enabled, else None for the firmware rainbow.
+fn viz_color(app: &App) -> Option<(u8, u8, u8)> {
+    app.audio
+        .solid_color
+        .then_some((app.info.led_r, app.info.led_g, app.info.led_b))
+}
+
+/// Re-send the music mode + current style/color to the keyboard (used on style,
+/// color, or Bars↔Patterns change). The viz thread keeps streaming bands.
 fn reapply_mode(app: &mut App, led_mode: u8) {
     if let Some(kb) = app.keyboard.clone() {
-        let _ = kb.set_music_viz_mode(led_mode, app.audio.style, 4, 4, false);
+        let _ = kb.set_music_viz_mode(led_mode, app.audio.style, 4, viz_color(app));
+    }
+}
+
+/// Toggle solid color vs the built-in rainbow, applied live if running.
+pub(in crate::tui) fn toggle_color(app: &mut App) {
+    app.audio.solid_color = !app.audio.solid_color;
+    let mode = app.info.led_mode;
+    if app.audio.run.is_some() {
+        reapply_mode(app, mode);
     }
 }
 

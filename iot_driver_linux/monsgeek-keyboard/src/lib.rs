@@ -972,13 +972,14 @@ impl KeyboardInterface {
     }
 
     /// Select a music-visualizer LED mode (MusicBars / MusicPatterns) with a
-    /// style variant.
+    /// style variant and color choice.
     ///
-    /// These modes carry the style in the **upper nibble** of the option byte
-    /// (`option = style << 4 | dazzle`), which neither [`set_led_with_option`]
-    /// nor [`set_led_params`] can express — they only set the dazzle flag for
-    /// non-UserPicture modes. The host then streams band levels via
-    /// `SET_AUDIO_VIZ` (0x0D); the firmware renders the bars on-device.
+    /// These modes carry the **style** in the upper nibble of the option byte,
+    /// which neither [`set_led_with_option`] nor [`set_led_params`] can express.
+    /// The option **low nibble** selects the color source: `4` = solid custom
+    /// RGB (from the color bytes); otherwise the firmware runs its built-in
+    /// rainbow hue cycle. Speed has no effect on this effect, so the speed byte
+    /// is fixed. The host then streams band levels via `SET_AUDIO_VIZ` (0x0D).
     ///
     /// [`set_led_with_option`]: Self::set_led_with_option
     /// [`set_led_params`]: Self::set_led_params
@@ -987,22 +988,20 @@ impl KeyboardInterface {
         mode: u8,
         style: u8,
         brightness: u8,
-        speed: u8,
-        dazzle: bool,
+        color: Option<(u8, u8, u8)>,
     ) -> Result<(), KeyboardError> {
-        let dazzle_flag = if dazzle {
-            led::DAZZLE_ON
-        } else {
-            led::DAZZLE_OFF
+        let (low, r, g, b) = match color {
+            Some((r, g, b)) => (4u8, r, g, b),  // solid custom color
+            None => (led::DAZZLE_OFF, 0, 0, 0), // built-in rainbow cycle
         };
         let data = [
             mode,
-            led::SPEED_MAX - speed.min(led::SPEED_MAX), // inverted in protocol
+            0, // speed (inverted) — ignored by this effect
             brightness.min(led::BRIGHTNESS_MAX),
-            (style << 4) | dazzle_flag,
-            0,
-            0,
-            0,
+            (style << 4) | low,
+            r,
+            g,
+            b,
         ];
         self.transport
             .send_command(cmd::SET_LEDPARAM, &data, ChecksumType::Bit8)?;
