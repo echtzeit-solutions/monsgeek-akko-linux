@@ -8,6 +8,7 @@ pub fn audio(
     led_mode: u8,
     style: u8,
     sensitivity: f32,
+    rate: u32,
     device: Option<String>,
 ) -> CommandResult {
     let keyboard = super::open_keyboard(ctx).map_err(|e| format!("Failed to open device: {e}"))?;
@@ -24,6 +25,7 @@ pub fn audio(
         led_mode,
         style,
         sensitivity,
+        update_hz: rate,
         device,
     };
 

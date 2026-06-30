@@ -1508,6 +1508,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
+                                    InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, -1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 3) % 4;
                                         app.set_userpic_layer(n);
@@ -1583,6 +1584,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
+                                    InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, 1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 1) % 4;
                                         app.set_userpic_layer(n);

@@ -425,6 +425,9 @@ pub enum Commands {
         /// Sensitivity multiplier (0.5-2.0)
         #[arg(long, default_value = "1.0")]
         sensitivity: f32,
+        /// Update rate in Hz (CPU vs fidelity; clamped 5-120)
+        #[arg(long, default_value = "50")]
+        rate: u32,
         /// Capture device (exact name or case-insensitive substring); default auto-detects the system monitor source. See `audio-test` for candidates.
         #[arg(short, long)]
         device: Option<String>,
@@ -635,10 +638,10 @@ pub enum EffectCommands {
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
 pub enum AudioMode {
-    /// On-device frequency bars (MusicBars). Styles: 0=Upright, 1=Separate, 2=Intersect
+    /// MusicBars (mode 22). On v407 identical to patterns; --style 0=vertical, 1=mirror, 2=left
     #[default]
     Bars,
-    /// On-device music patterns (MusicPatterns). Styles: 0-4
+    /// MusicPatterns (mode 20). Same on-device renderer as bars; --style 0-2
     Patterns,
 }
 

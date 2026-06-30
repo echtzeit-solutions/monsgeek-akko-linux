@@ -62,6 +62,7 @@ pub(in crate::tui) enum InfoTag {
     // Audio-reactive (shown only in a music LED mode; ←/→ cycle)
     AudioDevice,
     AudioVizStyle,
+    AudioRate,
     // UserPicture (mode 13): which stored picture layer to display (←/→ cycle)
     UserPicLayer,
 }
@@ -1144,6 +1145,13 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
             ListItem::new(Line::from(vec![
                 Span::raw("Audio Style:    "),
                 sel_span(format!("{} {style_name}", app.audio.style)),
+            ])),
+        ));
+        items.push((
+            InfoTag::AudioRate,
+            ListItem::new(Line::from(vec![
+                Span::raw("Audio Rate:     "),
+                sel_span(format!("{} Hz", app.audio.update_hz)),
             ])),
         ));
     } else if info.led_mode == cmd::LedMode::UserPicture.as_u8() {

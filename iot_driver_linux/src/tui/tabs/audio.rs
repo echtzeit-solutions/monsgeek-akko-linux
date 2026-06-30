@@ -60,18 +60,34 @@ impl Drop for AudioRun {
 }
 
 /// Audio-reactive state, held in [`App`].
-#[derive(Default)]
 pub(in crate::tui) struct AudioTabState {
     /// Capture sources; `None` until first enumerated.
     pub sources: Option<Vec<SourceEntry>>,
     pub selected: usize,
     pub style: u8,
+    /// Target update rate (Hz) — CPU vs fidelity.
+    pub update_hz: u32,
     pub error: Option<String>,
     run: Option<AudioRun>,
     /// LED mode the active run is streaming for (to detect Bars↔Patterns swaps).
     active_mode: Option<u8>,
     /// Last (mode, source) we attempted to start, to avoid retry spam on failure.
     attempted: Option<(u8, usize)>,
+}
+
+impl Default for AudioTabState {
+    fn default() -> Self {
+        Self {
+            sources: None,
+            selected: 0,
+            style: 0,
+            update_hz: 50,
+            error: None,
+            run: None,
+            active_mode: None,
+            attempted: None,
+        }
+    }
 }
 
 impl AudioTabState {
@@ -173,6 +189,26 @@ pub(in crate::tui) fn cycle_style(app: &mut App, delta: i32) {
     }
 }
 
+/// Preset update rates (Hz) — CPU/USB traffic vs fidelity.
+const RATE_PRESETS: [u32; 5] = [15, 30, 50, 75, 100];
+
+/// Cycle the update rate through [`RATE_PRESETS`], applied live to a running run.
+pub(in crate::tui) fn cycle_rate(app: &mut App, delta: i32) {
+    let cur = RATE_PRESETS
+        .iter()
+        .position(|&r| r == app.audio.update_hz)
+        .unwrap_or(2) as i32;
+    let next = (cur + delta).rem_euclid(RATE_PRESETS.len() as i32) as usize;
+    app.audio.update_hz = RATE_PRESETS[next];
+    if let Some(run) = app.audio.run.as_ref() {
+        run.capture
+            .state
+            .target_hz
+            .store(app.audio.update_hz, std::sync::atomic::Ordering::Relaxed);
+    }
+    app.status_msg = format!("Audio rate: {} Hz", app.audio.update_hz);
+}
+
 fn start(app: &mut App, led_mode: u8) {
     let Some(keyboard) = app.keyboard.clone() else {
         app.audio.error = Some("No keyboard connected".to_string());
@@ -193,6 +229,7 @@ fn start(app: &mut App, led_mode: u8) {
         led_mode,
         style: app.audio.style,
         sensitivity: 1.0,
+        update_hz: app.audio.update_hz,
         device: Some(source.name.clone()),
     };
 

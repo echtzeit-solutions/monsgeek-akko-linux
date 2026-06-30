@@ -58,6 +58,9 @@ pub struct AudioState {
     pub fft_hz: AtomicU32,
     /// Measured keyboard send rate (Hz) from the viz loop, ~1×/sec. Diagnostic.
     pub tx_hz: AtomicU32,
+    /// Target update rate (Hz) for the FFT + send loops; live-adjustable to trade
+    /// CPU/USB traffic against fidelity. Clamped to [5, 120] when used.
+    pub target_hz: AtomicU32,
 }
 
 impl Default for AudioState {
@@ -69,8 +72,14 @@ impl Default for AudioState {
             sample_rate: AtomicU32::new(44100),
             fft_hz: AtomicU32::new(0),
             tx_hz: AtomicU32::new(0),
+            target_hz: AtomicU32::new(50),
         }
     }
+}
+
+/// Clamp a requested update rate to the supported range.
+fn clamp_hz(hz: u32) -> u32 {
+    hz.clamp(5, 120)
 }
 
 impl AudioState {
@@ -118,6 +127,9 @@ impl AudioCapture {
         state
             .sample_rate
             .store(pulse::SAMPLE_RATE, Ordering::SeqCst);
+        state
+            .target_hz
+            .store(clamp_hz(config.update_hz), Ordering::SeqCst);
         let source_label = source.label();
 
         let sample_buffer: Arc<Mutex<Vec<f32>>> =
@@ -156,7 +168,6 @@ impl AudioCapture {
         let fft_thread = thread::spawn(move || {
             let mut display_bands = [0.0f32; NUM_BANDS];
             let mut peak_ref = 0.0f32; // loudness AGC reference (peak follower)
-            let process_interval = Duration::from_millis(16);
             let mut loop_count = 0u32;
             let mut rate_count = 0u32;
             let mut rate_start = Instant::now();
@@ -211,9 +222,12 @@ impl AudioCapture {
                 }
                 fft_state.set_bands(display_bands);
 
+                let interval = Duration::from_millis(
+                    1000 / clamp_hz(fft_state.target_hz.load(Ordering::Relaxed)) as u64,
+                );
                 let elapsed = start.elapsed();
-                if elapsed < process_interval {
-                    thread::sleep(process_interval - elapsed);
+                if elapsed < interval {
+                    thread::sleep(interval - elapsed);
                 }
             }
         });
@@ -259,6 +273,8 @@ pub struct AudioConfig {
     pub style: u8,
     /// Sensitivity multiplier (0.5 - 2.0)
     pub sensitivity: f32,
+    /// Target update rate (Hz) for the FFT + send loops (CPU vs fidelity).
+    pub update_hz: u32,
     /// Capture device name (exact or case-insensitive substring); None = auto-detect monitor source
     pub device: Option<String>,
 }
@@ -269,6 +285,7 @@ impl Default for AudioConfig {
             led_mode: cmd::LedMode::MusicBars.as_u8(),
             style: 0,
             sensitivity: 1.0,
+            update_hz: 50,
             device: None,
         }
     }
@@ -386,7 +403,6 @@ pub fn run_viz_loop(
     audio_state: &Arc<AudioState>,
     running: Arc<AtomicBool>,
 ) {
-    let frame_duration = Duration::from_millis(audio_viz::UPDATE_INTERVAL_MS);
     let mut frame_count = 0u32;
     let mut rate_count = 0u32;
     let mut rate_start = Instant::now();
@@ -442,6 +458,9 @@ pub fn run_viz_loop(
             eprintln!("[viz] avg={avg:.2} bass={:.2} levels={levels:?}", bands[1]);
         }
 
+        let frame_duration = Duration::from_millis(
+            1000 / clamp_hz(audio_state.target_hz.load(Ordering::Relaxed)) as u64,
+        );
         let elapsed = frame_start.elapsed();
         if elapsed < frame_duration {
             thread::sleep(frame_duration - elapsed);

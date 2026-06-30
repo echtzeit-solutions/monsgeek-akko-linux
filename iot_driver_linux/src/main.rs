@@ -248,9 +248,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mode,
             style,
             sensitivity,
+            rate,
             device,
         }) => {
-            commands::reactive::audio(&ctx, mode.led_mode(), style, sensitivity, device)?;
+            commands::reactive::audio(&ctx, mode.led_mode(), style, sensitivity, rate, device)?;
         }
         Some(Commands::AudioTest) => {
             commands::reactive::audio_test()?;
