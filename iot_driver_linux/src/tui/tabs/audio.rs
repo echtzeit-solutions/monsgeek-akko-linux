@@ -12,7 +12,7 @@ use std::thread::JoinHandle;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
@@ -235,16 +235,17 @@ fn reapply_mode(app: &mut App, led_mode: u8) {
     }
 }
 
-/// Render the live level meter (8 horizontal bars). Only meaningful while running.
+/// Render the live spectrum as vertical bars (one column per band). Only
+/// meaningful while running.
 pub(in crate::tui) fn render_meter(f: &mut Frame, app: &App, area: Rect) {
     use std::sync::atomic::Ordering;
     let title = match app.audio.run.as_ref() {
         Some(run) => format!(
-            "Audio Level Meter — FFT {}Hz · TX {}Hz",
+            "Spectrum — FFT {}Hz · TX {}Hz",
             run.capture.state.fft_hz.load(Ordering::Relaxed),
             run.capture.state.tx_hz.load(Ordering::Relaxed),
         ),
-        None => "Audio Level Meter".to_string(),
+        None => "Spectrum".to_string(),
     };
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
@@ -254,14 +255,25 @@ pub(in crate::tui) fn render_meter(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let bands = run.capture.get_bands();
-    let bar_w = inner.width.saturating_sub(4) as usize;
-    let lines: Vec<Line> = bands
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
+    let h = inner.height as usize;
+    let n = bands.len();
+    if h == 0 || n == 0 || inner.width == 0 {
+        return;
+    }
+
+    // Eighth-block vertical bars: each band is a column `cols_per` cells wide,
+    // drawn bottom-up so taller bars fill more rows.
+    const BLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let cols_per = (inner.width as usize / n).max(1);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(h);
+    for row in 0..h {
+        let row_from_bottom = (h - 1 - row) as i32;
+        let mut spans: Vec<Span> = Vec::with_capacity(n);
+        for &v in bands.iter() {
             let v = v.clamp(0.0, 1.0);
-            let filled = ((v * bar_w as f32).round() as usize).min(bar_w);
-            let bar = format!("{i} {}{}", "█".repeat(filled), "░".repeat(bar_w - filled));
+            let total_eighths = (v * h as f32 * 8.0) as i32;
+            let cell = (total_eighths - row_from_bottom * 8).clamp(0, 8) as usize;
             let color = if v > 0.85 {
                 Color::Red
             } else if v > 0.6 {
@@ -269,8 +281,10 @@ pub(in crate::tui) fn render_meter(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Color::Green
             };
-            Line::styled(bar, Style::default().fg(color))
-        })
-        .collect();
+            let s = BLOCKS[cell].to_string().repeat(cols_per);
+            spans.push(Span::styled(s, Style::default().fg(color)));
+        }
+        lines.push(Line::from(spans));
+    }
     f.render_widget(Paragraph::new(lines), inner);
 }

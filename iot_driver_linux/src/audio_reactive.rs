@@ -13,8 +13,10 @@ use crate::protocol::{audio_viz, cmd};
 use crate::pulse;
 use monsgeek_keyboard::KeyboardInterface;
 
-/// Number of frequency bands to analyze
-const NUM_BANDS: usize = 8;
+/// Number of frequency bands to analyze. Matches the device's 16 audio-viz
+/// bands 1:1 (the firmware sums each adjacent pair into one of 8 columns, so
+/// 16 *distinct* bands give real per-column detail instead of a doubled value).
+const NUM_BANDS: usize = 16;
 
 /// FFT sample size (must be power of 2)
 const FFT_SIZE: usize = 1024;
@@ -311,17 +313,27 @@ fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
         Err(_) => return bands,
     };
 
-    // Frequency band ranges (Hz) - logarithmic scale for better visualization
-    // Each band also has a weight to compensate for frequency distribution
+    // 16 log-spaced bands from 30Hz-16kHz (~0.55 octave each), tuned for music:
+    // dense through the musical midrange, capped at 16kHz (above that carries
+    // almost no musical energy). The rising weight is a gentle perceptual tilt
+    // so treble isn't perpetually dwarfed by bass.
     let band_ranges = [
-        (20.0, 60.0, 2.0),       // Sub-bass (boost - fewer bins)
-        (60.0, 150.0, 1.5),      // Bass
-        (150.0, 400.0, 1.2),     // Low-mids
-        (400.0, 1000.0, 1.0),    // Mids (reference)
-        (1000.0, 2500.0, 1.0),   // Upper-mids
-        (2500.0, 6000.0, 1.2),   // Presence
-        (6000.0, 12000.0, 1.5),  // Brilliance
-        (12000.0, 20000.0, 2.0), // Air (boost - often quiet)
+        (30.0, 45.0, 1.0),
+        (45.0, 66.0, 1.1),
+        (66.0, 97.0, 1.2),
+        (97.0, 144.0, 1.3),
+        (144.0, 213.0, 1.4),
+        (213.0, 315.0, 1.6),
+        (315.0, 467.0, 1.8),
+        (467.0, 691.0, 2.0),
+        (691.0, 1023.0, 2.2),
+        (1023.0, 1514.0, 2.4),
+        (1514.0, 2241.0, 2.6),
+        (2241.0, 3317.0, 2.8),
+        (3317.0, 4909.0, 3.0),
+        (4909.0, 7266.0, 3.3),
+        (7266.0, 10754.0, 3.6),
+        (10754.0, 16000.0, 4.0),
     ];
 
     // Count bins in each band for proper averaging
