@@ -161,7 +161,7 @@ pub mod pipewire_capture {
     /// this in the "sharing contents to …" picker/tray (instead of blank), and
     /// the ScreenCast restore token is namespaced to it — so a stable id is what
     /// makes the saved token actually match on later runs.
-    const APP_ID: &str = "com.monsgeek.iot_driver";
+    const APP_ID: &str = "solutions.echtzeit.akko_keyboard_driver";
 
     /// A live screencast session: held for the capture's lifetime so the portal
     /// stream stays valid, and explicitly closed on teardown. Dropping the Rust

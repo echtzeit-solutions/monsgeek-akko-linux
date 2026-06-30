@@ -123,14 +123,14 @@ install-systemd:
 	systemctl daemon-reload
 	@echo "Systemd service installed. BPF loader will auto-start on device plug-in."
 
-## Install the XDG desktop entry. Its app id (com.monsgeek.iot_driver) is what
+## Install the XDG desktop entry. Its app id (solutions.echtzeit.akko_keyboard_driver) is what
 ## the ScreenCast portal needs to register the app: KDE then shows a name in the
 ## screen-share picker/tray, and the saved restore token is namespaced to it so
 ## screen-reactive mode stops re-prompting. Without this file the portal rejects
 ## the app id with "App info not found".
 install-desktop:
-	$(INSTALL) -D -m 644 $(DRIVER_DIR)/packaging/com.monsgeek.iot_driver.desktop \
-		$(APP_DIR)/com.monsgeek.iot_driver.desktop
+	$(INSTALL) -D -m 644 $(DRIVER_DIR)/packaging/solutions.echtzeit.akko_keyboard_driver.desktop \
+		$(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
 	-update-desktop-database $(APP_DIR) 2>/dev/null || true
 	@echo "Installed desktop entry to $(APP_DIR)"
 
@@ -152,7 +152,7 @@ install-all: install-driver install-udev install-desktop install-data install-bp
 uninstall-driver:
 	rm -f $(BIN_DIR)/$(DRIVER_BIN)
 	rm -f $(UDEV_RULES_DIR)/99-monsgeek.rules
-	rm -f $(APP_DIR)/com.monsgeek.iot_driver.desktop
+	rm -f $(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
 	-update-desktop-database $(APP_DIR) 2>/dev/null || true
 	udevadm control --reload-rules
 	@echo "Driver uninstalled."

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Akko/MonsGeek Keyboard Driver (community)
+GenericName=Keyboard LED Controller
+Comment=Independent open-source driver for Akko/MonsGeek Hall-Effect keyboards (LEDs, macros, screen/audio-reactive lighting)
+Exec=iot_driver tui
+Icon=input-keyboard
+Terminal=true
+Categories=Utility;HardwareSettings;
+Keywords=keyboard;led;rgb;monsgeek;akko;hall effect;
