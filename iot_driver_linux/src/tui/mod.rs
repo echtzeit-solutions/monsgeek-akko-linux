@@ -187,6 +187,8 @@ struct App {
     notify: NotifyTabState,
     // Audio-reactive state (shown in the Device Info tab)
     audio: AudioTabState,
+    // Selected UserPicture layer (mode 13) to display
+    userpic_layer: u8,
     // Animation engine status (periodic query + interpolation)
     anim_snapshot: Option<crate::anim::EngineSnapshot>,
     anim_snapshot_time: Instant, // when the last snapshot was received
@@ -279,6 +281,7 @@ impl App {
             #[cfg(feature = "notify")]
             notify: NotifyTabState::default(),
             audio: AudioTabState::default(),
+            userpic_layer: 0,
             // Animation engine
             anim_snapshot: None,
             anim_snapshot_time: Instant::now(),
@@ -1505,6 +1508,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, -step); }
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, -1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
+                                    InfoTag::UserPicLayer => {
+                                        let n = (app.userpic_layer + 3) % 4;
+                                        app.set_userpic_layer(n);
+                                    }
                                     _ => {}
                                 }
                             }
@@ -1576,6 +1583,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::SleepDeep24g => { let step = if coarse { SLEEP_TIME_SPINNER.step_coarse } else { SLEEP_TIME_SPINNER.step } as i32; app.update_sleep_time(SleepField::Deep24g, step); }
                                     InfoTag::AudioDevice => tabs::audio::cycle_device(&mut app, 1),
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
+                                    InfoTag::UserPicLayer => {
+                                        let n = (app.userpic_layer + 1) % 4;
+                                        app.set_userpic_layer(n);
+                                    }
                                     _ => {}
                                 }
                             }

@@ -743,11 +743,18 @@ SET_AUDIO_VIZ at ~50Hz:
 > byte** (`option = style << 4 | dazzle`). There are exactly **3 styles**
 > (values 0-2; ≥3 ignored):
 >
-> | Style | Behavior |
+> | Style | Behavior (verified in `led_effect_audio_viz`) |
 > |-------|----------|
-> | 0 | 16 independent columns (full spectrum) |
-> | 1 | adjacent bands merged → 8 wide columns |
-> | 2 | 8 merged columns, mirrored/centred grouping |
+> | 0 | vertical bars rising from the bottom |
+> | 1 | horizontal bars mirrored from the centre |
+> | 2 | horizontal bars growing from the left |
+>
+> **Color:** the bar color is a **hardcoded rainbow hue cycle** (fixed step
+> per frame). Brightness (SET_LEDPARAM brightness) scales it; **speed has no
+> effect** (the renderer never reads it). A solid base color is only used if the
+> option byte's **low nibble == 4** (then per-mode RGB from `g_fw_config+0x82`);
+> the normal dazzle encoding (7/8) never triggers it, so via this protocol the
+> bars are always rainbow.
 
 **Band data.** 16 frequency-band levels, each **0-6**. The renderer **sums each
 adjacent pair** into a column and clamps to **8** (≈5-6 LED rows). So a column

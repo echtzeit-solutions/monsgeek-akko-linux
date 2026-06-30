@@ -1114,15 +1114,17 @@ pub mod music_viz {
     /// chosen from the **upper nibble** of the SET_LEDPARAM option byte. Values
     /// above 2 are ignored by the firmware. (MusicBars vs MusicPatterns are not
     /// distinguished in the v407 render path — only the style differs.)
+    /// Verified against the v407 renderer (`led_effect_audio_viz` @ 0x08009E68):
+    /// exactly 3 styles; ≥3 draws nothing.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
     pub enum Style {
-        /// 0: 16 independent per-column bars (full spectrum). Webapp: "Upright" (竖直).
-        FullSpectrum = 0,
-        /// 1: adjacent bands merged into 8 wide columns. Webapp: "Separate" (分离).
-        MergedWide = 1,
-        /// 2: 8 merged columns, mirrored/centred grouping. Webapp: "Intersect" (横断).
-        MirroredCenter = 2,
+        /// 0: vertical bars rising from the bottom.
+        VerticalBottom = 0,
+        /// 1: horizontal bars mirrored from the centre.
+        HorizontalMirror = 1,
+        /// 2: horizontal bars growing from the left.
+        HorizontalLeft = 2,
     }
 
     impl Style {
@@ -1131,18 +1133,18 @@ pub mod music_viz {
 
         pub fn from_u8(value: u8) -> Option<Self> {
             match value {
-                0 => Some(Self::FullSpectrum),
-                1 => Some(Self::MergedWide),
-                2 => Some(Self::MirroredCenter),
+                0 => Some(Self::VerticalBottom),
+                1 => Some(Self::HorizontalMirror),
+                2 => Some(Self::HorizontalLeft),
                 _ => None,
             }
         }
 
         pub fn name(&self) -> &'static str {
             match self {
-                Self::FullSpectrum => "Full Spectrum",
-                Self::MergedWide => "Merged Wide",
-                Self::MirroredCenter => "Mirrored Center",
+                Self::VerticalBottom => "Vertical (bottom-up)",
+                Self::HorizontalMirror => "Horizontal (mirror)",
+                Self::HorizontalLeft => "Horizontal (left)",
             }
         }
     }

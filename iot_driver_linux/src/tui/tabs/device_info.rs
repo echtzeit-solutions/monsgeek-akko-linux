@@ -62,6 +62,8 @@ pub(in crate::tui) enum InfoTag {
     // Audio-reactive (shown only in a music LED mode; ←/→ cycle)
     AudioDevice,
     AudioVizStyle,
+    // UserPicture (mode 13): which stored picture layer to display (←/→ cycle)
+    UserPicLayer,
 }
 
 impl App {
@@ -396,6 +398,25 @@ impl App {
         self.info.led_mode = mode;
         self.send_main_led();
         self.status_msg = format!("LED mode: {}", cmd::led_mode_name(mode));
+    }
+
+    /// Display a stored UserPicture layer (0-3) — mode 13 with the layer in the
+    /// option byte's upper nibble.
+    pub(in crate::tui) fn set_userpic_layer(&mut self, layer: u8) {
+        self.userpic_layer = layer.min(3);
+        if let Some(ref keyboard) = self.keyboard {
+            let _ = keyboard.set_led_with_option(
+                cmd::LedMode::UserPicture.as_u8(),
+                self.info.led_brightness,
+                speed_to_wire(self.info.led_speed),
+                0,
+                0,
+                0,
+                false,
+                self.userpic_layer,
+            );
+        }
+        self.status_msg = format!("Picture layer: {}", self.userpic_layer);
     }
 
     pub(in crate::tui) fn set_brightness(&mut self, brightness: u8) {
@@ -1097,6 +1118,43 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
             ),
         ])),
     ));
+
+    // Mode-specific selectors, shown right under the Mode row depending on which
+    // LED mode is active: music modes → capture source + style; UserPicture →
+    // which stored picture layer to display.
+    let sel_span = |s: String| Span::styled(format!("< {s} >"), Style::default().fg(Color::Cyan));
+    if super::audio::is_music_mode(info.led_mode) {
+        items.push((
+            InfoTag::AudioDevice,
+            ListItem::new(Line::from(vec![
+                Span::raw("Audio Source:   "),
+                sel_span(
+                    app.audio
+                        .selected_source_desc()
+                        .unwrap_or("(none)")
+                        .to_string(),
+                ),
+            ])),
+        ));
+        let style_name = crate::protocol::music_viz::Style::from_u8(app.audio.style)
+            .map(|s| s.name())
+            .unwrap_or("?");
+        items.push((
+            InfoTag::AudioVizStyle,
+            ListItem::new(Line::from(vec![
+                Span::raw("Audio Style:    "),
+                sel_span(format!("{} {style_name}", app.audio.style)),
+            ])),
+        ));
+    } else if info.led_mode == cmd::LedMode::UserPicture.as_u8() {
+        items.push((
+            InfoTag::UserPicLayer,
+            ListItem::new(Line::from(vec![
+                Span::raw("Picture Layer:  "),
+                sel_span(app.userpic_layer.to_string()),
+            ])),
+        ));
+    }
     items.push((
         InfoTag::LedBrightness,
         ListItem::new(Line::from(vec![
@@ -1401,45 +1459,16 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
         }
     }
 
-    // ── Audio Reactive ── only when a music LED mode is active; the LED Mode
-    // row above already selects MusicBars/MusicPatterns (and thus turns it on).
-    if super::audio::is_music_mode(app.info.led_mode) {
-        let audio_val =
-            |s: String| Span::styled(format!("< {s} >"), Style::default().fg(Color::Cyan));
-        items.push((
-            InfoTag::AudioDevice,
-            ListItem::new(Line::from(vec![
-                Span::raw("Audio Source:   "),
-                audio_val(
-                    app.audio
-                        .selected_source_desc()
-                        .unwrap_or("(none)")
-                        .to_string(),
-                ),
-            ])),
-        ));
-        let style_name = crate::protocol::music_viz::Style::from_u8(app.audio.style)
-            .map(|s| s.name())
-            .unwrap_or("?");
-        items.push((
-            InfoTag::AudioVizStyle,
-            ListItem::new(Line::from(vec![
-                Span::raw("Audio Style:    "),
-                audio_val(format!("{} {style_name}", app.audio.style)),
-            ])),
-        ));
-    }
-
     // Store tags and build list items
     app.info_tags = items.iter().map(|(tag, _)| *tag).collect();
     let list_items: Vec<ListItem> = items.into_iter().map(|(_, item)| item).collect();
     let max_idx = list_items.len().saturating_sub(1);
 
-    // When audio is running, reserve a bottom panel for the live level meter.
+    // When audio is running, show the live spectrum preview on the right.
     let list_area = if app.audio.is_running() {
         let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(8), Constraint::Length(10)])
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
             .split(area);
         super::audio::render_meter(f, app, chunks[1]);
         chunks[0]
