@@ -24,7 +24,6 @@ pub fn audio(
         led_mode,
         style,
         sensitivity,
-        smoothing: 0.3,
         device,
     };
 

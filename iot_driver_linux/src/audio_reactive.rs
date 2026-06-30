@@ -19,18 +19,30 @@ use monsgeek_transport::{ChecksumType, Transport};
 /// 16 *distinct* bands give real per-column detail instead of a doubled value).
 const NUM_BANDS: usize = 16;
 
-/// FFT sample size (must be power of 2)
-const FFT_SIZE: usize = 1024;
+/// FFT sample size (must be power of 2). 2048 (≈21Hz/bin @ 44.1k) matches the
+/// official app and gives the bass resolution beat detection needs.
+const FFT_SIZE: usize = 2048;
 
-/// AGC release per FFT frame (~2s time constant at the ~60Hz FFT rate). The
-/// loudness reference follows peaks instantly and decays slowly, so quiet
-/// passages render low instead of being renormalized to full scale every frame.
-const AGC_RELEASE: f32 = 0.992;
-/// Floor for the AGC reference, so near-silence isn't amplified to full scale.
-/// Tuned to the raw weighted-magnitude scale (loud music peaks ~2-7).
-const AGC_FLOOR: f32 = 0.3;
-/// Output shaping curve (<1 lifts low values for visibility).
-const LEVEL_CURVE: f32 = 0.7;
+/// Frequency window for the bands. Like the official "music" viz, we focus on
+/// the low end (kick/bass/low-mids) — that's where the beat lives on a gaming
+/// keyboard. 16 linear bands across this span.
+const BAND_LO_HZ: f32 = 20.0;
+const BAND_HI_HZ: f32 = 720.0;
+
+/// Loudness AGC: the reference follows peaks instantly (so a band can never
+/// exceed it → never clips) and decays slowly between hits, so quiet passages
+/// render low while recent loud parts hold the reference up. Self-calibrating —
+/// no absolute level constant needed.
+const AGC_RELEASE: f32 = 0.99;
+/// Tiny floor to avoid divide-by-zero (true silence returns zeros upstream).
+const AGC_EPS: f32 = 1e-6;
+/// Perceptual curve (<1 lifts quieter bands for visibility), since we're not in
+/// a true dB domain.
+const LEVEL_CURVE: f32 = 0.6;
+
+/// Per-frame decay for the peak-hold meter: bars jump up instantly (fast
+/// attack) and fall by this factor each FFT frame, giving a punchy beat pulse.
+const DECAY: f32 = 0.85;
 
 /// Audio reactive state shared between threads
 pub struct AudioState {
@@ -138,13 +150,12 @@ impl AudioCapture {
         });
 
         // FFT thread: ring buffer → smoothed bands.
-        let smoothing = config.smoothing;
         let sensitivity = config.sensitivity;
         let fft_state = Arc::clone(&state);
         let fft_buffer = Arc::clone(&sample_buffer);
         let fft_thread = thread::spawn(move || {
-            let mut smoothed_bands = [0.0f32; NUM_BANDS];
-            let mut peak_ref = 0.0f32; // AGC loudness reference (peak follower)
+            let mut display_bands = [0.0f32; NUM_BANDS];
+            let mut peak_ref = 0.0f32; // loudness AGC reference (peak follower)
             let process_interval = Duration::from_millis(16);
             let mut loop_count = 0u32;
             let mut rate_count = 0u32;
@@ -184,23 +195,21 @@ impl AudioCapture {
 
                 let raw_bands = analyze_spectrum(&samples, pulse::SAMPLE_RATE);
 
-                // AGC: a cross-frame peak follower (instant attack, slow release)
-                // gives an absolute-ish loudness reference, so quiet passages
-                // render low instead of being renormalized to full each frame.
+                // Loudness AGC: reference follows the frame peak instantly (so no
+                // band ever exceeds it → no clipping) and decays slowly, so quiet
+                // passages read low while recent loud parts hold it up.
                 let frame_max = raw_bands.iter().copied().fold(0.0f32, f32::max);
-                peak_ref = if frame_max > peak_ref {
-                    frame_max
-                } else {
-                    peak_ref * AGC_RELEASE
-                };
-                let reference = peak_ref.max(AGC_FLOOR);
+                peak_ref = frame_max.max(peak_ref * AGC_RELEASE);
+                let reference = peak_ref.max(AGC_EPS);
 
-                for i in 0..NUM_BANDS {
-                    let norm = (raw_bands[i] / reference * sensitivity).clamp(0.0, 1.0);
-                    let shaped = norm.powf(LEVEL_CURVE);
-                    smoothed_bands[i] = smoothed_bands[i] * smoothing + shaped * (1.0 - smoothing);
+                // Normalize + perceptual curve, then peak-hold-with-decay for a
+                // punchy beat pulse (instant attack, exponential fall).
+                for (display, &raw) in display_bands.iter_mut().zip(raw_bands.iter()) {
+                    let norm = (raw / reference).clamp(0.0, 1.0);
+                    let v = (norm * sensitivity).clamp(0.0, 1.0).powf(LEVEL_CURVE);
+                    *display = if v > *display { v } else { *display * DECAY };
                 }
-                fft_state.set_bands(smoothed_bands);
+                fft_state.set_bands(display_bands);
 
                 let elapsed = start.elapsed();
                 if elapsed < process_interval {
@@ -250,8 +259,6 @@ pub struct AudioConfig {
     pub style: u8,
     /// Sensitivity multiplier (0.5 - 2.0)
     pub sensitivity: f32,
-    /// Smoothing factor (0.0 = instant, 0.9 = very smooth)
-    pub smoothing: f32,
     /// Capture device name (exact or case-insensitive substring); None = auto-detect monitor source
     pub device: Option<String>,
 }
@@ -262,7 +269,6 @@ impl Default for AudioConfig {
             led_mode: cmd::LedMode::MusicBars.as_u8(),
             style: 0,
             sensitivity: 1.0,
-            smoothing: 0.3,
             device: None,
         }
     }
@@ -281,29 +287,25 @@ fn bands_to_viz_levels(bands: &[f32; NUM_BANDS]) -> [u8; audio_viz::NUM_BANDS] {
     levels
 }
 
-/// Analyze audio samples and extract frequency bands
+/// Analyze audio samples into [`NUM_BANDS`] average magnitudes (linear).
+///
+/// Bass-focused like the official "music" viz: 16 linear bands across
+/// [`BAND_LO_HZ`]..[`BAND_HI_HZ`] (kick/bass/low-mids — where the beat lives).
+/// Returns raw per-band magnitude (or zeros on silence); the caller applies the
+/// loudness AGC + curve so quiet passages render low without clipping.
 fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
     let mut bands = [0.0f32; NUM_BANDS];
 
     if samples.len() < FFT_SIZE {
         return bands;
     }
-
-    // Check if there's any audio at all
     let max_sample = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     if max_sample < 0.001 {
-        // Silence - return zeros
-        return bands;
+        return bands; // silence
     }
 
-    // Apply Hann window
     let windowed: Vec<f32> = hann_window(&samples[..FFT_SIZE]).to_vec();
-
-    // Max frequency is half the sample rate (Nyquist)
-    let max_freq = (sample_rate / 2) as f32;
-    let freq_limit = FrequencyLimit::Range(20.0, max_freq.min(20000.0));
-
-    // Compute FFT spectrum
+    let freq_limit = FrequencyLimit::Range(BAND_LO_HZ, BAND_HI_HZ);
     let spectrum = match samples_fft_to_spectrum(
         &windowed,
         sample_rate,
@@ -314,64 +316,21 @@ fn analyze_spectrum(samples: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
         Err(_) => return bands,
     };
 
-    // 16 log-spaced bands from 30Hz-16kHz (~0.55 octave each), tuned for music:
-    // dense through the musical midrange, capped at 16kHz (above that carries
-    // almost no musical energy). The rising weight is a gentle perceptual tilt
-    // so treble isn't perpetually dwarfed by bass.
-    let band_ranges = [
-        (30.0, 45.0, 1.0),
-        (45.0, 66.0, 1.1),
-        (66.0, 97.0, 1.2),
-        (97.0, 144.0, 1.3),
-        (144.0, 213.0, 1.4),
-        (213.0, 315.0, 1.6),
-        (315.0, 467.0, 1.8),
-        (467.0, 691.0, 2.0),
-        (691.0, 1023.0, 2.2),
-        (1023.0, 1514.0, 2.4),
-        (1514.0, 2241.0, 2.6),
-        (2241.0, 3317.0, 2.8),
-        (3317.0, 4909.0, 3.0),
-        (4909.0, 7266.0, 3.3),
-        (7266.0, 10754.0, 3.6),
-        (10754.0, 16000.0, 4.0),
-    ];
-
-    // Count bins in each band for proper averaging
-    let mut band_counts = [0u32; NUM_BANDS];
-
-    // Sum magnitudes in each band
+    // Average magnitude per linear band.
+    let step = (BAND_HI_HZ - BAND_LO_HZ) / NUM_BANDS as f32;
+    let mut counts = [0u32; NUM_BANDS];
     for (freq, magnitude) in spectrum.data().iter() {
-        let freq_hz = freq.val();
-        for (band_idx, (low, high, _weight)) in band_ranges.iter().enumerate() {
-            if freq_hz >= *low && freq_hz < *high {
-                bands[band_idx] += magnitude.val();
-                band_counts[band_idx] += 1;
-            }
+        let idx = ((freq.val() - BAND_LO_HZ) / step) as usize;
+        if idx < NUM_BANDS {
+            bands[idx] += magnitude.val();
+            counts[idx] += 1;
         }
     }
-
-    // Average and normalize each band
-    for (i, band) in bands.iter_mut().enumerate() {
-        if band_counts[i] > 0 {
-            // Average the magnitudes
-            *band /= band_counts[i] as f32;
-            // Apply band weight
-            *band *= band_ranges[i].2;
+    for (band, &c) in bands.iter_mut().zip(counts.iter()) {
+        if c > 0 {
+            *band /= c as f32;
         }
     }
-
-    // Silence detection on the absolute level.
-    let max_band = bands.iter().fold(0.0f32, |a, b| f32::max(a, *b));
-    const MIN_THRESHOLD: f32 = 0.0005;
-    if max_band < MIN_THRESHOLD {
-        return [0.0; NUM_BANDS];
-    }
-
-    // Return the raw (absolute) weighted magnitudes. The caller applies a
-    // cross-frame peak-follower AGC so quiet passages render low — normalizing
-    // here against this frame's own max would force the loudest band to full
-    // scale every frame, making quiet music look as loud as loud music.
     bands
 }
 
@@ -540,4 +499,38 @@ pub fn test_audio_levels(requested_device: Option<&str>) -> Result<(), String> {
     }
     println!("\nDone.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pure tone should energize the band covering its frequency.
+    fn peak_band_for(freq: f32) -> usize {
+        let mut s = vec![0.0f32; FFT_SIZE * 2];
+        for (i, x) in s.iter_mut().enumerate() {
+            *x = (2.0 * std::f32::consts::PI * freq * i as f32 / 44100.0).sin() * 0.5;
+        }
+        let b = analyze_spectrum(&s, 44100);
+        b.iter()
+            .enumerate()
+            .max_by(|a, c| a.1.partial_cmp(c.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap()
+    }
+
+    #[test]
+    fn tone_maps_to_expected_band() {
+        let step = (BAND_HI_HZ - BAND_LO_HZ) / NUM_BANDS as f32;
+        for freq in [100.0f32, 250.0, 500.0] {
+            let expected = ((freq - BAND_LO_HZ) / step) as usize;
+            assert_eq!(peak_band_for(freq), expected, "{freq} Hz in wrong band");
+        }
+    }
+
+    #[test]
+    fn silence_is_zero() {
+        let s = vec![0.0f32; FFT_SIZE * 2];
+        assert!(analyze_spectrum(&s, 44100).iter().all(|&b| b == 0.0));
+    }
 }

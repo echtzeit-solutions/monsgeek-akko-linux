@@ -193,7 +193,6 @@ fn start(app: &mut App, led_mode: u8) {
         led_mode,
         style: app.audio.style,
         sensitivity: 1.0,
-        smoothing: 0.3,
         device: Some(source.name.clone()),
     };
 
