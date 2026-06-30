@@ -23,6 +23,7 @@ pub mod protocol;
 pub mod pulse;
 #[cfg(feature = "screen-capture")]
 pub mod screen_capture;
+pub mod settings;
 pub mod tui;
 
 pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};

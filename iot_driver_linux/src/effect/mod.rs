@@ -247,10 +247,12 @@ impl EffectLibrary {
 
 /// Path to the default effects TOML file.
 pub fn default_effects_path() -> PathBuf {
-    dirs_path().join("effects.toml")
+    config_dir().join("effects.toml")
 }
 
-fn dirs_path() -> PathBuf {
+/// The `monsgeek` config directory (`$XDG_CONFIG_HOME/monsgeek`, else
+/// `~/.config/monsgeek`). Shared by the effects library and [`crate::settings`].
+pub fn config_dir() -> PathBuf {
     if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
         PathBuf::from(config).join("monsgeek")
     } else if let Some(home) = std::env::var_os("HOME") {

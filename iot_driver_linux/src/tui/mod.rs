@@ -187,6 +187,8 @@ struct App {
     notify: NotifyTabState,
     // Audio-reactive state (shown in the Device Info tab)
     audio: AudioTabState,
+    // Screen-reactive state (shown in the Device Info tab)
+    screen: tabs::screen::ScreenTabState,
     // Selected UserPicture layer (mode 13) to display
     userpic_layer: u8,
     // Animation engine status (periodic query + interpolation)
@@ -199,6 +201,7 @@ struct App {
 impl App {
     fn new(device_selector: Option<String>) -> (Self, mpsc::UnboundedReceiver<GenerationalResult>) {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
+        let persisted = crate::settings::Settings::load();
         let app = Self {
             device_selector,
             info: FirmwareSettings::default(),
@@ -280,7 +283,8 @@ impl App {
             info_tags: Vec::new(),
             #[cfg(feature = "notify")]
             notify: NotifyTabState::default(),
-            audio: AudioTabState::default(),
+            audio: AudioTabState::with_rate(persisted.audio_rate_hz),
+            screen: tabs::screen::ScreenTabState::with_rate(persisted.screen_rate_hz),
             userpic_layer: 0,
             // Animation engine
             anim_snapshot: None,
@@ -1510,6 +1514,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, -1),
                                     InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
+                                    InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, -1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 3) % 4;
                                         app.set_userpic_layer(n);
@@ -1587,6 +1592,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, 1),
                                     InfoTag::AudioColor => tabs::audio::toggle_color(&mut app),
+                                    InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, 1),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 1) % 4;
                                         app.set_userpic_layer(n);
@@ -1922,13 +1928,15 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
 
             // Handle tick updates
             _ = tick_interval.tick() => {
-                // Start/stop audio-reactive to follow the LED mode (music modes).
+                // Start/stop audio/screen-reactive to follow the LED mode.
                 tabs::audio::reconcile(&mut app);
+                tabs::screen::reconcile(&mut app);
 
                 // Fast tick (~60fps) when an animated panel needs it: the notify
-                // tab, or the audio level meter (Device Info tab while running).
+                // tab, or the audio/screen preview (Device Info tab while running).
                 let want_ms = {
-                    let mut fast = app.tab == 0 && app.audio.is_running();
+                    let mut fast =
+                        app.tab == 0 && (app.audio.is_running() || app.screen.is_running());
                     #[cfg(feature = "notify")]
                     { fast = fast || app.tab == 4; }
                     if fast { 16 } else { 100 }

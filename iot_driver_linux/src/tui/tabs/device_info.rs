@@ -64,6 +64,8 @@ pub(in crate::tui) enum InfoTag {
     AudioVizStyle,
     AudioRate,
     AudioColor,
+    // Screen-reactive (shown only in ScreenSync mode; ←/→ cycle)
+    ScreenRate,
     // UserPicture (mode 13): which stored picture layer to display (←/→ cycle)
     UserPicLayer,
 }
@@ -1169,6 +1171,14 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
                 ),
             ])),
         ));
+    } else if super::screen::is_screen_mode(info.led_mode) {
+        items.push((
+            InfoTag::ScreenRate,
+            ListItem::new(Line::from(vec![
+                Span::raw("Screen Rate:    "),
+                sel_span(format!("{} Hz", app.screen.rate_hz)),
+            ])),
+        ));
     } else if info.led_mode == cmd::LedMode::UserPicture.as_u8() {
         items.push((
             InfoTag::UserPicLayer,
@@ -1487,13 +1497,18 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
     let list_items: Vec<ListItem> = items.into_iter().map(|(_, item)| item).collect();
     let max_idx = list_items.len().saturating_sub(1);
 
-    // When audio is running, show the live spectrum preview on the right.
-    let list_area = if app.audio.is_running() {
+    // When a visualizer is running, show its live preview on the right: the
+    // audio spectrum meter, or the screen-color swatch.
+    let list_area = if app.audio.is_running() || app.screen.is_running() {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
             .split(area);
-        super::audio::render_meter(f, app, chunks[1]);
+        if app.audio.is_running() {
+            super::audio::render_meter(f, app, chunks[1]);
+        } else {
+            super::screen::render_preview(f, app, chunks[1]);
+        }
         chunks[0]
     } else {
         area

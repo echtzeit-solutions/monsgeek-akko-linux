@@ -94,6 +94,14 @@ impl Default for AudioTabState {
 }
 
 impl AudioTabState {
+    /// Default state with a persisted update rate applied.
+    pub(in crate::tui) fn with_rate(update_hz: u32) -> Self {
+        Self {
+            update_hz,
+            ..Self::default()
+        }
+    }
+
     pub(in crate::tui) fn is_running(&self) -> bool {
         self.run.is_some()
     }
@@ -192,8 +200,9 @@ pub(in crate::tui) fn cycle_style(app: &mut App, delta: i32) {
     }
 }
 
-/// Preset update rates (Hz) — CPU/USB traffic vs fidelity.
-const RATE_PRESETS: [u32; 5] = [15, 30, 50, 75, 100];
+/// Preset update rates (Hz) — CPU/USB traffic vs fidelity. Shared with the
+/// screen visualizer's rate selector.
+pub(in crate::tui) const RATE_PRESETS: [u32; 5] = [15, 30, 50, 75, 100];
 
 /// Cycle the update rate through [`RATE_PRESETS`], applied live to a running run.
 pub(in crate::tui) fn cycle_rate(app: &mut App, delta: i32) {
@@ -203,6 +212,7 @@ pub(in crate::tui) fn cycle_rate(app: &mut App, delta: i32) {
         .unwrap_or(2) as i32;
     let next = (cur + delta).rem_euclid(RATE_PRESETS.len() as i32) as usize;
     app.audio.update_hz = RATE_PRESETS[next];
+    crate::settings::Settings::update(|s| s.audio_rate_hz = app.audio.update_hz);
     if let Some(run) = app.audio.run.as_ref() {
         run.capture
             .state

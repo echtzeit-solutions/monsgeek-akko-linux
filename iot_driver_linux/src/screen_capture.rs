@@ -96,11 +96,15 @@ pub fn compute_average_color(data: &[u8], width: u32, height: u32, is_bgra: bool
 }
 
 /// Run the screen color streaming loop
-/// Sends RGB to keyboard at ~50Hz
+/// Sends RGB to keyboard at ~50Hz.
+///
+/// `show_readout` draws the live in-place truecolor swatch on stdout (CLI only);
+/// the TUI passes `false` to keep its alternate screen uncorrupted.
 fn run_screen_color_loop(
     keyboard: &KeyboardInterface,
     state: &Arc<ScreenColorState>,
     running: Arc<AtomicBool>,
+    show_readout: bool,
 ) -> Result<(), String> {
     let update_interval = Duration::from_millis(screen_color::UPDATE_INTERVAL_MS);
     let mut last_color = (0u8, 0u8, 0u8);
@@ -117,13 +121,15 @@ fn run_screen_color_loop(
         if (r, g, b) != last_color {
             trace!("Screen color: RGB({r}, {g}, {b}) #{r:02X}{g:02X}{b:02X}");
 
-            // Live in-place readout of the calculated color being streamed:
-            // truecolor swatch + hex + rgb.
-            use std::io::Write;
-            print!(
-                "\r  Screen color: \x1b[48;2;{r};{g};{b}m      \x1b[0m  #{r:02X}{g:02X}{b:02X}  rgb({r:>3},{g:>3},{b:>3})  "
-            );
-            let _ = std::io::stdout().flush();
+            if show_readout {
+                // Live in-place readout of the calculated color being streamed:
+                // truecolor swatch + hex + rgb.
+                use std::io::Write;
+                print!(
+                    "\r  Screen color: \x1b[48;2;{r};{g};{b}m      \x1b[0m  #{r:02X}{g:02X}{b:02X}  rgb({r:>3},{g:>3},{b:>3})  "
+                );
+                let _ = std::io::stdout().flush();
+            }
 
             let report = screen_color::build_report(r, g, b);
             // No-delay streaming send (the default flow-control delay would cap us).
@@ -137,7 +143,9 @@ fn run_screen_color_loop(
         }
     }
 
-    println!(); // end the in-place readout line
+    if show_readout {
+        println!(); // end the in-place readout line
+    }
     Ok(())
 }
 
@@ -147,7 +155,13 @@ pub mod pipewire_capture {
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
     use ashpd::desktop::PersistMode;
 
-    /// Start screen capture using XDG ScreenCast portal + PipeWire
+    use crate::settings::Settings;
+
+    /// Start screen capture using XDG ScreenCast portal + PipeWire.
+    ///
+    /// Reuses a previously persisted restore token (and requests
+    /// [`PersistMode::Application`]) so the portal only prompts the first time;
+    /// the token returned by the compositor is saved back to `settings.toml`.
     pub async fn start_capture(state: Arc<ScreenColorState>, fps: u32) -> Result<(), String> {
         // 1. Request screen cast via XDG portal
         let screencast = Screencast::new()
@@ -159,15 +173,18 @@ pub mod pipewire_capture {
             .await
             .map_err(|e| format!("Failed to create session: {e}"))?;
 
+        // Reuse a saved restore token to skip the picker on subsequent runs.
+        let saved_token = Settings::load().screencast_restore_token;
+
         // Select monitor source
         screencast
             .select_sources(
                 &session,
                 CursorMode::Hidden,
                 SourceType::Monitor.into(),
-                false, // single source
-                None,  // restore token
-                PersistMode::DoNot,
+                false,                  // single source
+                saved_token.as_deref(), // restore token (if any)
+                PersistMode::Application,
             )
             .await
             .map_err(|e| format!("Failed to select sources: {e}"))?;
@@ -182,20 +199,27 @@ pub mod pipewire_capture {
             .response()
             .map_err(|e| format!("Failed to get response: {e}"))?;
 
+        // Persist the (possibly new) restore token for next time.
+        if let Some(token) = response.restore_token() {
+            if Some(token) != saved_token.as_deref() {
+                Settings::update(|s| s.screencast_restore_token = Some(token.to_string()));
+            }
+        }
+
         let streams = response.streams();
         if streams.is_empty() {
             return Err("No streams returned from screencast".to_string());
         }
 
         let node_id = streams[0].pipe_wire_node_id();
-        println!("Got PipeWire node ID: {node_id}");
+        trace!("Got PipeWire node ID: {node_id}");
 
         // 2. Connect to PipeWire and receive frames
         // This runs in a blocking thread since pipewire-rs uses its own event loop
         let state_clone = state.clone();
         std::thread::spawn(move || {
             if let Err(e) = run_pipewire_capture(node_id, state_clone, fps) {
-                eprintln!("PipeWire capture error: {e}");
+                tracing::error!("PipeWire capture error: {e}");
             }
         });
 
@@ -372,7 +396,7 @@ pub mod pipewire_capture {
             let n_events = loop_.iterate(Duration::from_millis(50));
 
             if n_events < 0 {
-                eprintln!("PipeWire iterate() returned error: {n_events}");
+                tracing::error!("PipeWire iterate() returned error: {n_events}");
                 break;
             }
         }
@@ -420,7 +444,7 @@ pub async fn run_screen_color_mode(
 
     // Run the color streaming loop (blocking)
     println!("Streaming screen colors to keyboard...");
-    run_screen_color_loop(keyboard, &state, running)?;
+    run_screen_color_loop(keyboard, &state, running, true)?;
 
     state.stop();
     println!("Screen color mode stopped");
@@ -438,4 +462,45 @@ pub fn run_screen_color_mode_sync(
         tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(run_screen_color_mode(keyboard, running, fps))
+}
+
+/// Start screen-reactive mode for the TUI: spawn a background thread that runs
+/// the portal negotiation + PipeWire capture + the keyboard streaming loop, all
+/// silently (no stdout). Returns the shared [`ScreenColorState`] (for the live
+/// color preview) and the `running` flag (clear it to stop). The LED mode is
+/// assumed to already be ScreenSync (set by the caller).
+pub fn spawn_for_tui(
+    keyboard: Arc<KeyboardInterface>,
+    fps: u32,
+) -> (Arc<ScreenColorState>, Arc<AtomicBool>) {
+    let state = Arc::new(ScreenColorState::default());
+    let running = Arc::new(AtomicBool::new(true));
+
+    let thread_state = state.clone();
+    let thread_running = running.clone();
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!("screen capture: runtime: {e}");
+                thread_running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+        // Portal + PipeWire setup is async; the capture itself runs on its own
+        // thread spawned inside start_capture, so the runtime can be dropped after.
+        if let Err(e) = rt.block_on(pipewire_capture::start_capture(thread_state.clone(), fps)) {
+            tracing::error!("screen capture: {e}");
+            thread_running.store(false, Ordering::SeqCst);
+            return;
+        }
+        drop(rt);
+
+        // Give PipeWire a moment to negotiate the format before streaming.
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = run_screen_color_loop(&keyboard, &thread_state, thread_running, false);
+        thread_state.stop();
+    });
+
+    (state, running)
 }
