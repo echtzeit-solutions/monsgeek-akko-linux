@@ -160,8 +160,10 @@ pub mod pipewire_capture {
     /// Start screen capture using XDG ScreenCast portal + PipeWire.
     ///
     /// Reuses a previously persisted restore token (and requests
-    /// [`PersistMode::Application`]) so the portal only prompts the first time;
-    /// the token returned by the compositor is saved back to `settings.toml`.
+    /// [`PersistMode::ExplicitlyRevoked`]) so the portal only prompts the first
+    /// time, even across app restarts; the token returned by the compositor is
+    /// saved back to `settings.toml`. (`PersistMode::Application` would be
+    /// dropped by the compositor when the process exits, re-prompting next run.)
     pub async fn start_capture(state: Arc<ScreenColorState>, fps: u32) -> Result<(), String> {
         // 1. Request screen cast via XDG portal
         let screencast = Screencast::new()
@@ -184,7 +186,7 @@ pub mod pipewire_capture {
                 SourceType::Monitor.into(),
                 false,                  // single source
                 saved_token.as_deref(), // restore token (if any)
-                PersistMode::Application,
+                PersistMode::ExplicitlyRevoked,
             )
             .await
             .map_err(|e| format!("Failed to select sources: {e}"))?;
