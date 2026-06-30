@@ -45,9 +45,9 @@ jobs:
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-            libasound2-dev \
+            libpulse-dev \
+            libpipewire-0.3-dev \
             libdbus-1-dev \
-            libjack-jackd2-dev \
             libclang-dev
 
       - name: Install Rust
@@ -81,9 +81,9 @@ jobs:
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-            libasound2-dev \
+            libpulse-dev \
+            libpipewire-0.3-dev \
             libdbus-1-dev \
-            libjack-jackd2-dev \
             libclang-dev
 
       - name: Install Rust
@@ -115,9 +115,9 @@ jobs:
             libudev-dev \
             libhidapi-dev \
             protobuf-compiler \
-            libasound2-dev \
+            libpulse-dev \
+            libpipewire-0.3-dev \
             libdbus-1-dev \
-            libjack-jackd2-dev \
             libclang-dev
 
       - name: Install Rust
