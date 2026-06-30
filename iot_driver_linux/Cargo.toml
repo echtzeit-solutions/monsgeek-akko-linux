@@ -101,7 +101,7 @@ reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["firmware-api", "notify"]
+default = ["firmware-api", "notify", "screen-capture"]
 firmware-api = ["dep:reqwest", "firmware-api-async"]
 firmware-api-async = ["dep:reqwest"]
 bpf = ["dep:aya"]
