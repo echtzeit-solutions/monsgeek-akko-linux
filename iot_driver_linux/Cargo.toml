@@ -129,3 +129,6 @@ name = "read_dongle"
 [[example]]
 name = "screencast_reentry_test"
 required-features = ["screen-capture"]
+
+[[example]]
+name = "calib_curve_render"

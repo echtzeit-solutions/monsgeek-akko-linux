@@ -14,9 +14,11 @@
 #[cfg(feature = "screen-capture")]
 use std::time::{Duration, Instant};
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
@@ -410,52 +412,128 @@ pub(in crate::tui) enum CalField {
     Saturation,
 }
 
-/// Render the streamed screen color as a filled swatch with its hex value —
-/// i.e. the calibrated color (or active test swatch), so tuning is WYSIWYG.
+/// Render the calibration curves (per-channel input→output) with a collapsed,
+/// single-line live color swatch beneath them.
 pub(in crate::tui) fn render_preview(f: &mut Frame, app: &App, area: Rect) {
+    let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(area);
+    render_calibration_curves(f, app, rows[0]);
+    render_swatch_line(f, app, rows[1]);
+}
+
+/// The R/G/B gain+gamma mapping (input 0-255 → output) as one colored line each,
+/// over a faint diagonal identity reference. Drawn on a braille [`Canvas`] so the
+/// lines render reliably even in a small panel.
+fn render_calibration_curves(f: &mut Frame, app: &App, area: Rect) {
+    let cal = app.screen.calib();
+    const N: u32 = 48;
+    let colors = [Color::Red, Color::Green, Color::Blue];
+
+    // Where the current input color (live average, or the active test swatch)
+    // lands on each channel's curve: (input, mapped output).
+    let raw = TEST_SWATCHES[app.screen.test_swatch]
+        .1
+        .or_else(|| app.screen.color());
+    let markers: Option<[(f64, f64); 3]> = raw.map(|(r, g, b)| {
+        let inputs = [r, g, b];
+        std::array::from_fn(|ch| (inputs[ch] as f64, cal.channel_map(inputs[ch], ch) as f64))
+    });
+
+    let canvas = Canvas::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Calibration  R/G/B in→out"),
+        )
+        .marker(symbols::Marker::Braille)
+        .x_bounds([0.0, 255.0])
+        .y_bounds([0.0, 255.0])
+        .paint(move |ctx| {
+            // Faint identity reference (no-op baseline).
+            ctx.draw(&CanvasLine {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 255.0,
+                y2: 255.0,
+                color: Color::Gray,
+            });
+            for (ch, &color) in colors.iter().enumerate() {
+                let mut prev = (0.0_f64, cal.channel_map(0, ch) as f64);
+                for i in 1..=N {
+                    let x = (i * 255 / N) as u8;
+                    let cur = (x as f64, cal.channel_map(x, ch) as f64);
+                    ctx.draw(&CanvasLine {
+                        x1: prev.0,
+                        y1: prev.1,
+                        x2: cur.0,
+                        y2: cur.1,
+                        color,
+                    });
+                    prev = cur;
+                }
+            }
+
+            // Mark where the current color maps on each curve: a channel-colored
+            // cross with a white core dot at (input, output).
+            if let Some(marks) = markers {
+                const ARM: f64 = 7.0;
+                for (ch, &(mx, my)) in marks.iter().enumerate() {
+                    let color = colors[ch];
+                    ctx.draw(&CanvasLine {
+                        x1: mx - ARM,
+                        y1: my,
+                        x2: mx + ARM,
+                        y2: my,
+                        color,
+                    });
+                    ctx.draw(&CanvasLine {
+                        x1: mx,
+                        y1: my - ARM,
+                        x2: mx,
+                        y2: my + ARM,
+                        color,
+                    });
+                    ctx.draw(&Points {
+                        coords: &[(mx, my)],
+                        color: Color::White,
+                    });
+                }
+            }
+        });
+    f.render_widget(canvas, area);
+}
+
+/// One-line swatch of the streamed color (calibrated live average or active test
+/// swatch) with its hex/rgb label centered on it.
+fn render_swatch_line(f: &mut Frame, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let raw = TEST_SWATCHES[app.screen.test_swatch]
         .1
         .or_else(|| app.screen.color());
     let (r, g, b) = raw
         .map(|c| app.screen.calib().apply(c))
         .unwrap_or((0, 0, 0));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("Screen Color  #{r:02X}{g:02X}{b:02X}"));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
 
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-    let swatch_style = Style::default().bg(Color::Rgb(r, g, b));
-    let blank = " ".repeat(inner.width as usize);
-    let mid = inner.height as usize / 2;
-    let mut lines: Vec<Line> = Vec::with_capacity(inner.height as usize);
-    for row in 0..inner.height as usize {
-        if row == mid {
-            let label = format!("rgb({r}, {g}, {b})");
-            let w = inner.width as usize;
-            let label = if label.len() > w {
-                format!("#{r:02X}{g:02X}{b:02X}")
-            } else {
-                label
-            };
-            let lpad = w.saturating_sub(label.len()) / 2;
-            let rpad = w.saturating_sub(lpad + label.len());
-            let text_fg = if r as u16 + g as u16 + b as u16 > 320 {
-                Color::Black
-            } else {
-                Color::White
-            };
-            lines.push(Line::from(vec![
-                Span::styled(" ".repeat(lpad), swatch_style),
-                Span::styled(label, swatch_style.fg(text_fg)),
-                Span::styled(" ".repeat(rpad), swatch_style),
-            ]));
-        } else {
-            lines.push(Line::from(Span::styled(blank.clone(), swatch_style)));
-        }
-    }
-    f.render_widget(Paragraph::new(lines), inner);
+    let bg = Style::default().bg(Color::Rgb(r, g, b));
+    let w = area.width as usize;
+    let label = format!("#{r:02X}{g:02X}{b:02X}  rgb({r}, {g}, {b})");
+    let label = if label.len() > w {
+        format!("#{r:02X}{g:02X}{b:02X}")
+    } else {
+        label
+    };
+    let lpad = w.saturating_sub(label.len()) / 2;
+    let rpad = w.saturating_sub(lpad + label.len());
+    let fg = if r as u16 + g as u16 + b as u16 > 320 {
+        Color::Black
+    } else {
+        Color::White
+    };
+    let line = Line::from(vec![
+        Span::styled(" ".repeat(lpad), bg),
+        Span::styled(label, bg.fg(fg)),
+        Span::styled(" ".repeat(rpad), bg),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
