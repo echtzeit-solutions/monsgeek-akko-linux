@@ -21,6 +21,7 @@ pub mod power_supply;
 pub mod profile;
 pub mod protocol;
 pub mod pulse;
+pub mod screen_calib;
 #[cfg(feature = "screen-capture")]
 pub mod screen_capture;
 pub mod settings;

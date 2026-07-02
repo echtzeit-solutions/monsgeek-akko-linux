@@ -2,8 +2,10 @@
 //!
 //! Like the audio visualizer, this is implied by the keyboard's LED mode: when
 //! it is ScreenSync (21) the host captures the screen via the XDG ScreenCast
-//! portal + PipeWire, averages each frame to one color, and streams it over
-//! `SET_SCREEN_COLOR`. The only control is the capture **Rate**, and a live
+//! portal + PipeWire, averages a region of each frame to one color, applies a
+//! calibration transform, and streams it over `SET_SCREEN_COLOR`. Controls
+//! (capture **Rate**, **Region**, per-channel gain/gamma + saturation, and a
+//! **Test Swatch** for tuning) live in the Device Info tab; a live calibrated
 //! color swatch preview appears while it runs.
 //!
 //! The capture path is gated behind the `screen-capture` Cargo feature (it pulls
@@ -19,9 +21,88 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::super::App;
+use crate::screen_calib::{ColorCalibration, Region};
+use crate::settings::Settings;
 
 /// ScreenSync LED mode (host-streamed average screen color).
 pub(in crate::tui) const SCREEN_SYNC: u8 = 21;
+
+/// Named screen-region presets cycled by the Region control.
+const REGION_PRESETS: &[(&str, Region)] = &[
+    (
+        "Full",
+        Region {
+            left: 0.0,
+            top: 0.0,
+            right: 1.0,
+            bottom: 1.0,
+        },
+    ),
+    (
+        "No title bar",
+        Region {
+            left: 0.0,
+            top: 0.08,
+            right: 1.0,
+            bottom: 1.0,
+        },
+    ),
+    (
+        "Center 50%",
+        Region {
+            left: 0.25,
+            top: 0.25,
+            right: 0.75,
+            bottom: 0.75,
+        },
+    ),
+    (
+        "Left half",
+        Region {
+            left: 0.0,
+            top: 0.0,
+            right: 0.5,
+            bottom: 1.0,
+        },
+    ),
+    (
+        "Right half",
+        Region {
+            left: 0.5,
+            top: 0.0,
+            right: 1.0,
+            bottom: 1.0,
+        },
+    ),
+    (
+        "Bottom half",
+        Region {
+            left: 0.0,
+            top: 0.5,
+            right: 1.0,
+            bottom: 1.0,
+        },
+    ),
+];
+
+/// A named calibration-tuning target: label + fixed color (`None` = live average).
+type TestSwatch = (&'static str, Option<(u8, u8, u8)>);
+
+/// Fixed calibration-tuning targets. `None` = stream the live screen average.
+const TEST_SWATCHES: &[TestSwatch] = &[
+    ("Off", None),
+    ("White", Some((255, 255, 255))),
+    ("Red", Some((255, 0, 0))),
+    ("Green", Some((0, 255, 0))),
+    ("Blue", Some((0, 0, 255))),
+];
+
+/// Clamp/round a calibration scalar after a step (avoids f32 drift in the UI).
+fn stepf(v: f32, delta: i32, coarse: bool, min: f32, max: f32) -> f32 {
+    let step = if coarse { 0.20 } else { 0.05 };
+    let next = (v + delta as f32 * step).clamp(min, max);
+    (next * 100.0).round() / 100.0
+}
 
 /// Pause after tearing down a portal session before opening a new one in-process.
 #[cfg(feature = "screen-capture")]
@@ -38,6 +119,12 @@ pub(in crate::tui) struct ScreenTabState {
     /// Capture rate (Hz) — CPU/USB traffic vs fidelity.
     pub rate_hz: u32,
     pub error: Option<String>,
+    /// Color transform (mirror of the persisted value; pushed live to the run).
+    calibration: ColorCalibration,
+    /// Capture region (mirror of the persisted value).
+    region: Region,
+    /// Index into [`TEST_SWATCHES`] — transient tuning aid, not persisted.
+    test_swatch: usize,
     /// Earliest time we may open a new portal session after the last teardown.
     #[cfg(feature = "screen-capture")]
     reentry_after: Instant,
@@ -50,6 +137,9 @@ impl Default for ScreenTabState {
         Self {
             rate_hz: crate::settings::DEFAULT_RATE_HZ,
             error: None,
+            calibration: ColorCalibration::default(),
+            region: Region::default(),
+            test_swatch: 0,
             #[cfg(feature = "screen-capture")]
             reentry_after: Instant::now(),
             #[cfg(feature = "screen-capture")]
@@ -59,13 +149,48 @@ impl Default for ScreenTabState {
 }
 
 impl ScreenTabState {
-    /// Default state with a persisted capture rate applied.
-    pub(in crate::tui) fn with_rate(rate_hz: u32) -> Self {
+    /// Default state seeded with the persisted rate, calibration, and region.
+    pub(in crate::tui) fn from_settings(settings: &Settings) -> Self {
         Self {
-            rate_hz,
+            rate_hz: settings.screen_rate_hz,
+            calibration: settings.screen_calibration,
+            region: settings.screen_region,
             ..Self::default()
         }
     }
+
+    /// Calibration mirror (for rendering the control rows).
+    pub(in crate::tui) fn calib(&self) -> ColorCalibration {
+        self.calibration
+    }
+
+    /// Label of the current region (a preset name, or "Custom").
+    pub(in crate::tui) fn region_label(&self) -> &'static str {
+        REGION_PRESETS
+            .iter()
+            .find(|(_, r)| *r == self.region)
+            .map(|(name, _)| *name)
+            .unwrap_or("Custom")
+    }
+
+    /// Label of the current test swatch.
+    pub(in crate::tui) fn test_swatch_label(&self) -> &'static str {
+        TEST_SWATCHES[self.test_swatch].0
+    }
+
+    /// Push the current calibration/region/test-swatch to the running capture so
+    /// edits take effect live without restarting.
+    #[cfg(feature = "screen-capture")]
+    fn push_live(&self) {
+        if let Some(run) = &self.run {
+            run.state.set_calibration(self.calibration);
+            run.state.set_region(self.region);
+            run.state.set_test_swatch(TEST_SWATCHES[self.test_swatch].1);
+        }
+    }
+
+    #[cfg(not(feature = "screen-capture"))]
+    fn push_live(&self) {}
 
     #[cfg(feature = "screen-capture")]
     pub(in crate::tui) fn is_running(&self) -> bool {
@@ -198,8 +323,15 @@ fn start(app: &mut App) {
         return;
     };
 
-    crate::screen_capture::set_screen_sync_mode(&keyboard);
-
+    // The keyboard is already in ScreenSync mode here — set either by the user
+    // picking it in the LED mode row (which sent the user's brightness/color via
+    // `send_main_led`) or read from the device on connect. So we do NOT resend a
+    // placeholder SET_LEDPARAM (that used to overwrite the stored config); we
+    // just start streaming the captured color.
+    // The fresh capture starts from the persisted calibration/region (loaded in
+    // `spawn_for_tui` via `ScreenColorState::from_settings`) with no test swatch;
+    // reset the mirror so the displayed swatch matches.
+    app.screen.test_swatch = 0;
     let capture = crate::screen_capture::spawn_for_tui(keyboard, app.screen.rate_hz);
     app.screen.run = Some(capture);
     app.screen.error = None;
@@ -227,10 +359,66 @@ pub(in crate::tui) fn cycle_rate(app: &mut App, delta: i32) {
     app.status_msg = format!("Screen rate: {} Hz", app.screen.rate_hz);
 }
 
-/// Render the live screen color as a filled swatch with its hex value. Only
-/// meaningful while running.
+/// Cycle the capture region through [`REGION_PRESETS`]; persist and apply live.
+pub(in crate::tui) fn cycle_region(app: &mut App, delta: i32) {
+    let cur = REGION_PRESETS
+        .iter()
+        .position(|(_, r)| *r == app.screen.region)
+        .unwrap_or(0) as i32;
+    let next = (cur + delta).rem_euclid(REGION_PRESETS.len() as i32) as usize;
+    app.screen.region = REGION_PRESETS[next].1;
+    Settings::update(|s| s.screen_region = app.screen.region);
+    app.screen.push_live();
+    app.status_msg = format!("Screen region: {}", REGION_PRESETS[next].0);
+}
+
+/// Cycle the calibration test swatch (Off / White / R / G / B). Not persisted.
+pub(in crate::tui) fn cycle_test_swatch(app: &mut App, delta: i32) {
+    let next = (app.screen.test_swatch as i32 + delta).rem_euclid(TEST_SWATCHES.len() as i32);
+    app.screen.test_swatch = next as usize;
+    app.screen.push_live();
+    app.status_msg = format!("Test swatch: {}", TEST_SWATCHES[app.screen.test_swatch].0);
+}
+
+/// Adjust one calibration scalar (`field` selects gain[i]/gamma[i]/saturation);
+/// persist and apply live.
+pub(in crate::tui) fn adjust_calibration(app: &mut App, field: CalField, delta: i32, coarse: bool) {
+    let c = &mut app.screen.calibration;
+    match field {
+        CalField::GainR => c.gain[0] = stepf(c.gain[0], delta, coarse, 0.0, 2.0),
+        CalField::GainG => c.gain[1] = stepf(c.gain[1], delta, coarse, 0.0, 2.0),
+        CalField::GainB => c.gain[2] = stepf(c.gain[2], delta, coarse, 0.0, 2.0),
+        CalField::GammaR => c.gamma[0] = stepf(c.gamma[0], delta, coarse, 0.3, 3.0),
+        CalField::GammaG => c.gamma[1] = stepf(c.gamma[1], delta, coarse, 0.3, 3.0),
+        CalField::GammaB => c.gamma[2] = stepf(c.gamma[2], delta, coarse, 0.3, 3.0),
+        CalField::Saturation => c.saturation = stepf(c.saturation, delta, coarse, 0.0, 2.0),
+    }
+    let cal = app.screen.calibration;
+    Settings::update(|s| s.screen_calibration = cal);
+    app.screen.push_live();
+}
+
+/// Which calibration scalar [`adjust_calibration`] targets.
+#[derive(Clone, Copy)]
+pub(in crate::tui) enum CalField {
+    GainR,
+    GainG,
+    GainB,
+    GammaR,
+    GammaG,
+    GammaB,
+    Saturation,
+}
+
+/// Render the streamed screen color as a filled swatch with its hex value —
+/// i.e. the calibrated color (or active test swatch), so tuning is WYSIWYG.
 pub(in crate::tui) fn render_preview(f: &mut Frame, app: &App, area: Rect) {
-    let (r, g, b) = app.screen.color().unwrap_or((0, 0, 0));
+    let raw = TEST_SWATCHES[app.screen.test_swatch]
+        .1
+        .or_else(|| app.screen.color());
+    let (r, g, b) = raw
+        .map(|c| app.screen.calib().apply(c))
+        .unwrap_or((0, 0, 0));
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!("Screen Color  #{r:02X}{g:02X}{b:02X}"));

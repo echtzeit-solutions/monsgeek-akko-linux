@@ -63,8 +63,17 @@ pub(in crate::tui) enum InfoTag {
     AudioDevice,
     AudioVizStyle,
     AudioRate,
-    // Screen-reactive (shown only in ScreenSync mode; ←/→ cycle)
+    // Screen-reactive (shown only in ScreenSync mode; ←/→ cycle/adjust)
     ScreenRate,
+    ScreenRegion,
+    ScreenTestSwatch,
+    ScreenGainR,
+    ScreenGainG,
+    ScreenGainB,
+    ScreenGammaR,
+    ScreenGammaG,
+    ScreenGammaB,
+    ScreenSaturation,
     // UserPicture (mode 13): which stored picture layer to display (←/→ cycle)
     UserPicLayer,
 }
@@ -398,6 +407,17 @@ impl App {
     }
 
     pub(in crate::tui) fn set_led_mode(&mut self, mode: u8) {
+        // Remember the mode we came from when entering a reactive mode, so exit
+        // can return to it; keep it across reactive↔reactive switches and clear
+        // it when the user picks a normal mode (that switch already restores the
+        // full params via `send_main_led`).
+        if super::is_reactive(mode) {
+            if !super::is_reactive(self.info.led_mode) {
+                self.reactive_prev_mode = Some(self.info.led_mode);
+            }
+        } else {
+            self.reactive_prev_mode = None;
+        }
         self.info.led_mode = mode;
         self.send_main_led();
         self.status_msg = format!("LED mode: {}", cmd::led_mode_name(mode));
@@ -1159,12 +1179,71 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
         // Color (rainbow vs solid) is tied to the Dazzle flag below — Dazzle on
         // = rainbow, off = solid LED color.
     } else if super::screen::is_screen_mode(info.led_mode) {
+        let cal = app.screen.calib();
         items.push((
             InfoTag::ScreenRate,
             ListItem::new(Line::from(vec![
                 Span::raw("Screen Rate:    "),
                 sel_span(format!("{} Hz", app.screen.rate_hz)),
             ])),
+        ));
+        items.push((
+            InfoTag::ScreenRegion,
+            ListItem::new(Line::from(vec![
+                Span::raw("Region:         "),
+                sel_span(app.screen.region_label().to_string()),
+            ])),
+        ));
+        items.push((
+            InfoTag::ScreenTestSwatch,
+            ListItem::new(Line::from(vec![
+                Span::raw("Test Swatch:    "),
+                sel_span(app.screen.test_swatch_label().to_string()),
+            ])),
+        ));
+        let cal_row = |tag, label: &str, v: f32| {
+            (
+                tag,
+                ListItem::new(Line::from(vec![
+                    Span::raw(label.to_string()),
+                    sel_span(format!("{v:.2}")),
+                ])),
+            )
+        };
+        items.push(cal_row(
+            InfoTag::ScreenGainR,
+            "Gain R:         ",
+            cal.gain[0],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenGainG,
+            "Gain G:         ",
+            cal.gain[1],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenGainB,
+            "Gain B:         ",
+            cal.gain[2],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenGammaR,
+            "Gamma R:        ",
+            cal.gamma[0],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenGammaG,
+            "Gamma G:        ",
+            cal.gamma[1],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenGammaB,
+            "Gamma B:        ",
+            cal.gamma[2],
+        ));
+        items.push(cal_row(
+            InfoTag::ScreenSaturation,
+            "Saturation:     ",
+            cal.saturation,
         ));
     } else if info.led_mode == cmd::LedMode::UserPicture.as_u8() {
         items.push((

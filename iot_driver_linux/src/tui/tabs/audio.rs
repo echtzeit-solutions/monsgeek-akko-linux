@@ -260,7 +260,14 @@ fn start(app: &mut App, led_mode: u8) {
         }
     };
 
-    if let Err(e) = keyboard.set_music_viz_mode(led_mode, app.audio.style, 4, viz_color(app)) {
+    // Use the keyboard's current brightness (not a placeholder) so the stored
+    // LED config isn't overwritten; color/dazzle come from viz_color.
+    if let Err(e) = keyboard.set_music_viz_mode(
+        led_mode,
+        app.audio.style,
+        app.info.led_brightness,
+        viz_color(app),
+    ) {
         app.audio.error = Some(format!("Failed to set visualizer mode: {e}"));
     }
 
@@ -293,7 +300,12 @@ fn viz_color(app: &App) -> Option<(u8, u8, u8)> {
 /// color, or Bars↔Patterns change). The viz thread keeps streaming bands.
 fn reapply_mode(app: &mut App, led_mode: u8) {
     if let Some(kb) = app.keyboard.clone() {
-        let _ = kb.set_music_viz_mode(led_mode, app.audio.style, 4, viz_color(app));
+        let _ = kb.set_music_viz_mode(
+            led_mode,
+            app.audio.style,
+            app.info.led_brightness,
+            viz_color(app),
+        );
     }
 }
 

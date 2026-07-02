@@ -189,6 +189,9 @@ struct App {
     audio: AudioTabState,
     // Screen-reactive state (shown in the Device Info tab)
     screen: tabs::screen::ScreenTabState,
+    // LED mode selected before entering a reactive mode (music/screen), so it
+    // can be restored on exit. `None` when not in a reactive mode.
+    reactive_prev_mode: Option<u8>,
     // Selected UserPicture layer (mode 13) to display
     userpic_layer: u8,
     // Animation engine status (periodic query + interpolation)
@@ -284,7 +287,8 @@ impl App {
             #[cfg(feature = "notify")]
             notify: NotifyTabState::default(),
             audio: AudioTabState::with_rate(persisted.audio_rate_hz),
-            screen: tabs::screen::ScreenTabState::with_rate(persisted.screen_rate_hz),
+            screen: tabs::screen::ScreenTabState::from_settings(&persisted),
+            reactive_prev_mode: None,
             userpic_layer: 0,
             // Animation engine
             anim_snapshot: None,
@@ -1514,6 +1518,15 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, -1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, -1),
                                     InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, -1),
+                                    InfoTag::ScreenRegion => tabs::screen::cycle_region(&mut app, -1),
+                                    InfoTag::ScreenTestSwatch => tabs::screen::cycle_test_swatch(&mut app, -1),
+                                    InfoTag::ScreenGainR => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainR, -1, coarse),
+                                    InfoTag::ScreenGainG => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainG, -1, coarse),
+                                    InfoTag::ScreenGainB => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainB, -1, coarse),
+                                    InfoTag::ScreenGammaR => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaR, -1, coarse),
+                                    InfoTag::ScreenGammaG => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaG, -1, coarse),
+                                    InfoTag::ScreenGammaB => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaB, -1, coarse),
+                                    InfoTag::ScreenSaturation => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::Saturation, -1, coarse),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 3) % 4;
                                         app.set_userpic_layer(n);
@@ -1591,6 +1604,15 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     InfoTag::AudioVizStyle => tabs::audio::cycle_style(&mut app, 1),
                                     InfoTag::AudioRate => tabs::audio::cycle_rate(&mut app, 1),
                                     InfoTag::ScreenRate => tabs::screen::cycle_rate(&mut app, 1),
+                                    InfoTag::ScreenRegion => tabs::screen::cycle_region(&mut app, 1),
+                                    InfoTag::ScreenTestSwatch => tabs::screen::cycle_test_swatch(&mut app, 1),
+                                    InfoTag::ScreenGainR => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainR, 1, coarse),
+                                    InfoTag::ScreenGainG => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainG, 1, coarse),
+                                    InfoTag::ScreenGainB => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GainB, 1, coarse),
+                                    InfoTag::ScreenGammaR => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaR, 1, coarse),
+                                    InfoTag::ScreenGammaG => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaG, 1, coarse),
+                                    InfoTag::ScreenGammaB => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::GammaB, 1, coarse),
+                                    InfoTag::ScreenSaturation => tabs::screen::adjust_calibration(&mut app, tabs::screen::CalField::Saturation, 1, coarse),
                                     InfoTag::UserPicLayer => {
                                         let n = (app.userpic_layer + 1) % 4;
                                         app.set_userpic_layer(n);
@@ -1981,6 +2003,14 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
     // release the keyboard before the terminal is restored.
     tabs::audio::shutdown_async(&mut app).await;
     tabs::screen::shutdown_async(&mut app).await;
+
+    // If we quit while a reactive mode was active, return the keyboard to the
+    // mode selected beforehand — `send_main_led` resends the user's brightness/
+    // speed/color, so their normal lighting is restored intact.
+    if let Some(prev) = app.reactive_prev_mode.take() {
+        app.info.led_mode = prev;
+        app.send_main_led();
+    }
 
     // Cleanup - stop magnetism reporting and clear all animations
     if let Some(ref keyboard) = app.keyboard {

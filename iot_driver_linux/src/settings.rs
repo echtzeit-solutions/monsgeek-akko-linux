@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::effect::config_dir;
+use crate::screen_calib::{ColorCalibration, Region};
 
 /// Default visualizer refresh rate (Hz) for both audio and screen modes.
 pub const DEFAULT_RATE_HZ: u32 = 50;
@@ -31,6 +32,12 @@ pub struct Settings {
     /// XDG ScreenCast restore token, reused to skip the portal picker prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screencast_restore_token: Option<String>,
+    /// Screen-sync color calibration (per-channel gain/gamma + saturation).
+    #[serde(default)]
+    pub screen_calibration: ColorCalibration,
+    /// Screen-sync capture region (normalized fractions of the screen).
+    #[serde(default)]
+    pub screen_region: Region,
 }
 
 impl Default for Settings {
@@ -39,6 +46,8 @@ impl Default for Settings {
             audio_rate_hz: DEFAULT_RATE_HZ,
             screen_rate_hz: DEFAULT_RATE_HZ,
             screencast_restore_token: None,
+            screen_calibration: ColorCalibration::default(),
+            screen_region: Region::default(),
         }
     }
 }

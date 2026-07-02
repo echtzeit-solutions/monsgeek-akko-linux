@@ -380,10 +380,15 @@ pub fn run_audio_reactive(
     println!("Audio input: {}", audio_capture.source_label);
     println!("Audio capture started, enabling music visualizer...");
 
+    // Snapshot the current LED config to restore the previous mode + settings on
+    // exit, and reuse its brightness so we don't overwrite the stored config.
+    let saved = keyboard.get_led_params().ok();
+    let brightness = saved.as_ref().map_or(4, |p| p.brightness);
+
     // Switch the keyboard into its native audio-viz mode (rainbow; CLI doesn't
     // expose a solid color).
     keyboard
-        .set_music_viz_mode(config.led_mode, config.style, 4, None)
+        .set_music_viz_mode(config.led_mode, config.style, brightness, None)
         .map_err(|e| format!("Failed to set music visualizer mode: {e}"))?;
     thread::sleep(Duration::from_millis(200));
 
@@ -392,6 +397,11 @@ pub fn run_audio_reactive(
 
     // Stop audio capture
     audio_capture.stop();
+
+    // Return to the previously selected LED mode with the user's settings intact.
+    if let Some(p) = saved {
+        let _ = keyboard.set_led_params(&p);
+    }
 
     println!("Audio reactive mode stopped");
     Ok(())

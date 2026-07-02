@@ -2,20 +2,31 @@
 // Captures average screen color via PipeWire ScreenCast and streams to keyboard
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use tracing::trace;
 
 use crate::protocol::{cmd, screen_color};
+use crate::screen_calib::{ColorCalibration, Region};
+use crate::settings::Settings;
 use monsgeek_keyboard::KeyboardInterface;
 
-/// Screen color state shared between capture and main loop
+/// Screen color state shared between capture and main loop. Calibration/region/
+/// test-swatch are live-adjustable (the loop and PipeWire callback read them each
+/// frame), so TUI edits take effect without restarting the capture.
 pub struct ScreenColorState {
-    /// Current average RGB color
+    /// Latest raw average RGB color (pre-calibration).
     pub color: Mutex<(u8, u8, u8)>,
     /// Running flag
     pub running: AtomicBool,
+    /// Color transform applied before streaming.
+    calibration: RwLock<ColorCalibration>,
+    /// Sub-rectangle of the screen that drives the average.
+    region: RwLock<Region>,
+    /// When set, stream this fixed color instead of the screen average (used to
+    /// tune calibration against a known target).
+    test_swatch: Mutex<Option<(u8, u8, u8)>>,
 }
 
 impl Default for ScreenColorState {
@@ -23,11 +34,23 @@ impl Default for ScreenColorState {
         Self {
             color: Mutex::new((0, 0, 0)),
             running: AtomicBool::new(false),
+            calibration: RwLock::new(ColorCalibration::default()),
+            region: RwLock::new(Region::default()),
+            test_swatch: Mutex::new(None),
         }
     }
 }
 
 impl ScreenColorState {
+    /// New state seeded with the persisted calibration and region.
+    pub fn from_settings(settings: &Settings) -> Self {
+        Self {
+            calibration: RwLock::new(settings.screen_calibration),
+            region: RwLock::new(settings.screen_region),
+            ..Self::default()
+        }
+    }
+
     pub fn get_color(&self) -> (u8, u8, u8) {
         *self.color.lock().unwrap()
     }
@@ -43,30 +66,69 @@ impl ScreenColorState {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
     }
+
+    pub fn calibration(&self) -> ColorCalibration {
+        *self.calibration.read().unwrap()
+    }
+
+    pub fn set_calibration(&self, c: ColorCalibration) {
+        *self.calibration.write().unwrap() = c;
+    }
+
+    pub fn region(&self) -> Region {
+        *self.region.read().unwrap()
+    }
+
+    pub fn set_region(&self, r: Region) {
+        *self.region.write().unwrap() = r;
+    }
+
+    pub fn test_swatch(&self) -> Option<(u8, u8, u8)> {
+        *self.test_swatch.lock().unwrap()
+    }
+
+    pub fn set_test_swatch(&self, s: Option<(u8, u8, u8)>) {
+        *self.test_swatch.lock().unwrap() = s;
+    }
 }
 
 /// Grid size for sampling (16x16 = 256 samples instead of millions)
 const SAMPLE_GRID_SIZE: u32 = 16;
 
-/// Compute average RGB color by sampling a grid of pixels
-/// Much faster than averaging all pixels for high-res frames
-/// Assumes BGRA or RGBA format (4 bytes per pixel)
-pub fn compute_average_color(data: &[u8], width: u32, height: u32, is_bgra: bool) -> (u8, u8, u8) {
+/// Compute average RGB color by sampling a grid of pixels within `region`
+/// (a normalized sub-rectangle; use `Region::default()` for the whole screen).
+/// Much faster than averaging all pixels for high-res frames.
+/// Assumes BGRA or RGBA format (4 bytes per pixel).
+pub fn compute_average_color(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    is_bgra: bool,
+    region: Region,
+) -> (u8, u8, u8) {
     if width == 0 || height == 0 || data.len() < (width * height * 4) as usize {
         return (0, 0, 0);
     }
+
+    // Restrict sampling to the region's sub-rectangle.
+    let region = region.sanitized();
+    let x0 = (region.left * width as f32) as u32;
+    let y0 = (region.top * height as f32) as u32;
+    let x1 = ((region.right * width as f32) as u32).clamp(x0 + 1, width);
+    let y1 = ((region.bottom * height as f32) as u32).clamp(y0 + 1, height);
+    let (rw, rh) = (x1 - x0, y1 - y0);
 
     let stride = width * 4; // bytes per row
     let (mut r_sum, mut g_sum, mut b_sum) = (0u32, 0u32, 0u32);
     let mut sample_count = 0u32;
 
-    // Sample a grid of points across the image
+    // Sample a grid of points across the region
     for gy in 0..SAMPLE_GRID_SIZE {
-        let y = (gy * height / SAMPLE_GRID_SIZE) as usize;
+        let y = (y0 + gy * rh / SAMPLE_GRID_SIZE) as usize;
         let row_offset = y * stride as usize;
 
         for gx in 0..SAMPLE_GRID_SIZE {
-            let x = (gx * width / SAMPLE_GRID_SIZE) as usize;
+            let x = (x0 + gx * rw / SAMPLE_GRID_SIZE) as usize;
             let pixel_offset = row_offset + x * 4;
 
             if pixel_offset + 3 < data.len() {
@@ -115,7 +177,10 @@ fn run_screen_color_loop(
     while running.load(Ordering::SeqCst) {
         let frame_start = Instant::now();
 
-        let (r, g, b) = state.get_color();
+        // A test swatch (calibration helper) overrides the live average so the
+        // user can tune against a known target; calibration is always applied.
+        let raw = state.test_swatch().unwrap_or_else(|| state.get_color());
+        let (r, g, b) = state.calibration().apply(raw);
 
         // Only send if color changed (reduces USB traffic)
         if (r, g, b) != last_color {
@@ -154,8 +219,6 @@ pub mod pipewire_capture {
     use super::*;
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
     use ashpd::desktop::{PersistMode, Session};
-
-    use crate::settings::Settings;
 
     /// App identity reported to the XDG portal via the host Registry. KDE shows
     /// this in the "sharing contents to …" picker/tray (instead of blank), and
@@ -416,7 +479,13 @@ pub mod pipewire_capture {
                         if let Some(data) = datas[0].data() {
                             if width > 0 && height > 0 {
                                 // Assume BGRx format (common)
-                                let (r, g, b) = compute_average_color(data, width, height, true);
+                                let (r, g, b) = compute_average_color(
+                                    data,
+                                    width,
+                                    height,
+                                    true,
+                                    state_clone.region(),
+                                );
                                 state_clone.set_color(r, g, b);
                             }
                         }
@@ -541,16 +610,6 @@ pub mod pipewire_capture {
     }
 }
 
-/// Put the keyboard into its host-streamed ScreenSync LED mode (mode 21).
-///
-/// The brightness/speed/color params are fixed: the displayed color comes from
-/// the `SET_SCREEN_COLOR` stream, not from this LED-param command, so only the
-/// mode itself matters. Shared by the CLI ([`run_screen_color_mode`]) and TUI
-/// (`tabs::screen::start`) entry points.
-pub fn set_screen_sync_mode(keyboard: &KeyboardInterface) {
-    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), 4, 4, 0, 0, 0, false, 0);
-}
-
 /// Run screen color reactive mode (async entry point)
 pub async fn run_screen_color_mode(
     keyboard: &KeyboardInterface,
@@ -559,11 +618,26 @@ pub async fn run_screen_color_mode(
 ) -> Result<(), String> {
     println!("Starting screen color mode ({fps}fps)...");
 
-    set_screen_sync_mode(keyboard);
+    // Snapshot the current LED config so the previous mode + brightness/speed/
+    // color can be restored on exit. Enter ScreenSync using those same values
+    // (not placeholders), so the stored config is never overwritten mid-session.
+    let saved = keyboard.get_led_params().ok();
+    let (br, sp, r, g, b, dz) = match &saved {
+        Some(p) => (
+            p.brightness,
+            p.speed,
+            p.color.r,
+            p.color.g,
+            p.color.b,
+            (p.direction & 0x0F) == monsgeek_keyboard::led::DAZZLE_ON,
+        ),
+        None => (4, 0, 0, 0, 0, false),
+    };
+    let _ = keyboard.set_led_with_option(cmd::LedMode::ScreenSync.as_u8(), br, sp, r, g, b, dz, 0);
     std::thread::sleep(Duration::from_millis(200));
 
     // Create shared state
-    let state = Arc::new(ScreenColorState::default());
+    let state = Arc::new(ScreenColorState::from_settings(&Settings::load()));
 
     // Start PipeWire capture (requests permission via portal)
     println!("Requesting screen capture permission...");
@@ -577,6 +651,11 @@ pub async fn run_screen_color_mode(
     let result = run_screen_color_loop(keyboard, &state, running, true);
 
     capture.shutdown().await;
+
+    // Return to the previously selected LED mode with the user's settings intact.
+    if let Some(p) = saved {
+        let _ = keyboard.set_led_params(&p);
+    }
     println!("Screen color mode stopped");
     result
 }
@@ -615,7 +694,7 @@ impl TuiScreenCapture {
 /// silently (no stdout). The LED mode is assumed to already be ScreenSync
 /// (set by the caller).
 pub fn spawn_for_tui(keyboard: Arc<KeyboardInterface>, fps: u32) -> TuiScreenCapture {
-    let state = Arc::new(ScreenColorState::default());
+    let state = Arc::new(ScreenColorState::from_settings(&Settings::load()));
     let running = Arc::new(AtomicBool::new(true));
     let error = Arc::new(Mutex::new(None));
 
