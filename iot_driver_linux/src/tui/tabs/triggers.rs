@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use throbber_widgets_tui::Throbber;
 use tui_scrollview::{ScrollView, ScrollbarVisibility};
 
+use crate::tui::widgets::PopupSelect;
 use crate::TriggerSettings;
 use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, ModeByte, Precision};
 
@@ -37,6 +38,7 @@ pub(in crate::tui) enum TriggerField {
     TopDeadzone,
     BottomDeadzone,
     Mode,
+    RapidTrigger,
 }
 
 impl TriggerField {
@@ -49,6 +51,7 @@ impl TriggerField {
             Self::TopDeadzone => "Top DZ",
             Self::BottomDeadzone => "Bottom DZ",
             Self::Mode => "Mode",
+            Self::RapidTrigger => "Rapid Trig",
         }
     }
 
@@ -61,6 +64,7 @@ impl TriggerField {
             Self::TopDeadzone,
             Self::BottomDeadzone,
             Self::Mode,
+            Self::RapidTrigger,
         ]
     }
 
@@ -91,7 +95,8 @@ impl TriggerField {
                 decimals: 2,
                 unit: "mm",
             }),
-            Self::Mode => None, // Mode is cycled, not a spinner
+            // Mode opens a popup selector; RapidTrigger is a boolean toggle.
+            Self::Mode | Self::RapidTrigger => None,
         }
     }
 }
@@ -114,7 +119,10 @@ pub(in crate::tui) struct TriggerEditModal {
     pub rt_lift_mm: f32,
     pub top_dz_mm: f32,
     pub bottom_dz_mm: f32,
+    /// Full mode byte (base mode in low 7 bits, RT flag in `0x80`)
     pub mode: u8,
+    /// Open base-mode picker, when the user is choosing a mode
+    pub mode_picker: Option<PopupSelect<KeyMode>>,
 }
 
 impl TriggerEditModal {
@@ -133,6 +141,7 @@ impl TriggerEditModal {
             top_dz_mm: triggers.top_deadzone.first().copied().unwrap_or(0) as f32 / factor,
             bottom_dz_mm: triggers.bottom_deadzone.first().copied().unwrap_or(0) as f32 / factor,
             mode: triggers.key_modes.first().copied().unwrap_or(0),
+            mode_picker: None,
         }
     }
 
@@ -161,6 +170,7 @@ impl TriggerEditModal {
                 .unwrap_or(0) as f32
                 / factor,
             mode: triggers.key_modes.get(key_index).copied().unwrap_or(0),
+            mode_picker: None,
         }
     }
 
@@ -180,7 +190,8 @@ impl TriggerEditModal {
         };
     }
 
-    /// Get the current value for the selected field
+    /// Get the current value for the selected spinner field (0.0 for
+    /// non-spinner fields, which are edited by other means).
     pub(in crate::tui) fn current_value(&self) -> f32 {
         match self.current_field() {
             TriggerField::Actuation => self.actuation_mm,
@@ -189,11 +200,11 @@ impl TriggerEditModal {
             TriggerField::RtLift => self.rt_lift_mm,
             TriggerField::TopDeadzone => self.top_dz_mm,
             TriggerField::BottomDeadzone => self.bottom_dz_mm,
-            TriggerField::Mode => self.mode as f32,
+            TriggerField::Mode | TriggerField::RapidTrigger => 0.0,
         }
     }
 
-    /// Set the value for the selected field
+    /// Set the value for the selected spinner field.
     pub(in crate::tui) fn set_current_value(&mut self, value: f32) {
         match self.current_field() {
             TriggerField::Actuation => self.actuation_mm = value,
@@ -202,50 +213,67 @@ impl TriggerEditModal {
             TriggerField::RtLift => self.rt_lift_mm = value,
             TriggerField::TopDeadzone => self.top_dz_mm = value,
             TriggerField::BottomDeadzone => self.bottom_dz_mm = value,
-            TriggerField::Mode => {} // Mode is cycled, not set directly
+            // Mode uses a popup picker; RapidTrigger is toggled.
+            TriggerField::Mode | TriggerField::RapidTrigger => {}
         }
     }
 
-    /// Increment the current field value (using spinner config)
+    /// Increment the current field: spinner up, or open the mode picker / flip
+    /// the RT flag for the non-spinner fields.
     pub(in crate::tui) fn increment_current(&mut self, coarse: bool) {
-        if let Some(config) = self.current_field().spinner_config() {
-            let new_value = config.increment(self.current_value(), coarse);
-            self.set_current_value(new_value);
-        } else if self.current_field() == TriggerField::Mode {
-            self.cycle_mode();
+        match self.current_field() {
+            TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
+            field => {
+                if let Some(config) = field.spinner_config() {
+                    let new_value = config.increment(self.current_value(), coarse);
+                    self.set_current_value(new_value);
+                }
+            }
         }
     }
 
-    /// Decrement the current field value (using spinner config)
+    /// Decrement the current field: spinner down, or open the mode picker / flip
+    /// the RT flag for the non-spinner fields.
     pub(in crate::tui) fn decrement_current(&mut self, coarse: bool) {
-        if let Some(config) = self.current_field().spinner_config() {
-            let new_value = config.decrement(self.current_value(), coarse);
-            self.set_current_value(new_value);
-        } else if self.current_field() == TriggerField::Mode {
-            self.cycle_mode_reverse();
+        match self.current_field() {
+            TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
+            field => {
+                if let Some(config) = field.spinner_config() {
+                    let new_value = config.decrement(self.current_value(), coarse);
+                    self.set_current_value(new_value);
+                }
+            }
         }
     }
 
-    /// Cycle mode forward: Normal -> RT -> DKS -> SnapTap -> Normal
-    pub(in crate::tui) fn cycle_mode(&mut self) {
-        self.mode = match self.mode & 0x7F {
-            0 => 0x80,                       // Normal -> RT
-            _ if self.mode & 0x80 != 0 => 2, // RT -> DKS
-            2 => 7,                          // DKS -> SnapTap
-            7 => 0,                          // SnapTap -> Normal
-            _ => 0,                          // Unknown -> Normal
-        };
+    /// Flip the Rapid-Trigger (`0x80`) flag, preserving the base mode.
+    pub(in crate::tui) fn toggle_rapid_trigger(&mut self) {
+        self.mode ^= ModeByte::RT_FLAG;
     }
 
-    /// Cycle mode backward: Normal <- RT <- DKS <- SnapTap <- Normal
-    pub(in crate::tui) fn cycle_mode_reverse(&mut self) {
-        self.mode = match self.mode & 0x7F {
-            0 if self.mode & 0x80 != 0 => 0, // RT -> Normal
-            0 => 7,                          // Normal -> SnapTap
-            2 => 0x80,                       // DKS -> RT
-            7 => 2,                          // SnapTap -> DKS
-            _ => 0,                          // Unknown -> Normal
-        };
+    /// Open the base-mode popup selector, preselected to the current base mode.
+    pub(in crate::tui) fn open_mode_picker(&mut self) {
+        let current = KeyMode::from_u8(self.mode);
+        let items: Vec<(String, KeyMode)> = KeyMode::ALL
+            .iter()
+            .map(|&m| (m.label().to_string(), m))
+            .collect();
+        let mut picker = PopupSelect::new("Mode", items);
+        picker.select_where(|&m| m == current);
+        self.mode_picker = Some(picker);
+    }
+
+    /// Apply the picker's selection to the base mode (keeping the RT flag) and
+    /// close it.
+    pub(in crate::tui) fn confirm_mode_picker(&mut self) {
+        if let Some(picker) = self.mode_picker.take() {
+            if let Some(&base) = picker.selected() {
+                let rt = self.mode & ModeByte::RT_FLAG != 0;
+                self.mode = ModeByte::new(base, rt).to_u8();
+            }
+        }
     }
 
     /// Add a depth sample to history
@@ -1064,11 +1092,17 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
     render_modal_fields(f, modal, chunks[1]);
 
     // Render help line
-    let help_text = "Tab/↑↓: navigate | 0-9.: edit | m: cycle mode | Enter: save | Esc: cancel";
+    let help_text = "Tab/↑↓: field | ←/→: adjust/toggle | Enter: save | Esc: cancel";
     let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
     f.render_widget(help, chunks[2]);
+
+    // Overlay the base-mode picker if open. The renderer only has `&App`, so
+    // clone the small picker to satisfy the stateful-widget `&mut` requirement.
+    if let Some(picker) = &modal.mode_picker {
+        picker.clone().render(f, popup_area);
+    }
 }
 
 /// Render the depth chart within the modal
@@ -1200,20 +1234,27 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
         let is_selected = i == modal.field_index;
         let label = format!("{:12}", field.label());
 
-        // Get value and unit from spinner config, or special handling for Mode
-        let (value, unit) = if let Some(config) = field.spinner_config() {
-            let val = match field {
-                TriggerField::Actuation => modal.actuation_mm,
-                TriggerField::Release => modal.release_mm,
-                TriggerField::RtPress => modal.rt_press_mm,
-                TriggerField::RtLift => modal.rt_lift_mm,
-                TriggerField::TopDeadzone => modal.top_dz_mm,
-                TriggerField::BottomDeadzone => modal.bottom_dz_mm,
-                TriggerField::Mode => 0.0, // Won't reach here
-            };
-            (config.format(val), config.unit)
-        } else {
-            (ModeByte::from_u8(modal.mode).to_string(), "")
+        // Get value and unit from spinner config, or special handling for the
+        // Mode (base name) and Rapid-Trigger (on/off) fields.
+        let (value, unit) = match field {
+            TriggerField::Mode => (KeyMode::from_u8(modal.mode).label().to_string(), ""),
+            TriggerField::RapidTrigger => {
+                let on = modal.mode & ModeByte::RT_FLAG != 0;
+                ((if on { "On" } else { "Off" }).to_string(), "")
+            }
+            _ => {
+                let config = field.spinner_config().expect("spinner field");
+                let val = match field {
+                    TriggerField::Actuation => modal.actuation_mm,
+                    TriggerField::Release => modal.release_mm,
+                    TriggerField::RtPress => modal.rt_press_mm,
+                    TriggerField::RtLift => modal.rt_lift_mm,
+                    TriggerField::TopDeadzone => modal.top_dz_mm,
+                    TriggerField::BottomDeadzone => modal.bottom_dz_mm,
+                    TriggerField::Mode | TriggerField::RapidTrigger => unreachable!(),
+                };
+                (config.format(val), config.unit)
+            }
         };
 
         // Spinner-style display: < value > when selected, just value when not

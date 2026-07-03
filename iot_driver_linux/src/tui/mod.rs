@@ -4,6 +4,7 @@
 mod help;
 mod shared;
 mod tabs;
+mod widgets;
 
 use help::render_help_popup;
 use shared::*;
@@ -1303,6 +1304,33 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 app.hex_input.push(c.to_ascii_uppercase());
                             }
                             _ => {}
+                        }
+                        continue;
+                    }
+
+                    // Base-mode picker popup takes precedence over the modal's
+                    // own field navigation while it is open.
+                    let picker_open = app
+                        .trigger_edit_modal
+                        .as_ref()
+                        .is_some_and(|m| m.mode_picker.is_some());
+                    if picker_open {
+                        if let Some(ref mut modal) = app.trigger_edit_modal {
+                            match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if let Some(p) = modal.mode_picker.as_mut() {
+                                        p.up();
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if let Some(p) = modal.mode_picker.as_mut() {
+                                        p.down();
+                                    }
+                                }
+                                KeyCode::Enter => modal.confirm_mode_picker(),
+                                KeyCode::Esc => modal.mode_picker = None,
+                                _ => {}
+                            }
                         }
                         continue;
                     }
