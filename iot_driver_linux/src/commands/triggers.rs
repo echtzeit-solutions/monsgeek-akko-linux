@@ -579,7 +579,8 @@ pub fn set_key_trigger(
     key: u8,
     actuation: Option<f32>,
     release: Option<f32>,
-    mode: Option<String>,
+    mode: Option<KeyMode>,
+    rt: Option<bool>,
 ) -> CommandResult {
     // Get current settings first
     let current = match keyboard.get_key_trigger(key) {
@@ -594,23 +595,8 @@ pub fn set_key_trigger(
     // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
     let factor = 10.0f32;
 
-    // Resolve the requested mode. RT is an orthogonal flag, so "rt" enables the
-    // flag while preserving the current base mode; base-mode names preserve the
-    // current RT flag.
-    let (base, rapid_trigger) = match mode.as_deref().map(str::to_lowercase).as_deref() {
-        Some("normal" | "n") => (KeyMode::Normal, current.rapid_trigger),
-        Some("dks" | "dynamic") => (KeyMode::DynamicKeystroke, current.rapid_trigger),
-        Some("modtap" | "mt") => (KeyMode::ModTap, current.rapid_trigger),
-        Some("toggle" | "tgl" | "togglehold" | "tgl-hold") => {
-            (KeyMode::ToggleHold, current.rapid_trigger)
-        }
-        Some("toggledots" | "tgldots" | "tgl-dots") => (KeyMode::ToggleDots, current.rapid_trigger),
-        Some("snaptap" | "snap" | "st") => (KeyMode::SnapTap, current.rapid_trigger),
-        Some("rt" | "rapid" | "rapidtrigger") => (current.mode, true),
-        _ => (current.mode, current.rapid_trigger),
-    };
-
-    // Build settings with modifications
+    // Base mode and RT flag are independent; each preserves the current value
+    // when not overridden.
     let settings = KeyTriggerSettings {
         key_index: key,
         actuation: actuation
@@ -619,8 +605,8 @@ pub fn set_key_trigger(
         deactuation: release
             .map(|mm| (mm * factor) as u8)
             .unwrap_or(current.deactuation),
-        mode: base,
-        rapid_trigger,
+        mode: mode.unwrap_or(current.mode),
+        rapid_trigger: rt.unwrap_or(current.rapid_trigger),
     };
 
     match keyboard.set_key_trigger(&settings) {
@@ -638,6 +624,16 @@ pub fn set_key_trigger(
             );
         }
         Err(e) => eprintln!("Failed to set key trigger: {e}"),
+    }
+    Ok(())
+}
+
+/// Set the base mode (and optionally the RT flag) for all keys at once.
+pub fn set_mode_all(keyboard: &KeyboardInterface, mode: KeyMode, rt: bool) -> CommandResult {
+    let mode_byte = ModeByte::new(mode, rt);
+    match keyboard.set_mode_all(mode_byte) {
+        Ok(_) => println!("Set all keys to {mode_byte}"),
+        Err(e) => eprintln!("Failed to set mode for all keys: {e}"),
     }
     Ok(())
 }

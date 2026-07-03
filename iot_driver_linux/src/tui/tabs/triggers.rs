@@ -317,38 +317,50 @@ impl App {
     }
 
     pub(in crate::tui) fn set_all_key_modes(&mut self, mode: u8) {
-        let key_count = self
-            .triggers
-            .as_ref()
-            .map(|t| t.key_modes.len())
-            .unwrap_or(0);
-        if key_count == 0 {
+        let Some(keyboard) = self.keyboard.as_ref() else {
+            self.status_msg = "No keyboard connected".to_string();
             return;
+        };
+        match keyboard.set_mode_all(ModeByte::from_u8(mode)) {
+            Ok(()) => {
+                self.status_msg = format!("Set all keys to {}", ModeByte::from_u8(mode));
+                self.load_triggers();
+            }
+            Err(e) => self.status_msg = format!("Failed to set mode: {e}"),
         }
-        // TODO: Implement bulk key mode setting in keyboard interface
-        // For now, update locally
-        let modes: Vec<u8> = vec![mode; key_count];
-        if let Some(ref mut triggers) = self.triggers {
-            triggers.key_modes = modes;
-        }
-        self.status_msg = format!("Set all keys to {}", ModeByte::from_u8(mode));
     }
 
-    /// Set mode for a single key (used in layout view)
+    /// Set mode for a single key (used in layout view). The single-key protocol
+    /// bundles actuation/release with the mode, so re-send the key's current
+    /// travel (converted from stored precision units to 0.1 mm) alongside.
     pub(in crate::tui) fn set_single_key_mode(&mut self, key_index: usize, mode: u8) {
-        let valid = self
-            .triggers
-            .as_ref()
-            .map(|t| key_index < t.key_modes.len())
-            .unwrap_or(false);
-        if !valid {
+        let Some(triggers) = self.triggers.as_ref() else {
+            self.status_msg = "Triggers not loaded".to_string();
+            return;
+        };
+        if key_index >= triggers.key_modes.len() {
             self.status_msg = format!("Invalid key index: {key_index}");
             return;
         }
-        // TODO: Implement single key mode setting in keyboard interface
-        if let Some(ref mut triggers) = self.triggers {
-            triggers.key_modes[key_index] = mode;
+        let factor = self.precision.factor() as f32;
+        let to_u8_mm = |raw: u16| ((raw as f32 / factor) * 10.0) as u8;
+        let mode_byte = ModeByte::from_u8(mode);
+        let settings = KeyTriggerSettings {
+            key_index: key_index as u8,
+            actuation: to_u8_mm(triggers.press_travel.get(key_index).copied().unwrap_or(0)),
+            deactuation: to_u8_mm(triggers.lift_travel.get(key_index).copied().unwrap_or(0)),
+            mode: mode_byte.base,
+            rapid_trigger: mode_byte.rapid_trigger,
+        };
+        let Some(keyboard) = self.keyboard.as_ref() else {
+            self.status_msg = "No keyboard connected".to_string();
+            return;
+        };
+        if let Err(e) = keyboard.set_key_trigger(&settings) {
+            self.status_msg = format!("Failed to set key mode: {e}");
+            return;
         }
+        self.load_triggers();
         let key_name = get_key_label(self, key_index);
         self.status_msg = format!(
             "Key {} ({}) set to {}",

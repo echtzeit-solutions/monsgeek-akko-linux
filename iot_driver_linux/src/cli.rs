@@ -236,9 +236,23 @@ pub enum Commands {
         /// Release point in mm (optional)
         #[arg(long)]
         release: Option<f32>,
-        /// Key mode: normal, rt, dks, snaptap (optional)
+        /// Base key mode (optional; RT flag is set separately via --rt)
+        #[arg(long, value_enum)]
+        mode: Option<KeyModeArg>,
+        /// Enable/disable the Rapid-Trigger flag (optional; combines with --mode)
         #[arg(long)]
-        mode: Option<String>,
+        rt: Option<bool>,
+    },
+
+    /// Set the base mode for all keys at once
+    #[command(visible_alias = "sma")]
+    SetModeAll {
+        /// Base key mode for every key
+        #[arg(value_enum)]
+        mode: KeyModeArg,
+        /// Also enable the Rapid-Trigger flag on every key
+        #[arg(long)]
+        rt: bool,
     },
 
     // === Per-key Color Commands ===
@@ -634,6 +648,39 @@ pub enum EffectCommands {
         #[arg(long = "var", short = 'v')]
         vars: Vec<String>,
     },
+}
+
+/// Base per-key trigger mode, selectable on the CLI. The Rapid-Trigger flag is
+/// orthogonal and set separately via `--rt`.
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
+pub enum KeyModeArg {
+    /// Simple actuation/release
+    #[default]
+    Normal,
+    /// Dynamic Keystroke
+    Dks,
+    /// Mod-Tap
+    ModTap,
+    /// Toggle (hold variant)
+    ToggleHold,
+    /// Toggle (tap-toggle variant)
+    ToggleDots,
+    /// Snap Tap / SOCD
+    SnapTap,
+}
+
+impl From<KeyModeArg> for monsgeek_keyboard::KeyMode {
+    fn from(m: KeyModeArg) -> Self {
+        use monsgeek_keyboard::KeyMode;
+        match m {
+            KeyModeArg::Normal => KeyMode::Normal,
+            KeyModeArg::Dks => KeyMode::DynamicKeystroke,
+            KeyModeArg::ModTap => KeyMode::ModTap,
+            KeyModeArg::ToggleHold => KeyMode::ToggleHold,
+            KeyModeArg::ToggleDots => KeyMode::ToggleDots,
+            KeyModeArg::SnapTap => KeyMode::SnapTap,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Default)]

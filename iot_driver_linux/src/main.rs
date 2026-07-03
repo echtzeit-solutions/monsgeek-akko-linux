@@ -162,10 +162,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             actuation,
             release,
             mode,
+            rt,
         }) => {
+            let mode = mode.map(Into::into);
             commands::with_keyboard(&ctx, |kb| {
-                commands::triggers::set_key_trigger(kb, key, actuation, release, mode)
+                commands::triggers::set_key_trigger(kb, key, actuation, release, mode, rt)
             })?;
+        }
+        Some(Commands::SetModeAll { mode, rt }) => {
+            let mode = mode.into();
+            commands::with_keyboard(&ctx, |kb| commands::triggers::set_mode_all(kb, mode, rt))?;
         }
 
         // === Keymap Commands ===
