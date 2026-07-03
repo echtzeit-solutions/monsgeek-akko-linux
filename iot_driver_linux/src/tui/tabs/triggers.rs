@@ -39,9 +39,37 @@ pub(in crate::tui) enum TriggerField {
     BottomDeadzone,
     Mode,
     RapidTrigger,
+    ModTapTime,
+    SnapTapPartner,
 }
 
 impl TriggerField {
+    /// Fields shown in the global (all-keys) modal.
+    const GLOBAL: &'static [TriggerField] = &[
+        Self::Actuation,
+        Self::Release,
+        Self::RtPress,
+        Self::RtLift,
+        Self::TopDeadzone,
+        Self::BottomDeadzone,
+        Self::Mode,
+        Self::RapidTrigger,
+    ];
+
+    /// Fields shown in the per-key modal (adds Mod-Tap time + Snap-Tap partner).
+    const PER_KEY: &'static [TriggerField] = &[
+        Self::Actuation,
+        Self::Release,
+        Self::RtPress,
+        Self::RtLift,
+        Self::TopDeadzone,
+        Self::BottomDeadzone,
+        Self::Mode,
+        Self::RapidTrigger,
+        Self::ModTapTime,
+        Self::SnapTapPartner,
+    ];
+
     pub(in crate::tui) fn label(&self) -> &'static str {
         match self {
             Self::Actuation => "Actuation",
@@ -52,20 +80,9 @@ impl TriggerField {
             Self::BottomDeadzone => "Bottom DZ",
             Self::Mode => "Mode",
             Self::RapidTrigger => "Rapid Trig",
+            Self::ModTapTime => "MT Time",
+            Self::SnapTapPartner => "SnapTap Key",
         }
-    }
-
-    pub(in crate::tui) fn all() -> &'static [TriggerField] {
-        &[
-            Self::Actuation,
-            Self::Release,
-            Self::RtPress,
-            Self::RtLift,
-            Self::TopDeadzone,
-            Self::BottomDeadzone,
-            Self::Mode,
-            Self::RapidTrigger,
-        ]
     }
 
     /// Get spinner configuration for this field (None for Mode which is cycled)
@@ -95,8 +112,16 @@ impl TriggerField {
                 decimals: 2,
                 unit: "mm",
             }),
-            // Mode opens a popup selector; RapidTrigger is a boolean toggle.
-            Self::Mode | Self::RapidTrigger => None,
+            Self::ModTapTime => Some(SpinnerConfig {
+                min: 0.0,
+                max: 2550.0,
+                step: 10.0,
+                step_coarse: 100.0,
+                decimals: 0,
+                unit: "ms",
+            }),
+            // Mode / SnapTapPartner open popup selectors; RapidTrigger toggles.
+            Self::Mode | Self::RapidTrigger | Self::SnapTapPartner => None,
         }
     }
 }
@@ -121,8 +146,16 @@ pub(in crate::tui) struct TriggerEditModal {
     pub bottom_dz_mm: f32,
     /// Full mode byte (base mode in low 7 bits, RT flag in `0x80`)
     pub mode: u8,
+    /// Mod-Tap tap-vs-hold decision time in ms (per-key only)
+    pub modtap_ms: u16,
+    /// Snap-Tap partner key index, if bound (per-key only)
+    pub snaptap_partner: Option<u8>,
+    /// `(label, key_index)` choices for the Snap-Tap partner picker
+    pub key_choices: Vec<(String, u8)>,
     /// Open base-mode picker, when the user is choosing a mode
     pub mode_picker: Option<PopupSelect<KeyMode>>,
+    /// Open Snap-Tap partner picker, when choosing a partner key (`None` = unbound)
+    pub key_picker: Option<PopupSelect<Option<u8>>>,
 }
 
 impl TriggerEditModal {
@@ -141,15 +174,23 @@ impl TriggerEditModal {
             top_dz_mm: triggers.top_deadzone.first().copied().unwrap_or(0) as f32 / factor,
             bottom_dz_mm: triggers.bottom_deadzone.first().copied().unwrap_or(0) as f32 / factor,
             mode: triggers.key_modes.first().copied().unwrap_or(0),
+            modtap_ms: 0,
+            snaptap_partner: None,
+            key_choices: Vec::new(),
             mode_picker: None,
+            key_picker: None,
         }
     }
 
-    /// Create modal for editing a specific key
+    /// Create modal for editing a specific key. `modtap_ms`, `snaptap_partner`
+    /// and `key_choices` are pre-fetched by the caller (they need device access).
     pub(in crate::tui) fn new_per_key(
         key_index: usize,
         triggers: &TriggerSettings,
         precision: Precision,
+        modtap_ms: u16,
+        snaptap_partner: Option<u8>,
+        key_choices: Vec<(String, u8)>,
     ) -> Self {
         let factor = precision.factor() as f32;
         Self {
@@ -170,21 +211,34 @@ impl TriggerEditModal {
                 .unwrap_or(0) as f32
                 / factor,
             mode: triggers.key_modes.get(key_index).copied().unwrap_or(0),
+            modtap_ms,
+            snaptap_partner,
+            key_choices,
             mode_picker: None,
+            key_picker: None,
+        }
+    }
+
+    /// Fields shown for this modal. Per-key modals expose the Mod-Tap time and
+    /// Snap-Tap partner; the global modal does not (those are per-key configs).
+    pub(in crate::tui) fn fields(&self) -> &'static [TriggerField] {
+        match self.target {
+            TriggerEditTarget::Global => TriggerField::GLOBAL,
+            TriggerEditTarget::PerKey { .. } => TriggerField::PER_KEY,
         }
     }
 
     pub(in crate::tui) fn current_field(&self) -> TriggerField {
-        TriggerField::all()[self.field_index]
+        self.fields()[self.field_index]
     }
 
     pub(in crate::tui) fn next_field(&mut self) {
-        self.field_index = (self.field_index + 1) % TriggerField::all().len();
+        self.field_index = (self.field_index + 1) % self.fields().len();
     }
 
     pub(in crate::tui) fn prev_field(&mut self) {
         self.field_index = if self.field_index == 0 {
-            TriggerField::all().len() - 1
+            self.fields().len() - 1
         } else {
             self.field_index - 1
         };
@@ -200,7 +254,8 @@ impl TriggerEditModal {
             TriggerField::RtLift => self.rt_lift_mm,
             TriggerField::TopDeadzone => self.top_dz_mm,
             TriggerField::BottomDeadzone => self.bottom_dz_mm,
-            TriggerField::Mode | TriggerField::RapidTrigger => 0.0,
+            TriggerField::ModTapTime => self.modtap_ms as f32,
+            TriggerField::Mode | TriggerField::RapidTrigger | TriggerField::SnapTapPartner => 0.0,
         }
     }
 
@@ -213,16 +268,18 @@ impl TriggerEditModal {
             TriggerField::RtLift => self.rt_lift_mm = value,
             TriggerField::TopDeadzone => self.top_dz_mm = value,
             TriggerField::BottomDeadzone => self.bottom_dz_mm = value,
-            // Mode uses a popup picker; RapidTrigger is toggled.
-            TriggerField::Mode | TriggerField::RapidTrigger => {}
+            TriggerField::ModTapTime => self.modtap_ms = value.clamp(0.0, 2550.0) as u16,
+            // Mode / SnapTapPartner use popup pickers; RapidTrigger is toggled.
+            TriggerField::Mode | TriggerField::RapidTrigger | TriggerField::SnapTapPartner => {}
         }
     }
 
-    /// Increment the current field: spinner up, or open the mode picker / flip
-    /// the RT flag for the non-spinner fields.
+    /// Increment the current field: spinner up, or open a picker / flip the RT
+    /// flag for the non-spinner fields.
     pub(in crate::tui) fn increment_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
             field => {
                 if let Some(config) = field.spinner_config() {
@@ -233,11 +290,12 @@ impl TriggerEditModal {
         }
     }
 
-    /// Decrement the current field: spinner down, or open the mode picker / flip
-    /// the RT flag for the non-spinner fields.
+    /// Decrement the current field: spinner down, or open a picker / flip the RT
+    /// flag for the non-spinner fields.
     pub(in crate::tui) fn decrement_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
             field => {
                 if let Some(config) = field.spinner_config() {
@@ -272,6 +330,25 @@ impl TriggerEditModal {
             if let Some(&base) = picker.selected() {
                 let rt = self.mode & ModeByte::RT_FLAG != 0;
                 self.mode = ModeByte::new(base, rt).to_u8();
+            }
+        }
+    }
+
+    /// Open the Snap-Tap partner picker, preselected to the current partner.
+    pub(in crate::tui) fn open_key_picker(&mut self) {
+        let mut items = vec![("(none)".to_string(), None)];
+        items.extend(self.key_choices.iter().map(|(l, i)| (l.clone(), Some(*i))));
+        let mut picker = PopupSelect::new("SnapTap partner", items);
+        let current = self.snaptap_partner;
+        picker.select_where(|&p| p == current);
+        self.key_picker = Some(picker);
+    }
+
+    /// Apply the partner-picker selection and close it.
+    pub(in crate::tui) fn confirm_key_picker(&mut self) {
+        if let Some(picker) = self.key_picker.take() {
+            if let Some(&partner) = picker.selected() {
+                self.snaptap_partner = partner;
             }
         }
     }
@@ -406,10 +483,57 @@ impl App {
         }
     }
 
+    /// Build `(label, key_index)` choices for the Snap-Tap partner picker,
+    /// covering every named key.
+    fn key_choices(&self) -> Vec<(String, u8)> {
+        let count = self
+            .triggers
+            .as_ref()
+            .map(|t| t.key_modes.len())
+            .unwrap_or(0)
+            .min(u8::MAX as usize);
+        (0..count)
+            .filter_map(|i| {
+                let name = get_key_label(self, i);
+                (!name.is_empty()).then_some((name, i as u8))
+            })
+            .collect()
+    }
+
     /// Open trigger edit modal for a specific key
     pub(in crate::tui) fn open_trigger_edit_key(&mut self, key_index: usize) {
+        if self.triggers.is_none() {
+            self.status_msg = "No trigger data loaded".to_string();
+            return;
+        }
+        // Best-effort fetch of the per-key sub-configs (Mod-Tap time, Snap-Tap
+        // partner) that live outside the bulk trigger snapshot.
+        let (modtap_ms, snaptap_partner) = match self.keyboard.as_ref() {
+            Some(kb) => {
+                let mt = kb
+                    .get_modtap_times()
+                    .ok()
+                    .and_then(|v| v.get(key_index).copied())
+                    .unwrap_or(0);
+                let sp = kb
+                    .get_snaptap_binds()
+                    .ok()
+                    .and_then(|v| v.get(key_index).copied())
+                    .filter(|&p| p != monsgeek_keyboard::SNAPTAP_UNBOUND);
+                (mt, sp)
+            }
+            None => (0, None),
+        };
+        let key_choices = self.key_choices();
         if let Some(ref triggers) = self.triggers {
-            let modal = TriggerEditModal::new_per_key(key_index, triggers, self.precision);
+            let modal = TriggerEditModal::new_per_key(
+                key_index,
+                triggers,
+                self.precision,
+                modtap_ms,
+                snaptap_partner,
+                key_choices,
+            );
             self.trigger_edit_modal = Some(modal);
             // Enable depth monitoring for the modal
             if !self.depth_monitoring {
@@ -504,15 +628,38 @@ impl App {
 
                 match keyboard.set_key_trigger(&settings) {
                     Ok(()) => {
+                        // Apply the mode-specific sub-configs alongside the base
+                        // trigger. Mod-Tap time is only meaningful in Mod-Tap
+                        // mode; Snap-Tap pairing only in Snap-Tap mode.
+                        let key = key_index as u8;
+                        let mut extra = Vec::new();
+                        if mode_byte.base == KeyMode::ModTap {
+                            if let Err(e) = keyboard.set_modtap_time(key, modal.modtap_ms) {
+                                extra.push(format!("mt_time: {e}"));
+                            }
+                        }
+                        if mode_byte.base == KeyMode::SnapTap {
+                            let res = match modal.snaptap_partner {
+                                Some(partner) => keyboard.set_snaptap_pair(key, partner),
+                                None => keyboard.clear_snaptap(key),
+                            };
+                            if let Err(e) = res {
+                                extra.push(format!("snaptap: {e}"));
+                            }
+                        }
                         let key_name = get_key_label(self, key_index);
-                        self.status_msg = format!(
-                            "Key {} ({}) saved: act={:.1}mm rel={:.1}mm mode={:?}",
-                            key_index,
-                            key_name,
-                            modal.actuation_mm,
-                            modal.release_mm,
-                            settings.mode
-                        );
+                        self.status_msg = if extra.is_empty() {
+                            format!(
+                                "Key {} ({}) saved: act={:.1}mm rel={:.1}mm mode={}",
+                                key_index,
+                                key_name,
+                                modal.actuation_mm,
+                                modal.release_mm,
+                                ModeByte::new(settings.mode, settings.rapid_trigger),
+                            )
+                        } else {
+                            format!("Key {key_index} saved with errors: {}", extra.join(", "))
+                        };
                         // Reload triggers to reflect changes
                         self.load_triggers();
                     }
@@ -1091,9 +1238,9 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(8),    // Depth chart
-            Constraint::Length(9), // Fields
-            Constraint::Length(2), // Help line
+            Constraint::Min(6),     // Depth chart
+            Constraint::Length(13), // Fields (up to 10 + help)
+            Constraint::Length(2),  // Help line
         ])
         .split(inner);
 
@@ -1110,9 +1257,11 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
         .alignment(Alignment::Center);
     f.render_widget(help, chunks[2]);
 
-    // Overlay the base-mode picker if open. The renderer only has `&App`, so
-    // clone the small picker to satisfy the stateful-widget `&mut` requirement.
+    // Overlay a picker if open. The renderer only has `&App`, so clone the small
+    // picker to satisfy the stateful-widget `&mut` requirement.
     if let Some(picker) = &modal.mode_picker {
+        picker.clone().render(f, popup_area);
+    } else if let Some(picker) = &modal.key_picker {
         picker.clone().render(f, popup_area);
     }
 }
@@ -1239,7 +1388,7 @@ fn render_modal_depth_chart(f: &mut Frame, modal: &TriggerEditModal, app: &App, 
 
 /// Render the editable fields in the modal using spinner style
 fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
-    let fields = TriggerField::all();
+    let fields = modal.fields();
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, field) in fields.iter().enumerate() {
@@ -1247,12 +1396,24 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
         let label = format!("{:12}", field.label());
 
         // Get value and unit from spinner config, or special handling for the
-        // Mode (base name) and Rapid-Trigger (on/off) fields.
+        // Mode (base name), Rapid-Trigger (on/off) and Snap-Tap partner fields.
         let (value, unit) = match field {
             TriggerField::Mode => (KeyMode::from_u8(modal.mode).label().to_string(), ""),
             TriggerField::RapidTrigger => {
                 let on = modal.mode & ModeByte::RT_FLAG != 0;
                 ((if on { "On" } else { "Off" }).to_string(), "")
+            }
+            TriggerField::SnapTapPartner => {
+                let label = match modal.snaptap_partner {
+                    Some(idx) => modal
+                        .key_choices
+                        .iter()
+                        .find(|(_, i)| *i == idx)
+                        .map(|(l, _)| l.clone())
+                        .unwrap_or_else(|| format!("key {idx}")),
+                    None => "(none)".to_string(),
+                };
+                (label, "")
             }
             _ => {
                 let config = field.spinner_config().expect("spinner field");
@@ -1263,7 +1424,10 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                     TriggerField::RtLift => modal.rt_lift_mm,
                     TriggerField::TopDeadzone => modal.top_dz_mm,
                     TriggerField::BottomDeadzone => modal.bottom_dz_mm,
-                    TriggerField::Mode | TriggerField::RapidTrigger => unreachable!(),
+                    TriggerField::ModTapTime => modal.modtap_ms as f32,
+                    TriggerField::Mode
+                    | TriggerField::RapidTrigger
+                    | TriggerField::SnapTapPartner => unreachable!(),
                 };
                 (config.format(val), config.unit)
             }

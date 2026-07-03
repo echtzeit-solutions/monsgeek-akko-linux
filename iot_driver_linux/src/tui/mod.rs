@@ -1308,28 +1308,32 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         continue;
                     }
 
-                    // Base-mode picker popup takes precedence over the modal's
-                    // own field navigation while it is open.
+                    // A picker popup (base-mode or Snap-Tap partner) takes
+                    // precedence over the modal's own field navigation.
                     let picker_open = app
                         .trigger_edit_modal
                         .as_ref()
-                        .is_some_and(|m| m.mode_picker.is_some());
+                        .is_some_and(|m| m.mode_picker.is_some() || m.key_picker.is_some());
                     if picker_open {
                         if let Some(ref mut modal) = app.trigger_edit_modal {
-                            match key.code {
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if let Some(p) = modal.mode_picker.as_mut() {
-                                        p.up();
-                                    }
+                            let up = matches!(key.code, KeyCode::Up | KeyCode::Char('k'));
+                            let down = matches!(key.code, KeyCode::Down | KeyCode::Char('j'));
+                            if let Some(p) = modal.mode_picker.as_mut() {
+                                match key.code {
+                                    _ if up => p.up(),
+                                    _ if down => p.down(),
+                                    KeyCode::Enter => modal.confirm_mode_picker(),
+                                    KeyCode::Esc => modal.mode_picker = None,
+                                    _ => {}
                                 }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if let Some(p) = modal.mode_picker.as_mut() {
-                                        p.down();
-                                    }
+                            } else if let Some(p) = modal.key_picker.as_mut() {
+                                match key.code {
+                                    _ if up => p.up(),
+                                    _ if down => p.down(),
+                                    KeyCode::Enter => modal.confirm_key_picker(),
+                                    KeyCode::Esc => modal.key_picker = None,
+                                    _ => {}
                                 }
-                                KeyCode::Enter => modal.confirm_mode_picker(),
-                                KeyCode::Esc => modal.mode_picker = None,
-                                _ => {}
                             }
                         }
                         continue;
