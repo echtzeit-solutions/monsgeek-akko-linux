@@ -94,6 +94,16 @@ use monsgeek_transport::command::{
 };
 use zerocopy::IntoBytes;
 
+/// Wire step for the Mod-Tap decision time: the firmware stores `ms / 10` in a
+/// single byte, so times are quantized to 10 ms (0–2550 ms).
+const MODTAP_TIME_STEP_MS: u16 = 10;
+
+/// Sentinel partner index meaning "this key has no Snap-Tap pair".
+///
+/// NOTE: pending firmware confirmation on v407 — `0xFF` is the conventional
+/// unbound marker and is out of the valid key-index range.
+pub const SNAPTAP_UNBOUND: u8 = 0xFF;
+
 /// High-level keyboard interface using any transport
 ///
 /// Provides convenient methods for keyboard features like LED control,
@@ -900,6 +910,96 @@ impl KeyboardInterface {
     pub fn set_mode_all(&self, mode: ModeByte) -> Result<(), KeyboardError> {
         let values = vec![mode.to_u8(); self.key_count as usize];
         self.set_magnetism_u8(mag_cmd::KEY_MODE, &values)
+    }
+
+    /// Write a single key's bytes for a magnetism sub-command (the "simple",
+    /// non-paged form used by the webapp: `flag=0`, `page=key_index`,
+    /// `commit=is_final`). Mirrors `_sendMagnetismInfoSimpleCMD` in the vendor
+    /// web app exactly.
+    fn set_magnetism_simple(
+        &self,
+        sub_cmd: u8,
+        key_index: u8,
+        is_final: bool,
+        payload: &[u8],
+    ) -> Result<(), KeyboardError> {
+        let cmd = SetMultiMagnetismCommand {
+            header: SetMultiMagnetismHeader {
+                sub_cmd,
+                flag: 0,
+                page: key_index,
+                commit: is_final as u8,
+                _pad0: 0,
+                _pad1: 0,
+                _checksum: 0,
+            },
+            payload: payload.to_vec(),
+        };
+        self.transport.send_with_delay(&cmd, 30)?;
+        Ok(())
+    }
+
+    // === Mod-Tap ===
+
+    /// Read the Mod-Tap tap-vs-hold decision time (ms) for every key.
+    ///
+    /// Note: only the timing lives in the magnetism protocol; the tap/hold
+    /// keycodes are configured through the normal keymap for that key.
+    pub fn get_modtap_times(&self) -> Result<Vec<u16>, KeyboardError> {
+        let kc = self.key_count as usize;
+        let raw = self.get_magnetism(mag_cmd::MODTAP_TIME, kc.div_ceil(64))?;
+        Ok(raw
+            .into_iter()
+            .take(kc)
+            .map(|b| b as u16 * MODTAP_TIME_STEP_MS)
+            .collect())
+    }
+
+    /// Set the Mod-Tap decision time (ms, rounded to the 10 ms wire step) for a
+    /// single key.
+    pub fn set_modtap_time(&self, key_index: u8, ms: u16) -> Result<(), KeyboardError> {
+        let steps = (ms / MODTAP_TIME_STEP_MS).min(u8::MAX as u16) as u8;
+        self.set_magnetism_simple(mag_cmd::MODTAP_TIME, key_index, true, &[steps])
+    }
+
+    // === Snap Tap (SOCD) ===
+
+    /// Read each key's Snap-Tap partner index. `SNAPTAP_UNBOUND` means the key
+    /// is not part of a pair.
+    pub fn get_snaptap_binds(&self) -> Result<Vec<u8>, KeyboardError> {
+        let kc = self.key_count as usize;
+        let mut raw = self.get_magnetism(mag_cmd::SNAPTAP_ENABLE, kc.div_ceil(64))?;
+        raw.truncate(kc);
+        Ok(raw)
+    }
+
+    /// Bind two keys as a Snap-Tap (SOCD) pair. The binding is bidirectional, so
+    /// both directions are written (matching the vendor app).
+    pub fn set_snaptap_pair(&self, key_a: u8, key_b: u8) -> Result<(), KeyboardError> {
+        self.set_magnetism_simple(mag_cmd::SNAPTAP_ENABLE, key_a, false, &[key_b])?;
+        self.set_magnetism_simple(mag_cmd::SNAPTAP_ENABLE, key_b, true, &[key_a])
+    }
+
+    /// Clear a key's Snap-Tap binding, also clearing its partner's
+    /// back-reference so the pair is fully dissolved.
+    pub fn clear_snaptap(&self, key_index: u8) -> Result<(), KeyboardError> {
+        let binds = self.get_snaptap_binds()?;
+        let partner = binds
+            .get(key_index as usize)
+            .copied()
+            .unwrap_or(SNAPTAP_UNBOUND);
+        let partner_valid = partner != SNAPTAP_UNBOUND && (partner as usize) < binds.len();
+        // If there is a partner, the second write carries the final/commit flag.
+        self.set_magnetism_simple(
+            mag_cmd::SNAPTAP_ENABLE,
+            key_index,
+            !partner_valid,
+            &[SNAPTAP_UNBOUND],
+        )?;
+        if partner_valid {
+            self.set_magnetism_simple(mag_cmd::SNAPTAP_ENABLE, partner, true, &[SNAPTAP_UNBOUND])?;
+        }
+        Ok(())
     }
 
     /// Set bottom deadzone for all keys (u16 raw value)
