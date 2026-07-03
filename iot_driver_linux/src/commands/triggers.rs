@@ -637,3 +637,48 @@ pub fn set_mode_all(keyboard: &KeyboardInterface, mode: KeyMode, rt: bool) -> Co
     }
     Ok(())
 }
+
+/// Bind, clear, or show a key's Snap-Tap (SOCD) pairing.
+pub fn set_snaptap(
+    keyboard: &KeyboardInterface,
+    key: u8,
+    with: Option<u8>,
+    clear: bool,
+) -> CommandResult {
+    if clear {
+        match keyboard.clear_snaptap(key) {
+            Ok(_) => println!("Cleared Snap-Tap binding for key {key}"),
+            Err(e) => eprintln!("Failed to clear Snap-Tap binding: {e}"),
+        }
+    } else if let Some(partner) = with {
+        match keyboard.set_snaptap_pair(key, partner) {
+            Ok(_) => println!("Bound keys {key} <-> {partner} as a Snap-Tap pair"),
+            Err(e) => eprintln!("Failed to set Snap-Tap pair: {e}"),
+        }
+    } else {
+        match keyboard.get_snaptap_binds() {
+            Ok(binds) => {
+                let partner = binds
+                    .get(key as usize)
+                    .copied()
+                    .unwrap_or(monsgeek_keyboard::SNAPTAP_UNBOUND);
+                if partner == monsgeek_keyboard::SNAPTAP_UNBOUND {
+                    println!("Key {key}: no Snap-Tap binding");
+                } else {
+                    println!("Key {key} is bound to key {partner} (Snap-Tap)");
+                }
+            }
+            Err(e) => eprintln!("Failed to read Snap-Tap bindings: {e}"),
+        }
+    }
+    Ok(())
+}
+
+/// Set a key's Mod-Tap tap-vs-hold decision time (ms, quantized to 10 ms).
+pub fn set_modtap_time(keyboard: &KeyboardInterface, key: u8, ms: u16) -> CommandResult {
+    match keyboard.set_modtap_time(key, ms) {
+        Ok(_) => println!("Key {key} Mod-Tap decision time set to {}ms", ms / 10 * 10),
+        Err(e) => eprintln!("Failed to set Mod-Tap time: {e}"),
+    }
+    Ok(())
+}

@@ -255,6 +255,28 @@ pub enum Commands {
         rt: bool,
     },
 
+    /// Bind, clear, or show a Snap-Tap (SOCD) key pair
+    #[command(visible_alias = "st")]
+    SetSnaptap {
+        /// Key index
+        key: u8,
+        /// Partner key index to bind with (bidirectional)
+        #[arg(long, conflicts_with = "clear")]
+        with: Option<u8>,
+        /// Clear this key's binding (and its partner's back-reference)
+        #[arg(long, conflicts_with = "with")]
+        clear: bool,
+    },
+
+    /// Set the Mod-Tap tap-vs-hold decision time for a key
+    #[command(visible_alias = "mtt")]
+    SetModtapTime {
+        /// Key index
+        key: u8,
+        /// Decision time in milliseconds (10 ms steps, 0-2550)
+        ms: u16,
+    },
+
     // === Per-key Color Commands ===
     /// Set all keys to a single color
     #[command(visible_aliases = ["color-all", "sc"])]

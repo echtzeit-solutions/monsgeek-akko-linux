@@ -173,6 +173,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mode = mode.into();
             commands::with_keyboard(&ctx, |kb| commands::triggers::set_mode_all(kb, mode, rt))?;
         }
+        Some(Commands::SetSnaptap { key, with, clear }) => {
+            commands::with_keyboard(&ctx, |kb| {
+                commands::triggers::set_snaptap(kb, key, with, clear)
+            })?;
+        }
+        Some(Commands::SetModtapTime { key, ms }) => {
+            commands::with_keyboard(&ctx, |kb| commands::triggers::set_modtap_time(kb, key, ms))?;
+        }
 
         // === Keymap Commands ===
         Some(Commands::Remap { from, to, layer }) => {
