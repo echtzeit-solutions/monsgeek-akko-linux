@@ -13,7 +13,7 @@ pub mod sync;
 pub use error::KeyboardError;
 pub use led::{LedMode, LedParams, RgbColor};
 pub use magnetism::{
-    KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, TravelDepth,
+    KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, ModeByte, TravelDepth,
     TriggerSettings,
 };
 pub use settings::{
@@ -704,11 +704,13 @@ impl KeyboardInterface {
             ));
         }
 
+        let mode_byte = ModeByte::from_u8(resp[3]);
         Ok(KeyTriggerSettings {
             key_index,
             actuation: resp[1],
             deactuation: resp[2],
-            mode: KeyMode::from_u8(resp[3]),
+            mode: mode_byte.base,
+            rapid_trigger: mode_byte.rapid_trigger,
         })
     }
 
@@ -724,7 +726,7 @@ impl KeyboardInterface {
             key_index: settings.key_index,
             actuation: settings.actuation,
             deactuation: settings.deactuation,
-            mode: settings.mode.to_u8(),
+            mode: ModeByte::new(settings.mode, settings.rapid_trigger).to_u8(),
         })?;
 
         Ok(())
@@ -878,11 +880,25 @@ impl KeyboardInterface {
         self.set_magnetism_u16(mag_cmd::RT_LIFT, &values)
     }
 
-    /// Enable/disable Rapid Trigger for all keys
+    /// Enable/disable the Rapid-Trigger flag (`0x80`) for all keys, preserving
+    /// each key's base mode (read-modify-write of the KEY_MODE bytes).
     pub fn set_rapid_trigger_all(&self, enable: bool) -> Result<(), KeyboardError> {
-        // Mode values: 0=Normal, 1=RapidTrigger
-        let mode = if enable { 1u8 } else { 0u8 };
-        let values = vec![mode; self.key_count as usize];
+        let kc = self.key_count as usize;
+        let mut modes = self.get_magnetism(mag_cmd::KEY_MODE, kc.div_ceil(64))?;
+        modes.resize(kc, 0);
+        for m in &mut modes {
+            if enable {
+                *m |= ModeByte::RT_FLAG;
+            } else {
+                *m &= !ModeByte::RT_FLAG;
+            }
+        }
+        self.set_magnetism_u8(mag_cmd::KEY_MODE, &modes)
+    }
+
+    /// Set the base mode (`0x80` RT flag cleared) for all keys.
+    pub fn set_mode_all(&self, mode: ModeByte) -> Result<(), KeyboardError> {
+        let values = vec![mode.to_u8(); self.key_count as usize];
         self.set_magnetism_u8(mag_cmd::KEY_MODE, &values)
     }
 

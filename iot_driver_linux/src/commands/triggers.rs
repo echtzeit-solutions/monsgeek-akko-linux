@@ -1,8 +1,7 @@
 //! Trigger-related command handlers.
 
 use super::CommandResult;
-use iot_driver::protocol::magnetism;
-use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, KeyboardInterface};
+use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, KeyboardInterface, ModeByte};
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -460,7 +459,7 @@ pub fn triggers(keyboard: &KeyboardInterface) -> CommandResult {
             println!(
                 "  Mode:          {} ({})",
                 first_mode,
-                magnetism::mode_name(first_mode)
+                ModeByte::from_u8(first_mode)
             );
             println!();
 
@@ -595,6 +594,22 @@ pub fn set_key_trigger(
     // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
     let factor = 10.0f32;
 
+    // Resolve the requested mode. RT is an orthogonal flag, so "rt" enables the
+    // flag while preserving the current base mode; base-mode names preserve the
+    // current RT flag.
+    let (base, rapid_trigger) = match mode.as_deref().map(str::to_lowercase).as_deref() {
+        Some("normal" | "n") => (KeyMode::Normal, current.rapid_trigger),
+        Some("dks" | "dynamic") => (KeyMode::DynamicKeystroke, current.rapid_trigger),
+        Some("modtap" | "mt") => (KeyMode::ModTap, current.rapid_trigger),
+        Some("toggle" | "tgl" | "togglehold" | "tgl-hold") => {
+            (KeyMode::ToggleHold, current.rapid_trigger)
+        }
+        Some("toggledots" | "tgldots" | "tgl-dots") => (KeyMode::ToggleDots, current.rapid_trigger),
+        Some("snaptap" | "snap" | "st") => (KeyMode::SnapTap, current.rapid_trigger),
+        Some("rt" | "rapid" | "rapidtrigger") => (current.mode, true),
+        _ => (current.mode, current.rapid_trigger),
+    };
+
     // Build settings with modifications
     let settings = KeyTriggerSettings {
         key_index: key,
@@ -604,28 +619,18 @@ pub fn set_key_trigger(
         deactuation: release
             .map(|mm| (mm * factor) as u8)
             .unwrap_or(current.deactuation),
-        mode: mode
-            .as_ref()
-            .map(|m| match m.to_lowercase().as_str() {
-                "normal" | "n" => KeyMode::Normal,
-                "rt" | "rapid" | "rapidtrigger" => KeyMode::RapidTrigger,
-                "dks" | "dynamic" => KeyMode::DynamicKeystroke,
-                "snaptap" | "snap" | "st" => KeyMode::SnapTap,
-                "modtap" | "mt" => KeyMode::ModTap,
-                "toggle" | "tgl" => KeyMode::ToggleHold,
-                _ => current.mode,
-            })
-            .unwrap_or(current.mode),
+        mode: base,
+        rapid_trigger,
     };
 
     match keyboard.set_key_trigger(&settings) {
         Ok(_) => {
             println!("Key {key} trigger settings updated:");
             println!(
-                "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {:?}",
+                "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {}",
                 settings.actuation as f32 / factor,
                 settings.deactuation as f32 / factor,
-                settings.mode
+                ModeByte::new(settings.mode, settings.rapid_trigger)
             );
             println!(
                 "  (precision: {}, bulk commands use higher precision)",

@@ -422,56 +422,6 @@ pub const LED_OPTIONS_MASK: u8 = 0x0F;
 pub const LED_BRIGHTNESS_MAX: u8 = 4;
 pub const LED_SPEED_MAX: u8 = 4;
 
-/// Magnetism sub-commands for GET/SET_MULTI_MAGNETISM
-pub mod magnetism {
-    /// Press travel (actuation point) - values in precision units
-    pub const PRESS_TRAVEL: u8 = 0;
-    /// Lift travel (release point)
-    pub const LIFT_TRAVEL: u8 = 1;
-    /// Rapid Trigger press sensitivity
-    pub const RT_PRESS: u8 = 2;
-    /// Rapid Trigger lift sensitivity
-    pub const RT_LIFT: u8 = 3;
-    /// DKS (Dynamic Keystroke) travel
-    pub const DKS_TRAVEL: u8 = 4;
-    /// Mod-Tap activation time
-    pub const MODTAP_TIME: u8 = 5;
-    /// Bottom dead zone
-    pub const BOTTOM_DEADZONE: u8 = 6;
-    /// Key mode flags (Normal/RT/DKS/ModTap/Toggle/SnapTap)
-    pub const KEY_MODE: u8 = 7;
-    /// Snap Tap anti-SOCD enable
-    pub const SNAPTAP_ENABLE: u8 = 9;
-    /// DKS trigger modes/actions
-    pub const DKS_MODES: u8 = 10;
-    /// Top dead zone (firmware >= 1024)
-    pub const TOP_DEADZONE: u8 = 251;
-    /// Switch type (if replaceable)
-    pub const SWITCH_TYPE: u8 = 252;
-    /// Calibration values (raw sensor)
-    pub const CALIBRATION: u8 = 254;
-
-    /// Key mode values
-    pub const MODE_NORMAL: u8 = 0;
-    pub const MODE_RAPID_TRIGGER: u8 = 1;
-    pub const MODE_DKS: u8 = 2;
-    pub const MODE_MODTAP: u8 = 3;
-    pub const MODE_TOGGLE: u8 = 4;
-    pub const MODE_SNAPTAP: u8 = 5;
-
-    pub fn mode_name(mode: u8) -> &'static str {
-        match mode {
-            MODE_NORMAL => "Normal",
-            MODE_RAPID_TRIGGER => "Rapid Trigger",
-            MODE_DKS => "DKS",
-            MODE_MODTAP => "Mod-Tap",
-            MODE_TOGGLE => "Toggle",
-            MODE_SNAPTAP => "Snap Tap",
-            _ => "Unknown",
-        }
-    }
-}
-
 /// Polling rate (report rate) encoding/decoding
 /// Protocol: SET_REPORT (0x03) / GET_REPORT (0x83)
 /// Format: [cmd, 0, rate_code, 0, 0, 0, 0, checksum]

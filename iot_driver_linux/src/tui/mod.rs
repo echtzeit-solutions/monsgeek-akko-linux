@@ -49,13 +49,13 @@ use crate::hid::BatteryInfo;
 use crate::key_action::KeyAction;
 use crate::keymap::{self, KeyEntry, Layer};
 use crate::power_supply::find_hid_battery_power_supply;
-use crate::{cmd, devices, magnetism, FirmwareSettings, TriggerSettings};
+use crate::{cmd, devices, FirmwareSettings, TriggerSettings};
 use monsgeek_transport::protocol::matrix;
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    led::speed_to_wire, KeyboardInterface, Precision, SleepTimeSettings, TimestampedEvent,
-    VendorEvent,
+    led::speed_to_wire, KeyMode, KeyboardInterface, ModeByte, Precision, SleepTimeSettings,
+    TimestampedEvent, VendorEvent,
 };
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
 
@@ -1763,14 +1763,14 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
                             }
                         }
-                        KeyCode::Char('n') if app.tab == 2 => app.set_key_mode(magnetism::MODE_NORMAL),
-                        KeyCode::Char('N') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_NORMAL),
-                        KeyCode::Char('t') if app.tab == 2 => app.set_key_mode(magnetism::MODE_RAPID_TRIGGER),
-                        KeyCode::Char('T') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_RAPID_TRIGGER),
-                        KeyCode::Char('d') if app.tab == 2 => app.set_key_mode(magnetism::MODE_DKS),
-                        KeyCode::Char('D') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_DKS),
-                        KeyCode::Char('s') if app.tab == 2 => app.set_key_mode(magnetism::MODE_SNAPTAP),
-                        KeyCode::Char('S') if app.tab == 2 => app.set_all_key_modes(magnetism::MODE_SNAPTAP),
+                        KeyCode::Char('n') if app.tab == 2 => app.set_key_mode(KeyMode::Normal.to_u8()),
+                        KeyCode::Char('N') if app.tab == 2 => app.set_all_key_modes(KeyMode::Normal.to_u8()),
+                        KeyCode::Char('t') if app.tab == 2 => app.set_key_mode(ModeByte::new(KeyMode::Normal, true).to_u8()),
+                        KeyCode::Char('T') if app.tab == 2 => app.set_all_key_modes(ModeByte::new(KeyMode::Normal, true).to_u8()),
+                        KeyCode::Char('d') if app.tab == 2 => app.set_key_mode(KeyMode::DynamicKeystroke.to_u8()),
+                        KeyCode::Char('D') if app.tab == 2 => app.set_all_key_modes(KeyMode::DynamicKeystroke.to_u8()),
+                        KeyCode::Char('s') if app.tab == 2 => app.set_key_mode(KeyMode::SnapTap.to_u8()),
+                        KeyCode::Char('S') if app.tab == 2 => app.set_all_key_modes(KeyMode::SnapTap.to_u8()),
                         KeyCode::Char('p') if app.tab == 0 => app.apply_per_key_color(),
                         KeyCode::Char('v') if app.tab == 1 => app.toggle_depth_view(),
                         KeyCode::Char('v') if app.tab == 2 => app.toggle_trigger_view(),

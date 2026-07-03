@@ -31,7 +31,7 @@ pub use bpf_loader::{AkkoBpfLoader, BpfStatus, KernelBatteryInfo};
 pub use device_loader::{DeviceDatabase, JsonDeviceDefinition};
 pub use devices::is_supported;
 pub use hal::{device_registry, DeviceRegistry, HidInterface, InterfaceType};
-pub use hid::{key_mode, BatteryInfo, FirmwareSettings, TriggerSettings, VendorEventType};
+pub use hid::{BatteryInfo, FirmwareSettings, TriggerSettings, VendorEventType};
 pub use power_supply::{
     BatteryState, PowerSupply, PowerSupplyManager, PowerSupplyStatus, TestPowerIntegration,
 };
@@ -39,5 +39,4 @@ pub use profile::{profile_registry, DeviceProfile, DeviceProfileExt, ProfileRegi
 pub mod notify;
 
 pub use protocol::cmd;
-pub use protocol::magnetism;
 pub use protocol::music_viz;

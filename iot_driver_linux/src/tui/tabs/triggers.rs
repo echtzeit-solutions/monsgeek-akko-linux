@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 use throbber_widgets_tui::Throbber;
 use tui_scrollview::{ScrollView, ScrollbarVisibility};
 
-use crate::{key_mode, magnetism, TriggerSettings};
-use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, Precision};
+use crate::TriggerSettings;
+use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, ModeByte, Precision};
 
 use super::super::shared::{AsyncResult, LoadState, SpinnerConfig, TriggerViewMode};
 use super::super::App;
@@ -303,7 +303,7 @@ impl App {
         if let Some(ref mut triggers) = self.triggers {
             triggers.key_modes = modes;
         }
-        self.status_msg = format!("Set all keys to {}", magnetism::mode_name(mode));
+        self.status_msg = format!("Set all keys to {}", ModeByte::from_u8(mode));
     }
 
     /// Set mode for a single key (used in layout view)
@@ -326,7 +326,7 @@ impl App {
             "Key {} ({}) set to {}",
             key_index,
             key_name,
-            magnetism::mode_name(mode)
+            ModeByte::from_u8(mode)
         );
     }
 
@@ -453,11 +453,13 @@ impl App {
             }
             TriggerEditTarget::PerKey { key_index } => {
                 // Per-key uses u8 values with factor of 10 (0.1mm precision)
+                let mode_byte = ModeByte::from_u8(modal.mode);
                 let settings = KeyTriggerSettings {
                     key_index: key_index as u8,
                     actuation: (modal.actuation_mm * 10.0) as u8,
                     deactuation: (modal.release_mm * 10.0) as u8,
-                    mode: KeyMode::from_u8(modal.mode),
+                    mode: mode_byte.base,
+                    rapid_trigger: mode_byte.rapid_trigger,
                 };
 
                 match keyboard.set_key_trigger(&settings) {
@@ -691,7 +693,7 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::raw("  Mode: "),
                 Span::styled(
-                    magnetism::mode_name(first_mode),
+                    ModeByte::from_u8(first_mode).to_string(),
                     Style::default().fg(Color::Magenta),
                 ),
             ]),
@@ -741,7 +743,7 @@ fn render_trigger_list(f: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format!("{:.2}", lift as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_p as f32 / factor)),
                     Cell::from(format!("{:.2}", rt_l as f32 / factor)),
-                    Cell::from(magnetism::mode_name(mode)),
+                    Cell::from(ModeByte::from_u8(mode).to_string()),
                 ]);
 
                 if is_selected {
@@ -876,12 +878,18 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
             .and_then(|t| t.key_modes.get(pos).copied())
             .unwrap_or(0);
 
-        let mode_color = match key_mode::base_mode(mode) {
-            0 => Color::White,     // Normal
-            0x80 => Color::Yellow, // RT
-            2 => Color::Magenta,   // DKS
-            7 => Color::Cyan,      // SnapTap
-            _ => Color::Gray,
+        let parsed = ModeByte::from_u8(mode);
+        let mode_color = if parsed.rapid_trigger && parsed.base == KeyMode::Normal {
+            Color::Yellow // plain Rapid Trigger
+        } else {
+            match parsed.base {
+                KeyMode::Normal => Color::White,
+                KeyMode::DynamicKeystroke => Color::Magenta,
+                KeyMode::ModTap => Color::Green,
+                KeyMode::ToggleHold | KeyMode::ToggleDots => Color::Blue,
+                KeyMode::SnapTap => Color::Cyan,
+                KeyMode::Unknown(_) => Color::Gray,
+            }
         };
 
         let style = if is_selected {
@@ -937,7 +945,7 @@ fn render_trigger_layout(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Span::raw("  |  Mode: "),
                 Span::styled(
-                    magnetism::mode_name(mode),
+                    ModeByte::from_u8(mode).to_string(),
                     Style::default().fg(Color::Magenta),
                 ),
             ]),
@@ -1205,7 +1213,7 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
             };
             (config.format(val), config.unit)
         } else {
-            (magnetism::mode_name(modal.mode).to_string(), "")
+            (ModeByte::from_u8(modal.mode).to_string(), "")
         };
 
         // Spinner-style display: < value > when selected, just value when not

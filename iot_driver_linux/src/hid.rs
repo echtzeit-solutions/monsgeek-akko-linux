@@ -134,47 +134,6 @@ pub struct TriggerSettings {
 }
 
 /// Key mode values for per-key settings
-pub mod key_mode {
-    /// Normal mode - simple actuation/release points
-    pub const NORMAL: u8 = 0;
-    /// Dynamic Keystroke - 4-stage trigger
-    pub const DKS: u8 = 2;
-    /// Mod-Tap - different action for tap vs hold
-    pub const MOD_TAP: u8 = 3;
-    /// Toggle on hold
-    pub const TOGGLE_HOLD: u8 = 4;
-    /// Toggle on double-tap
-    pub const TOGGLE_DOTS: u8 = 5;
-    /// Snap-tap - bind to another key
-    pub const SNAP_TAP: u8 = 7;
-    /// Rapid Trigger flag (OR with mode)
-    pub const RT_FLAG: u8 = 0x80;
-
-    /// Check if RT is enabled for this mode
-    pub fn has_rt(mode: u8) -> bool {
-        mode & RT_FLAG != 0
-    }
-
-    /// Get base mode without RT flag
-    pub fn base_mode(mode: u8) -> u8 {
-        mode & 0x7F
-    }
-
-    /// Get mode name
-    pub fn name(mode: u8) -> &'static str {
-        let base = base_mode(mode);
-        match base {
-            NORMAL => "Normal",
-            DKS => "DKS",
-            MOD_TAP => "Mod-Tap",
-            TOGGLE_HOLD => "TglHold",
-            TOGGLE_DOTS => "TglDots",
-            SNAP_TAP => "SnapTap",
-            _ => "Unknown",
-        }
-    }
-}
-
 /// Firmware settings read from keyboard (LED, profile, debounce, etc.)
 #[derive(Debug, Clone, Default)]
 pub struct FirmwareSettings {

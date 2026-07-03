@@ -109,12 +109,14 @@ impl TriggerSettings {
         if index >= self.key_count {
             return None;
         }
+        let mode_byte = ModeByte::from_u8(self.key_modes.get(index).copied().unwrap_or(0));
         Some(KeyTriggerSettingsDetail {
             press_travel: self.press_travel.get(index).copied().unwrap_or(0),
             lift_travel: self.lift_travel.get(index).copied().unwrap_or(0),
             rt_press: self.rt_press.get(index).copied().unwrap_or(0),
             rt_lift: self.rt_lift.get(index).copied().unwrap_or(0),
-            key_mode: KeyMode::from_u8(self.key_modes.get(index).copied().unwrap_or(0)),
+            key_mode: mode_byte.base,
+            rapid_trigger: mode_byte.rapid_trigger,
             bottom_deadzone: self.bottom_deadzone.get(index).copied().unwrap_or(0),
             top_deadzone: self.top_deadzone.get(index).copied().unwrap_or(0),
         })
@@ -130,8 +132,10 @@ pub struct KeyTriggerSettings {
     pub actuation: u8,
     /// Deactuation point (raw units)
     pub deactuation: u8,
-    /// Key mode
+    /// Base key mode
     pub mode: KeyMode,
+    /// Rapid-Trigger flag (orthogonal to `mode`)
+    pub rapid_trigger: bool,
 }
 
 /// Detailed settings for a single key (from bulk query)
@@ -145,15 +149,21 @@ pub struct KeyTriggerSettingsDetail {
     pub rt_press: u16,
     /// Rapid Trigger lift sensitivity
     pub rt_lift: u16,
-    /// Key mode
+    /// Base key mode
     pub key_mode: KeyMode,
+    /// Rapid-Trigger flag (orthogonal to `key_mode`)
+    pub rapid_trigger: bool,
     /// Bottom deadzone
     pub bottom_deadzone: u16,
     /// Top deadzone
     pub top_deadzone: u16,
 }
 
-/// Key trigger mode
+/// Per-key base trigger mode — the low 7 bits of the firmware mode byte.
+///
+/// The Rapid-Trigger ("fire") flag is the orthogonal `0x80` bit and combines
+/// with *any* base mode; it is modelled separately by [`ModeByte`]. Values match
+/// the official webapp decoder (`CommonKBRY5088.js::_decodeMagnetismKeyModes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeyMode {
     /// Normal mode - simple actuation/release points
@@ -167,36 +177,37 @@ pub enum KeyMode {
     ToggleHold,
     /// Toggle Dots
     ToggleDots,
-    /// Snap Tap
+    /// Snap Tap (SOCD)
     SnapTap,
-    /// Rapid Trigger enabled
-    RapidTrigger,
-    /// Unknown mode
+    /// Unrecognized base mode (low 7 bits)
     Unknown(u8),
 }
 
 impl KeyMode {
-    /// Parse from protocol value
-    pub fn from_u8(value: u8) -> Self {
-        let base = value & 0x7F;
-        let rt = value & 0x80 != 0;
+    /// Every configurable base mode, in display/cycle order.
+    pub const ALL: [KeyMode; 6] = [
+        Self::Normal,
+        Self::DynamicKeystroke,
+        Self::ModTap,
+        Self::ToggleHold,
+        Self::ToggleDots,
+        Self::SnapTap,
+    ];
 
-        if rt {
-            Self::RapidTrigger
-        } else {
-            match base {
-                0 => Self::Normal,
-                2 => Self::DynamicKeystroke,
-                3 => Self::ModTap,
-                4 => Self::ToggleHold,
-                5 => Self::ToggleDots,
-                7 => Self::SnapTap,
-                _ => Self::Unknown(value),
-            }
+    /// Parse the base mode from the low 7 bits (ignores the `0x80` RT flag).
+    pub fn from_u8(value: u8) -> Self {
+        match value & 0x7F {
+            0 => Self::Normal,
+            2 => Self::DynamicKeystroke,
+            3 => Self::ModTap,
+            4 => Self::ToggleHold,
+            5 => Self::ToggleDots,
+            7 => Self::SnapTap,
+            other => Self::Unknown(other),
         }
     }
 
-    /// Convert to protocol value
+    /// Base mode value (low 7 bits; no RT flag).
     pub fn to_u8(self) -> u8 {
         match self {
             Self::Normal => 0,
@@ -205,8 +216,114 @@ impl KeyMode {
             Self::ToggleHold => 4,
             Self::ToggleDots => 5,
             Self::SnapTap => 7,
-            Self::RapidTrigger => 0x80,
-            Self::Unknown(v) => v,
+            Self::Unknown(v) => v & 0x7F,
         }
+    }
+
+    /// Human-readable label — the single source of truth for mode naming.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::DynamicKeystroke => "DKS",
+            Self::ModTap => "Mod-Tap",
+            Self::ToggleHold => "Toggle-Hold",
+            Self::ToggleDots => "Toggle-Dots",
+            Self::SnapTap => "SnapTap",
+            Self::Unknown(_) => "Unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for KeyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// A full per-key mode byte: a [`KeyMode`] base plus the orthogonal
+/// Rapid-Trigger flag (`0x80`). RT can be enabled on top of any base mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModeByte {
+    /// Base mode (low 7 bits)
+    pub base: KeyMode,
+    /// Rapid-Trigger ("fire") flag (`0x80`)
+    pub rapid_trigger: bool,
+}
+
+impl ModeByte {
+    /// Rapid-Trigger flag bit.
+    pub const RT_FLAG: u8 = 0x80;
+
+    pub fn new(base: KeyMode, rapid_trigger: bool) -> Self {
+        Self {
+            base,
+            rapid_trigger,
+        }
+    }
+
+    /// Split a raw mode byte into base mode + RT flag.
+    pub fn from_u8(value: u8) -> Self {
+        Self {
+            base: KeyMode::from_u8(value),
+            rapid_trigger: value & Self::RT_FLAG != 0,
+        }
+    }
+
+    /// Combine base mode + RT flag back into the raw mode byte.
+    pub fn to_u8(self) -> u8 {
+        self.base.to_u8() | if self.rapid_trigger { Self::RT_FLAG } else { 0 }
+    }
+}
+
+impl std::fmt::Display for ModeByte {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.base.label())?;
+        if self.rapid_trigger {
+            f.write_str("+RT")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_byte_round_trips_all_bases_and_rt() {
+        for base in KeyMode::ALL {
+            for rapid_trigger in [false, true] {
+                let mb = ModeByte::new(base, rapid_trigger);
+                let byte = mb.to_u8();
+                assert_eq!(byte & ModeByte::RT_FLAG != 0, rapid_trigger);
+                assert_eq!(ModeByte::from_u8(byte), mb);
+                // Base value never sets the RT bit itself.
+                assert_eq!(base.to_u8() & ModeByte::RT_FLAG, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn known_wire_values() {
+        // Values per CommonKBRY5088.js::_decodeMagnetismKeyModes.
+        assert_eq!(KeyMode::Normal.to_u8(), 0);
+        assert_eq!(KeyMode::DynamicKeystroke.to_u8(), 2);
+        assert_eq!(KeyMode::ModTap.to_u8(), 3);
+        assert_eq!(KeyMode::ToggleHold.to_u8(), 4);
+        assert_eq!(KeyMode::ToggleDots.to_u8(), 5);
+        assert_eq!(KeyMode::SnapTap.to_u8(), 7);
+        // DKS + Rapid Trigger, the byte the old model collapsed to bare RT.
+        let dks_rt = ModeByte::from_u8(0x82);
+        assert_eq!(dks_rt.base, KeyMode::DynamicKeystroke);
+        assert!(dks_rt.rapid_trigger);
+        assert_eq!(dks_rt.to_u8(), 0x82);
+    }
+
+    #[test]
+    fn unknown_base_preserved_without_rt_bit() {
+        let mb = ModeByte::from_u8(0x86); // base 6 (unknown) + RT
+        assert_eq!(mb.base, KeyMode::Unknown(6));
+        assert!(mb.rapid_trigger);
+        assert_eq!(mb.to_u8(), 0x86);
     }
 }
