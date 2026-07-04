@@ -104,6 +104,12 @@ const MODTAP_TIME_STEP_MS: u16 = 10;
 /// unbound marker and is out of the valid key-index range.
 pub const SNAPTAP_UNBOUND: u8 = 0xFF;
 
+/// Settle time after the final ("simple", flag=0) per-key SET_MULTI_MAGNETISM
+/// write of a batch before the firmware answers GET_MULTI_MAGNETISM correctly.
+/// Reading sooner returns the *whole* trigger table shifted/garbled — not just
+/// the written key. Measured floor is ~200 ms; this carries margin.
+const MAGNETISM_SETTLE_MS: u64 = 250;
+
 /// High-level keyboard interface using any transport
 ///
 /// Provides convenient methods for keyboard features like LED control,
@@ -923,7 +929,7 @@ impl KeyboardInterface {
         is_final: bool,
         payload: &[u8],
     ) -> Result<(), KeyboardError> {
-        let cmd = SetMultiMagnetismCommand {
+        let pkt = SetMultiMagnetismCommand {
             header: SetMultiMagnetismHeader {
                 sub_cmd,
                 flag: 0,
@@ -935,7 +941,13 @@ impl KeyboardInterface {
             },
             payload: payload.to_vec(),
         };
-        self.transport.send_with_delay(&cmd, 30)?;
+        // After the final write of a batch (commit=1) the firmware needs to settle
+        // before it will answer GET_MULTI_MAGNETISM correctly. Read it back too
+        // soon and every key comes back shifted/garbage (the whole trigger table
+        // reads wrong, not just this key). ~200ms is the observed floor; use margin.
+        // Mirrors the vendor web app's `vendorSleep()` after each simple-write batch.
+        let settle_ms = if is_final { MAGNETISM_SETTLE_MS } else { 30 };
+        self.transport.send_with_delay(&pkt, settle_ms)?;
         Ok(())
     }
 
