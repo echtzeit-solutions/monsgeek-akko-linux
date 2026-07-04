@@ -173,8 +173,10 @@ pub mod magnetism {
     pub const KEY_MODE: u8 = 0x07;
     /// Snap Tap anti-SOCD enable
     pub const SNAPTAP_ENABLE: u8 = 0x09;
-    /// DKS trigger modes/actions
+    /// DKS trigger modes/actions (GET, 8 pages — 512-byte interleaved layout)
     pub const DKS_MODES: u8 = 0x0A;
+    /// DKS trigger modes/actions (SET simple — 4 packed bytes per key)
+    pub const DKS_TRIGGER_MODES_SET: u8 = 0x08;
     /// Top deadzone (firmware >= 1024)
     pub const TOP_DEADZONE: u8 = 0xFB;
     /// Switch type (if replaceable)
@@ -195,6 +197,7 @@ pub mod magnetism {
             KEY_MODE => "KEY_MODE",
             SNAPTAP_ENABLE => "SNAPTAP_ENABLE",
             DKS_MODES => "DKS_MODES",
+            DKS_TRIGGER_MODES_SET => "DKS_TRIGGER_MODES_SET",
             TOP_DEADZONE => "TOP_DEADZONE",
             SWITCH_TYPE => "SWITCH_TYPE",
             CALIBRATION => "CALIBRATION",

@@ -7,9 +7,15 @@ use std::collections::VecDeque;
 use throbber_widgets_tui::Throbber;
 use tui_scrollview::{ScrollView, ScrollbarVisibility};
 
+use crate::key_action::KeyAction;
+use crate::keymap::Layer;
+use crate::protocol::hid;
 use crate::tui::widgets::PopupSelect;
 use crate::TriggerSettings;
-use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, ModeByte, Precision};
+use monsgeek_keyboard::{
+    DksAction, DksBinding, DksCombo, DksConfig, DksPhase, KeyMode, KeyTriggerSettings, ModeByte,
+    Precision,
+};
 
 use super::super::shared::{AsyncResult, LoadState, SpinnerConfig, TriggerViewMode};
 use super::super::App;
@@ -41,34 +47,102 @@ pub(in crate::tui) enum TriggerField {
     RapidTrigger,
     ModTapTime,
     SnapTapPartner,
+    DksTravel,
+    DksBinding,
+    DksBindingKey,
+    DksAct0,
+    DksAct1,
+    DksAct2,
+    DksAct3,
 }
 
 impl TriggerField {
-    /// Fields shown in the global (all-keys) modal.
-    const GLOBAL: &'static [TriggerField] = &[
-        Self::Actuation,
-        Self::Release,
-        Self::RtPress,
-        Self::RtLift,
-        Self::TopDeadzone,
-        Self::BottomDeadzone,
-        Self::Mode,
-        Self::RapidTrigger,
+    const CORE_TRAVEL: &'static [TriggerField] = &[Self::Actuation, Self::Release];
+    const RT_SENSITIVITY: &'static [TriggerField] = &[Self::RtPress, Self::RtLift];
+    const DEADZONES: &'static [TriggerField] = &[Self::TopDeadzone, Self::BottomDeadzone];
+    const MODE_CONTROLS: &'static [TriggerField] = &[Self::Mode, Self::RapidTrigger];
+    const MODTAP: &'static [TriggerField] = &[Self::ModTapTime];
+    const SNAPTAP: &'static [TriggerField] = &[Self::SnapTapPartner];
+    const DKS: &'static [TriggerField] = &[
+        Self::DksBinding,
+        Self::DksBindingKey,
+        Self::DksAct0,
+        Self::DksAct1,
+        Self::DksAct2,
+        Self::DksAct3,
     ];
 
-    /// Fields shown in the per-key modal (adds Mod-Tap time + Snap-Tap partner).
-    const PER_KEY: &'static [TriggerField] = &[
-        Self::Actuation,
-        Self::Release,
-        Self::RtPress,
-        Self::RtLift,
-        Self::TopDeadzone,
-        Self::BottomDeadzone,
-        Self::Mode,
-        Self::RapidTrigger,
-        Self::ModTapTime,
-        Self::SnapTapPartner,
-    ];
+    fn append_fields(out: &mut Vec<TriggerField>, slice: &'static [TriggerField]) {
+        out.extend_from_slice(slice);
+    }
+
+    /// Bulk all-keys edit — only fields that `save_trigger_edit_modal` writes globally.
+    fn global_fields() -> Vec<TriggerField> {
+        let mut fields = Vec::new();
+        Self::append_fields(&mut fields, Self::CORE_TRAVEL);
+        Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+        Self::append_fields(&mut fields, Self::DEADZONES);
+        fields
+    }
+
+    /// Per-key fields visible for the current base mode (and RT flag).
+    ///
+    /// Mode / Rapid Trigger are always first so changing mode refreshes the list below.
+    fn per_key_fields(mode_byte: u8) -> Vec<TriggerField> {
+        let base = KeyMode::from_u8(mode_byte);
+        let rt_on = mode_byte & ModeByte::RT_FLAG != 0;
+        let mut fields = Vec::new();
+        Self::append_fields(&mut fields, Self::MODE_CONTROLS);
+
+        match base {
+            KeyMode::Normal => {
+                Self::append_fields(&mut fields, Self::CORE_TRAVEL);
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+                Self::append_fields(&mut fields, Self::DEADZONES);
+            }
+            KeyMode::DynamicKeystroke => {
+                Self::append_fields(&mut fields, &[Self::DksTravel, Self::Actuation]);
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+                Self::append_fields(&mut fields, Self::DKS);
+            }
+            KeyMode::ModTap => {
+                Self::append_fields(&mut fields, Self::MODTAP);
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+            }
+            KeyMode::SnapTap => {
+                Self::append_fields(&mut fields, Self::SNAPTAP);
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+            }
+            // Toggle output is configured in the keymap; vendor hides travel/DZ for TGL.
+            KeyMode::ToggleHold | KeyMode::ToggleDots => {
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+            }
+            KeyMode::Unknown(_) => {
+                if rt_on {
+                    Self::append_fields(&mut fields, Self::RT_SENSITIVITY);
+                }
+            }
+        }
+        fields
+    }
+
+    /// Column label, with mode-specific names where the same field means something else.
+    pub(in crate::tui) fn label_for(self, mode_byte: u8) -> &'static str {
+        match (self, KeyMode::from_u8(mode_byte)) {
+            (Self::Actuation, KeyMode::DynamicKeystroke) => "DKS Full Depth",
+            _ => self.label(),
+        }
+    }
 
     pub(in crate::tui) fn label(&self) -> &'static str {
         match self {
@@ -82,6 +156,13 @@ impl TriggerField {
             Self::RapidTrigger => "Rapid Trig",
             Self::ModTapTime => "MT Time",
             Self::SnapTapPartner => "SnapTap Key",
+            Self::DksTravel => "DKS Trigger Pt",
+            Self::DksBinding => "DKS Binding",
+            Self::DksBindingKey => "DKS Output",
+            Self::DksAct0 => DksPhase::PressShallow.short_label(),
+            Self::DksAct1 => DksPhase::PressFull.short_label(),
+            Self::DksAct2 => DksPhase::ReleaseFull.short_label(),
+            Self::DksAct3 => DksPhase::ReleaseShallow.short_label(),
         }
     }
 
@@ -120,10 +201,53 @@ impl TriggerField {
                 decimals: 0,
                 unit: "ms",
             }),
-            // Mode / SnapTapPartner open popup selectors; RapidTrigger toggles.
-            Self::Mode | Self::RapidTrigger | Self::SnapTapPartner => None,
+            Self::DksTravel => Some(SpinnerConfig {
+                min: 0.1,
+                max: 4.0,
+                step: 0.05,
+                step_coarse: 0.2,
+                decimals: 2,
+                unit: "mm",
+            }),
+            // Mode / SnapTapPartner / DKS pickers open popups; RapidTrigger toggles.
+            Self::Mode
+            | Self::RapidTrigger
+            | Self::SnapTapPartner
+            | Self::DksBinding
+            | Self::DksBindingKey
+            | Self::DksAct0
+            | Self::DksAct1
+            | Self::DksAct2
+            | Self::DksAct3 => None,
         }
     }
+
+    fn dks_action_index(self) -> Option<usize> {
+        match self {
+            Self::DksAct0 => Some(0),
+            Self::DksAct1 => Some(1),
+            Self::DksAct2 => Some(2),
+            Self::DksAct3 => Some(3),
+            _ => None,
+        }
+    }
+}
+
+/// DKS fields loaded when opening a per-key trigger edit modal.
+#[derive(Debug, Clone)]
+pub(in crate::tui) struct DksEditState {
+    pub travel_mm: f32,
+    pub bindings: [DksBinding; 4],
+    pub binding_keys: [Option<u8>; 4],
+}
+
+/// Per-key sub-configs fetched from the device before opening the edit modal.
+#[derive(Debug, Clone)]
+pub(in crate::tui) struct PerKeyEditPrefetch {
+    pub modtap_ms: u16,
+    pub snaptap_partner: Option<u8>,
+    pub key_choices: Vec<(String, u8)>,
+    pub dks: DksEditState,
 }
 
 /// Trigger edit modal state
@@ -156,6 +280,27 @@ pub(in crate::tui) struct TriggerEditModal {
     pub mode_picker: Option<PopupSelect<KeyMode>>,
     /// Open Snap-Tap partner picker, when choosing a partner key (`None` = unbound)
     pub key_picker: Option<PopupSelect<Option<u8>>>,
+    /// DKS trigger-point travel in mm (per-key only; R1/R4 shallow depth)
+    pub dks_travel_mm: f32,
+    /// Four DKS output bindings (per-key only)
+    pub dks_bindings: [DksBinding; 4],
+    /// Which DKS binding row (0–3) is being edited
+    pub dks_binding_index: usize,
+    /// Matrix key index bound to each binding's primary output (for the picker UI)
+    pub dks_binding_keys: [Option<u8>; 4],
+    /// Open DKS output-key picker for the current binding
+    pub dks_key_picker: Option<PopupSelect<Option<u8>>>,
+    /// Open DKS action picker: `(DksPhase index, picker)`
+    pub dks_action_picker: Option<(usize, PopupSelect<DksAction>)>,
+}
+
+fn format_dks_combo(combo: DksCombo) -> String {
+    [combo.skey, combo.key, combo.key2]
+        .iter()
+        .filter(|&&c| c != 0)
+        .map(|&c| hid::key_name(c).to_string())
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 impl TriggerEditModal {
@@ -179,18 +324,22 @@ impl TriggerEditModal {
             key_choices: Vec::new(),
             mode_picker: None,
             key_picker: None,
+            dks_travel_mm: 0.0,
+            dks_bindings: [DksBinding::default(); 4],
+            dks_binding_index: 0,
+            dks_binding_keys: [None; 4],
+            dks_key_picker: None,
+            dks_action_picker: None,
         }
     }
 
-    /// Create modal for editing a specific key. `modtap_ms`, `snaptap_partner`
-    /// and `key_choices` are pre-fetched by the caller (they need device access).
+    /// Create modal for editing a specific key. `prefetch` is loaded by the
+    /// caller (needs device access for Mod-Tap, Snap-Tap, and DKS).
     pub(in crate::tui) fn new_per_key(
         key_index: usize,
         triggers: &TriggerSettings,
         precision: Precision,
-        modtap_ms: u16,
-        snaptap_partner: Option<u8>,
-        key_choices: Vec<(String, u8)>,
+        prefetch: PerKeyEditPrefetch,
     ) -> Self {
         let factor = precision.factor() as f32;
         Self {
@@ -211,34 +360,55 @@ impl TriggerEditModal {
                 .unwrap_or(0) as f32
                 / factor,
             mode: triggers.key_modes.get(key_index).copied().unwrap_or(0),
-            modtap_ms,
-            snaptap_partner,
-            key_choices,
+            modtap_ms: prefetch.modtap_ms,
+            snaptap_partner: prefetch.snaptap_partner,
+            key_choices: prefetch.key_choices,
             mode_picker: None,
             key_picker: None,
+            dks_travel_mm: prefetch.dks.travel_mm,
+            dks_bindings: prefetch.dks.bindings,
+            dks_binding_index: 0,
+            dks_binding_keys: prefetch.dks.binding_keys,
+            dks_key_picker: None,
+            dks_action_picker: None,
         }
     }
 
-    /// Fields shown for this modal. Per-key modals expose the Mod-Tap time and
-    /// Snap-Tap partner; the global modal does not (those are per-key configs).
-    pub(in crate::tui) fn fields(&self) -> &'static [TriggerField] {
+    /// Fields shown for this modal, filtered to what applies to the current mode.
+    pub(in crate::tui) fn visible_fields(&self) -> Vec<TriggerField> {
         match self.target {
-            TriggerEditTarget::Global => TriggerField::GLOBAL,
-            TriggerEditTarget::PerKey { .. } => TriggerField::PER_KEY,
+            TriggerEditTarget::Global => TriggerField::global_fields(),
+            TriggerEditTarget::PerKey { .. } => TriggerField::per_key_fields(self.mode),
         }
+    }
+
+    /// Keep focus on `preferred` after the visible field list changes (e.g. mode switch).
+    fn clamp_field_index(&mut self, preferred: TriggerField) {
+        let fields = self.visible_fields();
+        self.field_index = fields
+            .iter()
+            .position(|&f| f == preferred)
+            .or_else(|| fields.iter().position(|&f| f == TriggerField::Mode))
+            .unwrap_or(0);
     }
 
     pub(in crate::tui) fn current_field(&self) -> TriggerField {
-        self.fields()[self.field_index]
+        let fields = self.visible_fields();
+        fields
+            .get(self.field_index)
+            .copied()
+            .unwrap_or(TriggerField::Mode)
     }
 
     pub(in crate::tui) fn next_field(&mut self) {
-        self.field_index = (self.field_index + 1) % self.fields().len();
+        let len = self.visible_fields().len().max(1);
+        self.field_index = (self.field_index + 1) % len;
     }
 
     pub(in crate::tui) fn prev_field(&mut self) {
+        let len = self.visible_fields().len().max(1);
         self.field_index = if self.field_index == 0 {
-            self.fields().len() - 1
+            len - 1
         } else {
             self.field_index - 1
         };
@@ -255,7 +425,16 @@ impl TriggerEditModal {
             TriggerField::TopDeadzone => self.top_dz_mm,
             TriggerField::BottomDeadzone => self.bottom_dz_mm,
             TriggerField::ModTapTime => self.modtap_ms as f32,
-            TriggerField::Mode | TriggerField::RapidTrigger | TriggerField::SnapTapPartner => 0.0,
+            TriggerField::DksTravel => self.dks_travel_mm,
+            TriggerField::Mode
+            | TriggerField::RapidTrigger
+            | TriggerField::SnapTapPartner
+            | TriggerField::DksBinding
+            | TriggerField::DksBindingKey
+            | TriggerField::DksAct0
+            | TriggerField::DksAct1
+            | TriggerField::DksAct2
+            | TriggerField::DksAct3 => 0.0,
         }
     }
 
@@ -269,8 +448,16 @@ impl TriggerEditModal {
             TriggerField::TopDeadzone => self.top_dz_mm = value,
             TriggerField::BottomDeadzone => self.bottom_dz_mm = value,
             TriggerField::ModTapTime => self.modtap_ms = value.clamp(0.0, 2550.0) as u16,
-            // Mode / SnapTapPartner use popup pickers; RapidTrigger is toggled.
-            TriggerField::Mode | TriggerField::RapidTrigger | TriggerField::SnapTapPartner => {}
+            TriggerField::DksTravel => self.dks_travel_mm = value,
+            TriggerField::Mode
+            | TriggerField::RapidTrigger
+            | TriggerField::SnapTapPartner
+            | TriggerField::DksBinding
+            | TriggerField::DksBindingKey
+            | TriggerField::DksAct0
+            | TriggerField::DksAct1
+            | TriggerField::DksAct2
+            | TriggerField::DksAct3 => {}
         }
     }
 
@@ -280,6 +467,11 @@ impl TriggerEditModal {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
+            TriggerField::DksBindingKey => self.open_dks_key_picker(),
+            TriggerField::DksBinding => self.cycle_dks_binding(true),
+            field if field.dks_action_index().is_some() => {
+                self.open_dks_action_picker(field.dks_action_index().unwrap());
+            }
             TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
             field => {
                 if let Some(config) = field.spinner_config() {
@@ -296,6 +488,11 @@ impl TriggerEditModal {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
+            TriggerField::DksBindingKey => self.open_dks_key_picker(),
+            TriggerField::DksBinding => self.cycle_dks_binding(false),
+            field if field.dks_action_index().is_some() => {
+                self.open_dks_action_picker(field.dks_action_index().unwrap());
+            }
             TriggerField::RapidTrigger => self.toggle_rapid_trigger(),
             field => {
                 if let Some(config) = field.spinner_config() {
@@ -306,9 +503,19 @@ impl TriggerEditModal {
         }
     }
 
+    fn cycle_dks_binding(&mut self, forward: bool) {
+        if forward {
+            self.dks_binding_index = (self.dks_binding_index + 1) % 4;
+        } else {
+            self.dks_binding_index = (self.dks_binding_index + 3) % 4;
+        }
+    }
+
     /// Flip the Rapid-Trigger (`0x80`) flag, preserving the base mode.
     pub(in crate::tui) fn toggle_rapid_trigger(&mut self) {
+        let preferred = TriggerField::RapidTrigger;
         self.mode ^= ModeByte::RT_FLAG;
+        self.clamp_field_index(preferred);
     }
 
     /// Open the base-mode popup selector, preselected to the current base mode.
@@ -329,7 +536,9 @@ impl TriggerEditModal {
         if let Some(picker) = self.mode_picker.take() {
             if let Some(&base) = picker.selected() {
                 let rt = self.mode & ModeByte::RT_FLAG != 0;
+                let preferred = self.current_field();
                 self.mode = ModeByte::new(base, rt).to_u8();
+                self.clamp_field_index(preferred);
             }
         }
     }
@@ -349,6 +558,53 @@ impl TriggerEditModal {
         if let Some(picker) = self.key_picker.take() {
             if let Some(&partner) = picker.selected() {
                 self.snaptap_partner = partner;
+            }
+        }
+    }
+
+    /// Open the DKS output-key picker for the current slot.
+    pub(in crate::tui) fn open_dks_key_picker(&mut self) {
+        let mut items = vec![("(none)".to_string(), None)];
+        items.extend(self.key_choices.iter().map(|(l, i)| (l.clone(), Some(*i))));
+        let mut picker = PopupSelect::new(
+            format!("DKS binding {} output", self.dks_binding_index + 1),
+            items,
+        );
+        let current = self.dks_binding_keys[self.dks_binding_index];
+        picker.select_where(|&p| p == current);
+        self.dks_key_picker = Some(picker);
+    }
+
+    /// Open the DKS action picker for one travel checkpoint on the current slot.
+    pub(in crate::tui) fn open_dks_action_picker(&mut self, action_idx: usize) {
+        let current = self.dks_bindings[self.dks_binding_index].phase_actions[action_idx];
+        let items: Vec<(String, DksAction)> = [
+            DksAction::None,
+            DksAction::SingleTrigger,
+            DksAction::ContinuousUntilNext,
+            DksAction::ContinuousAcross,
+        ]
+        .into_iter()
+        .map(|a| (a.to_string(), a))
+        .collect();
+        let phase = DksPhase::from_index(action_idx).unwrap_or(DksPhase::PressShallow);
+        let mut picker = PopupSelect::new(
+            format!(
+                "DKS binding {} {}",
+                self.dks_binding_index + 1,
+                phase.short_label()
+            ),
+            items,
+        );
+        picker.select_where(|&a| a == current);
+        self.dks_action_picker = Some((action_idx, picker));
+    }
+
+    /// Apply the DKS action-picker selection and close it.
+    pub(in crate::tui) fn confirm_dks_action_picker(&mut self) {
+        if let Some((idx, picker)) = self.dks_action_picker.take() {
+            if let Some(&action) = picker.selected() {
+                self.dks_bindings[self.dks_binding_index].phase_actions[idx] = action;
             }
         }
     }
@@ -500,6 +756,37 @@ impl App {
             .collect()
     }
 
+    /// Default/base-layer HID code a matrix key would emit (remap-aware).
+    pub(in crate::tui) fn key_output_hid(&self, key_index: u8) -> u8 {
+        for entry in &self.remaps {
+            if entry.index == key_index && entry.layer == Layer::Base {
+                return match entry.action {
+                    KeyAction::Key(code) => code,
+                    KeyAction::Combo { key, .. } => key,
+                    _ => continue,
+                };
+            }
+        }
+        hid::key_code_from_name(monsgeek_transport::protocol::matrix::key_name(key_index))
+            .unwrap_or(0)
+    }
+
+    /// Best-effort reverse lookup: which matrix key emits the combo's primary HID.
+    fn dks_binding_key_for_combo(
+        &self,
+        combo: DksCombo,
+        key_choices: &[(String, u8)],
+    ) -> Option<u8> {
+        let hid_code = combo.key.max(combo.skey).max(combo.key2);
+        if hid_code == 0 {
+            return None;
+        }
+        key_choices
+            .iter()
+            .map(|(_, i)| *i)
+            .find(|&idx| self.key_output_hid(idx) == hid_code)
+    }
+
     /// Open trigger edit modal for a specific key
     pub(in crate::tui) fn open_trigger_edit_key(&mut self, key_index: usize) {
         if self.triggers.is_none() {
@@ -525,14 +812,44 @@ impl App {
             None => (0, None),
         };
         let key_choices = self.key_choices();
+        let factor = self.precision.factor() as f32;
+        let dks = match self.keyboard.as_ref() {
+            Some(kb) => kb
+                .get_dks_config(key_index as u8)
+                .map(|cfg| {
+                    let mut binding_keys = [None; 4];
+                    for (i, binding) in cfg.bindings.iter().enumerate() {
+                        binding_keys[i] =
+                            self.dks_binding_key_for_combo(binding.combo, &key_choices);
+                    }
+                    DksEditState {
+                        travel_mm: cfg.trigger_point_travel_raw as f32 / factor,
+                        bindings: cfg.bindings,
+                        binding_keys,
+                    }
+                })
+                .unwrap_or(DksEditState {
+                    travel_mm: 0.7,
+                    bindings: [DksBinding::default(); 4],
+                    binding_keys: [None; 4],
+                }),
+            None => DksEditState {
+                travel_mm: 0.7,
+                bindings: [DksBinding::default(); 4],
+                binding_keys: [None; 4],
+            },
+        };
         if let Some(ref triggers) = self.triggers {
             let modal = TriggerEditModal::new_per_key(
                 key_index,
                 triggers,
                 self.precision,
-                modtap_ms,
-                snaptap_partner,
-                key_choices,
+                PerKeyEditPrefetch {
+                    modtap_ms,
+                    snaptap_partner,
+                    key_choices,
+                    dks,
+                },
             );
             self.trigger_edit_modal = Some(modal);
             // Enable depth monitoring for the modal
@@ -645,6 +962,18 @@ impl App {
                             };
                             if let Err(e) = res {
                                 extra.push(format!("snaptap: {e}"));
+                            }
+                        }
+                        if mode_byte.base == KeyMode::DynamicKeystroke {
+                            let travel_raw = (modal.dks_travel_mm * factor) as u16;
+                            let config = DksConfig {
+                                trigger_point_travel_raw: travel_raw,
+                                bindings: modal.dks_bindings,
+                            };
+                            if let Err(e) =
+                                keyboard.set_dks_config(key, &config, Some(mode_byte.rapid_trigger))
+                            {
+                                extra.push(format!("dks: {e}"));
                             }
                         }
                         let key_name = get_key_label(self, key_index);
@@ -1204,7 +1533,7 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
 
     // Calculate popup size (70% width, 80% height)
     let popup_width = (area.width as f32 * 0.70).min(80.0) as u16;
-    let popup_height = (area.height as f32 * 0.80).min(30.0) as u16;
+    let popup_height = (area.height as f32 * 0.85).min(38.0) as u16;
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -1238,9 +1567,9 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(6),     // Depth chart
-            Constraint::Length(13), // Fields (up to 10 + help)
-            Constraint::Length(2),  // Help line
+            Constraint::Min(5),    // Depth chart
+            Constraint::Min(18),   // Fields (per-key modal has many rows)
+            Constraint::Length(2), // Help line
         ])
         .split(inner);
 
@@ -1262,6 +1591,10 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
     if let Some(picker) = &modal.mode_picker {
         picker.clone().render(f, popup_area);
     } else if let Some(picker) = &modal.key_picker {
+        picker.clone().render(f, popup_area);
+    } else if let Some(picker) = &modal.dks_key_picker {
+        picker.clone().render(f, popup_area);
+    } else if let Some((_, picker)) = &modal.dks_action_picker {
         picker.clone().render(f, popup_area);
     }
 }
@@ -1388,12 +1721,12 @@ fn render_modal_depth_chart(f: &mut Frame, modal: &TriggerEditModal, app: &App, 
 
 /// Render the editable fields in the modal using spinner style
 fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
-    let fields = modal.fields();
+    let fields = modal.visible_fields();
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, field) in fields.iter().enumerate() {
         let is_selected = i == modal.field_index;
-        let label = format!("{:12}", field.label());
+        let label = format!("{:12}", field.label_for(modal.mode));
 
         // Get value and unit from spinner config, or special handling for the
         // Mode (base name), Rapid-Trigger (on/off) and Snap-Tap partner fields.
@@ -1415,6 +1748,33 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                 };
                 (label, "")
             }
+            TriggerField::DksBinding => (format!("{} / 4", modal.dks_binding_index + 1), ""),
+            TriggerField::DksBindingKey => {
+                let binding = modal.dks_binding_index;
+                let label = if let Some(idx) = modal.dks_binding_keys[binding] {
+                    modal
+                        .key_choices
+                        .iter()
+                        .find(|(_, i)| *i == idx)
+                        .map(|(l, _)| l.clone())
+                        .unwrap_or_else(|| format_dks_combo(modal.dks_bindings[binding].combo))
+                } else if modal.dks_bindings[binding].combo.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    format_dks_combo(modal.dks_bindings[binding].combo)
+                };
+                (label, "")
+            }
+            TriggerField::DksAct0
+            | TriggerField::DksAct1
+            | TriggerField::DksAct2
+            | TriggerField::DksAct3 => {
+                let idx = field.dks_action_index().unwrap();
+                (
+                    modal.dks_bindings[modal.dks_binding_index].phase_actions[idx].to_string(),
+                    "",
+                )
+            }
             _ => {
                 let config = field.spinner_config().expect("spinner field");
                 let val = match field {
@@ -1425,9 +1785,16 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                     TriggerField::TopDeadzone => modal.top_dz_mm,
                     TriggerField::BottomDeadzone => modal.bottom_dz_mm,
                     TriggerField::ModTapTime => modal.modtap_ms as f32,
+                    TriggerField::DksTravel => modal.dks_travel_mm,
                     TriggerField::Mode
                     | TriggerField::RapidTrigger
-                    | TriggerField::SnapTapPartner => unreachable!(),
+                    | TriggerField::SnapTapPartner
+                    | TriggerField::DksBinding
+                    | TriggerField::DksBindingKey
+                    | TriggerField::DksAct0
+                    | TriggerField::DksAct1
+                    | TriggerField::DksAct2
+                    | TriggerField::DksAct3 => unreachable!(),
                 };
                 (config.format(val), config.unit)
             }

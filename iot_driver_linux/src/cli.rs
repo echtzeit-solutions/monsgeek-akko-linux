@@ -277,6 +277,37 @@ pub enum Commands {
         ms: u16,
     },
 
+    /// Show or configure DKS (Dynamic Keystroke) for a key
+    Dks {
+        /// Key index
+        key: u8,
+        /// DKS activation travel in mm (e.g. 0.7)
+        #[arg(long)]
+        travel_mm: Option<f32>,
+        /// Four packed trigger-mode bytes, comma-separated hex (e.g. "09,00,00,00")
+        #[arg(long)]
+        modes: Option<String>,
+        /// Four slots: `combo` or `combo:actions` separated by `;`
+        /// Actions are four comma-separated values (none/single/until_next/across).
+        /// Example: `A:1,0,0,0;B;Ctrl,C:2,0,0,0;`
+        #[arg(long)]
+        slots: Option<String>,
+        /// Enable/disable Rapid Trigger while setting DKS
+        #[arg(long)]
+        rt: Option<bool>,
+    },
+
+    /// Diagnostic: run one write op on a key and report which keys changed (dev tool).
+    #[command(hide = true)]
+    DksRoundtrip {
+        /// Key matrix index to exercise (default 0 — usually Esc)
+        #[arg(default_value_t = 0)]
+        key: u8,
+        /// Which write path to exercise: dks | travel | modes | combo | mode-all | keytrig
+        #[arg(long, default_value = "dks")]
+        op: String,
+    },
+
     // === Per-key Color Commands ===
     /// Set all keys to a single color
     #[command(visible_aliases = ["color-all", "sc"])]

@@ -1,7 +1,12 @@
 //! Trigger-related command handlers.
 
 use super::CommandResult;
-use monsgeek_keyboard::{KeyMode, KeyTriggerSettings, KeyboardInterface, ModeByte};
+use iot_driver::key_action::KeyAction;
+use iot_driver::protocol::hid;
+use monsgeek_keyboard::{
+    DksAction, DksBinding, DksCombo, DksConfig, DksPhase, KeyMode, KeyTriggerSettings,
+    KeyboardInterface, ModeByte,
+};
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -681,4 +686,307 @@ pub fn set_modtap_time(keyboard: &KeyboardInterface, key: u8, ms: u16) -> Comman
         Err(e) => eprintln!("Failed to set Mod-Tap time: {e}"),
     }
     Ok(())
+}
+
+fn key_action_hid_code(action: KeyAction) -> Option<u8> {
+    match action {
+        KeyAction::Key(code) => Some(code),
+        KeyAction::Combo { key, .. } => Some(key),
+        _ => None,
+    }
+}
+
+fn parse_dks_combo(spec: &str) -> Result<DksCombo, String> {
+    let mut codes = [0u8; 3];
+    for (i, part) in spec
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .take(3)
+        .enumerate()
+    {
+        let action: KeyAction = part
+            .parse()
+            .map_err(|e| format!("slot key '{part}': {e}"))?;
+        codes[i] = key_action_hid_code(action)
+            .ok_or_else(|| format!("slot key '{part}': need a keyboard key"))?;
+    }
+    Ok(DksCombo::new(codes[0], codes[1], codes[2]))
+}
+
+fn parse_dks_actions(spec: &str) -> Result<[DksAction; 4], String> {
+    let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "expected 4 comma-separated actions, got {}",
+            parts.len()
+        ));
+    }
+    let mut out = [DksAction::None; 4];
+    for (i, p) in parts.iter().enumerate() {
+        out[i] = match *p {
+            "0" | "none" => DksAction::None,
+            "1" | "single" => DksAction::SingleTrigger,
+            "2" | "until_next" => DksAction::ContinuousUntilNext,
+            "3" | "across" => DksAction::ContinuousAcross,
+            other => return Err(format!("unknown DKS action '{other}'")),
+        };
+    }
+    Ok(out)
+}
+
+fn format_dks_combo(combo: DksCombo) -> String {
+    [combo.skey, combo.key, combo.key2]
+        .iter()
+        .filter(|&&c| c != 0)
+        .map(|&c| hid::key_name(c).to_string())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+/// Show or configure DKS (Dynamic Keystroke) for a key.
+pub fn dks(
+    keyboard: &KeyboardInterface,
+    key: u8,
+    travel_mm: Option<f32>,
+    modes: Option<String>,
+    slots: Option<String>,
+    rt: Option<bool>,
+) -> CommandResult {
+    let setting = travel_mm.is_some() || modes.is_some() || slots.is_some();
+    if !setting {
+        return show_dks(keyboard, key);
+    }
+
+    let mut config = keyboard.get_dks_config(key).unwrap_or(DksConfig {
+        trigger_point_travel_raw: 0,
+        bindings: [DksBinding::default(); 4],
+    });
+
+    if let Some(mm) = travel_mm {
+        let precision = keyboard.get_precision().unwrap_or_default();
+        config.trigger_point_travel_raw = precision.mm_to_raw(mm as f64);
+    }
+
+    if let Some(spec) = modes {
+        let bytes: Result<Vec<u8>, String> = spec
+            .split(',')
+            .map(str::trim)
+            .map(|s| {
+                u8::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
+                    .map_err(|_| format!("invalid mode byte '{s}'"))
+            })
+            .collect();
+        let bytes = bytes?;
+        if bytes.len() != 4 {
+            return Err(format!("--modes requires 4 bytes, got {}", bytes.len()).into());
+        }
+        for (i, &b) in bytes.iter().enumerate() {
+            config.bindings[i] = DksBinding::from_packed_mode(b, config.bindings[i].combo);
+        }
+    }
+
+    if let Some(spec) = slots {
+        let binding_specs: Vec<&str> = spec.split(';').collect();
+        if binding_specs.len() != 4 {
+            return Err(format!(
+                "--slots requires 4 semicolon-separated binding specs, got {}",
+                binding_specs.len()
+            )
+            .into());
+        }
+        for (i, binding_spec) in binding_specs.iter().enumerate() {
+            if binding_spec.is_empty() {
+                config.bindings[i].combo = DksCombo::default();
+                continue;
+            }
+            let parts: Vec<&str> = binding_spec.split(':').collect();
+            let combo = parse_dks_combo(parts[0])?;
+            config.bindings[i].combo = combo;
+            if parts.len() > 1 {
+                config.bindings[i].phase_actions = parse_dks_actions(parts[1])?;
+            }
+        }
+    }
+
+    match keyboard.set_dks_config(key, &config, rt) {
+        Ok(_) => {
+            println!("DKS configuration written for key {key}");
+            show_dks(keyboard, key)?;
+        }
+        Err(e) => eprintln!("Failed to set DKS config: {e}"),
+    }
+    Ok(())
+}
+
+fn show_dks(keyboard: &KeyboardInterface, key: u8) -> CommandResult {
+    let precision = keyboard.get_precision().unwrap_or_default();
+    let factor = precision.factor() as f32;
+
+    match keyboard.get_dks_config(key) {
+        Ok(config) => {
+            let trigger = keyboard.get_key_trigger(key).ok();
+            println!("DKS config for key {key}:");
+            if let Some(t) = trigger {
+                println!("  Mode: {}", ModeByte::new(t.mode, t.rapid_trigger));
+            }
+            println!(
+                "  Trigger-point travel: {:.2}mm (raw {})",
+                config.trigger_point_travel_raw as f32 / factor,
+                config.trigger_point_travel_raw
+            );
+            println!("  Binding rows (packed): {:02X?}", config.trigger_modes());
+            for (i, binding) in config.bindings.iter().enumerate() {
+                let combo = if binding.combo.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    format_dks_combo(binding.combo)
+                };
+                let phases: Vec<String> = DksPhase::ALL
+                    .iter()
+                    .map(|p| format!("{}={}", p.short_label(), binding.phase_actions[p.index()]))
+                    .collect();
+                println!(
+                    "  Binding {i}: combo={combo}  phases=[{}]",
+                    phases.join(", ")
+                );
+            }
+        }
+        Err(e) => eprintln!("Failed to read DKS config: {e}"),
+    }
+    Ok(())
+}
+
+/// Diagnostic: prove (or disprove) that setting one key to DKS disturbs other
+/// keys' trigger state. Snapshots all keys, does a read-stability check (two
+/// reads, no writes), sets `key` to DKS, snapshots again, diffs, then restores
+/// the key's original mode/travel and snapshots once more.
+pub fn dks_roundtrip(keyboard: &KeyboardInterface, key: u8, op: &str) -> CommandResult {
+    let snap = |label: &str| match keyboard.get_all_triggers() {
+        Ok(t) => Some(t),
+        Err(e) => {
+            eprintln!("[{label}] read failed: {e}");
+            None
+        }
+    };
+
+    let orig_trigger = keyboard.get_key_trigger(key)?;
+    println!(
+        "Roundtrip op '{op}' on key {key} ({}), current mode {}\n",
+        keyboard.matrix_key_name(key as usize),
+        ModeByte::new(orig_trigger.mode, orig_trigger.rapid_trigger),
+    );
+
+    let Some(a) = snap("A") else { return Ok(()) };
+    let Some(b) = snap("B") else { return Ok(()) };
+    let read_noise = diff_triggers("read-stability (A vs B, no writes)", &a, &b, keyboard);
+
+    // Isolate which write in the DKS sequence desyncs the read pipeline.
+    match op {
+        "travel" => keyboard.set_dks_trigger_point_travel_raw(key, 70)?,
+        "modes" => keyboard.set_dks_trigger_modes(key, [0, 0, 0, 0])?,
+        "combo" => keyboard.set_dks_combo_binding(0, key, 0, DksCombo::default())?,
+        "mode-all" => keyboard.set_mode_all(ModeByte::new(KeyMode::Normal, false))?,
+        "keytrig" => keyboard.set_key_trigger(&orig_trigger)?,
+        _ => {
+            let config = DksConfig {
+                trigger_point_travel_raw: 0,
+                bindings: [DksBinding::default(); 4],
+            };
+            keyboard.set_dks_config(key, &config, Some(orig_trigger.rapid_trigger))?;
+        }
+    }
+
+    let Some(c) = snap("C") else { return Ok(()) };
+    let after_write = diff_triggers(
+        &format!("after set key {key} -> DKS (B vs C)"),
+        &b,
+        &c,
+        keyboard,
+    );
+
+    keyboard.set_key_trigger(&orig_trigger)?;
+    let Some(d) = snap("D") else { return Ok(()) };
+    diff_triggers(
+        &format!("after restoring key {key} (C vs D)"),
+        &c,
+        &d,
+        keyboard,
+    );
+    diff_triggers("net change vs start (A vs D)", &a, &d, keyboard);
+
+    println!("\nVerdict:");
+    if read_noise > 0 {
+        println!(
+            "  ⚠ {read_noise} keys differ between two back-to-back reads with no writes \
+             → the readback itself is unstable (response desync), not real corruption."
+        );
+    }
+    let cross = after_write.saturating_sub(1); // the target key is expected to change
+    if cross > 0 {
+        println!(
+            "  ✗ setting key {key} to DKS changed {cross} OTHER key(s) — real cross-key effect."
+        );
+    } else if read_noise == 0 {
+        println!("  ✓ only key {key} changed; no other keys were disturbed.");
+    }
+    Ok(())
+}
+
+/// Compare two full trigger snapshots; print every key whose per-key state
+/// changed and return the count of changed keys.
+fn diff_triggers(
+    label: &str,
+    before: &monsgeek_keyboard::TriggerSettings,
+    after: &monsgeek_keyboard::TriggerSettings,
+    keyboard: &KeyboardInterface,
+) -> usize {
+    let n = before
+        .key_modes
+        .len()
+        .min(after.key_modes.len())
+        .max(before.press_travel.len().min(after.press_travel.len()));
+    let mut changed = 0usize;
+    println!("=== {label} ===");
+    for i in 0..n {
+        let mut fields = Vec::new();
+        let bm = before.key_modes.get(i).copied();
+        let am = after.key_modes.get(i).copied();
+        if bm != am {
+            let (bb, ab) = (bm.unwrap_or(0), am.unwrap_or(0));
+            fields.push(format!(
+                "mode 0x{bb:02X} ({}) -> 0x{ab:02X} ({})",
+                ModeByte::from_u8(bb),
+                ModeByte::from_u8(ab),
+            ));
+        }
+        for (name, bv, av) in [
+            ("press", &before.press_travel, &after.press_travel),
+            ("lift", &before.lift_travel, &after.lift_travel),
+            ("rt_press", &before.rt_press, &after.rt_press),
+            ("rt_lift", &before.rt_lift, &after.rt_lift),
+            ("bot_dz", &before.bottom_deadzone, &after.bottom_deadzone),
+            ("top_dz", &before.top_deadzone, &after.top_deadzone),
+        ] {
+            let x = bv.get(i).copied();
+            let y = av.get(i).copied();
+            if x != y {
+                fields.push(format!("{name} {} -> {}", x.unwrap_or(0), y.unwrap_or(0)));
+            }
+        }
+        if !fields.is_empty() {
+            changed += 1;
+            println!(
+                "  key {i:>3} ({:<8}): {}",
+                keyboard.matrix_key_name(i),
+                fields.join(", ")
+            );
+        }
+    }
+    if changed == 0 {
+        println!("  (no changes)");
+    } else {
+        println!("  {changed} key(s) changed");
+    }
+    changed
 }

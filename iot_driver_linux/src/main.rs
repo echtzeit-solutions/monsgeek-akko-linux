@@ -181,6 +181,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::SetModtapTime { key, ms }) => {
             commands::with_keyboard(&ctx, |kb| commands::triggers::set_modtap_time(kb, key, ms))?;
         }
+        Some(Commands::Dks {
+            key,
+            travel_mm,
+            modes,
+            slots,
+            rt,
+        }) => {
+            commands::with_keyboard(&ctx, |kb| {
+                commands::triggers::dks(kb, key, travel_mm, modes, slots, rt)
+            })?;
+        }
+        Some(Commands::DksRoundtrip { key, op }) => {
+            commands::with_keyboard(&ctx, |kb| commands::triggers::dks_roundtrip(kb, key, &op))?;
+        }
 
         // === Keymap Commands ===
         Some(Commands::Remap { from, to, layer }) => {

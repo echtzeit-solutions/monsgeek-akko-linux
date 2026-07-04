@@ -285,6 +285,254 @@ impl std::fmt::Display for ModeByte {
     }
 }
 
+/// One of four fixed travel phases on the DKS timeline (vendor grid columns).
+///
+/// Confirmed from the webapp DKS editor column headers (`data-cell-index` 0–3):
+/// shallow columns use **触发点行程** (`dynamicTravel`, SET subcmd 0x04); full columns
+/// use the key's **press actuation travel** (SET subcmd 0x00, displayed as 最大行程).
+///
+/// | Index | Marketing | Direction | Depth source |
+/// |-------|-----------|-----------|--------------|
+/// | 0 | R1 light press | Press down | Trigger-point travel |
+/// | 1 | R2 deep press | Press down | Key actuation / full travel |
+/// | 2 | R3 initial lift | Release up | Key actuation / full travel |
+/// | 3 | R4 full release | Release up | Trigger-point travel |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DksPhase {
+    PressShallow = 0,
+    PressFull = 1,
+    ReleaseFull = 2,
+    ReleaseShallow = 3,
+}
+
+impl DksPhase {
+    pub const ALL: [Self; 4] = [
+        Self::PressShallow,
+        Self::PressFull,
+        Self::ReleaseFull,
+        Self::ReleaseShallow,
+    ];
+
+    pub fn from_index(i: usize) -> Option<Self> {
+        Self::ALL.get(i).copied()
+    }
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn direction_label(self) -> &'static str {
+        match self {
+            Self::PressShallow | Self::PressFull => "press",
+            Self::ReleaseFull | Self::ReleaseShallow => "release",
+        }
+    }
+
+    pub fn depth_source(self) -> &'static str {
+        match self {
+            Self::PressShallow | Self::ReleaseShallow => "trigger_point",
+            Self::PressFull | Self::ReleaseFull => "actuation",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::PressShallow => "press@trigger",
+            Self::PressFull => "press@full",
+            Self::ReleaseFull => "release@full",
+            Self::ReleaseShallow => "release@trigger",
+        }
+    }
+
+    pub fn marketing_label(self) -> &'static str {
+        match self {
+            Self::PressShallow => "R1 light press",
+            Self::PressFull => "R2 deep press",
+            Self::ReleaseFull => "R3 initial lift",
+            Self::ReleaseShallow => "R4 full release",
+        }
+    }
+}
+
+impl std::fmt::Display for DksPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.short_label())
+    }
+}
+
+/// 2-bit segment role at one [`DksPhase`] stop (vendor `RO` bar editor).
+///
+/// Values match the vendor webapp DKS editor (`RO` component) and help text
+/// (`弹窗_动态键程提示文本`): click "+" for single trigger, drag to next "+"
+/// for continuous-until-next, drag across multiple "+" for continuous-across.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum DksAction {
+    #[default]
+    None = 0,
+    /// Click "+" — fire once at this depth.
+    SingleTrigger = 1,
+    /// Drag to next "+" — hold until released at the next checkpoint.
+    ContinuousUntilNext = 2,
+    /// Drag across multiple "+" — hold across checkpoints.
+    ContinuousAcross = 3,
+}
+
+impl DksAction {
+    pub fn from_u8(v: u8) -> Self {
+        match v & 3 {
+            1 => Self::SingleTrigger,
+            2 => Self::ContinuousUntilNext,
+            3 => Self::ContinuousAcross,
+            _ => Self::None,
+        }
+    }
+}
+
+impl std::fmt::Display for DksAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::None => "none",
+            Self::SingleTrigger => "single",
+            Self::ContinuousUntilNext => "until_next",
+            Self::ContinuousAcross => "across",
+        })
+    }
+}
+
+/// Up to three simultaneous HID keycodes for one DKS output binding (grid row).
+///
+/// Wire format in SET_KEYMATRIX layer 0–3: `[0, skey, key, key2]` per
+/// `MatrixUtils.configToMatrix` combo branch in the vendor webapp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DksCombo {
+    pub skey: u8,
+    pub key: u8,
+    pub key2: u8,
+}
+
+impl DksCombo {
+    pub const fn new(skey: u8, key: u8, key2: u8) -> Self {
+        Self { skey, key, key2 }
+    }
+
+    pub fn from_config_bytes(bytes: [u8; 4]) -> Option<Self> {
+        if bytes[0] != 0 {
+            return None;
+        }
+        Some(Self {
+            skey: bytes[1],
+            key: bytes[2],
+            key2: bytes[3],
+        })
+    }
+
+    pub fn to_config_bytes(self) -> [u8; 4] {
+        [0, self.skey, self.key, self.key2]
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.skey == 0 && self.key == 0 && self.key2 == 0
+    }
+}
+
+/// One of four DKS output bindings (vendor grid row) on a physical key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DksBinding {
+    pub combo: DksCombo,
+    /// Segment roles at each [`DksPhase`] stop (indexed by [`DksPhase::index`]).
+    pub phase_actions: [DksAction; 4],
+}
+
+impl DksBinding {
+    pub fn action_at(self, phase: DksPhase) -> DksAction {
+        self.phase_actions[phase.index()]
+    }
+
+    pub fn set_action_at(&mut self, phase: DksPhase, action: DksAction) {
+        self.phase_actions[phase.index()] = action;
+    }
+
+    /// Pack four 2-bit phase actions into one firmware byte (per binding row).
+    ///
+    /// Wire: `byte = (p3<<6)|(p2<<4)|(p1<<2)|p0` where pN is [`DksPhase`] N.
+    pub fn pack_phase_actions(actions: [DksAction; 4]) -> u8 {
+        (actions[DksPhase::ReleaseShallow.index()] as u8) << 6
+            | (actions[DksPhase::ReleaseFull.index()] as u8) << 4
+            | (actions[DksPhase::PressFull.index()] as u8) << 2
+            | actions[DksPhase::PressShallow.index()] as u8
+    }
+
+    /// Unpack one firmware byte into four phase-indexed actions.
+    pub fn unpack_phase_actions(byte: u8) -> [DksAction; 4] {
+        [
+            DksAction::from_u8(byte),
+            DksAction::from_u8(byte >> 2),
+            DksAction::from_u8(byte >> 4),
+            DksAction::from_u8(byte >> 6),
+        ]
+    }
+
+    pub fn packed_mode(self) -> u8 {
+        Self::pack_phase_actions(self.phase_actions)
+    }
+
+    pub fn from_packed_mode(byte: u8, combo: DksCombo) -> Self {
+        Self {
+            combo,
+            phase_actions: Self::unpack_phase_actions(byte),
+        }
+    }
+}
+
+/// Full DKS configuration for one matrix key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DksConfig {
+    /// Shallow trigger-point travel (触发点行程 / `dynamicTravel`, SET subcmd 0x04).
+    pub trigger_point_travel_raw: u16,
+    /// Four output bindings (grid rows / firmware `dks_binding_row0..3` packed bytes).
+    pub bindings: [DksBinding; 4],
+}
+
+impl DksConfig {
+    /// Four packed binding-row bytes (SET subcmd 0x08 / GET subcmd 0x0A layout).
+    ///
+    /// Firmware RAM names these `dks_point1..4` per key — they are **binding rows**,
+    /// not travel phases. Phase stops live inside each packed byte.
+    pub fn trigger_modes(&self) -> [u8; 4] {
+        [
+            self.bindings[0].packed_mode(),
+            self.bindings[1].packed_mode(),
+            self.bindings[2].packed_mode(),
+            self.bindings[3].packed_mode(),
+        ]
+    }
+
+    /// Parse binding-row bytes from the 512-byte GET_DKS_MODES blob for `key_index`.
+    pub fn trigger_modes_from_blob(blob: &[u8], key_index: usize) -> [u8; 4] {
+        let k = key_index.min(127);
+        [
+            blob.get(k).copied().unwrap_or(0),
+            blob.get(128 + k).copied().unwrap_or(0),
+            blob.get(256 + k).copied().unwrap_or(0),
+            blob.get(384 + k).copied().unwrap_or(0),
+        ]
+    }
+
+    pub fn from_parts(
+        trigger_point_travel_raw: u16,
+        modes: [u8; 4],
+        combos: [DksCombo; 4],
+    ) -> Self {
+        let bindings = std::array::from_fn(|i| DksBinding::from_packed_mode(modes[i], combos[i]));
+        Self {
+            trigger_point_travel_raw,
+            bindings,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +573,38 @@ mod tests {
         assert_eq!(mb.base, KeyMode::Unknown(6));
         assert!(mb.rapid_trigger);
         assert_eq!(mb.to_u8(), 0x86);
+    }
+
+    #[test]
+    fn dks_action_pack_roundtrip() {
+        let actions = [
+            DksAction::SingleTrigger,
+            DksAction::None,
+            DksAction::ContinuousUntilNext,
+            DksAction::ContinuousAcross,
+        ];
+        let packed = DksBinding::pack_phase_actions(actions);
+        assert_eq!(packed, 0b11_10_00_01);
+        assert_eq!(DksBinding::unpack_phase_actions(packed), actions);
+    }
+
+    #[test]
+    fn dks_trigger_modes_blob_layout() {
+        let mut blob = vec![0u8; 512];
+        blob[5] = 0x55;
+        blob[128 + 5] = 0xAA;
+        blob[256 + 5] = 0x0F;
+        blob[384 + 5] = 0xF0;
+        assert_eq!(
+            DksConfig::trigger_modes_from_blob(&blob, 5),
+            [0x55, 0xAA, 0x0F, 0xF0]
+        );
+    }
+
+    #[test]
+    fn dks_combo_wire_bytes() {
+        let c = DksCombo::new(0xE0, 0x04, 0x06);
+        assert_eq!(c.to_config_bytes(), [0, 0xE0, 0x04, 0x06]);
+        assert_eq!(DksCombo::from_config_bytes([0, 0xE0, 0x04, 0x06]), Some(c));
     }
 }

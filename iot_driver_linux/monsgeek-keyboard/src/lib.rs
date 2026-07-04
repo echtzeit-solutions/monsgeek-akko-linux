@@ -13,8 +13,8 @@ pub mod sync;
 pub use error::KeyboardError;
 pub use led::{LedMode, LedParams, RgbColor};
 pub use magnetism::{
-    KeyDepthEvent, KeyMode, KeyTriggerSettings, KeyTriggerSettingsDetail, ModeByte, TravelDepth,
-    TriggerSettings,
+    DksAction, DksBinding, DksCombo, DksConfig, DksPhase, KeyDepthEvent, KeyMode,
+    KeyTriggerSettings, KeyTriggerSettingsDetail, ModeByte, TravelDepth, TriggerSettings,
 };
 pub use settings::{
     BatteryInfo, FeatureList, FirmwareVersion, KeyboardOptions, PollingRate, Precision,
@@ -951,6 +951,149 @@ impl KeyboardInterface {
         Ok(())
     }
 
+    // === DKS (Dynamic Keystroke) ===
+
+    /// Read the 512-byte DKS trigger-modes blob (GET subcmd 0x0A, 8 pages).
+    pub fn get_dks_trigger_modes_blob(&self) -> Result<Vec<u8>, KeyboardError> {
+        self.get_magnetism(mag_cmd::DKS_MODES, 8)
+    }
+
+    /// Read per-key DKS activation travel values (GET subcmd 0x04, u16 LE per key).
+    pub fn get_dks_travels(&self) -> Result<Vec<u16>, KeyboardError> {
+        let kc = self.key_count as usize;
+        let raw = self.get_magnetism(mag_cmd::DKS_TRAVEL, kc.div_ceil(32))?;
+        Ok(raw
+            .chunks(2)
+            .take(kc)
+            .map(|c| u16::from_le_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
+            .collect())
+    }
+
+    /// Read the 4-byte key config stored on a keymatrix sub-layer (0–3).
+    ///
+    /// DKS modify-key combos live on layers 0–3 (`setKeyConfigSimple` in the
+    /// vendor webapp). `profile` is the keyboard profile (usually 0).
+    pub fn get_key_config_at_layer(
+        &self,
+        profile: u8,
+        layer: u8,
+        key_index: u8,
+    ) -> Result<[u8; 4], KeyboardError> {
+        let matrix = self.get_keymatrix_with_layer(profile, layer, 8)?;
+        let off = key_index as usize * 4;
+        if off + 4 > matrix.len() {
+            return Err(KeyboardError::InvalidParameter(format!(
+                "key_index {key_index} out of range for keymatrix"
+            )));
+        }
+        Ok([
+            matrix[off],
+            matrix[off + 1],
+            matrix[off + 2],
+            matrix[off + 3],
+        ])
+    }
+
+    /// Read the full DKS configuration for one key.
+    pub fn get_dks_config(&self, key_index: u8) -> Result<DksConfig, KeyboardError> {
+        let idx = key_index as usize;
+        let travels = self.get_dks_travels()?;
+        let travel_raw = travels.get(idx).copied().unwrap_or(0);
+        let blob = self.get_dks_trigger_modes_blob()?;
+        let modes = DksConfig::trigger_modes_from_blob(&blob, idx);
+        let mut combos = [DksCombo::default(); 4];
+        for (layer, combo) in combos.iter_mut().enumerate() {
+            let bytes = self.get_key_config_at_layer(0, layer as u8, key_index)?;
+            *combo = DksCombo::from_config_bytes(bytes).unwrap_or_default();
+        }
+        Ok(DksConfig::from_parts(travel_raw, modes, combos))
+    }
+
+    /// Write DKS trigger-point travel (触发点行程, u16 raw) for one key (SET subcmd 0x04).
+    pub fn set_dks_trigger_point_travel_raw(
+        &self,
+        key_index: u8,
+        trigger_point_travel_raw: u16,
+    ) -> Result<(), KeyboardError> {
+        let bytes = trigger_point_travel_raw.to_le_bytes();
+        self.set_magnetism_simple(mag_cmd::DKS_TRAVEL, key_index, true, &bytes)
+    }
+
+    /// Write four packed binding-row bytes for one key (SET subcmd 0x08).
+    pub fn set_dks_trigger_modes(
+        &self,
+        key_index: u8,
+        modes: [u8; 4],
+    ) -> Result<(), KeyboardError> {
+        self.set_magnetism_simple(mag_cmd::DKS_TRIGGER_MODES_SET, key_index, true, &modes)
+    }
+
+    /// Write one DKS output binding to keymatrix sub-layer 0–3.
+    ///
+    /// All four DKS bindings live on SET_KEYMATRIX layers 0–3 — matching the
+    /// vendor webapp `setKeyConfigSimple`, which always emits `FEA_CMD_SET_KEYMATRIX`
+    /// with the layer in the query. This deliberately bypasses
+    /// [`set_key_config`](Self::set_key_config), whose `layer > 1` path routes to
+    /// SET_FN (a separate Fn-layer store) and so would **not** round-trip with
+    /// [`get_key_config_at_layer`](Self::get_key_config_at_layer), which reads all
+    /// four layers back from GET_KEYMATRIX.
+    pub fn set_dks_combo_binding(
+        &self,
+        profile: u8,
+        key_index: u8,
+        binding: u8,
+        combo: DksCombo,
+    ) -> Result<(), KeyboardError> {
+        if binding > 3 {
+            return Err(KeyboardError::InvalidParameter(
+                "DKS binding index must be 0–3".into(),
+            ));
+        }
+        let config = combo.to_config_bytes();
+        let enabled = config != [0, 0, 0, 0];
+        let pkt = SetKeyMatrixData::new(profile, key_index, binding, enabled, config)?;
+        self.transport.send_command(
+            self.commands.set_keymatrix,
+            &pkt.to_data(),
+            ChecksumType::Bit7,
+        )?;
+        Ok(())
+    }
+
+    /// Apply a full DKS configuration: mode, travel, trigger modes, and four combos.
+    ///
+    /// Sets the key's base mode to DKS (preserving any existing RT flag unless
+    /// `rapid_trigger` is `Some`). Combos are written to keymatrix layers 0–3.
+    pub fn set_dks_config(
+        &self,
+        key_index: u8,
+        config: &DksConfig,
+        rapid_trigger: Option<bool>,
+    ) -> Result<(), KeyboardError> {
+        let mut trigger = self.get_key_trigger(key_index)?;
+        trigger.mode = KeyMode::DynamicKeystroke;
+        if let Some(rt) = rapid_trigger {
+            trigger.rapid_trigger = rt;
+        }
+        self.set_key_trigger(&trigger)?;
+
+        let travel_bytes = config.trigger_point_travel_raw.to_le_bytes();
+        self.set_magnetism_simple(mag_cmd::DKS_TRAVEL, key_index, false, &travel_bytes)?;
+
+        let modes = config.trigger_modes();
+        self.set_magnetism_simple(mag_cmd::DKS_TRIGGER_MODES_SET, key_index, true, &modes)?;
+
+        for binding in 0..4u8 {
+            self.set_dks_combo_binding(
+                0,
+                key_index,
+                binding,
+                config.bindings[binding as usize].combo,
+            )?;
+        }
+        Ok(())
+    }
+
     // === Mod-Tap ===
 
     /// Read the Mod-Tap tap-vs-hold decision time (ms) for every key.
@@ -1301,6 +1444,18 @@ impl KeyboardInterface {
     /// # Returns
     /// Raw key matrix data (4 bytes per key: type, enabled, layer, keycode)
     pub fn get_keymatrix(&self, profile: u8, num_pages: usize) -> Result<Vec<u8>, KeyboardError> {
+        self.get_keymatrix_with_layer(profile, 0, num_pages)
+    }
+
+    /// Like [`get_keymatrix`](Self::get_keymatrix) but reads a keymatrix
+    /// sub-layer (byte 4 of the GET query — layers 0–3 hold DKS modify-key
+    /// combos in the vendor webapp).
+    pub fn get_keymatrix_with_layer(
+        &self,
+        profile: u8,
+        layer: u8,
+        num_pages: usize,
+    ) -> Result<Vec<u8>, KeyboardError> {
         let mut all_data = Vec::new();
 
         for page in 0..num_pages {
@@ -1308,7 +1463,7 @@ impl KeyboardInterface {
                 profile,
                 magic: 0xFF,
                 page: page as u8,
-                magnetism_profile: 0,
+                magnetism_profile: layer,
             };
 
             match self.transport.query_raw(

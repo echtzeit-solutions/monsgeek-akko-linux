@@ -55,8 +55,8 @@ use monsgeek_transport::protocol::matrix;
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    led::speed_to_wire, KeyMode, KeyboardInterface, ModeByte, Precision, SleepTimeSettings,
-    TimestampedEvent, VendorEvent,
+    led::speed_to_wire, DksCombo, KeyMode, KeyboardInterface, ModeByte, Precision,
+    SleepTimeSettings, TimestampedEvent, VendorEvent,
 };
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
 
@@ -1308,13 +1308,75 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         continue;
                     }
 
-                    // A picker popup (base-mode or Snap-Tap partner) takes
+                    // A picker popup (base-mode, Snap-Tap partner, or DKS) takes
                     // precedence over the modal's own field navigation.
                     let picker_open = app
                         .trigger_edit_modal
                         .as_ref()
-                        .is_some_and(|m| m.mode_picker.is_some() || m.key_picker.is_some());
+                        .is_some_and(|m| {
+                            m.mode_picker.is_some()
+                                || m.key_picker.is_some()
+                                || m.dks_key_picker.is_some()
+                                || m.dks_action_picker.is_some()
+                        });
                     if picker_open {
+                        let enter = key.code == KeyCode::Enter;
+                        if enter {
+                            enum PickerConfirm {
+                                Mode,
+                                Key,
+                                DksKey,
+                                DksAction,
+                            }
+                            let confirm = app.trigger_edit_modal.as_ref().and_then(|m| {
+                                if m.mode_picker.is_some() {
+                                    Some(PickerConfirm::Mode)
+                                } else if m.key_picker.is_some() {
+                                    Some(PickerConfirm::Key)
+                                } else if m.dks_key_picker.is_some() {
+                                    Some(PickerConfirm::DksKey)
+                                } else if m.dks_action_picker.is_some() {
+                                    Some(PickerConfirm::DksAction)
+                                } else {
+                                    None
+                                }
+                            });
+                            match confirm {
+                                Some(PickerConfirm::Mode) => {
+                                    if let Some(m) = app.trigger_edit_modal.as_mut() {
+                                        m.confirm_mode_picker();
+                                    }
+                                }
+                                Some(PickerConfirm::Key) => {
+                                    if let Some(m) = app.trigger_edit_modal.as_mut() {
+                                        m.confirm_key_picker();
+                                    }
+                                }
+                                Some(PickerConfirm::DksKey) => {
+                                    let (slot_idx, selected) = {
+                                        let m = app.trigger_edit_modal.as_mut().unwrap();
+                                        let picker = m.dks_key_picker.take().unwrap();
+                                        let sel = picker.selected().copied().flatten();
+                                        (m.dks_binding_index, sel)
+                                    };
+                                    let combo = match selected {
+                                        Some(ki) => DksCombo::new(0, app.key_output_hid(ki), 0),
+                                        None => DksCombo::default(),
+                                    };
+                                    if let Some(m) = app.trigger_edit_modal.as_mut() {
+                                        m.dks_binding_keys[slot_idx] = selected;
+                                        m.dks_bindings[slot_idx].combo = combo;
+                                    }
+                                }
+                                Some(PickerConfirm::DksAction) => {
+                                    if let Some(m) = app.trigger_edit_modal.as_mut() {
+                                        m.confirm_dks_action_picker();
+                                    }
+                                }
+                                None => {}
+                            }
+                            continue;
+                        }
                         if let Some(ref mut modal) = app.trigger_edit_modal {
                             let up = matches!(key.code, KeyCode::Up | KeyCode::Char('k'));
                             let down = matches!(key.code, KeyCode::Down | KeyCode::Char('j'));
@@ -1322,7 +1384,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 match key.code {
                                     _ if up => p.up(),
                                     _ if down => p.down(),
-                                    KeyCode::Enter => modal.confirm_mode_picker(),
                                     KeyCode::Esc => modal.mode_picker = None,
                                     _ => {}
                                 }
@@ -1330,8 +1391,21 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 match key.code {
                                     _ if up => p.up(),
                                     _ if down => p.down(),
-                                    KeyCode::Enter => modal.confirm_key_picker(),
                                     KeyCode::Esc => modal.key_picker = None,
+                                    _ => {}
+                                }
+                            } else if let Some(p) = modal.dks_key_picker.as_mut() {
+                                match key.code {
+                                    _ if up => p.up(),
+                                    _ if down => p.down(),
+                                    KeyCode::Esc => modal.dks_key_picker = None,
+                                    _ => {}
+                                }
+                            } else if let Some((_, p)) = modal.dks_action_picker.as_mut() {
+                                match key.code {
+                                    _ if up => p.up(),
+                                    _ if down => p.down(),
+                                    KeyCode::Esc => modal.dks_action_picker = None,
                                     _ => {}
                                 }
                             }

@@ -17,8 +17,9 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 pub const MAX_PROFILE: u8 = 3;
 /// Maximum valid key index (0-125, matrix has 126 positions).
 pub const MAX_KEY_INDEX: u8 = 125;
-/// Maximum valid layer index (0 = base, 1 = layer1, 2 = Fn).
-pub const MAX_LAYER: u8 = 2;
+/// Maximum valid keymatrix layer index. 0 = base, 1 = layer1, 2 = Fn; DKS also
+/// uses layers 0-3 as its four modify-key binding slots (SET_KEYMATRIX byte 5).
+pub const MAX_LAYER: u8 = 3;
 /// Maximum valid macro slot index (0-49).
 ///
 /// The firmware's macro save function (Ghidra 0x08008384) writes 256 bytes per
@@ -2701,12 +2702,13 @@ mod tests {
 
     #[test]
     fn test_set_key_matrix_rejects_bad_layer() {
-        assert!(SetKeyMatrixData::new(0, 0, 3, true, [0; 4]).is_err());
+        // Layers 0-3 are valid (0-2 remap layers + DKS binding layer 3); 4 is not.
+        assert!(SetKeyMatrixData::new(0, 0, 4, true, [0; 4]).is_err());
     }
 
     #[test]
     fn test_set_key_matrix_accepts_boundary_values() {
-        assert!(SetKeyMatrixData::new(3, 125, 2, true, [0; 4]).is_ok());
+        assert!(SetKeyMatrixData::new(3, 125, 3, true, [0; 4]).is_ok());
     }
 
     #[test]

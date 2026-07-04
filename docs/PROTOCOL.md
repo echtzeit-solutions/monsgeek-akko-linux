@@ -563,8 +563,9 @@ Used with SET/GET_MULTI_MAGNETISM for per-key hall effect settings:
 | 0x05 | MODTAP_TIME | Mod-Tap activation time |
 | 0x06 | BOTTOM_DEADZONE | Bottom dead zone |
 | 0x07 | KEY_MODE | Mode flags |
+| 0x08 | DKS_TRIGGER_MODES_SET | DKS packed trigger modes (SET simple only, 4 bytes/key) |
 | 0x09 | SNAPTAP_ENABLE | Snap Tap anti-SOCD enable |
-| 0x0A | DKS_MODES | DKS trigger modes/actions |
+| 0x0A | DKS_MODES | DKS trigger modes/actions (GET, 8 pages — interleaved 128B/slot) |
 | 0xFB | TOP_DEADZONE | Top dead zone (firmware >= 1024) |
 | 0xFC | SWITCH_TYPE | Switch type (if replaceable) |
 | 0xFE | CALIBRATION | Raw sensor calibration values |
@@ -678,10 +679,44 @@ raw_value = travel_mm * precision_factor;
 **DKS mode per-key data:**
 ```javascript
 {
-    dynamicTravel: 10,    // DKS activation travel
-    triggerModes: [1, 2, 0, 3]  // Actions at 4 depth levels
+    dynamicTravel: 10,    // DKS trigger-point travel (u16 LE, SET/GET subcmd 0x04) — R1/R4 shallow depth
+    triggerModes: [0x09, 0, 0, 0]  // 4 packed binding-row bytes (SET subcmd 0x08, GET subcmd 0x0A)
 }
 ```
+
+Each `triggerModes[i]` byte is one **output binding row** (keymatrix layer *i*), not a travel
+phase. It packs four 2-bit segment roles at the shared travel phases:
+`byte = (p3<<6)|(p2<<4)|(p1<<2)|p0` where each `pN` is phase index N:
+
+| Phase index | Marketing | Direction | Depth source |
+|-------------|-----------|-----------|--------------|
+| 0 (p0) | R1 light press | Press down | `dynamicTravel` / trigger-point (subcmd 0x04) |
+| 1 (p1) | R2 deep press | Press down | Key **press** actuation travel (subcmd 0x00) |
+| 2 (p2) | R3 initial lift | Release up | Key **press** actuation travel (same full depth) |
+| 3 (p3) | R4 full release | Release up | `dynamicTravel` / trigger-point |
+
+**Press vs release travel in firmware:** subcmds `0x00` (`press_travel`) and `0x01`
+(`lift_travel`) are separate u16 fields per key in magnetism RAM (see
+`ry5088_structs.h`). Normal mode uses both for actuation/release hysteresis. DKS
+phase depths do **not** use `lift_travel`; the vendor DKS UI only edits
+`dynamicTravel` plus the shared full depth (from `press_travel`). Release point
+remains configurable for Normal-mode keys but is hidden/disabled in the vendor app
+when the key is in DKS/MT/TGL mode.
+
+Each `pN` action value:
+
+| Value | Action |
+|-------|--------|
+| 0 | None |
+| 1 | Single trigger (click "+" checkpoint) |
+| 2 | Continuous until next checkpoint |
+| 3 | Continuous across checkpoints |
+
+Firmware RAM labels these four bytes per key `dks_point1..4`; they are **binding rows**,
+not phase checkpoints. Phase depths are shared across all bindings on a key.
+
+DKS output keycodes are **not** in magnetism — they use keymatrix sub-layers 0–3
+with combo wire format `[0, skey, key, key2]` per binding (`MatrixUtils.configToMatrix`).
 
 ### 5.4 Key Matrix Format
 
