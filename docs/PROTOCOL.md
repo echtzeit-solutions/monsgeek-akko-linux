@@ -469,9 +469,36 @@ Clear this context after receiving a response to avoid stale matches.
 
 | Hex | Name | Description |
 |-----|------|-------------|
-| 0x9D | GET_KEY_MAGNETISM_MODE | Per-key trigger mode |
+| 0x9D | GET_KEY_MAGNETISM_MODE | ⚠ no-op on RY5088 (YC500-only, see below) |
 | 0xE5 | GET_MULTI_MAGNETISM | RT/DKS per-key settings |
 | 0xE6 | GET_FEATURE_LIST | Supported features bitmap |
+
+#### Per-key config model (RY5088, firmware-validated in Ghidra v407)
+
+A key's behaviour spans **two per-key tables**, plus a separate Fn table:
+
+- **Keymatrix** (`SET_KEYMATRIX 0x0A` / `GET_KEYMATRIX 0x8A`): 4 layers × keys × 4 bytes
+  `[type,b1,b2,b3]`. **Fn is a separate table** (`SET_FN 0x10` / `GET_FN 0x90`, keyed by
+  OS: 0=Win, 1=Mac).
+- **Magnetism** (`SET_MULTI_MAGNETISM 0x65` / `GET_MULTI_MAGNETISM 0xE5`): per-key by
+  sub-command — `0` press, `1` lift, `2/3` RT, `4` DKS travel, `5` ModTap time, `6`
+  bottom deadzone, **`7` KEY_MODE**, **`8` DKS binding-rows (SET)**, **`9` SnapTap
+  partner**, **`0x0A` DKS modes (GET)** — note the DKS SET(8)/GET(0x0A) asymmetry —
+  `0xFB` top deadzone.
+
+Key facts:
+- **`KEY_MODE` (subcmd 7) is one byte per key** (`&7` = base mode: 0 Normal, 2 DKS,
+  3 ModTap, 4 ToggleHold, 5 ToggleDots, 7 SnapTap; `0x80` = Rapid-Trigger). It
+  **reinterprets that key's keymatrix layers**: Normal emits layer 0 only; DKS runs
+  4 phases reading keymatrix **layers 0–3** as the four output combos. So DKS output
+  bindings live in the *same* keymatrix layers 0/1 that normal remaps use.
+- **A `[0,0,0,0]` keymatrix entry emits keycode 0 = nothing.** There is **no factory
+  fallback for the base layer** — an explicit all-zero write to layer 0 silences the
+  key. The "enabled" byte (SET_KEYMATRIX byte 4) only sets the flash-dirty/save bit;
+  it does **not** gate output. (Overlay layers 1/Fn treat 0 as transparent.)
+- **`SET_KEY_MAGNETISM_MODE 0x1D` / `GET_KEY_MAGNETISM_MODE 0x9D` are no-ops on the
+  RY5088** — they belong to the YC500 chip family and `CommonKBRY5088.js` stubs them.
+  All per-key trigger config goes through `SET_MULTI_MAGNETISM 0x65` (simple form).
 
 #### Version/Info Commands
 
