@@ -2191,10 +2191,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(title, chunks[0]);
 
     // Tabs, with a right-aligned navigation hint.
-    let tab_hint = format!(
-        " Alt+1-{}: switch tabs   ?: help   q: quit ",
-        app.tab_count()
-    );
+    let tab_hint = format!(" Alt+1-{}: switch tabs ", app.tab_count());
     let tab_row = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
