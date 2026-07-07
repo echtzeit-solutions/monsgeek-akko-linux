@@ -10,7 +10,9 @@ use crate::key_action::KeyAction;
 use crate::protocol::hid;
 use monsgeek_transport::protocol::matrix;
 
-use monsgeek_keyboard::{KeyboardError, KeyboardInterface};
+use monsgeek_keyboard::{
+    DksConfig, KeyMode, KeyboardError, KeyboardInterface, ModeByte, SNAPTAP_UNBOUND,
+};
 
 // Re-export from monsgeek-transport so existing `use crate::keymap::{Layer, KeyRef}` still works.
 pub use monsgeek_transport::protocol::{KeyRef, Layer};
@@ -299,6 +301,131 @@ pub fn reset_key_async(
     layer: Layer,
 ) -> Result<(), KeyboardError> {
     reset_key_impl(kb, index, layer)
+}
+
+// ---------------------------------------------------------------------------
+// KeyRow — unified per-key config (keymatrix + magnetism), for the Key Mapping tab
+// ---------------------------------------------------------------------------
+
+/// A physical key's complete configuration, fused across the keymatrix table
+/// (outputs across all layers) and the magnetism table (mode + travel +
+/// mode-specific values). Backs the "Key Mapping" TUI tab.
+#[derive(Debug, Clone)]
+pub struct KeyRow {
+    pub index: u8,
+    pub position: &'static str,
+    /// Base mode (magnetism subcmd 7). Reinterprets the keymatrix layers:
+    /// Normal → `outputs[0]` is the key; DKS → `outputs[0..4]` are the combo slots.
+    pub mode: KeyMode,
+    pub rapid_trigger: bool,
+    // Magnetism travel values, raw u16 (device precision).
+    pub actuation: u16,
+    pub release: u16,
+    pub rt_press: u16,
+    pub rt_lift: u16,
+    pub bottom_dz: u16,
+    pub top_dz: u16,
+    /// Keymatrix output per layer 0–3 (in DKS mode: the four combo slots).
+    pub outputs: [KeyAction; 4],
+    /// Whether each keymatrix layer differs from its factory default.
+    pub output_remapped: [bool; 4],
+    /// Fn-layer binding (separate table), if non-empty.
+    pub fn_action: Option<KeyAction>,
+    /// DKS trigger-point travel, raw u16.
+    pub dks_travel: u16,
+    /// DKS packed binding-row bytes (4 × 2-bit phase actions each).
+    pub dks_modes: [u8; 4],
+    /// Mod-Tap decision time (ms).
+    pub modtap_ms: u16,
+    /// Snap-Tap partner key index, if bound.
+    pub snaptap_partner: Option<u8>,
+}
+
+impl KeyRow {
+    /// True when the key differs from a plain factory default (any layer remapped,
+    /// a non-Normal mode, RT enabled, or an Fn binding).
+    pub fn is_customized(&self) -> bool {
+        self.mode != KeyMode::Normal
+            || self.rapid_trigger
+            || self.output_remapped.iter().any(|&b| b)
+            || self.fn_action.is_some()
+    }
+}
+
+/// Load the fused per-key rows for every physical key. All reads are bulk (no
+/// per-key round-trips); mode-specific tables tolerate failure on older firmware.
+pub fn load_key_rows(kb: &KeyboardInterface) -> Result<Vec<KeyRow>, KeyboardError> {
+    let key_count = kb.key_count() as usize;
+
+    // Keymatrix layers 0–3 (outputs / DKS combos) + the separate Fn table.
+    let layers: [Vec<u8>; 4] = [
+        kb.get_keymatrix_with_layer(0, 0, KEYMATRIX_PAGES)?,
+        kb.get_keymatrix_with_layer(0, 1, KEYMATRIX_PAGES)?,
+        kb.get_keymatrix_with_layer(0, 2, KEYMATRIX_PAGES)?,
+        kb.get_keymatrix_with_layer(0, 3, KEYMATRIX_PAGES)?,
+    ];
+    let fn_layer = kb.get_fn_keymatrix(0, 0, KEYMATRIX_PAGES).ok();
+
+    // Magnetism table + mode-specific bulk reads.
+    let trig = kb.get_all_triggers()?;
+    let dks_travels = kb.get_dks_travels().unwrap_or_default();
+    let dks_blob = kb.get_dks_trigger_modes_blob().unwrap_or_default();
+    let modtap = kb.get_modtap_times().unwrap_or_default();
+    let snaptap = kb.get_snaptap_binds().unwrap_or_default();
+
+    let mut rows = Vec::new();
+    for i in 0..key_count {
+        let name = matrix::key_name(i as u8);
+        if name == "?" {
+            continue;
+        }
+        let default = default_keycode(i as u8);
+        let mode_byte = ModeByte::from_u8(trig.key_modes.get(i).copied().unwrap_or(0));
+
+        let mut outputs = [KeyAction::Disabled; 4];
+        let mut output_remapped = [false; 4];
+        for (l, data) in layers.iter().enumerate() {
+            if i * 4 + 4 <= data.len() {
+                let k = &data[i * 4..i * 4 + 4];
+                outputs[l] = KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]);
+                // Only the base layer has a factory-default keycode; the overlay /
+                // DKS layers count as "set" iff non-empty.
+                output_remapped[l] = if l == 0 {
+                    is_user_remap(k, default)
+                } else {
+                    k != [0, 0, 0, 0]
+                };
+            }
+        }
+
+        let fn_action = fn_layer.as_ref().and_then(|d| {
+            let k = d.get(i * 4..i * 4 + 4)?;
+            (k != [0, 0, 0, 0]).then(|| KeyAction::from_config_bytes([k[0], k[1], k[2], k[3]]))
+        });
+
+        let snap = snaptap.get(i).copied().unwrap_or(SNAPTAP_UNBOUND);
+        rows.push(KeyRow {
+            index: i as u8,
+            position: name,
+            mode: mode_byte.base,
+            rapid_trigger: mode_byte.rapid_trigger,
+            actuation: trig.press_travel.get(i).copied().unwrap_or(0),
+            release: trig.lift_travel.get(i).copied().unwrap_or(0),
+            rt_press: trig.rt_press.get(i).copied().unwrap_or(0),
+            rt_lift: trig.rt_lift.get(i).copied().unwrap_or(0),
+            bottom_dz: trig.bottom_deadzone.get(i).copied().unwrap_or(0),
+            top_dz: trig.top_deadzone.get(i).copied().unwrap_or(0),
+            outputs,
+            output_remapped,
+            fn_action,
+            dks_travel: dks_travels.get(i).copied().unwrap_or(0),
+            dks_modes: DksConfig::trigger_modes_from_blob(&dks_blob, i),
+            modtap_ms: modtap.get(i).copied().unwrap_or(0),
+            snaptap_partner: (snap != SNAPTAP_UNBOUND && (snap as usize) < key_count)
+                .then_some(snap),
+        });
+    }
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
