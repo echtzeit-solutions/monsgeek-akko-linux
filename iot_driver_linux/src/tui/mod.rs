@@ -1112,6 +1112,10 @@ impl App {
             self.load_triggers();
         } else if self.tab == 3 && self.loading.key_mapping == LoadState::NotLoaded {
             self.load_key_mapping();
+            // The unified editor reuses the trigger modal, which reads `triggers`.
+            if self.loading.triggers == LoadState::NotLoaded {
+                self.load_triggers();
+            }
         }
         #[cfg(feature = "notify")]
         if self.tab == 4 && self.notify.effects.is_none() {
@@ -1777,7 +1781,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 app.load_device_info();
                                 app.load_options(); // Options are on tab 0
                                 if app.tab == 2 { app.load_triggers(); }
-                                else if app.tab == 3 { app.load_key_mapping(); }
+                                else if app.tab == 3 { app.load_key_mapping(); app.load_triggers(); }
                             }
                         }
                         KeyCode::Enter if app.tab == 0 => {
@@ -1924,6 +1928,13 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             // 'g' opens global edit modal
                             app.open_trigger_edit_global();
                         }
+                        // Key Mapping tab: Enter/'e' edit the selected key, 'g' edits all keys.
+                        KeyCode::Enter | KeyCode::Char('e') if app.tab == 3 => {
+                            if let Some(row) = app.key_rows.get(app.key_mapping_selected) {
+                                app.open_trigger_edit_key(row.index as usize);
+                            }
+                        }
+                        KeyCode::Char('g') if app.tab == 3 => app.open_trigger_edit_global(),
                         KeyCode::Char('x') if app.tab == 1 => app.clear_depth_data(),
                         KeyCode::Char(' ') if app.tab == 1 => {
                             if app.depth_view_mode == DepthViewMode::BarChart {

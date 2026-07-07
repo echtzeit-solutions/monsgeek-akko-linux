@@ -926,6 +926,9 @@ impl App {
                     );
                     // Reload triggers to reflect changes
                     self.load_triggers();
+                    if self.loading.key_mapping != LoadState::NotLoaded {
+                        self.load_key_mapping();
+                    }
                 } else {
                     self.status_msg = format!("Errors: {}", errors.join(", "));
                 }
@@ -989,6 +992,9 @@ impl App {
                         };
                         // Reload triggers to reflect changes
                         self.load_triggers();
+                        if self.loading.key_mapping != LoadState::NotLoaded {
+                            self.load_key_mapping();
+                        }
                     }
                     Err(e) => {
                         self.status_msg = format!("Failed to save key {}: {}", key_index, e);
