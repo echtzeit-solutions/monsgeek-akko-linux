@@ -2190,7 +2190,18 @@ fn ui(f: &mut Frame, app: &mut App) {
         .alignment(Alignment::Center);
     f.render_widget(title, chunks[0]);
 
-    // Tabs
+    // Tabs, with a right-aligned navigation hint.
+    let tab_hint = format!(
+        " Alt+1-{}: switch tabs   ?: help   q: quit ",
+        app.tab_count()
+    );
+    let tab_row = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(tab_hint.len() as u16),
+        ])
+        .split(chunks[1]);
     let tabs = Tabs::new(app.tab_names())
         .select(app.tab)
         .style(Style::default().fg(Color::White))
@@ -2200,10 +2211,16 @@ fn ui(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         )
         .divider("│");
-    f.render_widget(tabs, chunks[1]);
+    f.render_widget(tabs, tab_row[0]);
+    f.render_widget(
+        Paragraph::new(tab_hint)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Right),
+        tab_row[1],
+    );
 
     // Store areas for mouse hit testing (using interior mutability)
-    app.tab_bar_area.set(chunks[1]);
+    app.tab_bar_area.set(tab_row[0]);
     app.content_area.set(chunks[2]);
 
     // Content based on tab
