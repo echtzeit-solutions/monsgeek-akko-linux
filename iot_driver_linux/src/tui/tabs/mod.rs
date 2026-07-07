@@ -3,6 +3,7 @@
 pub(super) mod audio;
 pub(super) mod depth;
 pub(super) mod device_info;
+pub(super) mod key_mapping;
 #[cfg(feature = "notify")]
 pub(super) mod notify;
 pub(super) mod remaps;

@@ -830,6 +830,9 @@ impl BindingEditor {
 // Rendering
 // ============================================================================
 
+// Superseded by the Key Mapping tab; retained temporarily so the binding-editor
+// rendering can be lifted into the unified editor. Remove once that lands.
+#[allow(dead_code)]
 pub(in crate::tui) fn render_remaps(f: &mut Frame, app: &mut App, area: Rect) {
     // Check loading state first
     if app.loading.remaps == LoadState::Loading {

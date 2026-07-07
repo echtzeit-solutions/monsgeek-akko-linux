@@ -14,8 +14,7 @@ use tabs::depth::{get_key_label, render_depth_monitor};
 use tabs::device_info::{render_device_info, HexColorTarget, InfoTag};
 
 use tabs::remaps::{
-    render_remaps, text_preview_from_events, BindingEditor, BindingField, BindingType, RemapFocus,
-    RemapLayerView,
+    text_preview_from_events, BindingEditor, BindingField, BindingType, RemapFocus, RemapLayerView,
 };
 
 use tabs::triggers::{render_trigger_edit_modal, render_trigger_settings, TriggerEditModal};
@@ -48,7 +47,7 @@ use tui_scrollview::ScrollViewState;
 use crate::firmware_api::FirmwareCheckResult;
 use crate::hid::BatteryInfo;
 use crate::key_action::KeyAction;
-use crate::keymap::{self, KeyEntry, Layer};
+use crate::keymap::{self, KeyEntry, KeyRow, Layer};
 use crate::power_supply::find_hid_battery_power_supply;
 use crate::{cmd, devices, FirmwareSettings, TriggerSettings};
 use monsgeek_transport::protocol::matrix;
@@ -128,6 +127,10 @@ struct App {
     remap_layer_view: RemapLayerView,
     binding_editor: BindingEditor,
     remap_focus: RemapFocus,
+    // Key Mapping tab state (unified per-key view)
+    key_rows: Vec<KeyRow>,
+    key_mapping_selected: usize,
+    key_mapping_layer_view: RemapLayerView,
     // Macro data (loaded alongside remaps or on editor open)
     macros: Vec<MacroSlot>,
     // Key depth visualization
@@ -236,6 +239,9 @@ impl App {
             remap_layer_view: RemapLayerView::default(),
             binding_editor: BindingEditor::new(),
             remap_focus: RemapFocus::default(),
+            key_rows: Vec::new(),
+            key_mapping_selected: 0,
+            key_mapping_layer_view: RemapLayerView::default(),
             macros: Vec::new(),
             // Key depth visualization
             depth_view_mode: DepthViewMode::default(),
@@ -704,6 +710,21 @@ impl App {
         });
     }
 
+    /// Load the unified per-key rows for the Key Mapping tab.
+    fn load_key_mapping(&mut self) {
+        let Some(keyboard) = self.keyboard.clone() else {
+            return;
+        };
+        self.loading.key_mapping = LoadState::Loading;
+        let tx = self.gen_sender();
+        tokio::spawn(async move {
+            match keymap::load_key_rows(&keyboard) {
+                Ok(rows) => tx.send(AsyncResult::KeyRows(Ok(rows))),
+                Err(e) => tx.send(AsyncResult::KeyRows(Err(e.to_string()))),
+            }
+        });
+    }
+
     /// Get remaps filtered by current layer view.
     fn filtered_remaps(&self) -> Vec<usize> {
         self.remaps
@@ -969,6 +990,18 @@ impl App {
                 self.loading.remaps = LoadState::Error;
                 self.status_msg = format!("Failed to load remaps: {e}");
             }
+            AsyncResult::KeyRows(Ok(rows)) => {
+                self.key_rows = rows;
+                self.loading.key_mapping = LoadState::Loaded;
+                if self.key_mapping_selected >= self.key_rows.len() {
+                    self.key_mapping_selected = self.key_rows.len().saturating_sub(1);
+                }
+                self.status_msg = format!("{} keys loaded", self.key_rows.len());
+            }
+            AsyncResult::KeyRows(Err(e)) => {
+                self.loading.key_mapping = LoadState::Error;
+                self.status_msg = format!("Failed to load key mapping: {e}");
+            }
             AsyncResult::Macros(Ok(macros)) => {
                 self.macros = macros;
                 self.loading.macros = LoadState::Loaded;
@@ -1067,7 +1100,7 @@ impl App {
 
     /// Tab names for display.
     fn tab_names(&self) -> Vec<&'static str> {
-        let mut names = vec!["Device Info", "Key Depth", "Triggers", "Remaps"];
+        let mut names = vec!["Device Info", "Key Depth", "Triggers", "Key Mapping"];
         #[cfg(feature = "notify")]
         names.push("Notify");
         names
@@ -1077,8 +1110,8 @@ impl App {
     fn auto_load_tab(&mut self) {
         if self.tab == 2 && self.loading.triggers == LoadState::NotLoaded {
             self.load_triggers();
-        } else if self.tab == 3 && self.loading.remaps == LoadState::NotLoaded {
-            self.load_remaps();
+        } else if self.tab == 3 && self.loading.key_mapping == LoadState::NotLoaded {
+            self.load_key_mapping();
         }
         #[cfg(feature = "notify")]
         if self.tab == 4 && self.notify.effects.is_none() {
@@ -1515,9 +1548,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 3 {
-                                if app.remap_selected > 0 {
-                                    app.remap_selected -= 1;
-                                    app.sync_binding_editor();
+                                if app.key_mapping_selected > 0 {
+                                    app.key_mapping_selected -= 1;
+                                    app.scroll_state.scroll_up();
                                 }
                             } else {
                                 #[cfg(feature = "notify")]
@@ -1561,10 +1594,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 3 {
-                                let max = app.filtered_remaps().len().saturating_sub(1);
-                                if app.remap_selected < max {
-                                    app.remap_selected += 1;
-                                    app.sync_binding_editor();
+                                if app.key_mapping_selected + 1 < app.key_rows.len() {
+                                    app.key_mapping_selected += 1;
+                                    app.scroll_state.scroll_down();
                                 }
                             } else {
                                 #[cfg(feature = "notify")]
@@ -1745,7 +1777,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 app.load_device_info();
                                 app.load_options(); // Options are on tab 0
                                 if app.tab == 2 { app.load_triggers(); }
-                                else if app.tab == 3 { app.load_remaps(); }
+                                else if app.tab == 3 { app.load_key_mapping(); }
                             }
                         }
                         KeyCode::Enter if app.tab == 0 => {
@@ -1814,7 +1846,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('f') if app.tab == 3 => {
-                            app.remap_layer_view = app.remap_layer_view.cycle();
+                            app.key_mapping_layer_view = app.key_mapping_layer_view.cycle();
                             app.remap_selected = 0;
                             app.sync_binding_editor();
                             app.status_msg = format!(
@@ -2179,7 +2211,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         0 => render_device_info(f, app, chunks[2]),
         1 => render_depth_monitor(f, app, chunks[2]),
         2 => render_trigger_settings(f, app, chunks[2]),
-        3 => render_remaps(f, app, chunks[2]),
+        3 => tabs::key_mapping::render_key_mapping(f, app, chunks[2]),
         #[cfg(feature = "notify")]
         4 => render_notify(f, app, chunks[2]),
         _ => {}
