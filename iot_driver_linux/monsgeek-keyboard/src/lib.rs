@@ -88,9 +88,8 @@ use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
 // Typed commands
 use monsgeek_transport::command::{
     GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData, HidCommand,
-    LedParamsResponse as TransportLedParamsResponse, QueryLedParams, SetFnData,
-    SetKeyMagnetismModeData, SetKeyMatrixData, SetMacroCommand, SetMagnetismReport,
-    SetMultiMagnetismCommand, SetMultiMagnetismHeader,
+    LedParamsResponse as TransportLedParamsResponse, QueryLedParams, SetFnData, SetKeyMatrixData,
+    SetMacroCommand, SetMagnetismReport, SetMultiMagnetismCommand, SetMultiMagnetismHeader,
 };
 use zerocopy::IntoBytes;
 
@@ -700,37 +699,31 @@ impl KeyboardInterface {
             .map_err(KeyboardError::Transport)
     }
 
-    /// Get trigger settings for a specific key
+    /// Get trigger settings for a specific key.
+    ///
+    /// Per-key config lives in the multi-magnetism table (subcmd 0x00 actuation,
+    /// 0x01 release, 0x07 mode). The legacy single-key command (`GET_KEY_MAGNETISM_MODE`
+    /// 0x9D) is a no-op on the RY5088 — the vendor web app stubs it out — so we
+    /// read the bulk table and index it.
     pub fn get_key_trigger(&self, key_index: u8) -> Result<KeyTriggerSettings, KeyboardError> {
-        if !self.has_magnetism {
-            return Err(KeyboardError::NotSupported(
-                "Device does not have Hall Effect switches".into(),
-            ));
-        }
-
-        let resp = self.transport.query_command(
-            cmd::GET_KEY_MAGNETISM_MODE,
-            &[key_index],
-            ChecksumType::Bit7,
-        )?;
-
-        if resp.len() < 5 || resp[0] != cmd::GET_KEY_MAGNETISM_MODE {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid trigger response".into(),
-            ));
-        }
-
-        let mode_byte = ModeByte::from_u8(resp[3]);
+        let all = self.get_all_triggers()?;
+        let idx = key_index as usize;
+        let mode_byte = ModeByte::from_u8(all.key_modes.get(idx).copied().unwrap_or(0));
         Ok(KeyTriggerSettings {
             key_index,
-            actuation: resp[1],
-            deactuation: resp[2],
+            actuation: all.press_travel.get(idx).copied().unwrap_or(0),
+            deactuation: all.lift_travel.get(idx).copied().unwrap_or(0),
             mode: mode_byte.base,
             rapid_trigger: mode_byte.rapid_trigger,
         })
     }
 
-    /// Set trigger settings for a specific key
+    /// Set trigger settings for a specific key.
+    ///
+    /// Writes actuation (subcmd 0x00), release (0x01) and mode (0x07) via the
+    /// per-key "simple" multi-magnetism form, exactly as the vendor web app does.
+    /// The old `SET_KEY_MAGNETISM_MODE` (0x1D) command is a no-op on the RY5088
+    /// (it belongs to a different chip family), so writes through it never landed.
     pub fn set_key_trigger(&self, settings: &KeyTriggerSettings) -> Result<(), KeyboardError> {
         if !self.has_magnetism {
             return Err(KeyboardError::NotSupported(
@@ -738,13 +731,21 @@ impl KeyboardInterface {
             ));
         }
 
-        self.transport.send(&SetKeyMagnetismModeData {
-            key_index: settings.key_index,
-            actuation: settings.actuation,
-            deactuation: settings.deactuation,
-            mode: ModeByte::new(settings.mode, settings.rapid_trigger).to_u8(),
-        })?;
-
+        let key = settings.key_index;
+        self.set_magnetism_simple(
+            mag_cmd::PRESS_TRAVEL,
+            key,
+            false,
+            &settings.actuation.to_le_bytes(),
+        )?;
+        self.set_magnetism_simple(
+            mag_cmd::LIFT_TRAVEL,
+            key,
+            false,
+            &settings.deactuation.to_le_bytes(),
+        )?;
+        let mode = ModeByte::new(settings.mode, settings.rapid_trigger).to_u8();
+        self.set_magnetism_simple(mag_cmd::KEY_MODE, key, true, &[mode])?;
         Ok(())
     }
 
@@ -1043,20 +1044,35 @@ impl KeyboardInterface {
         key_index: u8,
         binding: u8,
         combo: DksCombo,
+        commit: bool,
     ) -> Result<(), KeyboardError> {
         if binding > 3 {
             return Err(KeyboardError::InvalidParameter(
                 "DKS binding index must be 0–3".into(),
             ));
         }
+        // The keymatrix "enabled" byte is really the firmware's flash-dirty/save bit
+        // (it does NOT gate output). Set it on only the LAST binding of a batch — the
+        // single commit persists all four RAM writes (mirrors the vendor webapp) and
+        // avoids four separate flash saves. A commit triggers a flash write that
+        // briefly stalls the vendor pipeline, so settle before any readback, exactly
+        // like the magnetism-simple writes.
         let config = combo.to_config_bytes();
-        let enabled = config != [0, 0, 0, 0];
-        let pkt = SetKeyMatrixData::new(profile, key_index, binding, enabled, config)?;
-        self.transport.send_command(
-            self.commands.set_keymatrix,
-            &pkt.to_data(),
-            ChecksumType::Bit7,
-        )?;
+        let pkt = SetKeyMatrixData::new(profile, key_index, binding, commit, config)?;
+        if commit {
+            self.transport.send_command_with_delay(
+                self.commands.set_keymatrix,
+                &pkt.to_data(),
+                ChecksumType::Bit7,
+                MAGNETISM_SETTLE_MS,
+            )?;
+        } else {
+            self.transport.send_command(
+                self.commands.set_keymatrix,
+                &pkt.to_data(),
+                ChecksumType::Bit7,
+            )?;
+        }
         Ok(())
     }
 
@@ -1083,13 +1099,25 @@ impl KeyboardInterface {
         let modes = config.trigger_modes();
         self.set_magnetism_simple(mag_cmd::DKS_TRIGGER_MODES_SET, key_index, true, &modes)?;
 
-        for binding in 0..4u8 {
-            self.set_dks_combo_binding(
-                0,
-                key_index,
-                binding,
-                config.bindings[binding as usize].combo,
-            )?;
+        // Binding 0 occupies keymatrix layer 0 — the key's *base* output when it
+        // returns to Normal mode. Writing it empty stores keycode 0 and silences the
+        // key (no ROM fallback for the base layer). If the caller left binding 0
+        // empty, preserve the key's current layer-0 output instead of zeroing it.
+        let mut combos: [DksCombo; 4] = std::array::from_fn(|i| config.bindings[i].combo);
+        if combos[0].is_empty() {
+            if let Some(cur) =
+                DksCombo::from_config_bytes(self.get_key_config_at_layer(0, 0, key_index)?)
+            {
+                if !cur.is_empty() {
+                    combos[0] = cur;
+                }
+            }
+        }
+
+        for (binding, combo) in combos.into_iter().enumerate() {
+            // Persist once, on the final binding (commit = flash-dirty + settle).
+            let commit = binding == 3;
+            self.set_dks_combo_binding(0, key_index, binding as u8, combo, commit)?;
         }
         Ok(())
     }

@@ -597,18 +597,18 @@ pub fn set_key_trigger(
     };
 
     let precision = keyboard.get_precision().unwrap_or_default();
-    // Note: Single-key protocol uses u8, with factor of 10 (0.1mm steps)
-    let factor = 10.0f32;
+    // Per-key config uses the same u16 precision as the bulk table (0.01mm here).
+    let factor = precision.factor() as f32;
 
     // Base mode and RT flag are independent; each preserves the current value
     // when not overridden.
     let settings = KeyTriggerSettings {
         key_index: key,
         actuation: actuation
-            .map(|mm| (mm * factor) as u8)
+            .map(|mm| (mm * factor) as u16)
             .unwrap_or(current.actuation),
         deactuation: release
-            .map(|mm| (mm * factor) as u8)
+            .map(|mm| (mm * factor) as u16)
             .unwrap_or(current.deactuation),
         mode: mode.unwrap_or(current.mode),
         rapid_trigger: rt.unwrap_or(current.rapid_trigger),
@@ -618,14 +618,11 @@ pub fn set_key_trigger(
         Ok(_) => {
             println!("Key {key} trigger settings updated:");
             println!(
-                "  Actuation: {:.1}mm, Release: {:.1}mm, Mode: {}",
+                "  Actuation: {:.2}mm, Release: {:.2}mm, Mode: {}  (precision: {})",
                 settings.actuation as f32 / factor,
                 settings.deactuation as f32 / factor,
-                ModeByte::new(settings.mode, settings.rapid_trigger)
-            );
-            println!(
-                "  (precision: {}, bulk commands use higher precision)",
-                precision.as_str()
+                ModeByte::new(settings.mode, settings.rapid_trigger),
+                precision.as_str(),
             );
         }
         Err(e) => eprintln!("Failed to set key trigger: {e}"),
@@ -885,7 +882,7 @@ pub fn dks_roundtrip(keyboard: &KeyboardInterface, key: u8, op: &str) -> Command
     match op {
         "travel" => keyboard.set_dks_trigger_point_travel_raw(key, 70)?,
         "modes" => keyboard.set_dks_trigger_modes(key, [0, 0, 0, 0])?,
-        "combo" => keyboard.set_dks_combo_binding(0, key, 0, DksCombo::default())?,
+        "combo" => keyboard.set_dks_combo_binding(0, key, 0, DksCombo::default(), true)?,
         "mode-all" => keyboard.set_mode_all(ModeByte::new(KeyMode::Normal, false))?,
         "keytrig" => keyboard.set_key_trigger(&orig_trigger)?,
         _ => {

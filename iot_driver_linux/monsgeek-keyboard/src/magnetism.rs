@@ -128,10 +128,10 @@ impl TriggerSettings {
 pub struct KeyTriggerSettings {
     /// Key matrix index
     pub key_index: u8,
-    /// Actuation point (raw units)
-    pub actuation: u8,
-    /// Deactuation point (raw units)
-    pub deactuation: u8,
+    /// Actuation point (raw u16 firmware units, precision-dependent)
+    pub actuation: u16,
+    /// Deactuation / release point (raw u16 firmware units)
+    pub deactuation: u16,
     /// Base key mode
     pub mode: KeyMode,
     /// Rapid-Trigger flag (orthogonal to `mode`)

@@ -675,13 +675,11 @@ impl App {
             self.status_msg = format!("Invalid key index: {key_index}");
             return;
         }
-        let factor = self.precision.factor() as f32;
-        let to_u8_mm = |raw: u16| ((raw as f32 / factor) * 10.0) as u8;
         let mode_byte = ModeByte::from_u8(mode);
         let settings = KeyTriggerSettings {
             key_index: key_index as u8,
-            actuation: to_u8_mm(triggers.press_travel.get(key_index).copied().unwrap_or(0)),
-            deactuation: to_u8_mm(triggers.lift_travel.get(key_index).copied().unwrap_or(0)),
+            actuation: triggers.press_travel.get(key_index).copied().unwrap_or(0),
+            deactuation: triggers.lift_travel.get(key_index).copied().unwrap_or(0),
             mode: mode_byte.base,
             rapid_trigger: mode_byte.rapid_trigger,
         };
@@ -933,12 +931,12 @@ impl App {
                 }
             }
             TriggerEditTarget::PerKey { key_index } => {
-                // Per-key uses u8 values with factor of 10 (0.1mm precision)
+                // Per-key uses the same u16 precision as the bulk table.
                 let mode_byte = ModeByte::from_u8(modal.mode);
                 let settings = KeyTriggerSettings {
                     key_index: key_index as u8,
-                    actuation: (modal.actuation_mm * 10.0) as u8,
-                    deactuation: (modal.release_mm * 10.0) as u8,
+                    actuation: (modal.actuation_mm * factor) as u16,
+                    deactuation: (modal.release_mm * factor) as u16,
                     mode: mode_byte.base,
                     rapid_trigger: mode_byte.rapid_trigger,
                 };

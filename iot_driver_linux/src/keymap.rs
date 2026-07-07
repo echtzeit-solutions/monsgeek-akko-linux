@@ -264,13 +264,32 @@ pub fn set_key_async(
     kb.set_key_config(0, index, layer.wire_layer(), action.to_config_bytes())
 }
 
+/// Factory-default HID keycode for a matrix position, derived from its name.
+pub fn default_keycode(index: u8) -> u8 {
+    hid::key_code_from_name(matrix::key_name(index)).unwrap_or(0)
+}
+
+/// Reset a key to its firmware default.
+///
+/// The base layer has **no ROM fallback** (firmware-confirmed): an all-zero
+/// keymatrix entry emits keycode 0 and *silences* the key. So the base layer is
+/// reset by writing the position's factory-default keycode, not zeros. The overlay
+/// layers (Layer1 / Fn) treat a zero entry as a transparent fall-through to the
+/// base, so zeros are the correct "default" there.
+fn reset_key_impl(kb: &KeyboardInterface, index: u8, layer: Layer) -> Result<(), KeyboardError> {
+    match layer {
+        Layer::Base => kb.set_keymatrix(0, index, default_keycode(index), true, 0),
+        Layer::Layer1 | Layer::Fn => kb.reset_key(layer.wire_layer(), index),
+    }
+}
+
 /// Reset a key to default via KeyboardInterface (CLI).
 pub fn reset_key_sync(
     kb: &KeyboardInterface,
     index: u8,
     layer: Layer,
 ) -> Result<(), KeyboardError> {
-    kb.reset_key(layer.wire_layer(), index)
+    reset_key_impl(kb, index, layer)
 }
 
 /// Reset a key to default via KeyboardInterface (TUI async).
@@ -279,7 +298,7 @@ pub fn reset_key_async(
     index: u8,
     layer: Layer,
 ) -> Result<(), KeyboardError> {
-    kb.reset_key(layer.wire_layer(), index)
+    reset_key_impl(kb, index, layer)
 }
 
 // ---------------------------------------------------------------------------
