@@ -1353,6 +1353,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         .is_some_and(|m| {
                             m.mode_picker.is_some()
                                 || m.key_picker.is_some()
+                                || m.output_picker.is_some()
                                 || m.dks_key_picker.is_some()
                                 || m.dks_action_picker.is_some()
                         });
@@ -1362,6 +1363,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             enum PickerConfirm {
                                 Mode,
                                 Key,
+                                Output,
                                 DksKey,
                                 DksAction,
                             }
@@ -1370,6 +1372,8 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     Some(PickerConfirm::Mode)
                                 } else if m.key_picker.is_some() {
                                     Some(PickerConfirm::Key)
+                                } else if m.output_picker.is_some() {
+                                    Some(PickerConfirm::Output)
                                 } else if m.dks_key_picker.is_some() {
                                     Some(PickerConfirm::DksKey)
                                 } else if m.dks_action_picker.is_some() {
@@ -1387,6 +1391,20 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 Some(PickerConfirm::Key) => {
                                     if let Some(m) = app.trigger_edit_modal.as_mut() {
                                         m.confirm_key_picker();
+                                    }
+                                }
+                                Some(PickerConfirm::Output) => {
+                                    let selected = app
+                                        .trigger_edit_modal
+                                        .as_mut()
+                                        .and_then(|m| m.output_picker.take())
+                                        .and_then(|p| p.selected().copied().flatten());
+                                    if let Some(pos) = selected {
+                                        let hid = app.key_output_hid(pos);
+                                        if let Some(m) = app.trigger_edit_modal.as_mut() {
+                                            m.output_key = Some(pos);
+                                            m.output = crate::key_action::KeyAction::Key(hid);
+                                        }
                                     }
                                 }
                                 Some(PickerConfirm::DksKey) => {
@@ -1429,6 +1447,13 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     _ if up => p.up(),
                                     _ if down => p.down(),
                                     KeyCode::Esc => modal.key_picker = None,
+                                    _ => {}
+                                }
+                            } else if let Some(p) = modal.output_picker.as_mut() {
+                                match key.code {
+                                    _ if up => p.up(),
+                                    _ if down => p.down(),
+                                    KeyCode::Esc => modal.output_picker = None,
                                     _ => {}
                                 }
                             } else if let Some(p) = modal.dks_key_picker.as_mut() {

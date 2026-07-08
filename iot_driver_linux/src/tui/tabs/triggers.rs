@@ -45,6 +45,7 @@ pub(in crate::tui) enum TriggerField {
     BottomDeadzone,
     Mode,
     RapidTrigger,
+    Output,
     ModTapTime,
     SnapTapPartner,
     DksTravel,
@@ -61,6 +62,9 @@ impl TriggerField {
     const RT_SENSITIVITY: &'static [TriggerField] = &[Self::RtPress, Self::RtLift];
     const DEADZONES: &'static [TriggerField] = &[Self::TopDeadzone, Self::BottomDeadzone];
     const MODE_CONTROLS: &'static [TriggerField] = &[Self::Mode, Self::RapidTrigger];
+    /// The key's emitted output (keymatrix layer 0). Shown for every mode except
+    /// DKS, where the four combo slots below are the output.
+    const OUTPUT: &'static [TriggerField] = &[Self::Output];
     const MODTAP: &'static [TriggerField] = &[Self::ModTapTime];
     const SNAPTAP: &'static [TriggerField] = &[Self::SnapTapPartner];
     const DKS: &'static [TriggerField] = &[
@@ -93,6 +97,11 @@ impl TriggerField {
         let rt_on = mode_byte & ModeByte::RT_FLAG != 0;
         let mut fields = Vec::new();
         Self::append_fields(&mut fields, Self::MODE_CONTROLS);
+        // The output binding (keymatrix layer 0). In DKS mode the combo slots below
+        // are the output, so it's omitted there.
+        if base != KeyMode::DynamicKeystroke {
+            Self::append_fields(&mut fields, Self::OUTPUT);
+        }
 
         match base {
             KeyMode::Normal => {
@@ -154,6 +163,7 @@ impl TriggerField {
             Self::BottomDeadzone => "Bottom DZ",
             Self::Mode => "Mode",
             Self::RapidTrigger => "Rapid Trig",
+            Self::Output => "Output",
             Self::ModTapTime => "MT Time",
             Self::SnapTapPartner => "SnapTap Key",
             Self::DksTravel => "DKS Trigger Pt",
@@ -212,6 +222,7 @@ impl TriggerField {
             // Mode / SnapTapPartner / DKS pickers open popups; RapidTrigger toggles.
             Self::Mode
             | Self::RapidTrigger
+            | Self::Output
             | Self::SnapTapPartner
             | Self::DksBinding
             | Self::DksBindingKey
@@ -248,6 +259,10 @@ pub(in crate::tui) struct PerKeyEditPrefetch {
     pub snaptap_partner: Option<u8>,
     pub key_choices: Vec<(String, u8)>,
     pub dks: DksEditState,
+    /// Current keymatrix layer-0 output for the key.
+    pub output: KeyAction,
+    /// Matrix position whose default keycode equals `output` (for the picker preselect).
+    pub output_key: Option<u8>,
 }
 
 /// Trigger edit modal state
@@ -292,6 +307,12 @@ pub(in crate::tui) struct TriggerEditModal {
     pub dks_key_picker: Option<PopupSelect<Option<u8>>>,
     /// Open DKS action picker: `(DksPhase index, picker)`
     pub dks_action_picker: Option<(usize, PopupSelect<DksAction>)>,
+    /// The key's emitted output (keymatrix layer 0), for display. Non-DKS modes.
+    pub output: KeyAction,
+    /// Matrix position whose default keycode is the chosen output (for the picker).
+    pub output_key: Option<u8>,
+    /// Open output-key picker.
+    pub output_picker: Option<PopupSelect<Option<u8>>>,
 }
 
 fn format_dks_combo(combo: DksCombo) -> String {
@@ -330,6 +351,9 @@ impl TriggerEditModal {
             dks_binding_keys: [None; 4],
             dks_key_picker: None,
             dks_action_picker: None,
+            output: KeyAction::Disabled,
+            output_key: None,
+            output_picker: None,
         }
     }
 
@@ -371,6 +395,9 @@ impl TriggerEditModal {
             dks_binding_keys: prefetch.dks.binding_keys,
             dks_key_picker: None,
             dks_action_picker: None,
+            output: prefetch.output,
+            output_key: prefetch.output_key,
+            output_picker: None,
         }
     }
 
@@ -428,6 +455,7 @@ impl TriggerEditModal {
             TriggerField::DksTravel => self.dks_travel_mm,
             TriggerField::Mode
             | TriggerField::RapidTrigger
+            | TriggerField::Output
             | TriggerField::SnapTapPartner
             | TriggerField::DksBinding
             | TriggerField::DksBindingKey
@@ -451,6 +479,7 @@ impl TriggerEditModal {
             TriggerField::DksTravel => self.dks_travel_mm = value,
             TriggerField::Mode
             | TriggerField::RapidTrigger
+            | TriggerField::Output
             | TriggerField::SnapTapPartner
             | TriggerField::DksBinding
             | TriggerField::DksBindingKey
@@ -466,6 +495,7 @@ impl TriggerEditModal {
     pub(in crate::tui) fn increment_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::Output => self.open_output_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::DksBindingKey => self.open_dks_key_picker(),
             TriggerField::DksBinding => self.cycle_dks_binding(true),
@@ -487,6 +517,7 @@ impl TriggerEditModal {
     pub(in crate::tui) fn decrement_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::Output => self.open_output_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::DksBindingKey => self.open_dks_key_picker(),
             TriggerField::DksBinding => self.cycle_dks_binding(false),
@@ -560,6 +591,20 @@ impl TriggerEditModal {
                 self.snaptap_partner = partner;
             }
         }
+    }
+
+    /// Open the output-key picker (what this key emits on layer 0). Only real keys
+    /// are offered — never "(none)", which would silence the key.
+    pub(in crate::tui) fn open_output_picker(&mut self) {
+        let items: Vec<(String, Option<u8>)> = self
+            .key_choices
+            .iter()
+            .map(|(l, i)| (l.clone(), Some(*i)))
+            .collect();
+        let mut picker = PopupSelect::new("Output key", items);
+        let current = self.output_key;
+        picker.select_where(|&p| p == current);
+        self.output_picker = Some(picker);
     }
 
     /// Open the DKS output-key picker for the current slot.
@@ -837,6 +882,22 @@ impl App {
                 binding_keys: [None; 4],
             },
         };
+        // Current keymatrix layer-0 output (what the key emits) + its picker position.
+        let output = self
+            .keyboard
+            .as_ref()
+            .and_then(|kb| kb.get_key_config_at_layer(0, 0, key_index as u8).ok())
+            .map(KeyAction::from_config_bytes)
+            .unwrap_or(KeyAction::Disabled);
+        let output_hid = match output {
+            KeyAction::Key(c) => c,
+            KeyAction::Combo { key, .. } => key,
+            _ => 0,
+        };
+        let output_key = key_choices
+            .iter()
+            .map(|(_, i)| *i)
+            .find(|&idx| self.key_output_hid(idx) == output_hid);
         if let Some(ref triggers) = self.triggers {
             let modal = TriggerEditModal::new_per_key(
                 key_index,
@@ -846,6 +907,8 @@ impl App {
                     modtap_ms,
                     snaptap_partner,
                     key_choices,
+                    output,
+                    output_key,
                     dks,
                 },
             );
@@ -975,6 +1038,21 @@ impl App {
                                 keyboard.set_dks_config(key, &config, Some(mode_byte.rapid_trigger))
                             {
                                 extra.push(format!("dks: {e}"));
+                            }
+                        } else if modal.output != KeyAction::Disabled {
+                            // Output binding (keymatrix layer 0). DKS writes its combos
+                            // above; every other mode uses layer 0 as the key's output.
+                            // Route through the committing DKS-combo path so the flash
+                            // save settles before the reload (see set_dks_combo_binding).
+                            let bytes = modal.output.to_config_bytes();
+                            let res = match DksCombo::from_config_bytes(bytes) {
+                                Some(combo) => {
+                                    keyboard.set_dks_combo_binding(0, key, 0, combo, true)
+                                }
+                                None => keyboard.set_key_config(0, key, 0, bytes),
+                            };
+                            if let Err(e) = res {
+                                extra.push(format!("output: {e}"));
                             }
                         }
                         let key_name = get_key_label(self, key_index);
@@ -1596,6 +1674,8 @@ pub(in crate::tui) fn render_trigger_edit_modal(f: &mut Frame, app: &App, area: 
         picker.clone().render(f, popup_area);
     } else if let Some(picker) = &modal.key_picker {
         picker.clone().render(f, popup_area);
+    } else if let Some(picker) = &modal.output_picker {
+        picker.clone().render(f, popup_area);
     } else if let Some(picker) = &modal.dks_key_picker {
         picker.clone().render(f, popup_area);
     } else if let Some((_, picker)) = &modal.dks_action_picker {
@@ -1740,6 +1820,7 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                 let on = modal.mode & ModeByte::RT_FLAG != 0;
                 ((if on { "On" } else { "Off" }).to_string(), "")
             }
+            TriggerField::Output => (modal.output.to_string(), ""),
             TriggerField::SnapTapPartner => {
                 let label = match modal.snaptap_partner {
                     Some(idx) => modal
@@ -1792,6 +1873,7 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                     TriggerField::DksTravel => modal.dks_travel_mm,
                     TriggerField::Mode
                     | TriggerField::RapidTrigger
+                    | TriggerField::Output
                     | TriggerField::SnapTapPartner
                     | TriggerField::DksBinding
                     | TriggerField::DksBindingKey
