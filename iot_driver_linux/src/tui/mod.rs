@@ -17,7 +17,7 @@ use tabs::remaps::{
     text_preview_from_events, BindingEditor, BindingField, BindingType, RemapFocus, RemapLayerView,
 };
 
-use tabs::key_mapping::KeyMappingFilter;
+use tabs::key_mapping::{KeyMappingFilter, KeyMappingView};
 use tabs::triggers::{render_trigger_edit_modal, TriggerEditModal};
 
 #[cfg(feature = "notify")]
@@ -130,6 +130,7 @@ struct App {
     // Key Mapping tab state (unified per-key view)
     key_rows: Vec<KeyRow>,
     key_mapping_selected: usize,
+    key_mapping_view: KeyMappingView,
     key_mapping_filter: KeyMappingFilter,
     key_mapping_filter_open: bool,
     key_mapping_filter_field: usize,
@@ -242,6 +243,7 @@ impl App {
             remap_focus: RemapFocus::default(),
             key_rows: Vec::new(),
             key_mapping_selected: 0,
+            key_mapping_view: KeyMappingView::default(),
             key_mapping_filter: KeyMappingFilter::default(),
             key_mapping_filter_open: false,
             key_mapping_filter_field: 0,
@@ -1572,7 +1574,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 2 {
-                                if app.key_mapping_selected > 0 {
+                                if app.key_mapping_view == KeyMappingView::Layout {
+                                    tabs::key_mapping::layout_move(&mut app, 0, -1);
+                                } else if app.key_mapping_selected > 0 {
                                     app.key_mapping_selected -= 1;
                                     app.scroll_state.scroll_up();
                                 }
@@ -1601,7 +1605,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 2 {
-                                if app.key_mapping_selected + 1
+                                if app.key_mapping_view == KeyMappingView::Layout {
+                                    tabs::key_mapping::layout_move(&mut app, 0, 1);
+                                } else if app.key_mapping_selected + 1
                                     < tabs::key_mapping::visible_indices(&app).len()
                                 {
                                     app.key_mapping_selected += 1;
@@ -1625,6 +1631,8 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
+                            } else if app.tab == 2 && app.key_mapping_view == KeyMappingView::Layout {
+                                tabs::key_mapping::layout_move(&mut app, -1, 0);
                             } else if app.tab == 0 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
@@ -1685,25 +1693,8 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-                            if app.tab == 3 {
-                                // Enter editor from list
-                                let filtered = app.filtered_remaps();
-                                if !filtered.is_empty() {
-                                    if app.loading.macros == LoadState::NotLoaded {
-                                        app.load_macros();
-                                    }
-                                    app.sync_binding_editor();
-                                    app.remap_focus = RemapFocus::Editor;
-                                    app.binding_editor.field = BindingField::Type;
-                                    if let Some(&remap_idx) = filtered.get(app.remap_selected) {
-                                        let remap = &app.remaps[remap_idx];
-                                        app.status_msg = format!(
-                                            "Editing {} on {}",
-                                            remap.position,
-                                            remap.layer.name()
-                                        );
-                                    }
-                                }
+                            if app.tab == 2 && app.key_mapping_view == KeyMappingView::Layout {
+                                tabs::key_mapping::layout_move(&mut app, 1, 0);
                             } else if app.tab == 1 && app.depth_view_mode == DepthViewMode::BarChart {
                                 let max_key = app.key_depths.len().min(66).saturating_sub(1);
                                 if app.depth_cursor < max_key {
@@ -1875,6 +1866,12 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         }
                         KeyCode::Char('p') if app.tab == 0 => app.apply_per_key_color(),
                         KeyCode::Char('v') if app.tab == 1 => app.toggle_depth_view(),
+                        KeyCode::Char('v') if app.tab == 2 => {
+                            app.key_mapping_view = match app.key_mapping_view {
+                                KeyMappingView::List => KeyMappingView::Layout,
+                                KeyMappingView::Layout => KeyMappingView::List,
+                            };
+                        }
                         // Key Mapping tab: Enter/'e' edit the selected key, 'g' edits all keys.
                         KeyCode::Enter | KeyCode::Char('e') if app.tab == 2 => {
                             let visible = tabs::key_mapping::visible_indices(&app);

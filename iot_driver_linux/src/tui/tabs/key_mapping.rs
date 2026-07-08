@@ -16,6 +16,14 @@ use monsgeek_transport::protocol::matrix;
 use super::super::shared::LoadState;
 use super::super::App;
 
+/// List vs. keyboard-layout presentation for the Key Mapping tab.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub(in crate::tui) enum KeyMappingView {
+    #[default]
+    List,
+    Layout,
+}
+
 // ---------------------------------------------------------------------------
 // Filtering
 // ---------------------------------------------------------------------------
@@ -192,6 +200,13 @@ fn layer_markers(row: &KeyRow) -> String {
 }
 
 pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rect) {
+    match app.key_mapping_view {
+        KeyMappingView::Layout => render_key_mapping_layout(f, app, area),
+        KeyMappingView::List => render_key_mapping_list(f, app, area),
+    }
+}
+
+fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(6)])
@@ -222,7 +237,7 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
             filter_style,
         ),
         Span::styled(
-            "  (f: filter  ↑↓: select  Enter: edit  g: global)",
+            "  (f: filter  v: layout  Enter: edit  g: global)",
             Style::default().fg(Color::DarkGray),
         ),
     ])])
@@ -306,6 +321,133 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
         ScrollView::new(content_size).horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
     scroll_view.render_widget(table, Rect::new(0, 0, inner.width, content_height));
     f.render_stateful_widget(scroll_view, inner, &mut app.scroll_state);
+}
+
+/// Keyboard-shaped view: every key drawn at its matrix position, colored by mode.
+/// Filtered-out keys are dimmed (the whole board stays visible); the selected key
+/// (a filter match) is highlighted.
+fn render_key_mapping_layout(f: &mut Frame, app: &mut App, area: Rect) {
+    let visible = visible_indices(app);
+    let filter = app.key_mapping_filter;
+    let sel_pos = visible
+        .get(app.key_mapping_selected)
+        .map(|&ri| app.key_rows[ri].index);
+    let visible_set: std::collections::HashSet<u8> =
+        visible.iter().map(|&ri| app.key_rows[ri].index).collect();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Length(3)])
+        .split(area);
+
+    let block = Block::default().borders(Borders::ALL).title(format!(
+        "Key Mapping — layout  [{}/{} keys]  (v: list  ←↑↓→: move  Enter: edit  f: filter  g: global)",
+        visible.len(),
+        app.key_rows.len(),
+    ));
+    let inner = block.inner(chunks[0]);
+    f.render_widget(block, chunks[0]);
+
+    let (key_w, key_h) = (5u16, 2u16);
+    for r in &app.key_rows {
+        if r.position.is_empty() || r.position == "?" {
+            continue;
+        }
+        let col = r.index as u16 / 6;
+        let row = r.index as u16 % 6;
+        let x = inner.x + col * key_w;
+        let y = inner.y + row * key_h;
+        if x + key_w > inner.x + inner.width || y + key_h > inner.y + inner.height {
+            continue;
+        }
+        let selected = Some(r.index) == sel_pos;
+        let text_style = if selected {
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else if !visible_set.contains(&r.index) {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default().fg(mode_color(r.mode))
+        };
+        let border_style = if selected {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let name: String = r.position.chars().take(4).collect();
+        let cell = Paragraph::new(name)
+            .style(text_style)
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            );
+        f.render_widget(cell, Rect::new(x, y, key_w, key_h));
+    }
+
+    // Detail line for the selected key.
+    let factor = app.precision.factor() as f32;
+    let detail = if let Some(&ri) = visible.get(app.key_mapping_selected) {
+        let r = &app.key_rows[ri];
+        Line::from(vec![
+            Span::styled(
+                format!("{} ", r.position),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                ModeByte::new(r.mode, r.rapid_trigger).to_string(),
+                Style::default().fg(mode_color(r.mode)),
+            ),
+            Span::raw(format!(
+                "  → {}   act {:.2} / rel {:.2}mm   {}",
+                output_text(r, filter.layer),
+                r.actuation as f32 / factor,
+                r.release as f32 / factor,
+                extra_text(r, factor),
+            )),
+        ])
+    } else {
+        Line::from(Span::styled(
+            "(no matching key)",
+            Style::default().fg(Color::DarkGray),
+        ))
+    };
+    f.render_widget(
+        Paragraph::new(detail).block(Block::default().borders(Borders::ALL).title("Selected")),
+        chunks[1],
+    );
+}
+
+/// Move the layout selection one grid step; `dcol`/`drow` in {-1,0,1}. Snaps to
+/// the nearest visible key in that direction (same column for up/down, same row
+/// for left/right).
+pub(in crate::tui) fn layout_move(app: &mut App, dcol: i32, drow: i32) {
+    let visible = visible_indices(app);
+    let Some(&cur_ri) = visible.get(app.key_mapping_selected) else {
+        return;
+    };
+    let cur = app.key_rows[cur_ri].index as i32;
+    let (col, row) = (cur / 6, cur % 6);
+    // Search outward in the requested direction for the next visible key.
+    for step in 1..=21i32 {
+        let (c, r) = (col + dcol * step, row + drow * step);
+        if !(0..21).contains(&c) || !(0..6).contains(&r) {
+            break;
+        }
+        let target = (c * 6 + r) as u8;
+        if let Some(vi) = visible
+            .iter()
+            .position(|&ri| app.key_rows[ri].index == target)
+        {
+            app.key_mapping_selected = vi;
+            return;
+        }
+    }
 }
 
 /// The `f` filter popup: three cyclable fields (layer / state / mode).
