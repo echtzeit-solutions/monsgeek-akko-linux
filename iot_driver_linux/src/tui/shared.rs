@@ -76,14 +76,6 @@ pub(crate) enum DepthViewMode {
     TimeSeries, // Time series graph of selected keys
 }
 
-/// Trigger settings view mode
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) enum TriggerViewMode {
-    #[default]
-    List, // Scrollable list of keys
-    Layout, // Visual keyboard layout
-}
-
 /// Configuration for a spinner (numeric value with left/right adjustment)
 /// Reusable across different tabs and modals
 #[derive(Debug, Clone, Copy)]

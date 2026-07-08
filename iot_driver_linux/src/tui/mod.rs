@@ -18,7 +18,7 @@ use tabs::remaps::{
 };
 
 use tabs::key_mapping::KeyMappingFilter;
-use tabs::triggers::{render_trigger_edit_modal, render_trigger_settings, TriggerEditModal};
+use tabs::triggers::{render_trigger_edit_modal, TriggerEditModal};
 
 #[cfg(feature = "notify")]
 use crate::effect::{default_effects_path, EffectLibrary};
@@ -55,8 +55,8 @@ use monsgeek_transport::protocol::matrix;
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    led::speed_to_wire, DksCombo, KeyMode, KeyboardInterface, ModeByte, Precision,
-    SleepTimeSettings, TimestampedEvent, VendorEvent,
+    led::speed_to_wire, DksCombo, KeyboardInterface, Precision, SleepTimeSettings,
+    TimestampedEvent, VendorEvent,
 };
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
 
@@ -115,7 +115,6 @@ struct App {
     // Trigger settings
     triggers: Option<TriggerSettings>,
     trigger_scroll: usize,
-    trigger_view_mode: TriggerViewMode,
     trigger_selected_key: usize, // Selected key in layout view
     precision: Precision,
     // Keyboard options
@@ -232,7 +231,6 @@ impl App {
             matrix_key_names: Vec::new(),
             triggers: None,
             trigger_scroll: 0,
-            trigger_view_mode: TriggerViewMode::default(),
             trigger_selected_key: 0,
             precision: Precision::default(),
             options: None,
@@ -761,24 +759,6 @@ impl App {
         });
     }
 
-    /// Reset a key to its default mapping
-    fn reset_remap(&mut self, key_index: u8, layer: Layer) {
-        let Some(keyboard) = self.keyboard.clone() else {
-            self.status_msg = "No keyboard connected".to_string();
-            return;
-        };
-
-        let position = matrix::key_name(key_index);
-        let tx = self.gen_sender();
-        self.status_msg = format!("Resetting {position}...");
-
-        tokio::spawn(async move {
-            let result =
-                keymap::reset_key_async(&keyboard, key_index, layer).map_err(|e| e.to_string());
-            tx.send(AsyncResult::SetComplete("Remap".to_string(), result));
-        });
-    }
-
     /// Save macro events directly to a slot.
     fn set_macro_from_events(&mut self, index: u8, events: &[(u8, bool, u16)], repeat: u16) {
         let Some(keyboard) = self.keyboard.clone() else {
@@ -1105,7 +1085,7 @@ impl App {
 
     /// Tab names for display.
     fn tab_names(&self) -> Vec<&'static str> {
-        let mut names = vec!["Device Info", "Key Depth", "Triggers", "Key Mapping"];
+        let mut names = vec!["Device Info", "Key Depth", "Key Mapping"];
         #[cfg(feature = "notify")]
         names.push("Notify");
         names
@@ -1113,9 +1093,7 @@ impl App {
 
     /// Auto-load data when entering a tab.
     fn auto_load_tab(&mut self) {
-        if self.tab == 2 && self.loading.triggers == LoadState::NotLoaded {
-            self.load_triggers();
-        } else if self.tab == 3 && self.loading.key_mapping == LoadState::NotLoaded {
+        if self.tab == 2 && self.loading.key_mapping == LoadState::NotLoaded {
             self.load_key_mapping();
             // The unified editor reuses the trigger modal, which reads `triggers`.
             if self.loading.triggers == LoadState::NotLoaded {
@@ -1123,7 +1101,7 @@ impl App {
             }
         }
         #[cfg(feature = "notify")]
-        if self.tab == 4 && self.notify.effects.is_none() {
+        if self.tab == 3 && self.notify.effects.is_none() {
             self.load_notify_effects();
         }
     }
@@ -1196,7 +1174,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                     }
 
                     // Handle binding editor focus (replaces old macro modal + remap editor)
-                    if app.tab == 3 && app.remap_focus == RemapFocus::Editor {
+                    if app.tab == 2 && app.remap_focus == RemapFocus::Editor {
                         match key.code {
                             KeyCode::Esc => {
                                 app.remap_focus = RemapFocus::List;
@@ -1566,7 +1544,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         KeyCode::Char('q') => break,
                         KeyCode::Esc => {
                             #[cfg(feature = "notify")]
-                            if app.tab == 4 && app.notify.focus != NotifyFocus::EffectList {
+                            if app.tab == 3 && app.notify.focus != NotifyFocus::EffectList {
                                 handle_notify_input(&mut app, key.code);
                             } else {
                                 break;
@@ -1577,7 +1555,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         // Tab/BackTab: navigate within current tab
                         KeyCode::Tab | KeyCode::BackTab => {
                             #[cfg(feature = "notify")]
-                            if app.tab == 4 {
+                            if app.tab == 3 {
                                 handle_notify_input(&mut app, key.code);
                             }
                             // Other tabs: no-op for now (can add widget focus later)
@@ -1594,26 +1572,13 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 2 {
-                                if app.trigger_view_mode == TriggerViewMode::Layout {
-                                    app.layout_key_up();
-                                } else {
-                                    // List view: move selection up
-                                    if app.trigger_selected_key > 0 {
-                                        app.trigger_selected_key -= 1;
-                                        // Keep selection visible in scroll window
-                                        if app.trigger_selected_key < app.trigger_scroll {
-                                            app.trigger_scroll = app.trigger_selected_key;
-                                        }
-                                    }
-                                }
-                            } else if app.tab == 3 {
                                 if app.key_mapping_selected > 0 {
                                     app.key_mapping_selected -= 1;
                                     app.scroll_state.scroll_up();
                                 }
                             } else {
                                 #[cfg(feature = "notify")]
-                                if app.tab == 4 {
+                                if app.tab == 3 {
                                     handle_notify_input(&mut app, key.code);
                                 } else if app.selected > 0 {
                                     app.selected -= 1;
@@ -1636,23 +1601,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 2 {
-                                if app.trigger_view_mode == TriggerViewMode::Layout {
-                                    app.layout_key_down();
-                                } else {
-                                    // List view: move selection down
-                                    let max_key = app.triggers.as_ref()
-                                        .map(|t| t.key_modes.len().saturating_sub(1))
-                                        .unwrap_or(0);
-                                    if app.trigger_selected_key < max_key {
-                                        app.trigger_selected_key += 1;
-                                        // Keep selection visible in scroll window (assume ~15 visible rows)
-                                        let visible_rows = 15usize;
-                                        if app.trigger_selected_key >= app.trigger_scroll + visible_rows {
-                                            app.trigger_scroll = app.trigger_selected_key.saturating_sub(visible_rows - 1);
-                                        }
-                                    }
-                                }
-                            } else if app.tab == 3 {
                                 if app.key_mapping_selected + 1
                                     < tabs::key_mapping::visible_indices(&app).len()
                                 {
@@ -1661,7 +1609,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 }
                             } else {
                                 #[cfg(feature = "notify")]
-                                if app.tab == 4 {
+                                if app.tab == 3 {
                                     handle_notify_input(&mut app, key.code);
                                 } else if app.selected < app.info_tags.len().saturating_sub(1) {
                                     app.selected += 1;
@@ -1677,8 +1625,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 if app.depth_cursor > 0 {
                                     app.depth_cursor -= 1;
                                 }
-                            } else if app.tab == 2 && app.trigger_view_mode == TriggerViewMode::Layout {
-                                app.layout_key_left();
                             } else if app.tab == 0 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
@@ -1734,7 +1680,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 }
                             }
                             #[cfg(feature = "notify")]
-                            if app.tab == 4 {
+                            if app.tab == 3 {
                                 handle_notify_input(&mut app, key.code);
                             }
                         }
@@ -1763,8 +1709,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 if app.depth_cursor < max_key {
                                     app.depth_cursor += 1;
                                 }
-                            } else if app.tab == 2 && app.trigger_view_mode == TriggerViewMode::Layout {
-                                app.layout_key_right();
                             } else if app.tab == 0 {
                                 let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
                                 match app.info_tags.get(app.selected).copied().unwrap_or(InfoTag::ReadOnly) {
@@ -1820,7 +1764,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 }
                             }
                             #[cfg(feature = "notify")]
-                            if app.tab == 4 {
+                            if app.tab == 3 {
                                 handle_notify_input(&mut app, key.code);
                             }
                         }
@@ -1837,8 +1781,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 app.status_msg = "Refreshing...".to_string();
                                 app.load_device_info();
                                 app.load_options(); // Options are on tab 0
-                                if app.tab == 2 { app.load_triggers(); }
-                                else if app.tab == 3 { app.load_key_mapping(); app.load_triggers(); }
+                                if app.tab == 2 { app.load_key_mapping(); app.load_triggers(); }
                             }
                         }
                         KeyCode::Enter if app.tab == 0 => {
@@ -1879,14 +1822,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 _ => {}
                             }
                         }
-                        KeyCode::Char('d') if app.tab == 3 => {
-                            let filtered = app.filtered_remaps();
-                            if let Some(&remap_idx) = filtered.get(app.remap_selected) {
-                                let remap = &app.remaps[remap_idx];
-                                app.reset_remap(remap.index, remap.layer);
-                            }
-                        }
-                        KeyCode::Char('f') if app.tab == 3 => {
+                        KeyCode::Char('f') if app.tab == 2 => {
                             app.key_mapping_filter_open = true;
                             app.key_mapping_filter_field = 0;
                         }
@@ -1916,7 +1852,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char('d') if app.tab != 2 => {
+                        KeyCode::Char('d') => {
                             app.scan_device_picker();
                             app.show_device_picker = true;
                         }
@@ -1924,51 +1860,30 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(1),
                         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(2),
                         KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::CONTROL) => app.set_profile(3),
-                        KeyCode::PageUp => {
-                            if app.tab == 2 {
-                                app.trigger_scroll = app.trigger_scroll.saturating_sub(15);
+                        KeyCode::PageUp if app.tab == 2 => {
+                            for _ in 0..10 {
+                                app.scroll_state.scroll_up();
                             }
+                            app.key_mapping_selected = app.key_mapping_selected.saturating_sub(10);
                         }
-                        KeyCode::PageDown => {
-                            if app.tab == 2 {
-                                let max_scroll = app.triggers.as_ref()
-                                    .map(|t| t.key_modes.len().saturating_sub(15))
-                                    .unwrap_or(0);
-                                app.trigger_scroll = (app.trigger_scroll + 15).min(max_scroll);
+                        KeyCode::PageDown if app.tab == 2 => {
+                            let n = tabs::key_mapping::visible_indices(&app).len();
+                            for _ in 0..10 {
+                                app.scroll_state.scroll_down();
                             }
+                            app.key_mapping_selected = (app.key_mapping_selected + 10).min(n.saturating_sub(1));
                         }
-                        KeyCode::Char('n') if app.tab == 2 => app.set_key_mode(KeyMode::Normal.to_u8()),
-                        KeyCode::Char('N') if app.tab == 2 => app.set_all_key_modes(KeyMode::Normal.to_u8()),
-                        KeyCode::Char('t') if app.tab == 2 => app.set_key_mode(ModeByte::new(KeyMode::Normal, true).to_u8()),
-                        KeyCode::Char('T') if app.tab == 2 => app.set_all_key_modes(ModeByte::new(KeyMode::Normal, true).to_u8()),
-                        KeyCode::Char('d') if app.tab == 2 => app.set_key_mode(KeyMode::DynamicKeystroke.to_u8()),
-                        KeyCode::Char('D') if app.tab == 2 => app.set_all_key_modes(KeyMode::DynamicKeystroke.to_u8()),
-                        KeyCode::Char('s') if app.tab == 2 => app.set_key_mode(KeyMode::SnapTap.to_u8()),
-                        KeyCode::Char('S') if app.tab == 2 => app.set_all_key_modes(KeyMode::SnapTap.to_u8()),
                         KeyCode::Char('p') if app.tab == 0 => app.apply_per_key_color(),
                         KeyCode::Char('v') if app.tab == 1 => app.toggle_depth_view(),
-                        KeyCode::Char('v') if app.tab == 2 => app.toggle_trigger_view(),
-                        KeyCode::Enter if app.tab == 2 => {
-                            // Open trigger edit modal for selected key (both views)
-                            app.open_trigger_edit_key(app.trigger_selected_key);
-                        }
-                        KeyCode::Char('e') if app.tab == 2 => {
-                            // 'e' also opens edit modal for selected key
-                            app.open_trigger_edit_key(app.trigger_selected_key);
-                        }
-                        KeyCode::Char('g') if app.tab == 2 => {
-                            // 'g' opens global edit modal
-                            app.open_trigger_edit_global();
-                        }
                         // Key Mapping tab: Enter/'e' edit the selected key, 'g' edits all keys.
-                        KeyCode::Enter | KeyCode::Char('e') if app.tab == 3 => {
+                        KeyCode::Enter | KeyCode::Char('e') if app.tab == 2 => {
                             let visible = tabs::key_mapping::visible_indices(&app);
                             if let Some(&ri) = visible.get(app.key_mapping_selected) {
                                 let idx = app.key_rows[ri].index as usize;
                                 app.open_trigger_edit_key(idx);
                             }
                         }
-                        KeyCode::Char('g') if app.tab == 3 => app.open_trigger_edit_global(),
+                        KeyCode::Char('g') if app.tab == 2 => app.open_trigger_edit_global(),
                         KeyCode::Char('x') if app.tab == 1 => app.clear_depth_data(),
                         KeyCode::Char(' ') if app.tab == 1 => {
                             if app.depth_view_mode == DepthViewMode::BarChart {
@@ -1983,7 +1898,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         }
                         // ── Notify tab input handling ──
                         #[cfg(feature = "notify")]
-                        _ if app.tab == 4 => {
+                        _ if app.tab == 3 => {
                             handle_notify_input(&mut app, key.code);
                         }
                         _ => {}
@@ -2141,7 +2056,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                     let mut fast =
                         app.tab == 0 && (app.audio.is_running() || app.screen.is_running());
                     #[cfg(feature = "notify")]
-                    { fast = fast || app.tab == 4; }
+                    { fast = fast || app.tab == 3; }
                     if fast { 16 } else { 100 }
                 };
                 if want_ms != last_tick_ms {
@@ -2269,10 +2184,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     match app.tab {
         0 => render_device_info(f, app, chunks[2]),
         1 => render_depth_monitor(f, app, chunks[2]),
-        2 => render_trigger_settings(f, app, chunks[2]),
-        3 => tabs::key_mapping::render_key_mapping(f, app, chunks[2]),
+        2 => tabs::key_mapping::render_key_mapping(f, app, chunks[2]),
         #[cfg(feature = "notify")]
-        4 => render_notify(f, app, chunks[2]),
+        3 => render_notify(f, app, chunks[2]),
         _ => {}
     }
 
