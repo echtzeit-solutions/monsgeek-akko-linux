@@ -1847,26 +1847,6 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 _ => {}
                             }
                         }
-                        KeyCode::Enter if app.tab == 3 => {
-                            // Enter editor from list
-                            let filtered = app.filtered_remaps();
-                            if !filtered.is_empty() {
-                                if app.loading.macros == LoadState::NotLoaded {
-                                    app.load_macros();
-                                }
-                                app.sync_binding_editor();
-                                app.remap_focus = RemapFocus::Editor;
-                                app.binding_editor.field = BindingField::Type;
-                                if let Some(&remap_idx) = filtered.get(app.remap_selected) {
-                                    let remap = &app.remaps[remap_idx];
-                                    app.status_msg = format!(
-                                        "Editing {} on {}",
-                                        remap.position,
-                                        remap.layer.name()
-                                    );
-                                }
-                            }
-                        }
                         KeyCode::Char('d') if app.tab == 3 => {
                             let filtered = app.filtered_remaps();
                             if let Some(&remap_idx) = filtered.get(app.remap_selected) {
