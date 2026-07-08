@@ -16,6 +16,103 @@ use monsgeek_transport::protocol::matrix;
 use super::super::shared::LoadState;
 use super::super::App;
 
+// ---------------------------------------------------------------------------
+// Filtering
+// ---------------------------------------------------------------------------
+
+/// Customization narrowing for the Key Mapping table.
+#[derive(Clone, Copy, PartialEq)]
+pub(in crate::tui) enum KmState {
+    All,
+    Customized,
+    Default,
+}
+
+impl KmState {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::All => Self::Customized,
+            Self::Customized => Self::Default,
+            Self::Default => Self::All,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Customized => "Customized",
+            Self::Default => "Default",
+        }
+    }
+}
+
+/// Which keys the table shows, by three independent narrowings.
+#[derive(Clone, Copy)]
+pub(in crate::tui) struct KeyMappingFilter {
+    /// Layer: Both = all; L0/L1 = keys with a non-default binding on that keymatrix
+    /// layer; Fn = keys with an Fn binding.
+    pub layer: RemapLayerView,
+    pub state: KmState,
+    /// Mode narrowing (None = any).
+    pub mode: Option<KeyMode>,
+}
+
+impl Default for KeyMappingFilter {
+    fn default() -> Self {
+        Self {
+            layer: RemapLayerView::Both,
+            state: KmState::All,
+            mode: None,
+        }
+    }
+}
+
+impl KeyMappingFilter {
+    pub fn matches(&self, r: &KeyRow) -> bool {
+        let state_ok = match self.state {
+            KmState::All => true,
+            KmState::Customized => r.is_customized(),
+            KmState::Default => !r.is_customized(),
+        };
+        let layer_ok = match self.layer {
+            RemapLayerView::Both => true,
+            RemapLayerView::L0 => r.output_remapped[0],
+            RemapLayerView::L1 => r.output_remapped[1],
+            RemapLayerView::Fn => r.fn_action.is_some(),
+        };
+        state_ok && layer_ok && self.mode.is_none_or(|m| r.mode == m)
+    }
+
+    /// True when any narrowing is active.
+    pub fn is_active(&self) -> bool {
+        self.layer != RemapLayerView::Both || self.state != KmState::All || self.mode.is_some()
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        self.mode.map_or("Any", |m| m.label())
+    }
+}
+
+/// Cycle the mode filter: None → Normal → … → SnapTap → None.
+pub(in crate::tui) fn cycle_mode_filter(cur: Option<KeyMode>) -> Option<KeyMode> {
+    match cur {
+        None => KeyMode::ALL.first().copied(),
+        Some(m) => {
+            let i = KeyMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
+            KeyMode::ALL.get(i + 1).copied()
+        }
+    }
+}
+
+/// Indices into `app.key_rows` that pass the current filter.
+pub(in crate::tui) fn visible_indices(app: &App) -> Vec<usize> {
+    app.key_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| app.key_mapping_filter.matches(r))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn mode_color(mode: KeyMode) -> Color {
     match mode {
         KeyMode::Normal => Color::White,
@@ -100,25 +197,32 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
         .constraints([Constraint::Length(3), Constraint::Min(6)])
         .split(area);
 
+    let filter = app.key_mapping_filter;
+    let visible = visible_indices(app);
+
     // Header / legend.
-    let customized = app.key_rows.iter().filter(|r| r.is_customized()).count();
+    let filter_style = if filter.is_active() {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
     let header = Paragraph::new(vec![Line::from(vec![
         Span::styled(
-            format!("{} keys", app.key_rows.len()),
+            format!("{}/{} keys", visible.len(), app.key_rows.len()),
             Style::default().fg(Color::Green),
         ),
-        Span::raw("  "),
+        Span::raw("   filter "),
         Span::styled(
-            format!("{customized} customized"),
-            Style::default().fg(Color::Yellow),
+            format!(
+                "[layer:{} state:{} mode:{}]",
+                filter.layer.label(),
+                filter.state.label(),
+                filter.mode_label()
+            ),
+            filter_style,
         ),
-        Span::raw("   |   Layer view: "),
         Span::styled(
-            app.key_mapping_layer_view.label(),
-            Style::default().fg(Color::Cyan),
-        ),
-        Span::styled(
-            "  (f: layer  ↑↓: select  Enter: edit  g: global  c: calibrate)",
+            "  (f: filter  ↑↓: select  Enter: edit  g: global)",
             Style::default().fg(Color::DarkGray),
         ),
     ])])
@@ -141,14 +245,14 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
     }
 
     let factor = app.precision.factor() as f32;
-    let view = app.key_mapping_layer_view;
+    let view = filter.layer;
     let selected = app.key_mapping_selected;
 
-    let rows: Vec<Row> = app
-        .key_rows
+    let rows: Vec<Row> = visible
         .iter()
         .enumerate()
-        .map(|(i, r)| {
+        .map(|(vi, &ri)| {
+            let r = &app.key_rows[ri];
             let mode_str = ModeByte::new(r.mode, r.rapid_trigger).to_string();
             let cells = vec![
                 Cell::from(format!("{:3}", r.index)),
@@ -161,7 +265,7 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
                 Cell::from(layer_markers(r)),
             ];
             let row = Row::new(cells);
-            if i == selected {
+            if vi == selected {
                 row.style(Style::default().bg(Color::Blue).fg(Color::White))
             } else if !r.is_customized() {
                 row.style(Style::default().fg(Color::DarkGray))
@@ -196,10 +300,88 @@ pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rec
     ];
     let table = Table::new(rows, widths).header(header_row);
 
-    let content_height = (app.key_rows.len() + 1) as u16;
+    let content_height = (visible.len() + 1) as u16;
     let content_size = Size::new(inner.width, content_height);
     let mut scroll_view =
         ScrollView::new(content_size).horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
     scroll_view.render_widget(table, Rect::new(0, 0, inner.width, content_height));
     f.render_stateful_widget(scroll_view, inner, &mut app.scroll_state);
+}
+
+/// The `f` filter popup: three cyclable fields (layer / state / mode).
+pub(in crate::tui) fn render_key_mapping_filter(f: &mut Frame, app: &App, area: Rect) {
+    let filter = app.key_mapping_filter;
+    let field = app.key_mapping_filter_field;
+    let rows = [
+        ("Layer", filter.layer.label()),
+        ("State", filter.state.label()),
+        ("Mode", filter.mode_label()),
+    ];
+
+    let w = 44u16.min(area.width);
+    let h = (rows.len() as u16 + 4).min(area.height);
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(w)) / 2,
+        area.y + (area.height.saturating_sub(h)) / 2,
+        w,
+        h,
+    );
+    f.render_widget(Clear, popup);
+
+    let mut lines = vec![Line::from("")];
+    for (i, (label, val)) in rows.iter().enumerate() {
+        let val_style = if i == field {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {label:<7}")),
+            Span::styled(format!(" ‹ {val} › "), val_style),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        "  ↑↓ field   ←→ change   Esc/Enter close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Filter")
+                .border_style(Style::default().fg(Color::Cyan)),
+        ),
+        popup,
+    );
+}
+
+/// Cycle the filter's currently-selected field by `dir` (+1 / -1).
+pub(in crate::tui) fn cycle_filter_field(app: &mut App, forward: bool) {
+    match app.key_mapping_filter_field {
+        0 => {
+            // Layer cycles through the RemapLayerView order both directions.
+            app.key_mapping_filter.layer = if forward {
+                app.key_mapping_filter.layer.cycle()
+            } else {
+                app.key_mapping_filter.layer.cycle().cycle().cycle()
+            };
+        }
+        1 => {
+            app.key_mapping_filter.state = if forward {
+                app.key_mapping_filter.state.cycle()
+            } else {
+                app.key_mapping_filter.state.cycle().cycle()
+            };
+        }
+        _ => {
+            app.key_mapping_filter.mode = cycle_mode_filter(app.key_mapping_filter.mode);
+            let _ = forward;
+        }
+    }
+    // Keep the selection in range after the visible set changes.
+    let n = visible_indices(app).len();
+    if app.key_mapping_selected >= n {
+        app.key_mapping_selected = n.saturating_sub(1);
+    }
 }

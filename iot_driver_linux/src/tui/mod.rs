@@ -17,6 +17,7 @@ use tabs::remaps::{
     text_preview_from_events, BindingEditor, BindingField, BindingType, RemapFocus, RemapLayerView,
 };
 
+use tabs::key_mapping::KeyMappingFilter;
 use tabs::triggers::{render_trigger_edit_modal, render_trigger_settings, TriggerEditModal};
 
 #[cfg(feature = "notify")]
@@ -130,7 +131,9 @@ struct App {
     // Key Mapping tab state (unified per-key view)
     key_rows: Vec<KeyRow>,
     key_mapping_selected: usize,
-    key_mapping_layer_view: RemapLayerView,
+    key_mapping_filter: KeyMappingFilter,
+    key_mapping_filter_open: bool,
+    key_mapping_filter_field: usize,
     // Macro data (loaded alongside remaps or on editor open)
     macros: Vec<MacroSlot>,
     // Key depth visualization
@@ -241,7 +244,9 @@ impl App {
             remap_focus: RemapFocus::default(),
             key_rows: Vec::new(),
             key_mapping_selected: 0,
-            key_mapping_layer_view: RemapLayerView::default(),
+            key_mapping_filter: KeyMappingFilter::default(),
+            key_mapping_filter_open: false,
+            key_mapping_filter_field: 0,
             macros: Vec::new(),
             // Key depth visualization
             depth_view_mode: DepthViewMode::default(),
@@ -1475,6 +1480,31 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         continue;
                     }
 
+                    // Key Mapping filter popup: ↑↓ pick field, ←→ change, Esc/Enter/f close.
+                    if app.key_mapping_filter_open {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('f') => {
+                                app.key_mapping_filter_open = false;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.key_mapping_filter_field =
+                                    app.key_mapping_filter_field.saturating_sub(1);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.key_mapping_filter_field =
+                                    (app.key_mapping_filter_field + 1).min(2);
+                            }
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                tabs::key_mapping::cycle_filter_field(&mut app, false);
+                            }
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                tabs::key_mapping::cycle_filter_field(&mut app, true);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     // Trigger edit modal - uses spinners with Left/Right to adjust values
                     if app.trigger_edit_modal.is_some() {
                         let coarse = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -1623,7 +1653,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                             } else if app.tab == 3 {
-                                if app.key_mapping_selected + 1 < app.key_rows.len() {
+                                if app.key_mapping_selected + 1
+                                    < tabs::key_mapping::visible_indices(&app).len()
+                                {
                                     app.key_mapping_selected += 1;
                                     app.scroll_state.scroll_down();
                                 }
@@ -1855,13 +1887,8 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('f') if app.tab == 3 => {
-                            app.key_mapping_layer_view = app.key_mapping_layer_view.cycle();
-                            app.remap_selected = 0;
-                            app.sync_binding_editor();
-                            app.status_msg = format!(
-                                "Filter: {}",
-                                app.remap_layer_view.label()
-                            );
+                            app.key_mapping_filter_open = true;
+                            app.key_mapping_filter_field = 0;
                         }
                         KeyCode::Char('m') => {
                             app.depth_monitoring = !app.depth_monitoring;
@@ -1935,8 +1962,10 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                         }
                         // Key Mapping tab: Enter/'e' edit the selected key, 'g' edits all keys.
                         KeyCode::Enter | KeyCode::Char('e') if app.tab == 3 => {
-                            if let Some(row) = app.key_rows.get(app.key_mapping_selected) {
-                                app.open_trigger_edit_key(row.index as usize);
+                            let visible = tabs::key_mapping::visible_indices(&app);
+                            if let Some(&ri) = visible.get(app.key_mapping_selected) {
+                                let idx = app.key_rows[ri].index as usize;
+                                app.open_trigger_edit_key(idx);
                             }
                         }
                         KeyCode::Char('g') if app.tab == 3 => app.open_trigger_edit_global(),
@@ -2327,6 +2356,11 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Trigger edit modal (renders on top)
     if app.trigger_edit_modal.is_some() {
         render_trigger_edit_modal(f, app, f.area());
+    }
+
+    // Key Mapping filter popup (renders on top)
+    if app.key_mapping_filter_open {
+        tabs::key_mapping::render_key_mapping_filter(f, app, f.area());
     }
 }
 
