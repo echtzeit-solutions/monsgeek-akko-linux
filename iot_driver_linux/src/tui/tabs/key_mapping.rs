@@ -183,25 +183,6 @@ fn extra_text(row: &KeyRow, factor: f32) -> String {
     }
 }
 
-/// Names of the layers that carry a binding beyond the base output, e.g. "L1 Fn".
-/// Base (L0) is shown in the Output column, so it's omitted here; "·" means none.
-fn layer_markers(row: &KeyRow) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for l in 1..4 {
-        if row.output_remapped[l] {
-            parts.push(format!("L{l}"));
-        }
-    }
-    if row.fn_action.is_some() {
-        parts.push("Fn".into());
-    }
-    if parts.is_empty() {
-        "·".into()
-    } else {
-        parts.join(" ")
-    }
-}
-
 pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rect) {
     match app.key_mapping_view {
         KeyMappingView::Layout => render_key_mapping_layout(f, app, area),
@@ -263,7 +244,6 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let factor = app.precision.factor() as f32;
-    let view = filter.layer;
     let selected = app.key_mapping_selected;
 
     let rows: Vec<Row> = visible
@@ -275,11 +255,12 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(format!("{:3}", r.index)),
                 Cell::from(r.position),
                 Cell::from(mode_str).style(Style::default().fg(mode_color(r.mode))),
-                Cell::from(output_text(r, view)),
+                Cell::from(output_text(r, RemapLayerView::L0)),
+                Cell::from(output_text(r, RemapLayerView::L1)),
+                Cell::from(output_text(r, RemapLayerView::Fn)),
                 Cell::from(format!("{:.2}", r.actuation as f32 / factor)),
                 Cell::from(format!("{:.2}", r.release as f32 / factor)),
                 Cell::from(extra_text(r, factor)),
-                Cell::from(layer_markers(r)),
             ];
             let row = Row::new(cells);
             if !r.is_customized() {
@@ -291,7 +272,7 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let header_row = Row::new(vec![
-        "#", "Key", "Mode", "Output", "Act", "Rel", "Extra", "Layers",
+        "#", "Key", "Mode", "Base", "L1", "Fn", "Act", "Rel", "Extra",
     ])
     .style(
         Style::default()
@@ -303,10 +284,11 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Length(4),
         Constraint::Length(8),
         Constraint::Length(13),
-        Constraint::Min(16),
+        Constraint::Min(14),
+        Constraint::Length(10),
+        Constraint::Length(12),
         Constraint::Length(5),
         Constraint::Length(5),
-        Constraint::Length(11),
         Constraint::Length(11),
     ];
     // A stateful Table keeps the header row sticky and scrolls the body to keep the
