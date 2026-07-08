@@ -43,6 +43,7 @@ pub(in crate::tui) enum TriggerField {
     BottomDeadzone,
     Mode,
     RapidTrigger,
+    OutputLayer,
     Output,
     ModTapTime,
     SnapTapPartner,
@@ -62,7 +63,7 @@ impl TriggerField {
     const MODE_CONTROLS: &'static [TriggerField] = &[Self::Mode, Self::RapidTrigger];
     /// The key's emitted output (keymatrix layer 0). Shown for every mode except
     /// DKS, where the four combo slots below are the output.
-    const OUTPUT: &'static [TriggerField] = &[Self::Output];
+    const OUTPUT: &'static [TriggerField] = &[Self::OutputLayer, Self::Output];
     const MODTAP: &'static [TriggerField] = &[Self::ModTapTime];
     const SNAPTAP: &'static [TriggerField] = &[Self::SnapTapPartner];
     const DKS: &'static [TriggerField] = &[
@@ -161,6 +162,7 @@ impl TriggerField {
             Self::BottomDeadzone => "Bottom DZ",
             Self::Mode => "Mode",
             Self::RapidTrigger => "Rapid Trig",
+            Self::OutputLayer => "Layer",
             Self::Output => "Output",
             Self::ModTapTime => "MT Time",
             Self::SnapTapPartner => "SnapTap Key",
@@ -220,6 +222,7 @@ impl TriggerField {
             // Mode / SnapTapPartner / DKS pickers open popups; RapidTrigger toggles.
             Self::Mode
             | Self::RapidTrigger
+            | Self::OutputLayer
             | Self::Output
             | Self::SnapTapPartner
             | Self::DksBinding
@@ -257,10 +260,10 @@ pub(in crate::tui) struct PerKeyEditPrefetch {
     pub snaptap_partner: Option<u8>,
     pub key_choices: Vec<(String, u8)>,
     pub dks: DksEditState,
-    /// Current keymatrix layer-0 output for the key.
-    pub output: KeyAction,
-    /// Matrix position whose default keycode equals `output` (for the picker preselect).
-    pub output_key: Option<u8>,
+    /// Current output per layer `[Base, Layer1, Fn]`.
+    pub outputs: [KeyAction; 3],
+    /// Matrix position whose default keycode equals each layer's output (picker preselect).
+    pub output_keys: [Option<u8>; 3],
 }
 
 /// Trigger edit modal state
@@ -305,10 +308,14 @@ pub(in crate::tui) struct TriggerEditModal {
     pub dks_key_picker: Option<PopupSelect<Option<u8>>>,
     /// Open DKS action picker: `(DksPhase index, picker)`
     pub dks_action_picker: Option<(usize, PopupSelect<DksAction>)>,
-    /// The key's emitted output (keymatrix layer 0), for display. Non-DKS modes.
-    pub output: KeyAction,
-    /// Matrix position whose default keycode is the chosen output (for the picker).
-    pub output_key: Option<u8>,
+    /// The key's emitted output per layer `[Base, Layer1, Fn]` (non-DKS modes).
+    pub outputs: [KeyAction; 3],
+    /// Matrix position whose default keycode was chosen per layer (for the picker).
+    pub output_keys: [Option<u8>; 3],
+    /// Snapshot of `outputs` at open, so save only writes layers that changed.
+    pub outputs_orig: [KeyAction; 3],
+    /// Which output layer the `Output`/`Layer` fields target: 0=Base, 1=Layer1, 2=Fn.
+    pub output_layer: usize,
     /// Open output-key picker.
     pub output_picker: Option<PopupSelect<Option<u8>>>,
 }
@@ -349,8 +356,10 @@ impl TriggerEditModal {
             dks_binding_keys: [None; 4],
             dks_key_picker: None,
             dks_action_picker: None,
-            output: KeyAction::Disabled,
-            output_key: None,
+            outputs: [KeyAction::Disabled; 3],
+            output_keys: [None; 3],
+            outputs_orig: [KeyAction::Disabled; 3],
+            output_layer: 0,
             output_picker: None,
         }
     }
@@ -393,8 +402,10 @@ impl TriggerEditModal {
             dks_binding_keys: prefetch.dks.binding_keys,
             dks_key_picker: None,
             dks_action_picker: None,
-            output: prefetch.output,
-            output_key: prefetch.output_key,
+            outputs: prefetch.outputs,
+            output_keys: prefetch.output_keys,
+            outputs_orig: prefetch.outputs,
+            output_layer: 0,
             output_picker: None,
         }
     }
@@ -453,6 +464,7 @@ impl TriggerEditModal {
             TriggerField::DksTravel => self.dks_travel_mm,
             TriggerField::Mode
             | TriggerField::RapidTrigger
+            | TriggerField::OutputLayer
             | TriggerField::Output
             | TriggerField::SnapTapPartner
             | TriggerField::DksBinding
@@ -477,6 +489,7 @@ impl TriggerEditModal {
             TriggerField::DksTravel => self.dks_travel_mm = value,
             TriggerField::Mode
             | TriggerField::RapidTrigger
+            | TriggerField::OutputLayer
             | TriggerField::Output
             | TriggerField::SnapTapPartner
             | TriggerField::DksBinding
@@ -493,6 +506,7 @@ impl TriggerEditModal {
     pub(in crate::tui) fn increment_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::OutputLayer => self.cycle_output_layer(true),
             TriggerField::Output => self.open_output_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::DksBindingKey => self.open_dks_key_picker(),
@@ -515,6 +529,7 @@ impl TriggerEditModal {
     pub(in crate::tui) fn decrement_current(&mut self, coarse: bool) {
         match self.current_field() {
             TriggerField::Mode => self.open_mode_picker(),
+            TriggerField::OutputLayer => self.cycle_output_layer(false),
             TriggerField::Output => self.open_output_picker(),
             TriggerField::SnapTapPartner => self.open_key_picker(),
             TriggerField::DksBindingKey => self.open_dks_key_picker(),
@@ -591,16 +606,31 @@ impl TriggerEditModal {
         }
     }
 
-    /// Open the output-key picker (what this key emits on layer 0). Only real keys
-    /// are offered — never "(none)", which would silence the key.
+    /// Names of the three output layers, indexed by `output_layer`.
+    pub(in crate::tui) fn output_layer_name(&self) -> &'static str {
+        ["Base", "Layer1", "Fn"][self.output_layer.min(2)]
+    }
+
+    /// Cycle the output-layer selector (Base → Layer1 → Fn → Base).
+    pub(in crate::tui) fn cycle_output_layer(&mut self, forward: bool) {
+        self.output_layer = if forward {
+            (self.output_layer + 1) % 3
+        } else {
+            (self.output_layer + 2) % 3
+        };
+    }
+
+    /// Open the output-key picker for the current output layer. "(none)" is offered
+    /// on the overlay layers (Layer1 / Fn) — they're transparent when empty — but
+    /// never on Base, where an empty entry would silence the key.
     pub(in crate::tui) fn open_output_picker(&mut self) {
-        let items: Vec<(String, Option<u8>)> = self
-            .key_choices
-            .iter()
-            .map(|(l, i)| (l.clone(), Some(*i)))
-            .collect();
-        let mut picker = PopupSelect::new("Output key", items);
-        let current = self.output_key;
+        let mut items: Vec<(String, Option<u8>)> = Vec::new();
+        if self.output_layer != 0 {
+            items.push(("(none)".to_string(), None));
+        }
+        items.extend(self.key_choices.iter().map(|(l, i)| (l.clone(), Some(*i))));
+        let mut picker = PopupSelect::new(format!("{} output", self.output_layer_name()), items);
+        let current = self.output_keys[self.output_layer];
         picker.select_where(|&p| p == current);
         self.output_picker = Some(picker);
     }
@@ -810,22 +840,40 @@ impl App {
                 binding_keys: [None; 4],
             },
         };
-        // Current keymatrix layer-0 output (what the key emits) + its picker position.
-        let output = self
-            .keyboard
-            .as_ref()
-            .and_then(|kb| kb.get_key_config_at_layer(0, 0, key_index as u8).ok())
-            .map(KeyAction::from_config_bytes)
-            .unwrap_or(KeyAction::Disabled);
-        let output_hid = match output {
-            KeyAction::Key(c) => c,
-            KeyAction::Combo { key, .. } => key,
-            _ => 0,
+        // Current output per layer [Base, Layer1, Fn]. Base/Layer1 come from
+        // keymatrix layers 0/1; Fn from the separate Fn table.
+        let resolve = |bytes: [u8; 4]| {
+            let action = KeyAction::from_config_bytes(bytes);
+            let hid = match action {
+                KeyAction::Key(c) => c,
+                KeyAction::Combo { key, .. } => key,
+                _ => 0,
+            };
+            let key = key_choices
+                .iter()
+                .map(|(_, i)| *i)
+                .find(|&idx| self.key_output_hid(idx) == hid);
+            (action, key)
         };
-        let output_key = key_choices
-            .iter()
-            .map(|(_, i)| *i)
-            .find(|&idx| self.key_output_hid(idx) == output_hid);
+        let kb = self.keyboard.as_ref();
+        let base_bytes = kb
+            .and_then(|kb| kb.get_key_config_at_layer(0, 0, key_index as u8).ok())
+            .unwrap_or([0; 4]);
+        let l1_bytes = kb
+            .and_then(|kb| kb.get_key_config_at_layer(0, 1, key_index as u8).ok())
+            .unwrap_or([0; 4]);
+        let fn_bytes = kb
+            .and_then(|kb| kb.get_fn_keymatrix(0, 0, 8).ok())
+            .and_then(|m| {
+                m.get(key_index * 4..key_index * 4 + 4)
+                    .map(|s| [s[0], s[1], s[2], s[3]])
+            })
+            .unwrap_or([0; 4]);
+        let (o0, k0) = resolve(base_bytes);
+        let (o1, k1) = resolve(l1_bytes);
+        let (o2, k2) = resolve(fn_bytes);
+        let outputs = [o0, o1, o2];
+        let output_keys = [k0, k1, k2];
         if let Some(ref triggers) = self.triggers {
             let modal = TriggerEditModal::new_per_key(
                 key_index,
@@ -835,8 +883,8 @@ impl App {
                     modtap_ms,
                     snaptap_partner,
                     key_choices,
-                    output,
-                    output_key,
+                    outputs,
+                    output_keys,
                     dks,
                 },
             );
@@ -967,20 +1015,37 @@ impl App {
                             {
                                 extra.push(format!("dks: {e}"));
                             }
-                        } else if modal.output != KeyAction::Disabled {
-                            // Output binding (keymatrix layer 0). DKS writes its combos
-                            // above; every other mode uses layer 0 as the key's output.
-                            // Route through the committing DKS-combo path so the flash
-                            // save settles before the reload (see set_dks_combo_binding).
-                            let bytes = modal.output.to_config_bytes();
-                            let res = match DksCombo::from_config_bytes(bytes) {
-                                Some(combo) => {
-                                    keyboard.set_dks_combo_binding(0, key, 0, combo, true)
+                        } else {
+                            // Per-layer output bindings (non-DKS). Write only layers that
+                            // changed. Base (0) must never be all-zero — that silences the
+                            // key — and Base/Layer1 (keymatrix) commit via the settling
+                            // combo path; Fn goes to the separate Fn table (SET_FN). The
+                            // overlay layers treat an empty entry as transparent.
+                            for layer in 0..3usize {
+                                if modal.outputs[layer] == modal.outputs_orig[layer] {
+                                    continue;
                                 }
-                                None => keyboard.set_key_config(0, key, 0, bytes),
-                            };
-                            if let Err(e) = res {
-                                extra.push(format!("output: {e}"));
+                                let bytes = modal.outputs[layer].to_config_bytes();
+                                if layer == 0 && bytes == [0, 0, 0, 0] {
+                                    continue;
+                                }
+                                let res = if layer < 2 {
+                                    match DksCombo::from_config_bytes(bytes) {
+                                        Some(combo) => keyboard.set_dks_combo_binding(
+                                            0,
+                                            key,
+                                            layer as u8,
+                                            combo,
+                                            true,
+                                        ),
+                                        None => keyboard.set_key_config(0, key, layer as u8, bytes),
+                                    }
+                                } else {
+                                    keyboard.set_key_config(0, key, 2, bytes)
+                                };
+                                if let Err(e) = res {
+                                    extra.push(format!("output L{layer}: {e}"));
+                                }
                             }
                         }
                         let key_name = get_key_label(self, key_index);
@@ -1272,7 +1337,8 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                 let on = modal.mode & ModeByte::RT_FLAG != 0;
                 ((if on { "On" } else { "Off" }).to_string(), "")
             }
-            TriggerField::Output => (modal.output.to_string(), ""),
+            TriggerField::OutputLayer => (modal.output_layer_name().to_string(), ""),
+            TriggerField::Output => (modal.outputs[modal.output_layer].to_string(), ""),
             TriggerField::SnapTapPartner => {
                 let label = match modal.snaptap_partner {
                     Some(idx) => modal
@@ -1325,6 +1391,7 @@ fn render_modal_fields(f: &mut Frame, modal: &TriggerEditModal, area: Rect) {
                     TriggerField::DksTravel => modal.dks_travel_mm,
                     TriggerField::Mode
                     | TriggerField::RapidTrigger
+                    | TriggerField::OutputLayer
                     | TriggerField::Output
                     | TriggerField::SnapTapPartner
                     | TriggerField::DksBinding

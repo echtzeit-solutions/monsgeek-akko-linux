@@ -1379,16 +1379,27 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                     }
                                 }
                                 Some(PickerConfirm::Output) => {
-                                    let selected = app
+                                    // `Some(inner)` = a choice was made; `inner` is
+                                    // `None` for the "(none)" option, `Some(pos)` for a key.
+                                    let picked = app
                                         .trigger_edit_modal
                                         .as_mut()
                                         .and_then(|m| m.output_picker.take())
-                                        .and_then(|p| p.selected().copied().flatten());
-                                    if let Some(pos) = selected {
-                                        let hid = app.key_output_hid(pos);
+                                        .and_then(|p| p.selected().copied());
+                                    if let Some(inner) = picked {
+                                        let (action, key) = match inner {
+                                            Some(pos) => (
+                                                crate::key_action::KeyAction::Key(
+                                                    app.key_output_hid(pos),
+                                                ),
+                                                Some(pos),
+                                            ),
+                                            None => (crate::key_action::KeyAction::Disabled, None),
+                                        };
                                         if let Some(m) = app.trigger_edit_modal.as_mut() {
-                                            m.output_key = Some(pos);
-                                            m.output = crate::key_action::KeyAction::Key(hid);
+                                            let layer = m.output_layer;
+                                            m.outputs[layer] = action;
+                                            m.output_keys[layer] = key;
                                         }
                                     }
                                 }
