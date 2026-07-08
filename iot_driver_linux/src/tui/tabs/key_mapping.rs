@@ -6,7 +6,6 @@
 // overlapping tables — DKS output combos even live in the keymatrix layers).
 
 use ratatui::{prelude::*, widgets::*};
-use tui_scrollview::{ScrollView, ScrollbarVisibility};
 
 use crate::keymap::KeyRow;
 use crate::tui::RemapLayerView;
@@ -184,19 +183,23 @@ fn extra_text(row: &KeyRow, factor: f32) -> String {
     }
 }
 
-/// Compact layer-occupancy markers, e.g. "0 1 · · F".
+/// Names of the layers that carry a binding beyond the base output, e.g. "L1 Fn".
+/// Base (L0) is shown in the Output column, so it's omitted here; "·" means none.
 fn layer_markers(row: &KeyRow) -> String {
-    let mut s = String::new();
-    for (l, &set) in row.output_remapped.iter().enumerate() {
-        s.push(if set {
-            char::from(b'0' + l as u8)
-        } else {
-            '·'
-        });
-        s.push(' ');
+    let mut parts: Vec<String> = Vec::new();
+    for l in 1..4 {
+        if row.output_remapped[l] {
+            parts.push(format!("L{l}"));
+        }
     }
-    s.push(if row.fn_action.is_some() { 'F' } else { '·' });
-    s
+    if row.fn_action.is_some() {
+        parts.push("Fn".into());
+    }
+    if parts.is_empty() {
+        "·".into()
+    } else {
+        parts.join(" ")
+    }
 }
 
 pub(in crate::tui) fn render_key_mapping(f: &mut Frame, app: &mut App, area: Rect) {
@@ -265,8 +268,7 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     let rows: Vec<Row> = visible
         .iter()
-        .enumerate()
-        .map(|(vi, &ri)| {
+        .map(|&ri| {
             let r = &app.key_rows[ri];
             let mode_str = ModeByte::new(r.mode, r.rapid_trigger).to_string();
             let cells = vec![
@@ -280,9 +282,7 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(layer_markers(r)),
             ];
             let row = Row::new(cells);
-            if vi == selected {
-                row.style(Style::default().bg(Color::Blue).fg(Color::White))
-            } else if !r.is_customized() {
+            if !r.is_customized() {
                 row.style(Style::default().fg(Color::DarkGray))
             } else {
                 row
@@ -299,10 +299,6 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
             .fg(Color::Cyan),
     );
 
-    let block = Block::default().borders(Borders::ALL);
-    let inner = block.inner(chunks[1]);
-    f.render_widget(block, chunks[1]);
-
     let widths = [
         Constraint::Length(4),
         Constraint::Length(8),
@@ -313,14 +309,20 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Length(11),
         Constraint::Length(11),
     ];
-    let table = Table::new(rows, widths).header(header_row);
-
-    let content_height = (visible.len() + 1) as u16;
-    let content_size = Size::new(inner.width, content_height);
-    let mut scroll_view =
-        ScrollView::new(content_size).horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
-    scroll_view.render_widget(table, Rect::new(0, 0, inner.width, content_height));
-    f.render_stateful_widget(scroll_view, inner, &mut app.scroll_state);
+    // A stateful Table keeps the header row sticky and scrolls the body to keep the
+    // selection visible.
+    let table = Table::new(rows, widths)
+        .header(header_row)
+        .block(Block::default().borders(Borders::ALL))
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
+    let mut state = TableState::default();
+    state.select((!visible.is_empty()).then_some(selected.min(visible.len() - 1)));
+    f.render_stateful_widget(table, chunks[1], &mut state);
 }
 
 /// Keyboard-shaped view: every key drawn at its matrix position, colored by mode.
