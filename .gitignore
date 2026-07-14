@@ -78,6 +78,11 @@ firmwares/*/firmware_patched.bin
 # Generated from Ghidra exports (regenerate via generate_patch_files.py)
 firmwares/*/patch/fw_*.h
 firmwares/*/patch/fw_symbols.ld
+
+# Ghidra project transient files (lock + temp postscript scratch); the DB shards
+# under *.rep/ are intentionally tracked, but these are per-session junk.
+firmwares/*/ghidra_*.lock
+firmwares/*/*.rep/**/tmp*.ps
 firmwares/*/patch/symbols.json
 firmwares/*/patch/callgraph.*
 
