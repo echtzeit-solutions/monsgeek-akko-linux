@@ -170,10 +170,24 @@ fn output_text(row: &KeyRow, view: RemapLayerView) -> String {
     }
 }
 
-/// Mode-specific "Extra" cell (DKS travel / ModTap time / SnapTap partner).
+/// Mode-specific "Extra" cell (DKS travel + active combos / ModTap time / SnapTap).
 fn extra_text(row: &KeyRow, factor: f32) -> String {
     match row.mode {
-        KeyMode::DynamicKeystroke => format!("↧{:.2}mm", row.dks_travel as f32 / factor),
+        KeyMode::DynamicKeystroke => {
+            let travel = format!("↧{:.2}mm", row.dks_travel as f32 / factor);
+            // A binding fires only if it has an output and at least one phase action.
+            let active = (0..4)
+                .filter(|&i| {
+                    !matches!(row.outputs[i], crate::key_action::KeyAction::Disabled)
+                        && row.dks_modes[i] != 0
+                })
+                .count();
+            if active == 0 {
+                format!("{travel} ∅")
+            } else {
+                format!("{travel} ×{active}")
+            }
+        }
         KeyMode::ModTap => format!("{}ms", row.modtap_ms),
         KeyMode::SnapTap => row
             .snaptap_partner
@@ -289,7 +303,7 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Length(12),
         Constraint::Length(5),
         Constraint::Length(5),
-        Constraint::Length(11),
+        Constraint::Length(13),
     ];
     // A stateful Table keeps the header row sticky and scrolls the body to keep the
     // selection visible.
