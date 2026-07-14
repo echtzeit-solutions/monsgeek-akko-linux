@@ -52,7 +52,74 @@ impl KmState {
     }
 }
 
-/// Which keys the table shows, by three independent narrowings.
+/// Physical key class narrowing. Alphanumeric = a single-character label that is an
+/// ASCII letter or digit (A–Z, 0–9); Other = everything else (Esc, Tab, modifiers,
+/// symbols, navigation, …).
+#[derive(Clone, Copy, PartialEq, Default)]
+pub(in crate::tui) enum KmClass {
+    #[default]
+    All,
+    Alphanumeric,
+    Other,
+}
+
+impl KmClass {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::All => Self::Alphanumeric,
+            Self::Alphanumeric => Self::Other,
+            Self::Other => Self::All,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Alphanumeric => "Alnum",
+            Self::Other => "Other",
+        }
+    }
+    /// A key is alphanumeric iff its physical label is exactly one ASCII letter/digit.
+    fn is_alnum(r: &KeyRow) -> bool {
+        let mut chars = r.position.chars();
+        matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_alphanumeric())
+    }
+    pub fn matches(self, r: &KeyRow) -> bool {
+        match self {
+            Self::All => true,
+            Self::Alphanumeric => Self::is_alnum(r),
+            Self::Other => !Self::is_alnum(r),
+        }
+    }
+}
+
+/// Row ordering for the Key Mapping table.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub(in crate::tui) enum KmSort {
+    /// Physical reading order: top row L→R, then the next row down, … (Esc,F1,F2…;
+    /// `,1,2…; Tab,Q,W…). The stored index is column-major, so we re-key on
+    /// (index % 6, index / 6) = (physical row, physical column).
+    #[default]
+    Layout,
+    /// Alphabetical by physical key label (case-insensitive).
+    Alpha,
+}
+
+impl KmSort {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Layout => Self::Alpha,
+            Self::Alpha => Self::Layout,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Layout => "Layout",
+            Self::Alpha => "A–Z",
+        }
+    }
+}
+
+/// Which keys the table shows, by four independent narrowings.
 #[derive(Clone, Copy)]
 pub(in crate::tui) struct KeyMappingFilter {
     /// Layer: Both = all; L0/L1 = keys with a non-default binding on that keymatrix
@@ -61,6 +128,8 @@ pub(in crate::tui) struct KeyMappingFilter {
     pub state: KmState,
     /// Mode narrowing (None = any).
     pub mode: Option<KeyMode>,
+    /// Physical key class (alphanumeric / other).
+    pub class: KmClass,
 }
 
 impl Default for KeyMappingFilter {
@@ -69,6 +138,7 @@ impl Default for KeyMappingFilter {
             layer: RemapLayerView::Both,
             state: KmState::All,
             mode: None,
+            class: KmClass::All,
         }
     }
 }
@@ -86,12 +156,15 @@ impl KeyMappingFilter {
             RemapLayerView::L1 => r.output_remapped[1],
             RemapLayerView::Fn => r.fn_action.is_some(),
         };
-        state_ok && layer_ok && self.mode.is_none_or(|m| r.mode == m)
+        state_ok && layer_ok && self.class.matches(r) && self.mode.is_none_or(|m| r.mode == m)
     }
 
     /// True when any narrowing is active.
     pub fn is_active(&self) -> bool {
-        self.layer != RemapLayerView::Both || self.state != KmState::All || self.mode.is_some()
+        self.layer != RemapLayerView::Both
+            || self.state != KmState::All
+            || self.mode.is_some()
+            || self.class != KmClass::All
     }
 
     pub fn mode_label(&self) -> &'static str {
@@ -110,14 +183,30 @@ pub(in crate::tui) fn cycle_mode_filter(cur: Option<KeyMode>) -> Option<KeyMode>
     }
 }
 
-/// Indices into `app.key_rows` that pass the current filter.
+/// Indices into `app.key_rows` that pass the current filter, ordered by the active sort.
 pub(in crate::tui) fn visible_indices(app: &App) -> Vec<usize> {
-    app.key_rows
+    let mut v: Vec<usize> = app
+        .key_rows
         .iter()
         .enumerate()
         .filter(|(_, r)| app.key_mapping_filter.matches(r))
         .map(|(i, _)| i)
-        .collect()
+        .collect();
+    match app.key_mapping_sort {
+        KmSort::Layout => v.sort_by_key(|&i| {
+            let idx = app.key_rows[i].index as u16;
+            (idx % 6, idx / 6)
+        }),
+        KmSort::Alpha => {
+            v.sort_by(|&a, &b| {
+                app.key_rows[a]
+                    .position
+                    .to_ascii_lowercase()
+                    .cmp(&app.key_rows[b].position.to_ascii_lowercase())
+            });
+        }
+    }
+    v
 }
 
 fn mode_color(mode: KeyMode) -> Color {
@@ -227,15 +316,21 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
         Span::raw("   filter "),
         Span::styled(
             format!(
-                "[layer:{} state:{} mode:{}]",
+                "[layer:{} state:{} mode:{} class:{}]",
                 filter.layer.label(),
                 filter.state.label(),
-                filter.mode_label()
+                filter.mode_label(),
+                filter.class.label(),
             ),
             filter_style,
         ),
+        Span::raw("  sort "),
         Span::styled(
-            "  (f: filter  v: layout  Enter: edit  g: global)",
+            app.key_mapping_sort.label(),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(
+            "  (f: filter  s: sort  v: layout  Enter: edit  g: global)",
             Style::default().fg(Color::DarkGray),
         ),
     ])])
@@ -341,7 +436,7 @@ fn render_key_mapping_layout(f: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
 
     let block = Block::default().borders(Borders::ALL).title(format!(
-        "Key Mapping — layout  [{}/{} keys]  (v: list  ←↑↓→: move  Enter: edit  f: filter  g: global)",
+        "Key Mapping — layout  [{}/{} keys]  (v: list  ←↑↓→: move  Enter: edit  f: filter  s: sort  g: global)",
         visible.len(),
         app.key_rows.len(),
     ));
@@ -458,6 +553,7 @@ pub(in crate::tui) fn render_key_mapping_filter(f: &mut Frame, app: &App, area: 
         ("Layer", filter.layer.label()),
         ("State", filter.state.label()),
         ("Mode", filter.mode_label()),
+        ("Class", filter.class.label()),
     ];
 
     let w = 44u16.min(area.width);
@@ -516,9 +612,16 @@ pub(in crate::tui) fn cycle_filter_field(app: &mut App, forward: bool) {
                 app.key_mapping_filter.state.cycle().cycle()
             };
         }
-        _ => {
+        2 => {
             app.key_mapping_filter.mode = cycle_mode_filter(app.key_mapping_filter.mode);
             let _ = forward;
+        }
+        _ => {
+            app.key_mapping_filter.class = if forward {
+                app.key_mapping_filter.class.cycle()
+            } else {
+                app.key_mapping_filter.class.cycle().cycle()
+            };
         }
     }
     // Keep the selection in range after the visible set changes.

@@ -17,7 +17,7 @@ use tabs::remaps::{
     text_preview_from_events, BindingEditor, BindingField, BindingType, RemapFocus, RemapLayerView,
 };
 
-use tabs::key_mapping::{KeyMappingFilter, KeyMappingView};
+use tabs::key_mapping::{KeyMappingFilter, KeyMappingView, KmSort};
 use tabs::triggers::{render_trigger_edit_modal, TriggerEditModal};
 
 #[cfg(feature = "notify")]
@@ -131,6 +131,7 @@ struct App {
     key_rows: Vec<KeyRow>,
     key_mapping_selected: usize,
     key_mapping_view: KeyMappingView,
+    key_mapping_sort: KmSort,
     key_mapping_filter: KeyMappingFilter,
     key_mapping_filter_open: bool,
     key_mapping_filter_field: usize,
@@ -244,6 +245,7 @@ impl App {
             key_rows: Vec::new(),
             key_mapping_selected: 0,
             key_mapping_view: KeyMappingView::default(),
+            key_mapping_sort: KmSort::default(),
             key_mapping_filter: KeyMappingFilter::default(),
             key_mapping_filter_open: false,
             key_mapping_filter_field: 0,
@@ -1483,7 +1485,7 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 app.key_mapping_filter_field =
-                                    (app.key_mapping_filter_field + 1).min(2);
+                                    (app.key_mapping_filter_field + 1).min(3);
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 tabs::key_mapping::cycle_filter_field(&mut app, false);
@@ -1882,6 +1884,9 @@ pub async fn run(device_selector: Option<String>) -> io::Result<()> {
                                 KeyMappingView::List => KeyMappingView::Layout,
                                 KeyMappingView::Layout => KeyMappingView::List,
                             };
+                        }
+                        KeyCode::Char('s') if app.tab == 2 => {
+                            app.key_mapping_sort = app.key_mapping_sort.cycle();
                         }
                         // Key Mapping tab: Enter/'e' edit the selected key, 'g' edits all keys.
                         KeyCode::Enter | KeyCode::Char('e') if app.tab == 2 => {
