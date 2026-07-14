@@ -317,7 +317,9 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
     let mut state = TableState::default();
-    state.select((!visible.is_empty()).then_some(selected.min(visible.len() - 1)));
+    // `.then` (lazy) — an empty filter result must not evaluate `visible.len() - 1`,
+    // which would underflow and panic.
+    state.select((!visible.is_empty()).then(|| selected.min(visible.len() - 1)));
     f.render_stateful_widget(table, chunks[1], &mut state);
 }
 
