@@ -3,13 +3,21 @@
 
 CARGO ?= cargo
 INSTALL ?= install
+# DESTDIR stages the install under a directory instead of writing to the live system
+# (deb/rpm/AUR set it to their package root). When it is non-empty, every recipe below
+# skips its side-effects (udevadm/systemctl/desktop-db reloads, network DB refresh) so a
+# packaging `make install-all DESTDIR=... PREFIX=/usr` needs no custom steps — the reloads
+# belong in the package's postinst/postrm scripts.
+DESTDIR ?=
 PREFIX ?= /usr/local
-UDEV_RULES_DIR ?= /etc/udev/rules.d
-SYSTEMD_DIR ?= /etc/systemd/system
 BIN_DIR ?= $(PREFIX)/bin
 LIB_DIR ?= $(PREFIX)/lib/akko
 DATA_DIR ?= $(PREFIX)/share/akko
 APP_DIR ?= $(PREFIX)/share/applications
+# udev rules and systemd units live in fixed system search paths, NOT under PREFIX
+# (systemd/udev never scan /usr/local). Packagers can override for split layouts.
+UDEV_RULES_DIR ?= /usr/lib/udev/rules.d
+SYSTEMD_DIR ?= /usr/lib/systemd/system
 
 # Project directories
 DRIVER_DIR := iot_driver_linux
@@ -17,6 +25,7 @@ BPF_DIR := akko-hid-bpf
 
 # Binary names
 DRIVER_BIN := iot_driver
+JOYSTICK_BIN := monsgeek-joystick
 LOADER_BIN := akko-loader
 
 .PHONY: all driver driver-debug bpf clean clean-driver clean-bpf \
@@ -86,42 +95,57 @@ clean-bpf:
 # Install Targets (require sudo, run 'make driver' first as regular user)
 # ============================================================================
 
-## Install driver binary (must run 'make driver' first)
+## Install driver + joystick binaries (must run 'make driver' first)
 install-driver:
 	@test -f $(DRIVER_DIR)/target/release/$(DRIVER_BIN) || \
 		{ echo "Error: Binary not found. Run 'make driver' first (as regular user)."; exit 1; }
-	$(INSTALL) -D -m 755 $(DRIVER_DIR)/target/release/$(DRIVER_BIN) $(BIN_DIR)/$(DRIVER_BIN)
+	$(INSTALL) -D -m 755 $(DRIVER_DIR)/target/release/$(DRIVER_BIN) $(DESTDIR)$(BIN_DIR)/$(DRIVER_BIN)
 	@echo "Installed $(DRIVER_BIN) to $(BIN_DIR)"
+	@# monsgeek-joystick is a workspace member built by the same `make driver`.
+	@if [ -f $(DRIVER_DIR)/target/release/$(JOYSTICK_BIN) ]; then \
+		$(INSTALL) -D -m 755 $(DRIVER_DIR)/target/release/$(JOYSTICK_BIN) $(DESTDIR)$(BIN_DIR)/$(JOYSTICK_BIN); \
+		echo "Installed $(JOYSTICK_BIN) to $(BIN_DIR)"; \
+	fi
 
 ## Install udev rules
 install-udev:
 	@echo "Installing udev rules..."
-	$(INSTALL) -D -m 644 udev/99-monsgeek.rules $(UDEV_RULES_DIR)/99-monsgeek.rules
-	udevadm control --reload-rules
-	udevadm trigger --subsystem-match=hidraw --subsystem-match=input
-	@echo "Udev rules installed. You may need to reconnect your keyboard."
+	$(INSTALL) -D -m 644 udev/99-monsgeek.rules $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek.rules
+	@if [ -z "$(DESTDIR)" ]; then \
+		udevadm control --reload-rules; \
+		udevadm trigger --subsystem-match=hidraw --subsystem-match=input; \
+		echo "Udev rules installed. You may need to reconnect your keyboard."; \
+	else \
+		echo "Staged udev rules under DESTDIR; reload with 'udevadm control --reload-rules' in postinst."; \
+	fi
 
-## Install BPF loader binary (must run 'make bpf' first)
+## Install BPF loader binary + eBPF object (must run 'make bpf bpf-ebpf' first)
 install-bpf:
 	@test -f $(BPF_DIR)/target/release/$(LOADER_BIN) || \
 		{ echo "Error: Loader not found. Run 'make bpf' first (as regular user)."; exit 1; }
-	$(INSTALL) -D -m 755 $(BPF_DIR)/target/release/$(LOADER_BIN) $(BIN_DIR)/$(LOADER_BIN)
+	$(INSTALL) -D -m 755 $(BPF_DIR)/target/release/$(LOADER_BIN) $(DESTDIR)$(BIN_DIR)/$(LOADER_BIN)
 	@echo "Installed $(LOADER_BIN) to $(BIN_DIR)"
-	@# Install pre-built eBPF object if available
 	@if [ -f $(BPF_DIR)/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf ]; then \
 		$(INSTALL) -D -m 644 $(BPF_DIR)/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf \
-			$(LIB_DIR)/akko-ebpf.bpf.o; \
+			$(DESTDIR)$(LIB_DIR)/akko-ebpf.bpf.o; \
 		echo "Installed eBPF object to $(LIB_DIR)"; \
+	else \
+		echo "WARNING: eBPF object missing — run 'make bpf-ebpf' first, or battery-over-BPF will not work." >&2; \
 	fi
 
 ## Install systemd service for BPF auto-load
 install-systemd:
 	@echo "Installing systemd service..."
-	sed 's|/usr/local|$(PREFIX)|g' systemd/akko-bpf-battery.service > /tmp/akko-bpf-battery.service
-	$(INSTALL) -D -m 644 /tmp/akko-bpf-battery.service $(SYSTEMD_DIR)/akko-bpf-battery.service
-	rm /tmp/akko-bpf-battery.service
-	systemctl daemon-reload
-	@echo "Systemd service installed. BPF loader will auto-start on device plug-in."
+	$(INSTALL) -d $(DESTDIR)$(SYSTEMD_DIR)
+	sed 's|/usr/local|$(PREFIX)|g' systemd/akko-bpf-battery.service \
+		> $(DESTDIR)$(SYSTEMD_DIR)/akko-bpf-battery.service
+	chmod 644 $(DESTDIR)$(SYSTEMD_DIR)/akko-bpf-battery.service
+	@if [ -z "$(DESTDIR)" ]; then \
+		systemctl daemon-reload; \
+		echo "Systemd service installed. BPF loader will auto-start on device plug-in."; \
+	else \
+		echo "Staged systemd unit under DESTDIR; reload with 'systemctl daemon-reload' in postinst."; \
+	fi
 
 ## Install the XDG desktop entry. Its app id (solutions.echtzeit.akko_keyboard_driver) is what
 ## the ScreenCast portal needs to register the app: KDE then shows a name in the
@@ -130,8 +154,10 @@ install-systemd:
 ## the app id with "App info not found".
 install-desktop:
 	$(INSTALL) -D -m 644 $(DRIVER_DIR)/packaging/solutions.echtzeit.akko_keyboard_driver.desktop \
-		$(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
-	-update-desktop-database $(APP_DIR) 2>/dev/null || true
+		$(DESTDIR)$(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
+	@if [ -z "$(DESTDIR)" ]; then \
+		update-desktop-database $(APP_DIR) 2>/dev/null || true; \
+	fi
 	@echo "Installed desktop entry to $(APP_DIR)"
 
 ## Install driver + udev rules (standard install)
@@ -150,22 +176,29 @@ install-all: install-driver install-udev install-desktop install-data install-bp
 
 ## Uninstall driver
 uninstall-driver:
-	rm -f $(BIN_DIR)/$(DRIVER_BIN)
-	rm -f $(UDEV_RULES_DIR)/99-monsgeek.rules
-	rm -f $(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
-	-update-desktop-database $(APP_DIR) 2>/dev/null || true
-	udevadm control --reload-rules
+	rm -f $(DESTDIR)$(BIN_DIR)/$(DRIVER_BIN)
+	rm -f $(DESTDIR)$(BIN_DIR)/$(JOYSTICK_BIN)
+	rm -f $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek.rules
+	rm -f $(DESTDIR)$(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
+	@if [ -z "$(DESTDIR)" ]; then \
+		update-desktop-database $(APP_DIR) 2>/dev/null || true; \
+		udevadm control --reload-rules; \
+	fi
 	@echo "Driver uninstalled."
 
 ## Uninstall BPF components
 uninstall-bpf:
-	-systemctl stop akko-bpf-battery.service 2>/dev/null
-	-systemctl disable akko-bpf-battery.service 2>/dev/null
-	rm -f $(SYSTEMD_DIR)/akko-bpf-battery.service
-	systemctl daemon-reload
-	rm -f $(BIN_DIR)/$(LOADER_BIN)
-	rm -rf $(LIB_DIR)
-	-rm -rf /sys/fs/bpf/akko
+	@if [ -z "$(DESTDIR)" ]; then \
+		systemctl stop akko-bpf-battery.service 2>/dev/null || true; \
+		systemctl disable akko-bpf-battery.service 2>/dev/null || true; \
+	fi
+	rm -f $(DESTDIR)$(SYSTEMD_DIR)/akko-bpf-battery.service
+	rm -f $(DESTDIR)$(BIN_DIR)/$(LOADER_BIN)
+	rm -rf $(DESTDIR)$(LIB_DIR)
+	@if [ -z "$(DESTDIR)" ]; then \
+		systemctl daemon-reload; \
+		rm -rf /sys/fs/bpf/akko; \
+	fi
 	@echo "BPF components uninstalled."
 
 ## Uninstall everything
@@ -238,17 +271,20 @@ update-device-db-full:
 	@echo "Updating device database (webapp + electron)..."
 	./scripts/update-device-db.sh --electron
 
-## Install device data files (requires sudo). Interactive: offers to refresh the
-## database from the vendor driver first (default Yes), falling back to committed
-## assets. Set SKIP_REFRESH=1 to install committed assets without prompting.
+## Install device data files. Interactive for a live install: offers to refresh the
+## database from the vendor driver first (default Yes), falling back to committed assets.
+## When DESTDIR is set (packaging) the refresh is forced off — committed assets install
+## with no prompt and no network. Set SKIP_REFRESH=1 to force that for a live install too.
 install-data:
-	@DATA_DIR="$(DATA_DIR)" INSTALL="$(INSTALL)" ./scripts/install-data.sh
+	@DATA_DIR="$(DESTDIR)$(DATA_DIR)" INSTALL="$(INSTALL)" \
+		SKIP_REFRESH="$(if $(DESTDIR),1,$(SKIP_REFRESH))" \
+		./scripts/install-data.sh
 
 ## Uninstall device data files
 uninstall-data:
-	rm -f $(DATA_DIR)/devices.json
-	rm -f $(DATA_DIR)/device_matrices.json
-	-rmdir $(DATA_DIR) 2>/dev/null || true
+	rm -f $(DESTDIR)$(DATA_DIR)/devices.json
+	rm -f $(DESTDIR)$(DATA_DIR)/device_matrices.json
+	-rmdir $(DESTDIR)$(DATA_DIR) 2>/dev/null || true
 	@echo "Device data uninstalled."
 
 # ============================================================================
@@ -316,9 +352,15 @@ help:
 	@echo "  install-driver  Install driver binary only"
 	@echo "  install-udev    Install udev rules only"
 	@echo "  install-desktop Install XDG desktop entry (needed for screen-share app name)"
-	@echo "  install-bpf     Install BPF loader"
+	@echo "  install-bpf     Install BPF loader + eBPF object"
 	@echo "  install-systemd Install systemd service for BPF auto-load"
 	@echo "  uninstall       Remove all installed files"
+	@echo ""
+	@echo "Packaging (deb/rpm/AUR — no custom install steps needed):"
+	@echo "  make driver bpf bpf-ebpf"
+	@echo "  make install-all DESTDIR=\"\$$pkgdir\" PREFIX=/usr"
+	@echo "  # DESTDIR staged: udevadm/systemctl/desktop-db reloads and the DB refresh"
+	@echo "  # are skipped — run them from the package's postinst/postrm instead."
 	@echo ""
 	@echo "Tray app targets (KDE Plasma system tray):"
 	@echo "  run-tray       Run tray app for testing"
@@ -344,8 +386,12 @@ help:
 	@echo "  test-roundtrip   Run CLI setting roundtrip tests"
 	@echo "  test-tui         Run TUI basic tests"
 	@echo ""
-	@echo "Variables:"
+	@echo "Variables (override on the command line):"
+	@echo "  DESTDIR=$(DESTDIR)   (staging root for packaging; empty = live install)"
 	@echo "  PREFIX=$(PREFIX)"
 	@echo "  BIN_DIR=$(BIN_DIR)"
+	@echo "  LIB_DIR=$(LIB_DIR)"
 	@echo "  DATA_DIR=$(DATA_DIR)"
+	@echo "  APP_DIR=$(APP_DIR)"
 	@echo "  UDEV_RULES_DIR=$(UDEV_RULES_DIR)"
+	@echo "  SYSTEMD_DIR=$(SYSTEMD_DIR)"
