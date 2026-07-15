@@ -355,51 +355,74 @@ fn render_key_mapping_list(f: &mut Frame, app: &mut App, area: Rect) {
     let factor = app.precision.factor() as f32;
     let selected = app.key_mapping_selected;
 
-    let rows: Vec<Row> = visible
+    const HEADERS: [&str; 9] = [
+        "#", "Key", "Mode", "Base", "L1", "Fn", "Act", "Rel", "Extra",
+    ];
+
+    // Materialize every cell's text up front so columns can be sized to their content.
+    let text_rows: Vec<([String; 9], bool, KeyMode)> = visible
         .iter()
         .map(|&ri| {
             let r = &app.key_rows[ri];
-            let mode_str = ModeByte::new(r.mode, r.rapid_trigger).to_string();
-            let cells = vec![
-                Cell::from(format!("{:3}", r.index)),
-                Cell::from(r.position),
-                Cell::from(mode_str).style(Style::default().fg(mode_color(r.mode))),
-                Cell::from(output_text(r, RemapLayerView::L0)),
-                Cell::from(output_text(r, RemapLayerView::L1)),
-                Cell::from(output_text(r, RemapLayerView::Fn)),
-                Cell::from(format!("{:.2}", r.actuation as f32 / factor)),
-                Cell::from(format!("{:.2}", r.release as f32 / factor)),
-                Cell::from(extra_text(r, factor)),
+            let texts = [
+                r.index.to_string(),
+                r.position.to_string(),
+                ModeByte::new(r.mode, r.rapid_trigger).to_string(),
+                output_text(r, RemapLayerView::L0),
+                output_text(r, RemapLayerView::L1),
+                output_text(r, RemapLayerView::Fn),
+                format!("{:.2}", r.actuation as f32 / factor),
+                format!("{:.2}", r.release as f32 / factor),
+                extra_text(r, factor),
             ];
+            (texts, r.is_customized(), r.mode)
+        })
+        .collect();
+
+    // Each column is as wide as its widest cell (or header); the Extra column is left
+    // out and instead absorbs the remaining width.
+    let mut col_w = HEADERS.map(|h| h.chars().count() as u16);
+    for (texts, _, _) in &text_rows {
+        for (w, t) in col_w.iter_mut().zip(texts) {
+            *w = (*w).max(t.chars().count() as u16);
+        }
+    }
+
+    let rows: Vec<Row> = text_rows
+        .iter()
+        .map(|(texts, customized, mode)| {
+            let mut cells: Vec<Cell> = texts.iter().map(|t| Cell::from(t.clone())).collect();
+            cells[2] = cells[2]
+                .clone()
+                .style(Style::default().fg(mode_color(*mode)));
             let row = Row::new(cells);
-            if !r.is_customized() {
-                row.style(Style::default().fg(Color::DarkGray))
-            } else {
+            if *customized {
                 row
+            } else {
+                row.style(Style::default().fg(Color::DarkGray))
             }
         })
         .collect();
 
-    let header_row = Row::new(vec![
-        "#", "Key", "Mode", "Base", "L1", "Fn", "Act", "Rel", "Extra",
-    ])
-    .style(
+    let header_row = Row::new(HEADERS.to_vec()).style(
         Style::default()
             .add_modifier(Modifier::BOLD)
             .fg(Color::Cyan),
     );
 
-    let widths = [
-        Constraint::Length(4),
-        Constraint::Length(8),
-        Constraint::Length(13),
-        Constraint::Min(14),
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Length(13),
-    ];
+    // Content-fit every column; the last (Extra) fills whatever width is left over.
+    let last = HEADERS.len() - 1;
+    let widths: Vec<Constraint> = col_w
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| {
+            if i == last {
+                Constraint::Fill(1)
+            } else {
+                Constraint::Length(w)
+            }
+        })
+        .collect();
     // A stateful Table keeps the header row sticky and scrolls the body to keep the
     // selection visible.
     let table = Table::new(rows, widths)
