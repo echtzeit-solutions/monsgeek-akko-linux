@@ -67,25 +67,42 @@ mod config_type {
 
 /// Sub-function IDs for config_type SPECIAL_FN (10).
 ///
-/// Firmware no-ops: sub 0, 4, 6, 7, 0xf-0x16.
+/// Complete map, verified against v407 `keycode_dispatch` case 10 (Ghidra @ 0x08012088).
+/// Each sub toggles/sets a `g_fw_config` flag or an internal held-state bit; the
+/// comments record the exact firmware effect.
+///
+/// Every sub NOT listed here is a firmware **no-op**: explicitly `sub 0, 4, 6, 7,
+/// 0xf–0x16`, and — because the inner switch has no arm for them — everything
+/// `>= 0x18` (falls through `default: return`). So e.g. `SpecialFn(0x18)` (the
+/// webapp's "Fn+O") does nothing on v407.
 mod special_fn {
+    /// Fn held-modifier: sets bt_flags bit 1 while pressed.
     pub const FN_KEY: u8 = 1;
+    /// Sets g_action_key_state bit 0x10 while held (game-mode action-key bitmap).
     pub const GAME_MODE: u8 = 2;
+    /// Toggle flags1 bit 0 — guarded: only when flags1 & 6 == 0 (not in Mac/iOS). BT notify.
     pub const WIN_LOCK: u8 = 3;
     // sub 4: no-op
+    /// flags1 bits[2:1] <- b2 (0=Windows, 1=Mac, 2=iOS); b2=3 cycles.
     pub const OS_MODE: u8 = 5;
     // sub 6, 7: no-op
+    /// Enter pairing (GPIO + kbd_state+0x45), only when connection mode != USB(6).
     pub const BT_PAIRING: u8 = 8;
-    /// Same as FN_LOCK but without bt_event_queue (silent, no BT notification).
+    /// Toggle flags1 bit 4 — same bit as [`FN_LOCK`] but SILENT (no bt_event_queue).
     pub const FN_TOGGLE: u8 = 9;
+    /// Toggle flags1 bit 3; apply_config_changes + clear reports; BT notify.
     pub const WASD_SWAP: u8 = 0x0a;
+    /// Toggle flags2 bit 0 (NKRO); apply_config_changes + clear reports; BT notify.
     pub const NKRO_TOGGLE: u8 = 0x0b;
-    /// Fn Lock — toggles flags1 bit 4 with BT notification.
+    /// Toggle flags1 bit 4 (same bit as [`FN_TOGGLE`]) WITH bt_event_queue(3).
     pub const FN_LOCK: u8 = 0x0c;
+    /// Toggle flags2 bit 1 — 6KRO<->NKRO report select; clears reports; BT notify.
     pub const REPORT_MODE: u8 = 0x0d;
-    /// Toggles flags2 bit 2 — unknown function.
+    /// Toggle flags2 bit 2 — downstream effect not yet traced; BT notify.
     pub const FLAGS2_BIT2: u8 = 0x0e;
     // sub 0xf-0x16: no-op
+    /// Sets g_action_key_state bit 0x80 while held (webapp labels this an "AI/DeepSeek" key;
+    /// firmware just latches the held-state bit — consumer not fully traced).
     pub const RCTRL_MOD: u8 = 0x17;
 }
 
