@@ -193,7 +193,7 @@ pub fn open_keyboard(
 
     // Try matrix database for key names and matrix size (covers 390+ devices).
     // This is the generic path — no hardcoded profile needed.
-    let matrix_db = device_id.and_then(|id| registry.get_device_matrix(id));
+    let matrix_db = device_id.and_then(|id| registry.get_device_matrix(vid, pid, id));
     if let Some(matrix) = matrix_db {
         let matrix_size = matrix.matrix_size() as u8;
         if key_count == 0 || (key_count < matrix_size && matrix_size > 0) {

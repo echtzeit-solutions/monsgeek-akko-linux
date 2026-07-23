@@ -18,15 +18,18 @@
 //    are always non-analog
 //
 // Output: data/device_matrices.json
+//
+// Usage:
+//   node merge-matrices.js [--devices devices.json] [--matrices a.json --matrices b.json]
+//                          [--svg-dir <dir>] [-o device_matrices.json]
+//
+// --matrices may be repeated, once per vendor driver. Earlier files win on conflict, so
+// pass the most-trusted source first; later ones only fill in classes it doesn't have.
 
 const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '../data');
-const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
-const MATRICES_FILE = path.join(DATA_DIR, 'led_matrices.json');
-const OUTPUT_FILE = path.join(DATA_DIR, 'device_matrices.json');
-const SVG_DIR = path.join(__dirname, 'refactored/src/assets/svg');
 
 // HID code to key name
 const HID_TO_KEY = {
@@ -76,15 +79,19 @@ const SVG_ID_TO_HID = {
  * keys present in KeyMappings but absent from Calibration are non-analog.
  * Returns Map<svgStem, string[]> of non-analog SVG element IDs per layout.
  */
-function extractNonAnalogFromSvgs() {
+function extractNonAnalogFromSvgs(svgDirs) {
   const nonAnalogByLayout = new Map();
+  for (const dir of svgDirs) collectNonAnalogFromSvgDir(dir, nonAnalogByLayout);
+  return nonAnalogByLayout;
+}
 
+function collectNonAnalogFromSvgDir(svgDir, nonAnalogByLayout) {
   let svgFiles;
   try {
-    svgFiles = fs.readdirSync(SVG_DIR);
+    svgFiles = fs.readdirSync(svgDir);
   } catch {
-    console.log('SVG directory not found, skipping SVG-based non-analog detection');
-    return nonAnalogByLayout;
+    console.log(`SVG directory ${svgDir} not found, skipping its non-analog detection`);
+    return;
   }
 
   for (const f of svgFiles) {
@@ -94,8 +101,8 @@ function extractNonAnalogFromSvgs() {
     const kmFile = svgFiles.find(s => s.startsWith(stem + '_KeyMappings'));
     if (!kmFile) continue;
 
-    const calibContent = fs.readFileSync(path.join(SVG_DIR, f), 'utf8');
-    const kmContent = fs.readFileSync(path.join(SVG_DIR, kmFile), 'utf8');
+    const calibContent = fs.readFileSync(path.join(svgDir, f), 'utf8');
+    const kmContent = fs.readFileSync(path.join(svgDir, kmFile), 'utf8');
 
     const extractIds = (content) => {
       const ids = new Set();
@@ -112,11 +119,9 @@ function extractNonAnalogFromSvgs() {
     if (nonAnalog.length > 0) {
       // Layout stem e.g. "SG9000" from "Keyboard_82_SG9000"
       const layoutPart = stem.split('_').slice(2).join('_');
-      nonAnalogByLayout.set(layoutPart, nonAnalog);
+      if (!nonAnalogByLayout.has(layoutPart)) nonAnalogByLayout.set(layoutPart, nonAnalog);
     }
   }
-
-  return nonAnalogByLayout;
 }
 
 /**
@@ -150,22 +155,71 @@ function findNonAnalogPositions(matrix, keyLayoutName, svgNonAnalog) {
   return [...new Set(positions)].sort((a, b) => a - b);
 }
 
-function main() {
-  // Load data
-  const devicesData = JSON.parse(fs.readFileSync(DEVICES_FILE, 'utf8'));
-  const matricesData = JSON.parse(fs.readFileSync(MATRICES_FILE, 'utf8'));
+function parseArgs(argv) {
+  const opts = {
+    devices: path.join(DATA_DIR, 'devices.json'),
+    matrices: [],
+    svgDirs: [],
+    output: path.join(DATA_DIR, 'device_matrices.json'),
+  };
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--devices':
+        opts.devices = argv[++i];
+        break;
+      case '--matrices':
+        opts.matrices.push(argv[++i]);
+        break;
+      case '--svg-dir':
+        opts.svgDirs.push(argv[++i]);
+        break;
+      case '-o':
+      case '--output':
+        opts.output = argv[++i];
+        break;
+      default:
+        console.error(`Unknown option: ${argv[i]}`);
+        process.exit(1);
+    }
+  }
+  if (opts.matrices.length === 0) {
+    console.error('Error: at least one --matrices <led_matrices.json> is required');
+    process.exit(1);
+  }
+  return opts;
+}
 
-  // Extract non-analog key info from SVGs
-  const svgNonAnalog = extractNonAnalogFromSvgs();
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+
+  const devicesData = JSON.parse(fs.readFileSync(opts.devices, 'utf8'));
+
+  // Merge every vendor's matrix set; first file to define a class/alias wins.
+  const matrices = {};
+  const nameToClass = {};
+  for (const file of opts.matrices) {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    let newClasses = 0;
+    for (const [className, info] of Object.entries(data.devices || {})) {
+      if (!(className in matrices)) {
+        matrices[className] = info;
+        newClasses++;
+      }
+    }
+    // device name -> driver class name; resolves models that reuse another class's
+    // defaultMatrix. Empty if the source's extract-matrices.js run predates this.
+    for (const [name, className] of Object.entries(data.nameToClass || {})) {
+      if (!(name in nameToClass)) nameToClass[name] = className;
+    }
+    console.log(`  ${path.basename(file)}: +${newClasses} classes (${Object.keys(data.devices || {}).length} total)`);
+  }
+
+  const svgNonAnalog = extractNonAnalogFromSvgs(opts.svgDirs);
   if (svgNonAnalog.size > 0) {
     console.log(`Found non-analog keys in ${svgNonAnalog.size} SVG layouts`);
   }
 
   const devices = devicesData.devices;
-  const matrices = matricesData.devices;
-  // device name -> driver class name (from the main.jsx switch); resolves models that
-  // reuse another class's defaultMatrix. Empty if extract-matrices.js predates this.
-  const nameToClass = matricesData.nameToClass || {};
 
   // Build lookup tables
   const matrixByClassName = new Map();
@@ -280,6 +334,8 @@ function main() {
       const entry = {
         name: dev.name,
         displayName: dev.displayName,
+        vid: dev.vid,
+        pid: dev.pid,
         keyLayoutName: dev.keyLayoutName || null,
         keyCount: matrix.filter(h => h !== 0).length,
         matchMethod,
@@ -291,7 +347,10 @@ function main() {
         entry.nonAnalogPositions = nonAnalogPositions;
       }
 
-      deviceMatrices[dev.id] = entry;
+      // Keyed by vid:pid:id — device IDs are only unique per USB product. Two vendors
+      // reusing an ID (e.g. 790 = yc500_5108bplus_uk_soc @3151:4015 and yc580_yz21
+      // @3151:4010) would otherwise silently overwrite each other's matrix.
+      deviceMatrices[`${dev.vid}:${dev.pid}:${dev.id}`] = entry;
     } else {
       stats.byMethod.unmatched++;
     }
@@ -302,9 +361,9 @@ function main() {
 
   // Output
   const output = {
-    version: 2,
+    version: 3,
     generatedAt: new Date().toISOString(),
-    description: "Device ID to key matrix mapping. Matrix is position -> HID code, keyNames is position -> key name. nonAnalogPositions lists matrix indices of GPIO/encoder keys (not magnetic switches).",
+    description: "Key matrix per device, keyed \"vid:pid:id\". Matrix is position -> HID code, keyNames is position -> key name. nonAnalogPositions lists matrix indices of GPIO/encoder keys (not magnetic switches).",
     stats: {
       totalKeyboards: stats.total,
       matched: stats.matched,
@@ -317,9 +376,10 @@ function main() {
     devices: deviceMatrices,
   };
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(output, null, 2));
+  fs.mkdirSync(path.dirname(opts.output), { recursive: true });
+  fs.writeFileSync(opts.output, JSON.stringify(output, null, 2));
 
-  console.log(`Merged ${stats.matched}/${stats.total} keyboards to ${OUTPUT_FILE}`);
+  console.log(`Merged ${stats.matched}/${stats.total} keyboards to ${opts.output}`);
   console.log('By method:');
   for (const [method, count] of Object.entries(stats.byMethod)) {
     if (count > 0) {

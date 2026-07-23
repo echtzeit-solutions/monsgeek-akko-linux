@@ -425,7 +425,7 @@ impl App {
         // Try matrix database for key names and matrix size
         let registry = crate::profile_registry();
         let matrix_db: Option<&crate::device_loader::JsonDeviceMatrix> =
-            device_id.and_then(|id| registry.get_device_matrix(id));
+            device_id.and_then(|id| registry.get_device_matrix(vid, pid, id));
         let (key_count, display_key_count) = resolve_key_counts(db_key_count, matrix_db);
 
         let mut kb = KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
@@ -600,7 +600,7 @@ impl App {
                 );
 
                 let registry = crate::profile_registry();
-                let matrix_db = device_id.and_then(|id| registry.get_device_matrix(id));
+                let matrix_db = device_id.and_then(|id| registry.get_device_matrix(vid, pid, id));
                 let (key_count, display_key_count) = resolve_key_counts(db_key_count, matrix_db);
 
                 let mut kb =
@@ -2367,6 +2367,8 @@ mod tests {
         JsonDeviceMatrix {
             name: "test".into(),
             display_name: "Test".into(),
+            vid: 0x3151,
+            pid: 0x5030,
             key_layout_name: None,
             key_count: 88,
             match_method: "driverClass".into(),

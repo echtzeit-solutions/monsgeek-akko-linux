@@ -72,11 +72,26 @@ impl ProfileRegistry {
     }
 
     /// Get device info from the database by firmware device ID (from GET_USB_VERSION)
-    /// This is the correct lookup — device ID uniquely identifies the model.
+    /// This is the correct lookup — the device ID comes from the keyboard itself.
+    /// Returns `None` for the few IDs shared by several products; pass the USB IDs to
+    /// [`Self::get_device_info_by_id_and_usb`] to break those ties.
     pub fn get_device_info_by_id(&self, device_id: i32) -> Option<&JsonDeviceDefinition> {
         self.device_db
             .as_ref()
             .and_then(|db| db.find_by_id(device_id))
+    }
+
+    /// Get device info by firmware device ID, disambiguated by the USB IDs it was
+    /// reached through (which over a 2.4GHz dongle belong to the dongle, not the keyboard).
+    pub fn get_device_info_by_id_and_usb(
+        &self,
+        device_id: i32,
+        vid: u16,
+        pid: u16,
+    ) -> Option<&JsonDeviceDefinition> {
+        self.device_db
+            .as_ref()
+            .and_then(|db| db.find_by_id_and_usb(device_id, vid, pid))
     }
 
     /// Get device info with company preference
@@ -103,14 +118,16 @@ impl ProfileRegistry {
         self.get_device_info(vid, pid).and_then(|d| d.key_count)
     }
 
-    /// Get device matrix from the matrix database by device ID
+    /// Get device matrix from the matrix database
     pub fn get_device_matrix(
         &self,
+        vid: u16,
+        pid: u16,
         device_id: i32,
     ) -> Option<&crate::device_loader::JsonDeviceMatrix> {
         self.device_db
             .as_ref()
-            .and_then(|db| db.get_matrix(device_id))
+            .and_then(|db| db.get_matrix(vid, pid, device_id))
     }
 
     /// Check if device database is loaded

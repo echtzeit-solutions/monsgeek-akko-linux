@@ -18,9 +18,10 @@ pub fn is_supported(vid: u16, _pid: u16) -> bool {
 fn resolve_json_device(device_id: Option<i32>, vid: u16, pid: u16) -> Option<DeviceInfo> {
     let registry = profile_registry();
 
-    // Try device ID in JSON database (unique match)
+    // The device ID comes from the keyboard itself, so it leads; the USB IDs only
+    // disambiguate the few IDs claimed by more than one product.
     if let Some(id) = device_id {
-        if let Some(d) = registry.get_device_info_by_id(id) {
+        if let Some(d) = registry.get_device_info_by_id_and_usb(id, vid, pid) {
             return Some(DeviceInfo::from_json(d));
         }
     }

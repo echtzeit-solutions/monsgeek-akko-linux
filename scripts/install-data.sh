@@ -36,18 +36,32 @@ refresh_possible() {
     command -v curl >/dev/null 2>&1 && command -v 7z >/dev/null 2>&1
 }
 
-# Reject obviously-broken output before it overwrites the committed database.
+# Reject output that is broken or thinner than what we already ship. The committed
+# database is merged from several vendor drivers; a refresh that can only reach one of
+# them (say the webapp, because no vendor workspace is unpacked) would otherwise quietly
+# install a smaller device list than the one in the repo.
 validate_db() {
+  local backup="$1"
   node -e '
     const fs = require("fs");
-    const d = JSON.parse(fs.readFileSync(process.argv[1]));
-    const m = JSON.parse(fs.readFileSync(process.argv[2]));
-    const dd = d.devices || d;
-    const nd = Array.isArray(dd) ? dd.length : Object.keys(dd).length;
-    const nm = Object.keys(m.devices || {}).length;
+    const count = (file, pick) => {
+      const j = JSON.parse(fs.readFileSync(file));
+      const v = pick(j);
+      return Array.isArray(v) ? v.length : Object.keys(v).length;
+    };
+    const [devices, matrices, backupDir] = process.argv.slice(1);
+    const nd = count(devices, j => j.devices || j);
+    const nm = count(matrices, j => j.devices || {});
     if (!(nd >= 300)) throw new Error("device count too low: " + nd);
     if (!(nm >= 300)) throw new Error("matrix count too low: " + nm);
-  ' "$DEVICES" "$MATRICES"
+
+    for (const [label, name, now] of [["device", "devices.json", nd], ["matrix", "device_matrices.json", nm]]) {
+      const prev = backupDir + "/" + name;
+      if (!fs.existsSync(prev)) continue;
+      const before = count(prev, j => j.devices || j);
+      if (now < before) throw new Error(`${label} count regressed: ${before} -> ${now}`);
+    }
+  ' "$DEVICES" "$MATRICES" "$backup"
 }
 
 do_refresh() {
@@ -55,13 +69,16 @@ do_refresh() {
   echo "  (downloads the Akko Cloud installer ~70MB + runs the extractor; may take a few minutes)"
   local backup
   backup="$(mktemp -d)"
-  cp "$DEVICES" "$MATRICES" "$backup/" 2>/dev/null || true
-  if as_user "$REPO_ROOT/scripts/update-device-db.sh" --electron && validate_db; then
+  # The update also rewrites key_layouts/key_codes; back them up too so a rejected
+  # refresh leaves the working tree exactly as it found it.
+  local regenerated=(devices.json device_matrices.json key_layouts.json key_codes.json)
+  for f in "${regenerated[@]}"; do cp "$REPO_ROOT/data/$f" "$backup/" 2>/dev/null || true; done
+
+  if as_user "$REPO_ROOT/scripts/update-device-db.sh" --electron && validate_db "$backup"; then
     echo "Device database refreshed and validated."
   else
     echo "WARNING: refresh failed or produced invalid data — keeping the committed database." >&2
-    cp "$backup/devices.json" "$DEVICES" 2>/dev/null || true
-    cp "$backup/device_matrices.json" "$MATRICES" 2>/dev/null || true
+    for f in "${regenerated[@]}"; do cp "$backup/$f" "$REPO_ROOT/data/$f" 2>/dev/null || true; done
   fi
   rm -rf "$backup"
 }

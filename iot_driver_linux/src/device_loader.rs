@@ -160,6 +160,8 @@ fn default_type() -> String {
 pub struct JsonDeviceMatrix {
     pub name: String,
     pub display_name: String,
+    pub vid: u16,
+    pub pid: u16,
     #[serde(default)]
     pub key_layout_name: Option<String>,
     pub key_count: u16,
@@ -246,16 +248,19 @@ pub struct JsonDeviceMatricesFile {
 /// Device database loaded from JSON
 #[derive(Debug)]
 pub struct DeviceDatabase {
-    /// All devices indexed by ID
-    devices_by_id: HashMap<i32, JsonDeviceDefinition>,
-    /// Devices indexed by (VID, PID) -> list of matching device IDs
-    devices_by_vid_pid: HashMap<(u16, u16), Vec<i32>>,
-    /// Devices indexed by company
-    devices_by_company: HashMap<String, Vec<i32>>,
+    /// Every device definition; the indexes below hold positions into this list.
+    devices: Vec<JsonDeviceDefinition>,
+    /// Device ID -> devices claiming it (usually one; a few IDs are reused across products)
+    devices_by_id: HashMap<i32, Vec<usize>>,
+    /// (VID, PID) -> devices behind that USB product
+    devices_by_vid_pid: HashMap<(u16, u16), Vec<usize>>,
+    /// Company -> its devices
+    devices_by_company: HashMap<String, Vec<usize>>,
     /// Version of the loaded database
     version: u32,
-    /// Device matrices (loaded from device_matrices.json)
-    matrices: HashMap<i32, JsonDeviceMatrix>,
+    /// Device matrices (loaded from device_matrices.json), keyed by device ID.
+    /// A handful of IDs are claimed by more than one USB product, hence the Vec.
+    matrices: HashMap<i32, Vec<JsonDeviceMatrix>>,
 }
 
 /// Default paths to search for devices.json
@@ -278,6 +283,7 @@ impl DeviceDatabase {
     /// Create empty database
     pub fn new() -> Self {
         Self {
+            devices: Vec::new(),
             devices_by_id: HashMap::new(),
             devices_by_vid_pid: HashMap::new(),
             devices_by_company: HashMap::new(),
@@ -349,13 +355,14 @@ impl DeviceDatabase {
             .map_err(|e| format!("Failed to parse matrices JSON: {e}"))?;
 
         let mut count = 0;
-        for (id_str, matrix) in file.devices {
-            if let Ok(id) = id_str.parse::<i32>() {
-                self.matrices.insert(id, matrix);
-                count += 1;
-            } else {
-                warn!("Invalid device ID in matrices: {}", id_str);
-            }
+        for (key, matrix) in file.devices {
+            // Keys are "vid:pid:id"; the device ID is what the keyboard reports.
+            let Some(id) = key.rsplit(':').next().and_then(|s| s.parse::<i32>().ok()) else {
+                warn!("Invalid device matrix key: {key}");
+                continue;
+            };
+            self.matrices.entry(id).or_default().push(matrix);
+            count += 1;
         }
         Ok(count)
     }
@@ -396,33 +403,59 @@ impl DeviceDatabase {
         let id = device.id;
         let vid_pid = (device.vid, device.pid);
         let company = device.company.clone().unwrap_or_default();
+        let slot = self.devices.len();
+        self.devices.push(device);
 
-        // Index by VID/PID
-        self.devices_by_vid_pid.entry(vid_pid).or_default().push(id);
+        // Index by device ID. A few IDs are claimed by more than one USB product
+        // (e.g. 790 = yc500_5108bplus_uk_soc @3151:4015 and yc580_yz21 @3151:4010),
+        // so every claimant is kept and `find_by_id_and_usb` picks between them.
+        self.devices_by_id.entry(id).or_default().push(slot);
+        self.devices_by_vid_pid
+            .entry(vid_pid)
+            .or_default()
+            .push(slot);
 
         // Index by company (skip empty company names)
         if !company.is_empty() {
-            self.devices_by_company.entry(company).or_default().push(id);
+            self.devices_by_company
+                .entry(company)
+                .or_default()
+                .push(slot);
         }
-
-        // Store device
-        self.devices_by_id.insert(id, device);
     }
 
-    /// Find device by ID
+    /// Find device by ID, when that ID identifies exactly one product.
+    ///
+    /// Returns `None` for an ID several products claim — use [`Self::find_by_id_and_usb`]
+    /// there, which can break the tie.
     pub fn find_by_id(&self, id: i32) -> Option<&JsonDeviceDefinition> {
-        self.devices_by_id.get(&id)
+        match self.devices_by_id.get(&id)?.as_slice() {
+            [only] => self.devices.get(*only),
+            _ => None,
+        }
+    }
+
+    /// Find device by the ID it reports, disambiguated by the USB IDs we reached it through.
+    ///
+    /// The device ID comes from the keyboard itself, so it leads; `vid`/`pid` identify the
+    /// USB endpoint, which over a 2.4GHz dongle is the dongle rather than the keyboard.
+    /// They are therefore only consulted when several products claim the same ID.
+    pub fn find_by_id_and_usb(&self, id: i32, vid: u16, pid: u16) -> Option<&JsonDeviceDefinition> {
+        let slots = self.devices_by_id.get(&id)?;
+        match slots.as_slice() {
+            [only] => self.devices.get(*only),
+            claimants => claimants
+                .iter()
+                .filter_map(|&s| self.devices.get(s))
+                .find(|d| d.vid == vid && d.pid == pid),
+        }
     }
 
     /// Find all devices with matching VID/PID
     pub fn find_by_vid_pid(&self, vid: u16, pid: u16) -> Vec<&JsonDeviceDefinition> {
         self.devices_by_vid_pid
             .get(&(vid, pid))
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.devices_by_id.get(id))
-                    .collect()
-            })
+            .map(|slots| slots.iter().filter_map(|&s| self.devices.get(s)).collect())
             .unwrap_or_default()
     }
 
@@ -453,11 +486,7 @@ impl DeviceDatabase {
     pub fn find_by_company(&self, company: &str) -> Vec<&JsonDeviceDefinition> {
         self.devices_by_company
             .get(company)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.devices_by_id.get(id))
-                    .collect()
-            })
+            .map(|slots| slots.iter().filter_map(|&s| self.devices.get(s)).collect())
             .unwrap_or_default()
     }
 
@@ -468,17 +497,17 @@ impl DeviceDatabase {
 
     /// Get all devices
     pub fn all_devices(&self) -> impl Iterator<Item = &JsonDeviceDefinition> {
-        self.devices_by_id.values()
+        self.devices.iter()
     }
 
     /// Get device count
     pub fn len(&self) -> usize {
-        self.devices_by_id.len()
+        self.devices.len()
     }
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.devices_by_id.is_empty()
+        self.devices.is_empty()
     }
 
     /// Get all unique VID/PID combinations
@@ -496,35 +525,63 @@ impl DeviceDatabase {
         self.version
     }
 
-    /// Get device matrix by device ID
-    pub fn get_matrix(&self, device_id: i32) -> Option<&JsonDeviceMatrix> {
-        self.matrices.get(&device_id)
+    /// Get the key matrix for a keyboard reporting `device_id` from GET_USB_VERSION.
+    ///
+    /// The device ID always comes from the keyboard itself, so it is the primary key —
+    /// `vid`/`pid` identify whichever USB endpoint we are talking through, which over a
+    /// 2.4GHz dongle is the dongle rather than the keyboard. USB IDs therefore only break
+    /// ties for the handful of IDs that more than one product claims; when they cannot
+    /// (an ambiguous ID reached over a dongle) we return nothing rather than guess a
+    /// layout that may belong to a different keyboard.
+    ///
+    /// Mirrors the precedence in [`crate::devices::get_device_info_with_id`], so the
+    /// device database and the matrix database always agree on what is connected.
+    pub fn get_matrix(&self, vid: u16, pid: u16, device_id: i32) -> Option<&JsonDeviceMatrix> {
+        match self.matrices.get(&device_id)?.as_slice() {
+            [only] => Some(only),
+            claimants => claimants.iter().find(|m| m.vid == vid && m.pid == pid),
+        }
     }
 
     /// Get key name for a device's matrix position
-    pub fn device_key_name(&self, device_id: i32, position: usize) -> Option<&str> {
-        self.matrices
-            .get(&device_id)
+    pub fn device_key_name(
+        &self,
+        vid: u16,
+        pid: u16,
+        device_id: i32,
+        position: usize,
+    ) -> Option<&str> {
+        self.get_matrix(vid, pid, device_id)
             .and_then(|m| m.key_name(position))
     }
 
     /// Get matrix position for a key name on a device
-    pub fn device_key_index(&self, device_id: i32, name: &str) -> Option<usize> {
-        self.matrices
-            .get(&device_id)
+    pub fn device_key_index(
+        &self,
+        vid: u16,
+        pid: u16,
+        device_id: i32,
+        name: &str,
+    ) -> Option<usize> {
+        self.get_matrix(vid, pid, device_id)
             .and_then(|m| m.key_index(name))
     }
 
     /// Get HID code for a device's matrix position
-    pub fn device_hid_code(&self, device_id: i32, position: usize) -> Option<u8> {
-        self.matrices
-            .get(&device_id)
+    pub fn device_hid_code(
+        &self,
+        vid: u16,
+        pid: u16,
+        device_id: i32,
+        position: usize,
+    ) -> Option<u8> {
+        self.get_matrix(vid, pid, device_id)
             .and_then(|m| m.hid_code(position))
     }
 
     /// Get number of loaded matrices
     pub fn matrices_len(&self) -> usize {
-        self.matrices.len()
+        self.matrices.values().map(Vec::len).sum()
     }
 }
 
@@ -537,6 +594,9 @@ impl Default for DeviceDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const M1_V5_TMR_VID: u16 = 0x3151;
+    const M1_V5_TMR_PID: u16 = 0x5030;
 
     // Legacy array format
     const TEST_JSON_LEGACY: &str = r#"[
@@ -586,6 +646,95 @@ mod tests {
             }
         ]
     }"#;
+
+    // Two devices sharing ID 790 across different PIDs, plus an ID unique to one product.
+    const TEST_MATRICES_JSON: &str = r#"{
+        "version": 3,
+        "devices": {
+            "12625:16405:790": {
+                "name": "yc500_5108bplus_uk_soc", "displayName": "5108B+",
+                "vid": 12625, "pid": 16405, "keyCount": 3, "matchMethod": "exactName",
+                "matrix": [41, 43, 57], "keyNames": ["Esc", "Tab", "CapsLock"]
+            },
+            "12625:16400:790": {
+                "name": "yc580_yz21", "displayName": "YZ21",
+                "vid": 12625, "pid": 16400, "keyCount": 2, "matchMethod": "exactName",
+                "matrix": [4, 5], "keyNames": ["A", "B"]
+            },
+            "12625:20528:3804": {
+                "name": "ry5088_womier_sk75he_europe_3m_8k_8k", "displayName": "SK75 TMR",
+                "vid": 12625, "pid": 20528, "keyCount": 2, "matchMethod": "exactName",
+                "matrix": [74, 77], "keyNames": ["Home", "End"]
+            }
+        }
+    }"#;
+
+    #[test]
+    fn device_lookup_keeps_every_claimant_of_a_shared_id() {
+        // Same shape as the real collision: one ID, two unrelated keyboards.
+        let db = DeviceDatabase::load_from_json(
+            r#"[
+                {"id": 790, "vid": 12625, "pid": 16405, "name": "yc500_5108bplus_uk_soc",
+                 "displayName": "5108B Plus", "type": "keyboard", "company": "akko"},
+                {"id": 790, "vid": 12625, "pid": 16400, "name": "yc580_yz21",
+                 "displayName": "YZ-21", "type": "keyboard", "company": "YUNZII"},
+                {"id": 3804, "vid": 12625, "pid": 20528, "name": "ry5088_womier_sk75he_europe_3m_8k_8k",
+                 "displayName": "SK75 TMR", "type": "keyboard", "company": "WOMIER"}
+            ]"#,
+        )
+        .unwrap();
+
+        // Neither claimant is dropped at load time.
+        assert_eq!(db.len(), 3);
+        assert_eq!(
+            db.find_by_vid_pid(12625, 16405)[0].name,
+            "yc500_5108bplus_uk_soc"
+        );
+        assert_eq!(db.find_by_vid_pid(12625, 16400)[0].name, "yc580_yz21");
+
+        // An unambiguous ID resolves without USB IDs (i.e. also over a dongle).
+        assert_eq!(db.find_by_id(3804).unwrap().display_name, "SK75 TMR");
+        // A shared one needs the tie-break and refuses to guess without it.
+        assert!(db.find_by_id(790).is_none());
+        assert_eq!(
+            db.find_by_id_and_usb(790, 12625, 16400)
+                .unwrap()
+                .display_name,
+            "YZ-21"
+        );
+        assert!(db.find_by_id_and_usb(790, 0x3151, 0x5038).is_none());
+    }
+
+    #[test]
+    fn matrix_lookup_disambiguates_shared_device_ids() {
+        let mut db = DeviceDatabase::new();
+        assert_eq!(db.load_matrices_from_json(TEST_MATRICES_JSON).unwrap(), 3);
+
+        // An unambiguous device ID resolves through ANY transport — over a 2.4GHz dongle
+        // the vid/pid we see belong to the dongle, not to the keyboard reporting the ID.
+        const DONGLE: (u16, u16) = (0x3151, 0x5038);
+        assert_eq!(
+            db.get_matrix(DONGLE.0, DONGLE.1, 3804)
+                .unwrap()
+                .display_name,
+            "SK75 TMR"
+        );
+
+        // Where two products claim one ID, the USB IDs are the only tie-breaker.
+        assert_eq!(
+            db.get_matrix(12625, 16405, 790).unwrap().name,
+            "yc500_5108bplus_uk_soc"
+        );
+        assert_eq!(db.get_matrix(12625, 16400, 790).unwrap().name, "yc580_yz21");
+
+        // Ambiguous ID with no matching product (e.g. reached over a dongle): report
+        // nothing rather than a layout that may belong to the other keyboard.
+        assert!(db.get_matrix(DONGLE.0, DONGLE.1, 790).is_none());
+
+        assert_eq!(db.device_key_name(12625, 20528, 3804, 1), Some("End"));
+        assert_eq!(db.device_hid_code(12625, 20528, 3804, 0), Some(74));
+        assert_eq!(db.device_key_index(12625, 16400, 790, "b"), Some(1));
+    }
 
     #[test]
     fn test_load_legacy_json() {
@@ -775,7 +924,7 @@ mod tests {
 
         // Look up matrix from device_matrices.json
         let matrix = db
-            .get_matrix(m1v5.id)
+            .get_matrix(m1v5.vid, m1v5.pid, m1v5.id)
             .expect("M1 V5 HE matrix not found in device_matrices.json");
 
         println!(
@@ -814,7 +963,9 @@ mod tests {
         assert!(count > 300, "Expected 300+ matrices, got {}", count);
 
         // Test M1 V5 TMR (device 2247)
-        let matrix = db.get_matrix(2247).expect("M1 V5 TMR matrix not found");
+        let matrix = db
+            .get_matrix(M1_V5_TMR_VID, M1_V5_TMR_PID, 2247)
+            .expect("M1 V5 TMR matrix not found");
         assert_eq!(matrix.display_name, "M1 V5 TMR");
         assert_eq!(matrix.key_count, 85);
 
@@ -827,14 +978,26 @@ mod tests {
         );
 
         // Test helper methods on database
-        assert_eq!(db.device_key_name(2247, 28), Some("C"));
-        assert_eq!(db.device_key_name(2247, 0), Some("Esc"));
-        assert_eq!(db.device_hid_code(2247, 28), Some(6));
+        assert_eq!(
+            db.device_key_name(M1_V5_TMR_VID, M1_V5_TMR_PID, 2247, 28),
+            Some("C")
+        );
+        assert_eq!(
+            db.device_key_name(M1_V5_TMR_VID, M1_V5_TMR_PID, 2247, 0),
+            Some("Esc")
+        );
+        assert_eq!(
+            db.device_hid_code(M1_V5_TMR_VID, M1_V5_TMR_PID, 2247, 28),
+            Some(6)
+        );
 
         // Test key index lookup (uses key_names from JSON, not HID canonical names)
         assert_eq!(matrix.key_index("C"), Some(28));
         assert_eq!(matrix.key_index("Esc"), Some(0));
-        assert_eq!(db.device_key_index(2247, "C"), Some(28));
+        assert_eq!(
+            db.device_key_index(M1_V5_TMR_VID, M1_V5_TMR_PID, 2247, "C"),
+            Some(28)
+        );
 
         println!(
             "M1 V5 TMR: position 28 = HID {} = {}",
