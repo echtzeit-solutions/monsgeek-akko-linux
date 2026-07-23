@@ -417,6 +417,19 @@ function extractKeyLayoutIIFE(node) {
     return Object.keys(layouts).length > 0 ? layouts : null;
 }
 
+// The KeyLayout enum keeps its member names through minification but not its variable
+// name — deobfuscated builds call it `KeyLayout`, minified ones `c`, `h`, ... So identify
+// it by shape: a large IIFE-populated object whose keys are almost all layout names.
+const LAYOUT_MEMBER_RE = /^(Common|Special)\d+/;
+const MIN_LAYOUT_MEMBERS = 20;
+
+function looksLikeKeyLayoutEnum(layouts) {
+    const names = Object.keys(layouts);
+    if (names.length < MIN_LAYOUT_MEMBERS) return false;
+    const hits = names.filter(n => LAYOUT_MEMBER_RE.test(n)).length;
+    return hits / names.length > 0.8;
+}
+
 traverse(ast, {
     VariableDeclarator(nodePath) {
         const name = nodePath.node.id?.name;
@@ -424,12 +437,10 @@ traverse(ast, {
         if (!name || !init) return;
 
         // Look for KeyLayout IIFE
-        if (name === 'KeyLayout') {
-            const layouts = extractKeyLayoutIIFE(init);
-            if (layouts) {
-                Object.assign(keyLayouts, layouts);
-                console.error(`  Found KeyLayout: ${Object.keys(layouts).length} layouts`);
-            }
+        const layouts = extractKeyLayoutIIFE(init);
+        if (layouts && (name === 'KeyLayout' || looksLikeKeyLayoutEnum(layouts))) {
+            Object.assign(keyLayouts, layouts);
+            console.error(`  Found KeyLayout (as "${name}"): ${Object.keys(layouts).length} layouts`);
         }
 
         // Look for keyCode arrays: const keyCode_* = [...] or const keyCodeAll = [...]
@@ -470,11 +481,13 @@ traverse(ast, {
         for (const caseNode of nodePath.node.cases) {
             if (!caseNode.test) continue; // skip default
 
-            // Get KeyLayout name from case: KeyLayout.X
+            // Get layout name from case: KeyLayout.X (the enum's variable name is
+            // minified away, so accept any object and vet the member name instead).
             let layoutName = null;
             if (t.isMemberExpression(caseNode.test) &&
-                t.isIdentifier(caseNode.test.object, { name: 'KeyLayout' }) &&
-                t.isIdentifier(caseNode.test.property)) {
+                t.isIdentifier(caseNode.test.object) &&
+                t.isIdentifier(caseNode.test.property) &&
+                LAYOUT_MEMBER_RE.test(caseNode.test.property.name)) {
                 layoutName = caseNode.test.property.name;
             }
             if (!layoutName) continue;

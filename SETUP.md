@@ -163,38 +163,60 @@ The driver also supports CLI commands for scripting:
 
 ## Extraction Process
 
-### Step 1: Extract the Electron app
+### Step 1: Unpack a vendor driver
 
-The Akko Cloud installer is an NSIS package containing an Electron app:
+Vendor drivers are NSIS packages wrapping an Electron app. `download-and-extract.sh`
+handles the whole chain — download (or a local file), nested archive unpacking, format
+detection, and deobfuscation — into a per-vendor workspace at
+`driver_extract/vendors/<tag>/`:
 
 ```bash
 cd driver_extract
 
-# Extract NSIS installer
-7z x "Akko Cloud_v4_setup_370.2.17_WIN20251225.exe" -oextracted
+# Akko Cloud, downloaded from the official URL
+./download-and-extract.sh --version v4                 # workspace: vendors/akko
 
-# The app resources are in:
-# extracted/PLUGINSDIR/app/resources/app/dist/
+# Any locally downloaded vendor installer (.rar/.zip/.exe/.7z, or an unpacked dir)
+./download-and-extract.sh --input ~/Downloads/Womier_SK75_TMR.rar --vendor womier
 ```
 
-### Step 2: Download, unbundle, and refactor the Electron driver
+Two bundle formats are detected automatically:
+
+| Format | Looks like | Handling |
+|---|---|---|
+| `monolithic` | one `dist/index.*.js` (Akko Cloud v3/v4) | **webcrack** unbundles + deobfuscates, then `refactor-transform.js` splits it into `vendors/<tag>/refactored/` (device classes → `src/utils/`, plus SVG assets) |
+| `chunks` | Vite code-split `dist/js/*.js`, one chunk per device class (WOMIER 3.2.x) | used directly — the loader chunks already map device name → chunk → class, so no webcrack or refactor step is needed |
+
+The result is recorded in `vendors/<tag>/manifest.json`, which is what
+`update-device-db.sh` reads.
+
+> **`.rar` needs `unar`** — p7zip cannot decompress RAR5 and fails with
+> "Unsupported Method". `sudo apt install unar`.
+
+### Step 2: Merge sources into the device database
 
 ```bash
-# One command: download the Akko Cloud driver, extract, deobfuscate, refactor
-cd driver_extract
-./download-and-extract.sh --version v4
+./scripts/update-device-db.sh --electron --vendor womier
+# or, in one step from a downloaded installer:
+make add-vendor-driver DRIVER=~/Downloads/Womier_SK75_TMR.rar VENDOR=womier
 ```
 
-This runs:
-1. Download + NSIS unpack of the Akko Cloud driver installer
-2. **webcrack** - Unbundles the Vite/Rollup bundle, deobfuscates variable names
-3. **refactor-transform.js** - AST-based extraction into `refactored/`:
-   - Device classes with `defaultMatrix` (key matrix) → `refactored/src/utils/`
-   - Device definitions, protocol classes, components, SVG assets
+Each source contributes:
 
-The key-matrix data is then produced from `refactored/` by
-`extract-matrices.js` → `data/led_matrices.json` and `merge-matrices.js` →
-`data/device_matrices.json` (run together via `make update-device-db-full`).
+- **devices** (`extract-devices.js` on the entry bundle) → merged into `data/devices.json`,
+  along with `data/key_layouts.json` and `data/key_codes.json`
+- **key matrices** (`extract-matrices.js` on the device classes) → per-vendor
+  `led_matrices.json` in `.cache/device-db/`, merged by `merge-matrices.js` into
+  `data/device_matrices.json` (position → HID code, key names, non-analog positions)
+
+`--vendor` is repeatable and its order is the priority order: the first source to define a
+device or a driver class wins, later ones only fill gaps. Only the two `data/*.json` files
+consumed by the driver are committed; everything else is a regenerable intermediate.
+
+**Why local vendor drivers matter:** rebranded builds (WOMIER, Epomaker, ...) ship the same
+app with their own models added, so a vendor's own installer is often the only source of
+data for a recently released keyboard — and it carries every other model in that build too.
+Adding the WOMIER SK75 TMR driver contributed 401 devices the Akko sources did not have.
 
 ### Step 3: Analyze the protocol
 
@@ -231,12 +253,12 @@ monsgeek-m1-v5-tmr/
 │       └── driver.proto       # gRPC service definition
 │
 ├── driver_extract/            # Electron app extraction tools
-│   ├── download-and-extract.sh # Download + unpack + webcrack + refactor
+│   ├── download-and-extract.sh # Acquire + unpack + detect format (+ webcrack/refactor)
 │   ├── refactor-transform.js  # AST refactorer → refactored/ (src/utils, devices, svg)
-│   ├── extract-devices.js     # refactored/electron bundle → devices.json
-│   ├── extract-matrices.js    # refactored/src/utils → led_matrices.json
-│   ├── merge-matrices.js      # devices + led_matrices → device_matrices.json
-│   └── extracted/             # Extracted app contents
+│   ├── extract-devices.js     # entry bundle → devices.json, key_layouts, key_codes
+│   ├── extract-matrices.js    # device classes → led_matrices.json (--refactored|--chunks)
+│   ├── merge-matrices.js      # devices + N led_matrices → device_matrices.json
+│   └── vendors/<tag>/         # Per-vendor workspace + manifest.json (gitignored)
 │
 ├── webapp_source/             # Extracted web app JS
 │   ├── monsgeek_main.js       # Main bundle (beautified)

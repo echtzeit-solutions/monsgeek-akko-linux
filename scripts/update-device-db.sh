@@ -1,16 +1,23 @@
 #!/bin/bash
-# Update MonsGeek Device Database
+# Update the MonsGeek/Akko device database.
 #
-# Fetches device data from:
-#   1. app.monsgeek.com (webapp bundle)
-#   2. Akko Cloud driver (Electron app) - optional
+# Mines device definitions, key matrices and key layouts from any number of sources and
+# merges them into data/devices.json + data/device_matrices.json:
 #
-# Outputs unified database to: data/devices.json
+#   webapp   app.monsgeek.com bundle (always, unless --no-webapp)
+#   vendor   an Electron driver unpacked by driver_extract/download-and-extract.sh into
+#            driver_extract/vendors/<tag>/ — repeatable
+#
+# Rebranded vendor drivers (WOMIER, Epomaker, ...) ship the same app with their own models
+# added, so a locally downloaded vendor installer is often the only source for a recently
+# released keyboard. Earlier sources win on conflict; --vendor order is the priority order.
 #
 # Usage:
-#   ./update-device-db.sh              # Webapp only
-#   ./update-device-db.sh --electron   # Include Electron driver
-#   ./update-device-db.sh --clean      # Clean cached downloads
+#   ./update-device-db.sh                              # webapp only
+#   ./update-device-db.sh --electron                   # + the "akko" vendor workspace
+#   ./update-device-db.sh --vendor akko --vendor womier
+#   ./update-device-db.sh --no-webapp --vendor womier  # local driver only
+#   ./update-device-db.sh --clean                      # drop cached intermediates first
 
 set -e
 
@@ -21,14 +28,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 CACHE_DIR="$PROJECT_ROOT/.cache/device-db"
 
 WEBAPP_URL="https://app.monsgeek.com"
-INCLUDE_ELECTRON=false
+INCLUDE_WEBAPP=true
 CLEAN_CACHE=false
+VENDORS=()
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --electron)
-            INCLUDE_ELECTRON=true
+            VENDORS+=("akko")
+            shift
+            ;;
+        --vendor)
+            VENDORS+=("$2")
+            shift 2
+            ;;
+        --no-webapp)
+            INCLUDE_WEBAPP=false
             shift
             ;;
         --clean)
@@ -39,9 +54,14 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --electron    Also extract from Electron driver (slower)"
-            echo "  --clean       Clean cached downloads before fetching"
-            echo "  --help        Show this help"
+            echo "  --vendor <tag>  Include driver_extract/vendors/<tag> (repeatable)"
+            echo "  --electron      Shorthand for --vendor akko"
+            echo "  --no-webapp     Skip the app.monsgeek.com bundle"
+            echo "  --clean         Clean cached intermediates before extracting"
+            echo "  --help          Show this help"
+            echo ""
+            echo "Unpack a vendor driver first with:"
+            echo "  driver_extract/download-and-extract.sh --input <installer> --vendor <tag>"
             exit 0
             ;;
         *)
@@ -51,206 +71,177 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ "$INCLUDE_WEBAPP" = false ] && [ ${#VENDORS[@]} -eq 0 ]; then
+    echo "Error: nothing to extract — --no-webapp with no --vendor"
+    exit 1
+fi
+
 echo "=============================================="
 echo "MonsGeek Device Database Update"
 echo "=============================================="
 echo "Project root: $PROJECT_ROOT"
-echo "Include Electron: $INCLUDE_ELECTRON"
+echo "Webapp: $INCLUDE_WEBAPP"
+echo "Vendors: ${VENDORS[*]:-none}"
 echo ""
 
-# Clean cache if requested
 if [ "$CLEAN_CACHE" = true ]; then
     echo "Cleaning cache..."
     rm -rf "$CACHE_DIR"
 fi
 
-mkdir -p "$CACHE_DIR"
-mkdir -p "$DATA_DIR"
+mkdir -p "$CACHE_DIR" "$DATA_DIR"
+
+# Device JSONs in merge priority order, and the per-vendor LED matrix files / SVG dirs
+# that feed merge-matrices.js.
+DEVICE_JSONS=()
+MATRIX_ARGS=()
+SVG_ARGS=()
 
 # =============================================================================
-# Step 1: Fetch webapp bundle
+# Step 1: webapp bundle
 # =============================================================================
 
-echo "=== Step 1: Fetching webapp bundle ==="
+extract_webapp() {
+    echo "=== Step 1: Fetching webapp bundle ==="
 
-WEBAPP_DIR="$PROJECT_ROOT/app.monsgeek.com"
-WEBAPP_BUNDLE=""
+    local webapp_dir="$PROJECT_ROOT/app.monsgeek.com"
+    local bundle=""
 
-# Check if we have a recent local copy
-if [ -d "$WEBAPP_DIR" ]; then
-    WEBAPP_BUNDLE=$(find "$WEBAPP_DIR" -maxdepth 1 -name "index.*.js" -type f 2>/dev/null | head -1)
-fi
-
-if [ -z "$WEBAPP_BUNDLE" ] || [ ! -f "$WEBAPP_BUNDLE" ]; then
-    echo "Fetching from $WEBAPP_URL..."
-
-    # Get the HTML to find bundle name
-    WEBAPP_HTML=$(curl -sL "$WEBAPP_URL")
-    BUNDLE_NAME=$(echo "$WEBAPP_HTML" | grep -oP 'src="/\K[^"]+\.js' | head -1)
-
-    if [ -z "$BUNDLE_NAME" ]; then
-        # Try alternate pattern
-        BUNDLE_NAME=$(echo "$WEBAPP_HTML" | grep -oP 'index\.[a-f0-9]+\.js' | head -1)
+    if [ -d "$webapp_dir" ]; then
+        bundle=$(find "$webapp_dir" -maxdepth 1 -name "index.*.js" -type f 2>/dev/null | head -1)
     fi
 
-    if [ -z "$BUNDLE_NAME" ]; then
-        echo "Error: Could not find bundle name in webapp HTML"
-        echo "Falling back to cached/local version..."
-    else
-        mkdir -p "$WEBAPP_DIR"
-        WEBAPP_BUNDLE="$WEBAPP_DIR/$BUNDLE_NAME"
+    if [ -z "$bundle" ] || [ ! -f "$bundle" ]; then
+        echo "Fetching from $WEBAPP_URL..."
+        local html name
+        html=$(curl -sL "$WEBAPP_URL")
+        name=$(echo "$html" | grep -oP 'src="/\K[^"]+\.js' | head -1)
+        [ -z "$name" ] && name=$(echo "$html" | grep -oP 'index\.[a-f0-9]+\.js' | head -1)
 
-        if [ ! -f "$WEBAPP_BUNDLE" ]; then
-            echo "Downloading: $WEBAPP_URL/$BUNDLE_NAME"
-            curl -sL "$WEBAPP_URL/$BUNDLE_NAME" -o "$WEBAPP_BUNDLE"
-            echo "Downloaded: $WEBAPP_BUNDLE ($(du -h "$WEBAPP_BUNDLE" | cut -f1))"
-        else
-            echo "Using cached: $WEBAPP_BUNDLE"
+        if [ -z "$name" ]; then
+            echo "Warning: could not find the bundle name in the webapp HTML — skipping webapp"
+            return
+        fi
+
+        mkdir -p "$webapp_dir"
+        bundle="$webapp_dir/$name"
+        if [ ! -f "$bundle" ]; then
+            echo "Downloading: $WEBAPP_URL/$name"
+            curl -sL "$WEBAPP_URL/$name" -o "$bundle"
         fi
     fi
-else
-    echo "Using local: $WEBAPP_BUNDLE"
-fi
+    echo "Bundle: $bundle ($(du -h "$bundle" | cut -f1))"
 
-# Extract from webapp
-WEBAPP_JSON="$CACHE_DIR/webapp_devices.json"
-
-if [ -f "$WEBAPP_BUNDLE" ]; then
-    echo "Extracting devices from webapp..."
-    node "$DRIVER_EXTRACT/extract-devices.js" "$WEBAPP_BUNDLE" \
-        --source "webapp" \
-        --output "$WEBAPP_JSON"
+    local out="$CACHE_DIR/webapp_devices.json"
+    node "$DRIVER_EXTRACT/extract-devices.js" "$bundle" --source webapp --output "$out"
+    DEVICE_JSONS+=("$out")
     echo ""
-else
-    echo "Warning: No webapp bundle found, skipping webapp extraction"
-fi
+}
 
 # =============================================================================
-# Step 2: Extract from Electron driver (optional)
+# Step 2: vendor Electron drivers
 # =============================================================================
 
-ELECTRON_JSON=""
+extract_vendor() {
+    local tag="$1"
+    local workspace="$DRIVER_EXTRACT/vendors/$tag"
+    local manifest="$workspace/manifest.json"
 
-if [ "$INCLUDE_ELECTRON" = true ]; then
-    echo "=== Step 2: Extracting from Electron driver ==="
+    echo "=== Vendor '$tag' ==="
 
-    # Check for existing extracted/deobfuscated bundle
-    ELECTRON_BUNDLE=""
-
-    # Look in refactored directories
-    for dir in "$DRIVER_EXTRACT/unbundled" "$DRIVER_EXTRACT/refactored/src"; do
-        if [ -d "$dir" ]; then
-            ELECTRON_BUNDLE=$(find "$dir" -name "deobfuscated.js" -o -name "main.jsx" 2>/dev/null | head -1)
-            [ -n "$ELECTRON_BUNDLE" ] && break
-        fi
-    done
-
-    # Try extracted bundle directly
-    if [ -z "$ELECTRON_BUNDLE" ]; then
-        ELECTRON_BUNDLE=$(find "$DRIVER_EXTRACT/extracted" -name "index.*.js" -type f 2>/dev/null | head -1)
+    if [ ! -f "$manifest" ]; then
+        echo "Warning: no workspace at $workspace — skipping."
+        echo "  Unpack it first: driver_extract/download-and-extract.sh --input <installer> --vendor $tag"
+        echo ""
+        return
     fi
 
-    if [ -n "$ELECTRON_BUNDLE" ] && [ -f "$ELECTRON_BUNDLE" ]; then
-        echo "Using existing bundle: $ELECTRON_BUNDLE"
-        ELECTRON_JSON="$CACHE_DIR/electron_devices.json"
+    local format bundle chunks_dir refactored svg_dir
+    format=$(node -p "require('$manifest').format")
+    bundle=$(node -p "require('$manifest').bundle || ''")
+    chunks_dir=$(node -p "require('$manifest').chunksDir || ''")
+    refactored=$(node -p "require('$manifest').refactoredDir || ''")
+    svg_dir=$(node -p "require('$manifest').svgDir || ''")
 
-        node "$DRIVER_EXTRACT/extract-devices.js" "$ELECTRON_BUNDLE" \
-            --source "electron" \
-            --output "$ELECTRON_JSON"
-        echo ""
+    echo "Format: $format"
+
+    # Devices, key layouts and keycodes come from the entry bundle in both formats.
+    if [ -n "$bundle" ]; then
+        local out="$CACHE_DIR/${tag}_devices.json"
+        node "$DRIVER_EXTRACT/extract-devices.js" "$bundle" --source "$tag" --output "$out"
+        DEVICE_JSONS+=("$out")
     else
-        echo "No Electron bundle found."
-        echo "Run 'driver_extract/download-and-extract.sh' first to download and extract the driver."
-        echo "Continuing with webapp data only..."
-        echo ""
+        echo "Warning: manifest has no bundle — no devices from '$tag'"
     fi
-fi
+
+    # Matrices come from the per-device driver classes.
+    local matrices="$CACHE_DIR/${tag}_led_matrices.json"
+    if [ "$format" = "chunks" ] && [ -n "$chunks_dir" ]; then
+        node "$DRIVER_EXTRACT/extract-matrices.js" --chunks "$chunks_dir" -o "$matrices"
+        MATRIX_ARGS+=(--matrices "$matrices")
+    elif [ "$format" = "monolithic" ] && [ -n "$refactored" ]; then
+        node "$DRIVER_EXTRACT/extract-matrices.js" --refactored "$refactored" -o "$matrices"
+        MATRIX_ARGS+=(--matrices "$matrices")
+    else
+        echo "Warning: no matrix source for '$tag'"
+    fi
+
+    [ -n "$svg_dir" ] && SVG_ARGS+=(--svg-dir "$svg_dir")
+    echo ""
+}
+
+[ "$INCLUDE_WEBAPP" = true ] && extract_webapp
+for tag in "${VENDORS[@]}"; do
+    extract_vendor "$tag"
+done
 
 # =============================================================================
-# Step 3: Merge and output final database
+# Step 3: merge device definitions
 # =============================================================================
 
-echo "=== Step 3: Generating final database ==="
+echo "=== Merging device definitions ==="
 
-OUTPUT_FILE="$DATA_DIR/devices.json"
-
+DEVICES_FILE="$DATA_DIR/devices.json"
 LAYOUTS_FILE="$DATA_DIR/key_layouts.json"
 KEYCODES_FILE="$DATA_DIR/key_codes.json"
 
-if [ -f "$WEBAPP_JSON" ] && [ -f "$ELECTRON_JSON" ]; then
-    echo "Merging webapp and electron data..."
-    node "$DRIVER_EXTRACT/extract-devices.js" --merge \
-        "$WEBAPP_JSON" "$ELECTRON_JSON" \
-        --output "$OUTPUT_FILE"
-elif [ -f "$WEBAPP_JSON" ]; then
-    echo "Using webapp data only..."
-    cp "$WEBAPP_JSON" "$OUTPUT_FILE"
-    # Also copy layouts and keycodes if available
-    WEBAPP_LAYOUTS="${WEBAPP_JSON%.json}_layouts.json"
-    WEBAPP_KEYCODES="${WEBAPP_JSON%.json}_keycodes.json"
-    [ -f "$WEBAPP_LAYOUTS" ] && cp "$WEBAPP_LAYOUTS" "$LAYOUTS_FILE"
-    [ -f "$WEBAPP_KEYCODES" ] && cp "$WEBAPP_KEYCODES" "$KEYCODES_FILE"
-elif [ -f "$ELECTRON_JSON" ]; then
-    echo "Using electron data only..."
-    cp "$ELECTRON_JSON" "$OUTPUT_FILE"
-    ELECTRON_LAYOUTS="${ELECTRON_JSON%.json}_layouts.json"
-    ELECTRON_KEYCODES="${ELECTRON_JSON%.json}_keycodes.json"
-    [ -f "$ELECTRON_LAYOUTS" ] && cp "$ELECTRON_LAYOUTS" "$LAYOUTS_FILE"
-    [ -f "$ELECTRON_KEYCODES" ] && cp "$ELECTRON_KEYCODES" "$KEYCODES_FILE"
-else
-    echo "Error: No device data extracted!"
+if [ ${#DEVICE_JSONS[@]} -eq 0 ]; then
+    echo "Error: no device data extracted!"
     exit 1
+elif [ ${#DEVICE_JSONS[@]} -eq 1 ]; then
+    cp "${DEVICE_JSONS[0]}" "$DEVICES_FILE"
+    src="${DEVICE_JSONS[0]%.json}"
+    [ -f "${src}_layouts.json" ] && cp "${src}_layouts.json" "$LAYOUTS_FILE"
+    [ -f "${src}_keycodes.json" ] && cp "${src}_keycodes.json" "$KEYCODES_FILE"
+else
+    node "$DRIVER_EXTRACT/extract-devices.js" --merge "${DEVICE_JSONS[@]}" --output "$DEVICES_FILE"
+    merged_layouts="${DEVICES_FILE%.json}_layouts.json"
+    [ -f "$merged_layouts" ] && mv "$merged_layouts" "$LAYOUTS_FILE"
+    # The merge does not combine keycode arrays; keep the richest single source.
+    best=$(ls -S "$CACHE_DIR"/*_keycodes.json 2>/dev/null | head -1)
+    [ -n "$best" ] && cp "$best" "$KEYCODES_FILE"
 fi
-
-# Copy extra files to data dir if merge created them
-MERGED_LAYOUTS="${OUTPUT_FILE%.json}_layouts.json"
-MERGED_KEYCODES="${OUTPUT_FILE%.json}_keycodes.json"
-[ -f "$MERGED_LAYOUTS" ] && mv "$MERGED_LAYOUTS" "$LAYOUTS_FILE"
-[ -f "$MERGED_KEYCODES" ] && mv "$MERGED_KEYCODES" "$KEYCODES_FILE"
-
 echo ""
 
 # =============================================================================
-# Step 4: Extract LED matrices from utility classes
+# Step 4: merge matrices into the device ID lookup
 # =============================================================================
 
-echo "=== Step 4: Extracting LED matrices ==="
+echo "=== Merging key matrices ==="
 
-MATRICES_FILE="$DATA_DIR/led_matrices.json"
-MATRICES_SCRIPT="$DRIVER_EXTRACT/extract-matrices.js"
+MATRICES_FILE="$DATA_DIR/device_matrices.json"
 
-if [ -f "$MATRICES_SCRIPT" ]; then
-    if [ -d "$DRIVER_EXTRACT/refactored/src/utils" ]; then
-        echo "Extracting matrices from device utility classes..."
-        node "$MATRICES_SCRIPT"
-        echo ""
-    else
-        echo "Warning: refactored-v3/src/utils not found, skipping matrix extraction"
-        echo "Run driver_extract refactoring first to get utility classes."
-        echo ""
-    fi
+if [ ${#MATRIX_ARGS[@]} -eq 0 ]; then
+    echo "No vendor matrix data — leaving $MATRICES_FILE untouched."
+    echo "  (Matrices only come from an unpacked vendor driver, not the webapp bundle.)"
 else
-    echo "Warning: extract-matrices.js not found, skipping matrix extraction"
-    echo ""
+    node "$DRIVER_EXTRACT/merge-matrices.js" \
+        --devices "$DEVICES_FILE" \
+        "${MATRIX_ARGS[@]}" \
+        "${SVG_ARGS[@]}" \
+        -o "$MATRICES_FILE"
 fi
-
-# =============================================================================
-# Step 5: Merge device matrices (device ID -> matrix lookup)
-# =============================================================================
-
-echo "=== Step 5: Merging device matrices ==="
-
-DEVICE_MATRICES_FILE="$DATA_DIR/device_matrices.json"
-MERGE_SCRIPT="$DRIVER_EXTRACT/merge-matrices.js"
-
-if [ -f "$MERGE_SCRIPT" ] && [ -f "$MATRICES_FILE" ]; then
-    echo "Creating device ID to matrix lookup..."
-    node "$MERGE_SCRIPT"
-    echo ""
-else
-    echo "Warning: Cannot merge matrices (missing merge-matrices.js or led_matrices.json)"
-    echo ""
-fi
+echo ""
 
 # =============================================================================
 # Summary
@@ -259,60 +250,17 @@ fi
 echo "=============================================="
 echo "UPDATE COMPLETE"
 echo "=============================================="
-echo ""
-echo "Output files:"
-echo "  Devices: $OUTPUT_FILE"
-[ -f "$LAYOUTS_FILE" ] && echo "  Layouts: $LAYOUTS_FILE"
-[ -f "$KEYCODES_FILE" ] && echo "  KeyCodes: $KEYCODES_FILE"
-[ -f "$MATRICES_FILE" ] && echo "  Matrices: $MATRICES_FILE"
-[ -f "$DEVICE_MATRICES_FILE" ] && echo "  Device matrices: $DEVICE_MATRICES_FILE"
-
-if [ -f "$OUTPUT_FILE" ]; then
-    DEVICE_COUNT=$(grep -c '"id":' "$OUTPUT_FILE" || echo "?")
-    FILE_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
-    echo ""
-    echo "Devices: $DEVICE_COUNT ($FILE_SIZE)"
-fi
-
-if [ -f "$LAYOUTS_FILE" ]; then
-    LAYOUT_COUNT=$(node -e "console.log(require('$LAYOUTS_FILE').count)" 2>/dev/null || echo "?")
-    LAYOUT_SIZE=$(du -h "$LAYOUTS_FILE" | cut -f1)
-    echo "Key layouts: $LAYOUT_COUNT ($LAYOUT_SIZE)"
-fi
-
-if [ -f "$KEYCODES_FILE" ]; then
-    KEYCODE_COUNT=$(node -e "const d=require('$KEYCODES_FILE'); console.log(d.arrayCount + ' arrays, ' + d.mappingCount + ' mappings')" 2>/dev/null || echo "?")
-    KEYCODE_SIZE=$(du -h "$KEYCODES_FILE" | cut -f1)
-    echo "KeyCode arrays: $KEYCODE_COUNT ($KEYCODE_SIZE)"
-fi
-
-if [ -f "$MATRICES_FILE" ]; then
-    MATRIX_COUNT=$(node -e "console.log(require('$MATRICES_FILE').stats.totalDevices)" 2>/dev/null || echo "?")
-    MATRIX_SIZE=$(du -h "$MATRICES_FILE" | cut -f1)
-    echo "LED matrices: $MATRIX_COUNT ($MATRIX_SIZE)"
-fi
-
-if [ -f "$DEVICE_MATRICES_FILE" ]; then
-    DEVMATRIX_COUNT=$(node -e "console.log(require('$DEVICE_MATRICES_FILE').stats.matched)" 2>/dev/null || echo "?")
-    DEVMATRIX_SIZE=$(du -h "$DEVICE_MATRICES_FILE" | cut -f1)
-    echo "Device matrices: $DEVMATRIX_COUNT ($DEVMATRIX_SIZE)"
-fi
-
-# Show sample
-if [ -f "$OUTPUT_FILE" ]; then
-    echo ""
-    echo "Sample device:"
-    node -e "
-        const db = require('$OUTPUT_FILE');
-        const dev = db.devices?.find(d => d.displayName?.includes('M1') && d.displayName?.includes('TMR'));
-        if (dev) {
-            console.log(JSON.stringify(dev, null, 2));
-        } else {
-            const fallback = db.devices?.find(d => d.displayName?.includes('M1'));
-            if (fallback) console.log(JSON.stringify(fallback, null, 2));
-        }
-    " 2>/dev/null || true
-fi
-
-echo ""
+node -e '
+    const fs = require("fs");
+    const show = (label, file, fn) => {
+        if (!fs.existsSync(file)) return;
+        const size = (fs.statSync(file).size / 1024 / 1024).toFixed(1) + " MB";
+        console.log(`  ${label}: ${fn(JSON.parse(fs.readFileSync(file)))} (${size})`);
+    };
+    const [devices, layouts, keycodes, matrices] = process.argv.slice(1);
+    show("Devices", devices, d => `${d.devices.length} devices`);
+    show("Key layouts", layouts, d => `${d.count} layouts`);
+    show("KeyCodes", keycodes, d => `${d.arrayCount} arrays, ${d.mappingCount} mappings`);
+    show("Device matrices", matrices, d => `${d.stats.matched}/${d.stats.totalKeyboards} keyboards`);
+' "$DEVICES_FILE" "$LAYOUTS_FILE" "$KEYCODES_FILE" "$MATRICES_FILE"
 echo "=============================================="

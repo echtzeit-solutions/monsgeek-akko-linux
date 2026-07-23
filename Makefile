@@ -34,7 +34,7 @@ LOADER_BIN := akko-loader
         test check fmt help \
         install-tray uninstall-tray run-tray \
         install-dev-sudoers uninstall-dev-sudoers \
-        update-device-db update-device-db-full install-data uninstall-data \
+        update-device-db update-device-db-full add-vendor-driver install-data uninstall-data \
         test-integration test-cli test-bpf test-all
 
 # Tray app directory
@@ -271,6 +271,16 @@ update-device-db-full:
 	@echo "Updating device database (webapp + electron)..."
 	./scripts/update-device-db.sh --electron
 
+## Add a locally downloaded vendor driver as a database source, then rebuild.
+## Rebranded vendor drivers (WOMIER, Epomaker, ...) are often the only source of data
+## for a recently released keyboard.
+##   make add-vendor-driver DRIVER=~/Downloads/Womier_SK75.rar VENDOR=womier
+add-vendor-driver:
+	@test -n "$(DRIVER)" || { echo "Usage: make add-vendor-driver DRIVER=<installer> VENDOR=<tag>"; exit 1; }
+	@test -n "$(VENDOR)" || { echo "Usage: make add-vendor-driver DRIVER=<installer> VENDOR=<tag>"; exit 1; }
+	./driver_extract/download-and-extract.sh --input "$(DRIVER)" --vendor "$(VENDOR)"
+	./scripts/update-device-db.sh --electron --vendor "$(VENDOR)"
+
 ## Install device data files. Interactive for a live install: offers to refresh the
 ## database from the vendor driver first (default Yes), falling back to committed assets.
 ## When DESTDIR is set (packaging) the refresh is forced off — committed assets install
@@ -374,6 +384,7 @@ help:
 	@echo "Device database targets:"
 	@echo "  update-device-db      Fetch and extract device data from webapp"
 	@echo "  update-device-db-full Also include Electron driver (slower)"
+	@echo "  add-vendor-driver     Add a local vendor driver as a source (DRIVER=<file> VENDOR=<tag>)"
 	@echo "  install-data          Install device data to $(DATA_DIR) (prompts to refresh first; SKIP_REFRESH=1 to skip)"
 	@echo "  uninstall-data        Remove installed device data"
 	@echo ""

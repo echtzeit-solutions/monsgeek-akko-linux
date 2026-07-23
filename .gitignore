@@ -31,9 +31,7 @@ webapp_main.js
 # Extracted directories (can be regenerated)
 extracted/
 extracted_js/
-driver_extract/extracted/
-driver_extract/unbundled/
-driver_extract/refactored/
+driver_extract/vendors/
 webapp_source/node_modules/
 
 # IDE/Editor
