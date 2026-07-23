@@ -118,6 +118,7 @@ if (mergeMode) {
 
                 // Prefer more detailed data (longer displayName, has features)
                 if (!existing.keyCount && dev.keyCount) existing.keyCount = dev.keyCount;
+                if (!existing.reportRate && dev.reportRate) existing.reportRate = dev.reportRate;
                 if (!existing.magnetism && dev.magnetism) existing.magnetism = dev.magnetism;
                 if (!existing.sideLightLayout && dev.sideLightLayout) existing.sideLightLayout = dev.sideLightLayout;
                 if (!existing.travelSetting && dev.travelSetting) existing.travelSetting = dev.travelSetting;
@@ -213,6 +214,29 @@ function isDeviceArray(node) {
         if (isDeviceObject(node.elements[i])) deviceCount++;
     }
     return deviceCount >= Math.ceil(checkCount / 2);
+}
+
+// The app's WebHID request filters — `{type, vendorId, productId, usage, usagePage,
+// interfaceNumber, reportRate?}`. This is the only place the maximum polling rate is
+// recorded, and it is keyed by USB product rather than by model.
+function isHidFilterObject(node) {
+    if (!t.isObjectExpression(node)) return false;
+    const props = new Set(
+        node.properties
+            .filter(p => t.isObjectProperty(p) && t.isIdentifier(p.key))
+            .map(p => p.key.name)
+    );
+    return props.has('vendorId') && props.has('productId') && props.has('usagePage');
+}
+
+function isHidFilterArray(node) {
+    if (!t.isArrayExpression(node) || node.elements.length === 0) return false;
+    const checkCount = Math.min(3, node.elements.length);
+    let hits = 0;
+    for (let i = 0; i < checkCount; i++) {
+        if (isHidFilterObject(node.elements[i])) hits++;
+    }
+    return hits >= Math.ceil(checkCount / 2);
 }
 
 // Extract primitive value from AST node
@@ -360,6 +384,7 @@ const deviceArrayNames = [];
 const keyLayouts = {};
 const keyCodes = {};  // keyCode array name -> array of key names
 const layoutToKeyCode = {};  // KeyLayout name -> keyCode array name
+const reportRateByUsb = new Map();  // "vid:pid" -> max polling rate in Hz
 
 console.error('Extracting device definitions...');
 
@@ -468,6 +493,19 @@ traverse(ast, {
                 }
             }
         }
+
+        if (isHidFilterArray(init)) {
+            let found = 0;
+            for (const element of init.elements) {
+                const f = extractDevice(element);
+                if (!f || typeof f.reportRate !== 'number') continue;
+                reportRateByUsb.set(`${f.vendorId}:${f.productId}`, f.reportRate);
+                found++;
+            }
+            if (found > 0) {
+                console.error(`  Found HID filters: ${name} (${found} with reportRate)`);
+            }
+        }
     },
 
     // Look for switch statements mapping KeyLayout to keyCode arrays
@@ -525,6 +563,20 @@ for (const dev of devices) {
 
 const uniqueDevices = [...uniqueMap.values()].sort((a, b) => a.id - b.id);
 console.error(`Unique devices: ${uniqueDevices.length}`);
+
+// Fold the per-USB-product max polling rate onto each device, the way the app does when
+// a device connects. Absent means the model has no polling rate control at all.
+let ratedDevices = 0;
+for (const dev of uniqueDevices) {
+    const hz = reportRateByUsb.get(`${dev.vid}:${dev.pid}`);
+    if (hz) {
+        dev.reportRate = hz;
+        ratedDevices++;
+    }
+}
+console.error(
+    `Report rates: ${reportRateByUsb.size} USB products -> ${ratedDevices} devices`
+);
 
 // =============================================================================
 // Output

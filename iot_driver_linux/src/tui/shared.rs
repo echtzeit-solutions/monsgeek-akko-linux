@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc;
 
+use crate::device_loader::PollingRateSupport;
 use crate::firmware_api::FirmwareCheckResult;
 use crate::hid::BatteryInfo;
 use crate::keymap::{KeyEntry, KeyRow};
@@ -22,6 +23,31 @@ pub(crate) fn transport_type_name(tt: TransportType) -> &'static str {
         TransportType::Bluetooth => "bt",
         TransportType::WebRtc => "webrtc",
     }
+}
+
+/// Look up what polling rate control, if any, a connected device offers.
+///
+/// Returns the support requirement plus the rates it accepts, fastest first. Unknown
+/// devices get no control rather than the full rate list, since writing a rate the
+/// firmware does not implement has no defined behaviour.
+pub(crate) fn resolve_polling_rate(
+    device_id: Option<i32>,
+    vid: u16,
+    pid: u16,
+    transport: TransportType,
+) -> (PollingRateSupport, &'static [u16]) {
+    let registry = crate::profile_registry();
+    let Some(def) = device_id
+        .and_then(|id| registry.get_device_info_by_id_and_usb(id, vid, pid))
+        .or_else(|| registry.get_device_info(vid, pid))
+    else {
+        return (PollingRateSupport::Unsupported, &[]);
+    };
+    let over_bluetooth = transport == TransportType::Bluetooth;
+    (
+        def.polling_rate_support(over_bluetooth),
+        def.polling_rates(),
+    )
 }
 
 /// Battery data source

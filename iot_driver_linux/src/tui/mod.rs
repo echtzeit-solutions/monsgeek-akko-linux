@@ -158,6 +158,10 @@ struct App {
     battery_source: Option<BatterySource>,
     last_battery_check: Instant,
     is_wireless: bool,
+    // Polling rate: what this model supports, and the rates it accepts (fastest first).
+    // Empty/Unsupported means the TUI shows the field as unavailable instead of editable.
+    polling_rate_support: crate::device_loader::PollingRateSupport,
+    polling_rates: &'static [u16],
     // Help popup
     show_help: bool,
     // Device picker popup
@@ -270,6 +274,8 @@ impl App {
             battery_source: None,
             last_battery_check: Instant::now(),
             is_wireless: false,
+            polling_rate_support: crate::device_loader::PollingRateSupport::Unsupported,
+            polling_rates: &[],
             // Help popup
             show_help: false,
             // Device picker popup
@@ -429,6 +435,9 @@ impl App {
         let (key_count, display_key_count) = resolve_key_counts(db_key_count, matrix_db);
 
         let mut kb = KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
+        let (polling_rate_support, polling_rates) =
+            resolve_polling_rate(device_id, vid, pid, transport_info.transport_type);
+        kb.set_polling_rates(polling_rates.to_vec());
 
         // Resolve key names: prefer builtin profile, fall back to matrix database.
         let profile = device_id
@@ -474,6 +483,8 @@ impl App {
         self.matrix_size = matrix_size;
         self.matrix_key_names = matrix_key_names;
         self.is_wireless = is_wireless;
+        self.polling_rate_support = polling_rate_support;
+        self.polling_rates = polling_rates;
         self.keyboard = Some(keyboard);
 
         // Initialize key depths array based on actual key count
@@ -605,6 +616,9 @@ impl App {
 
                 let mut kb =
                     KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
+                let (polling_rate_support, polling_rates) =
+                    resolve_polling_rate(device_id, vid, pid, transport_info.transport_type);
+                kb.set_polling_rates(polling_rates.to_vec());
 
                 let profile = device_id
                     .and_then(|id| registry.find_by_id(id as u32))
@@ -646,6 +660,8 @@ impl App {
                 self.matrix_size = matrix_size;
                 self.matrix_key_names = matrix_key_names;
                 self.is_wireless = is_wireless;
+                self.polling_rate_support = polling_rate_support;
+                self.polling_rates = polling_rates;
                 self.keyboard = Some(keyboard);
 
                 self.key_depths = vec![0.0; self.key_count as usize];

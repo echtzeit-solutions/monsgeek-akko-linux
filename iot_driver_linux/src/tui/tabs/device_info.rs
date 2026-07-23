@@ -3,6 +3,7 @@
 use ratatui::{prelude::*, widgets::*};
 
 use crate::cmd;
+use crate::device_loader::PollingRateSupport;
 use crate::firmware_api::FirmwareCheckResult;
 use crate::hid::BatteryInfo;
 use crate::power_supply::{find_dongle_battery_power_supply, read_kernel_battery};
@@ -134,8 +135,12 @@ impl App {
             });
         }
 
-        // Polling rate
-        {
+        // Polling rate. Models with no such command at all are skipped — querying costs a
+        // round trip and can only yield an error. Version-gated ones are still asked,
+        // since the firmware version arrives from the query spawned just above.
+        if self.polling_rate_support == PollingRateSupport::Unsupported {
+            self.loading.polling_rate = LoadState::NotLoaded;
+        } else {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
@@ -387,11 +392,17 @@ impl App {
 
     pub(in crate::tui) fn cycle_polling_rate(&mut self, delta: i32) {
         use crate::protocol::polling_rate;
-        let rates = polling_rate::RATES;
+        // Only the rates this model accepts — the list is capped at its maximum, so a
+        // 1kHz board is never offered 8kHz.
+        let rates = self.polling_rates;
+        if rates.is_empty() {
+            self.status_msg = "Polling rate not supported on this device".to_string();
+            return;
+        }
         let current_idx = rates
             .iter()
             .position(|&r| r == self.info.polling_rate)
-            .unwrap_or(3); // default to 1000Hz
+            .unwrap_or(rates.len() - 1);
         let new_idx = (current_idx as i32 + delta).clamp(0, rates.len() as i32 - 1) as usize;
         let new_hz = rates[new_idx];
         if let Some(rate_enum) = monsgeek_keyboard::PollingRate::from_hz(new_hz) {
@@ -968,19 +979,30 @@ pub(in crate::tui) fn render_device_info(f: &mut Frame, app: &mut App, area: Rec
             ),
         ])),
     ));
+    // Devices whose firmware has no polling rate command get a read-only marker rather
+    // than an editable field, matching what the vendor app shows for them.
+    let polling_rate_available = app.polling_rate_support.is_available(info.version);
     items.push((
-        InfoTag::PollingRate,
+        if polling_rate_available {
+            InfoTag::PollingRate
+        } else {
+            InfoTag::ReadOnly
+        },
         ListItem::new(Line::from(vec![
             Span::raw("Polling Rate:   "),
-            editable_span(
-                loading.polling_rate,
-                if info.polling_rate > 0 {
-                    crate::protocol::polling_rate::name(info.polling_rate)
-                } else {
-                    "N/A".to_string()
-                },
-                Color::Cyan,
-            ),
+            if !polling_rate_available {
+                value_span(
+                    LoadState::Loaded,
+                    "unsupported".to_string(),
+                    Color::DarkGray,
+                )
+            } else {
+                editable_span(
+                    loading.polling_rate,
+                    crate::protocol::polling_rate::name(info.polling_rate),
+                    Color::Cyan,
+                )
+            },
         ])),
     ));
     items.push((

@@ -126,6 +126,9 @@ pub struct KeyboardInterface {
     matrix_key_names: Vec<String>,
     /// Matrix positions that are non-analog (GPIO/encoder, not magnetic switches).
     non_analog_positions: Vec<u8>,
+    /// Polling rates this model accepts, from the device database.
+    /// Empty means unknown, in which case no restriction is applied.
+    polling_rates: Vec<u16>,
     /// Protocol family determines which command byte mapping to use.
     protocol: ProtocolFamily,
     /// Command table for the active protocol family.
@@ -152,6 +155,7 @@ impl KeyboardInterface {
             has_magnetism,
             matrix_key_names: Vec::new(),
             non_analog_positions: Vec::new(),
+            polling_rates: Vec::new(),
             protocol,
             commands: protocol.commands(),
         }
@@ -174,6 +178,12 @@ impl KeyboardInterface {
     /// Set non-analog matrix positions (GPIO/encoder keys that can't be calibrated).
     pub fn set_non_analog_positions(&mut self, positions: Vec<u8>) {
         self.non_analog_positions = positions;
+    }
+
+    /// Restrict which polling rates may be set, capping at the model's maximum.
+    /// Leave unset for devices missing from the database to keep them unrestricted.
+    pub fn set_polling_rates(&mut self, rates: Vec<u16>) {
+        self.polling_rates = rates;
     }
 
     /// Check if a matrix position is non-analog (GPIO/encoder, not a magnetic switch).
@@ -354,6 +364,13 @@ impl KeyboardInterface {
         let cmd_byte = self.commands.set_report.ok_or_else(|| {
             KeyboardError::NotSupported("Polling rate not available on this device".into())
         })?;
+        let hz = rate.to_hz();
+        if !self.polling_rates.is_empty() && !self.polling_rates.contains(&hz) {
+            let max = self.polling_rates.iter().max().copied().unwrap_or(0);
+            return Err(KeyboardError::NotSupported(format!(
+                "{hz} Hz is above this device's maximum of {max} Hz"
+            )));
+        }
         // Payload starts one byte after the command, so pad to reach the code's slot.
         self.transport
             .send_command(cmd_byte, &[0, rate as u8], ChecksumType::Bit7)?;

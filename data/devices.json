@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-23T20:53:05.103Z",
+  "generatedAt": "2026-07-23T22:16:36.698Z",
   "deviceCount": 1071,
   "keyLayoutCount": 370,
   "devices": [
@@ -986,7 +986,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 1280,
@@ -1108,7 +1109,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1374,
@@ -1195,7 +1197,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 1476,
@@ -1208,7 +1211,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1528,
@@ -1361,7 +1365,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1660,
@@ -1376,7 +1381,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 1674,
@@ -1545,7 +1551,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1759,
@@ -1558,7 +1565,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 1764,
@@ -1571,7 +1579,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1766,
@@ -1627,7 +1636,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 1781,
@@ -1708,7 +1718,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 1846,
@@ -1729,7 +1740,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 1848,
@@ -1765,7 +1777,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1852,
@@ -1780,7 +1793,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1876,
@@ -1922,7 +1936,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1904,
@@ -1936,7 +1951,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 1905,
@@ -1974,7 +1990,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1921,
@@ -2042,7 +2059,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 1929,
@@ -2055,7 +2073,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 1933,
@@ -2133,7 +2152,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 1976,
@@ -2148,7 +2168,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 1981,
@@ -2227,7 +2248,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 2028,
@@ -2285,7 +2307,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2049,
@@ -2383,7 +2406,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2114,
@@ -2424,7 +2448,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2116,
@@ -2474,7 +2499,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2220,
@@ -2523,7 +2549,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2221,
@@ -2681,7 +2708,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2248,
@@ -2718,7 +2746,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2251,
@@ -2731,7 +2760,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2255,
@@ -2755,7 +2785,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2261,
@@ -2768,7 +2799,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 2268,
@@ -2792,7 +2824,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2270,
@@ -2816,7 +2849,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2278,
@@ -2838,7 +2872,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2279,
@@ -2883,7 +2918,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2284,
@@ -3015,7 +3051,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2304,
@@ -3037,7 +3074,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2305,
@@ -3059,7 +3097,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2306,
@@ -3081,7 +3120,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2307,
@@ -3103,7 +3143,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2308,
@@ -3127,7 +3168,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2310,
@@ -3150,7 +3192,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2311,
@@ -3216,7 +3259,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2320,
@@ -3282,7 +3326,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2328,
@@ -3303,7 +3348,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2330,
@@ -3344,7 +3390,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2334,
@@ -3368,7 +3415,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2335,
@@ -3392,7 +3440,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2336,
@@ -3416,7 +3465,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2338,
@@ -3438,7 +3488,8 @@
         "win": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2339,
@@ -3483,7 +3534,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2343,
@@ -3507,7 +3559,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2344,
@@ -3530,7 +3583,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2346,
@@ -3543,7 +3597,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2347,
@@ -3556,7 +3611,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2348,
@@ -3585,7 +3641,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2352,
@@ -3607,7 +3664,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2356,
@@ -3631,7 +3689,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2361,
@@ -3644,7 +3703,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 2366,
@@ -3657,7 +3717,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2367,
@@ -3703,7 +3764,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2370,
@@ -3727,7 +3789,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2371,
@@ -3751,7 +3814,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2376,
@@ -3793,7 +3857,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2380,
@@ -3808,7 +3873,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2381,
@@ -3830,7 +3896,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2383,
@@ -3874,7 +3941,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2386,
@@ -3898,7 +3966,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2387,
@@ -3920,7 +3989,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2388,
@@ -3935,7 +4005,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2395,
@@ -4002,7 +4073,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2406,
@@ -4095,7 +4167,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2425,
@@ -4117,7 +4190,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2426,
@@ -4146,7 +4220,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2436,
@@ -4169,7 +4244,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2445,
@@ -4190,7 +4266,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2446,
@@ -4222,7 +4299,8 @@
           "step": 0.01,
           "default": 0
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2447,
@@ -4245,7 +4323,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2450,
@@ -4269,7 +4348,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2453,
@@ -4292,7 +4372,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2454,
@@ -4315,7 +4396,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2460,
@@ -4330,7 +4412,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2464,
@@ -4352,7 +4435,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2465,
@@ -4375,7 +4459,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2472,
@@ -4399,7 +4484,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2475,
@@ -4414,7 +4500,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2483,
@@ -4451,7 +4538,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2485,
@@ -4474,7 +4562,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2492,
@@ -4489,7 +4578,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2494,
@@ -4541,7 +4631,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2499,
@@ -4565,7 +4656,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2500,
@@ -4586,7 +4678,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2501,
@@ -4610,7 +4703,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2507,
@@ -4632,7 +4726,8 @@
         "win": 1,
         "mac": 1
       },
-      "magnetism": true
+      "magnetism": true,
+      "reportRate": 8000
     },
     {
       "id": 2510,
@@ -4661,7 +4756,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2515,
@@ -4683,7 +4779,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2516,
@@ -4726,7 +4823,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2520,
@@ -4770,7 +4868,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2524,
@@ -4783,7 +4882,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2525,
@@ -4798,7 +4898,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2527,
@@ -4821,7 +4922,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2534,
@@ -4843,7 +4945,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2535,
@@ -4866,7 +4969,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2536,
@@ -4888,7 +4992,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2546,
@@ -4911,7 +5016,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2550,
@@ -4934,7 +5040,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2552,
@@ -4958,7 +5065,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2554,
@@ -4987,7 +5095,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2555,
@@ -5008,7 +5117,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2557,
@@ -5023,7 +5133,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2560,
@@ -5069,7 +5180,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2567,
@@ -5136,7 +5248,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2573,
@@ -5181,7 +5294,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2576,
@@ -5217,7 +5331,8 @@
           "default": 0.3,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2578,
@@ -5264,7 +5379,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2585,
@@ -5287,7 +5403,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2586,
@@ -5311,7 +5428,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2589,
@@ -5340,7 +5458,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2590,
@@ -5369,7 +5488,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2591,
@@ -5434,7 +5554,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2593,
@@ -5478,7 +5599,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2594,
@@ -5501,7 +5623,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2598,
@@ -5566,7 +5689,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2600,
@@ -5590,7 +5714,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2601,
@@ -5613,7 +5738,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2605,
@@ -5636,7 +5762,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2608,
@@ -5659,7 +5786,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2609,
@@ -5682,7 +5810,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2611,
@@ -5705,7 +5834,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2613,
@@ -5750,7 +5880,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2619,
@@ -5773,7 +5904,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2621,
@@ -5819,7 +5951,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2622,
@@ -5864,7 +5997,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2623,
@@ -5909,7 +6043,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2626,
@@ -5963,7 +6098,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2629,
@@ -5985,7 +6121,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2633,
@@ -6008,7 +6145,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2634,
@@ -6031,7 +6169,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2637,
@@ -6054,7 +6193,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2638,
@@ -6076,7 +6216,8 @@
         "win": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2642,
@@ -6099,7 +6240,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2644,
@@ -6137,7 +6279,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2646,
@@ -6182,7 +6325,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2650,
@@ -6206,7 +6350,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2651,
@@ -6228,7 +6373,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2652,
@@ -6252,7 +6398,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2653,
@@ -6276,7 +6423,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2655,
@@ -6332,7 +6480,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 2660,
@@ -6355,7 +6504,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2664,
@@ -6378,7 +6528,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2666,
@@ -6393,7 +6544,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2667,
@@ -6438,7 +6590,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2671,
@@ -6461,7 +6614,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2674,
@@ -6485,7 +6639,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2675,
@@ -6530,7 +6685,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2679,
@@ -6552,7 +6708,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2680,
@@ -6581,7 +6738,8 @@
           "min": 0,
           "max": 0.5
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2681,
@@ -6605,7 +6763,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2682,
@@ -6618,7 +6777,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2683,
@@ -6641,7 +6801,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2683,
@@ -6663,7 +6824,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2684,
@@ -6676,7 +6838,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 1000
     },
     {
       "id": 2685,
@@ -6689,7 +6852,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2686,
@@ -6702,7 +6866,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 2687,
@@ -6770,7 +6935,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2694,
@@ -6816,7 +6982,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2700,
@@ -6863,7 +7030,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2704,
@@ -6885,7 +7053,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2704,
@@ -6907,7 +7076,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2708,
@@ -6930,7 +7100,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2709,
@@ -6953,7 +7124,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2710,
@@ -6977,7 +7149,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2711,
@@ -7001,7 +7174,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2712,
@@ -7024,7 +7198,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2721,
@@ -7047,7 +7222,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2723,
@@ -7070,7 +7246,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2727,
@@ -7094,7 +7271,8 @@
       },
       "hasLightLayout": true,
       "hotSwap": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2729,
@@ -7183,7 +7361,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2735,
@@ -7229,7 +7408,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2739,
@@ -7275,7 +7455,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2743,
@@ -7299,7 +7480,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2745,
@@ -7324,7 +7506,8 @@
           "min": 0,
           "max": 2.8
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2746,
@@ -7348,7 +7531,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2749,
@@ -7371,7 +7555,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2751,
@@ -7419,7 +7604,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2753,
@@ -7466,7 +7652,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2756,
@@ -7490,7 +7677,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2757,
@@ -7514,7 +7702,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2759,
@@ -7561,7 +7750,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2762,
@@ -7585,7 +7775,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2763,
@@ -7607,7 +7798,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2763,
@@ -7628,7 +7820,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2764,
@@ -7659,7 +7852,8 @@
           "max": 3.3,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2766,
@@ -7683,7 +7877,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2769,
@@ -7706,7 +7901,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2770,
@@ -7729,7 +7925,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2771,
@@ -7775,7 +7972,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2773,
@@ -7798,7 +7996,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2774,
@@ -7846,7 +8045,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2776,
@@ -7870,7 +8070,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2780,
@@ -7893,7 +8094,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2781,
@@ -7917,7 +8119,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2782,
@@ -7941,7 +8144,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2785,
@@ -7965,7 +8169,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2786,
@@ -8031,7 +8236,8 @@
           "max": 1,
           "step": 0.1
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2789,
@@ -8054,7 +8260,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2790,
@@ -8121,7 +8328,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2792,
@@ -8145,7 +8353,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2793,
@@ -8169,7 +8378,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2795,
@@ -8194,7 +8404,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2796,
@@ -8230,7 +8441,8 @@
           "default": 0.3,
           "step": 0.02
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2797,
@@ -8253,7 +8465,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2798,
@@ -8277,7 +8490,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2799,
@@ -8300,7 +8514,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2800,
@@ -8325,7 +8540,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2801,
@@ -8348,7 +8564,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2802,
@@ -8371,7 +8588,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2804,
@@ -8417,7 +8635,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2807,
@@ -8441,7 +8660,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2808,
@@ -8464,7 +8684,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2809,
@@ -8512,7 +8733,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2811,
@@ -8544,7 +8766,8 @@
           "step": 0.005,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2816,
@@ -8595,7 +8818,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2817,
@@ -8618,7 +8842,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2818,
@@ -8633,7 +8858,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2819,
@@ -8657,7 +8883,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2820,
@@ -8680,7 +8907,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2821,
@@ -8742,7 +8970,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2828,
@@ -8765,7 +8994,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2829,
@@ -8788,7 +9018,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2831,
@@ -8812,7 +9043,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2832,
@@ -8837,7 +9069,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2833,
@@ -8861,7 +9094,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2834,
@@ -8885,7 +9119,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2835,
@@ -8909,7 +9144,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2836,
@@ -8934,7 +9170,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2839,
@@ -8957,7 +9194,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2843,
@@ -8972,7 +9210,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2844,
@@ -8996,7 +9235,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2845,
@@ -9021,7 +9261,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2848,
@@ -9045,7 +9286,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2851,
@@ -9091,7 +9333,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2853,
@@ -9116,7 +9359,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2854,
@@ -9187,7 +9431,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2857,
@@ -9212,7 +9457,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2858,
@@ -9237,7 +9483,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2859,
@@ -9261,7 +9508,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2861,
@@ -9355,7 +9603,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2866,
@@ -9379,7 +9628,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2869,
@@ -9427,7 +9677,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2871,
@@ -9450,7 +9701,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2872,
@@ -9473,7 +9725,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2873,
@@ -9521,7 +9774,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2875,
@@ -9552,7 +9806,8 @@
           "max": 3.3,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2876,
@@ -9577,7 +9832,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2879,
@@ -9601,7 +9857,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2881,
@@ -9626,7 +9883,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2883,
@@ -9650,7 +9908,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2884,
@@ -9674,7 +9933,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2885,
@@ -9698,7 +9958,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2886,
@@ -9722,7 +9983,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2887,
@@ -9746,7 +10008,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2888,
@@ -9815,7 +10078,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2893,
@@ -9839,7 +10103,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2895,
@@ -9910,7 +10175,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2899,
@@ -9934,7 +10200,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2900,
@@ -9979,7 +10246,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2902,
@@ -10003,7 +10271,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2903,
@@ -10027,7 +10296,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2904,
@@ -10051,7 +10321,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2905,
@@ -10076,7 +10347,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2906,
@@ -10101,7 +10373,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2907,
@@ -10196,6 +10469,7 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hotSwap": true,
+      "reportRate": 8000,
       "travelSetting": {
         "travel": {
           "min": 0,
@@ -10231,7 +10505,8 @@
         "webapp",
         "akko"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 2914,
@@ -10244,7 +10519,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 2916,
@@ -10268,7 +10544,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2917,
@@ -10293,7 +10570,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2918,
@@ -10318,7 +10596,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2919,
@@ -10343,7 +10622,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2920,
@@ -10368,7 +10648,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2922,
@@ -10439,7 +10720,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 2925,
@@ -10485,7 +10767,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2929,
@@ -10509,7 +10792,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2930,
@@ -10533,7 +10817,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2931,
@@ -10665,7 +10950,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2936,
@@ -10713,7 +10999,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2939,
@@ -10751,7 +11038,8 @@
           "min": 0.01,
           "max": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2942,
@@ -10775,7 +11063,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2943,
@@ -10811,7 +11100,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2949,
@@ -10835,7 +11125,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2950,
@@ -10924,7 +11215,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2957,
@@ -10948,7 +11240,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2958,
@@ -10996,7 +11289,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2960,
@@ -11019,7 +11313,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 2962,
@@ -11032,7 +11327,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2963,
@@ -11055,7 +11351,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 2964,
@@ -11079,7 +11376,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2965,
@@ -11092,7 +11390,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 2966,
@@ -11116,7 +11415,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2967,
@@ -11140,7 +11440,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2968,
@@ -11165,7 +11466,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2969,
@@ -11189,7 +11491,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2970,
@@ -11203,7 +11506,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 2971,
@@ -11216,7 +11520,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 2972,
@@ -11240,7 +11545,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2973,
@@ -11265,7 +11571,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2976,
@@ -11289,7 +11596,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2977,
@@ -11334,7 +11642,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2980,
@@ -11357,7 +11666,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2981,
@@ -11380,7 +11690,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2982,
@@ -11404,7 +11715,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2983,
@@ -11449,7 +11761,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2987,
@@ -11464,7 +11777,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2988,
@@ -11488,7 +11802,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2989,
@@ -11501,7 +11816,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 2991,
@@ -11550,7 +11866,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 2993,
@@ -11598,7 +11915,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2998,
@@ -11622,7 +11940,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 2999,
@@ -11646,7 +11965,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3000,
@@ -11737,7 +12057,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3003,
@@ -11803,7 +12124,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3007,
@@ -11862,7 +12184,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3011,
@@ -11887,7 +12210,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3012,
@@ -11912,7 +12236,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3013,
@@ -11949,7 +12274,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3015,
@@ -11964,7 +12290,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3016,
@@ -11979,7 +12306,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3017,
@@ -12003,7 +12331,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3020,
@@ -12073,7 +12402,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3026,
@@ -12112,7 +12442,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3031,
@@ -12157,7 +12488,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3033,
@@ -12181,7 +12513,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3034,
@@ -12226,7 +12559,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3036,
@@ -12250,7 +12584,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3037,
@@ -12387,7 +12722,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3041,
@@ -12423,7 +12759,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3043,
@@ -12447,7 +12784,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3044,
@@ -12471,7 +12809,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3045,
@@ -12692,7 +13031,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3054,
@@ -12717,7 +13057,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3055,
@@ -12741,7 +13082,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3056,
@@ -12932,7 +13274,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3064,
@@ -12956,7 +13299,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3065,
@@ -12979,7 +13323,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3066,
@@ -13003,7 +13348,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3067,
@@ -13027,7 +13373,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3068,
@@ -13049,7 +13396,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3069,
@@ -13071,7 +13419,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3070,
@@ -13093,7 +13442,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3071,
@@ -13141,7 +13491,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3076,
@@ -13165,7 +13516,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3077,
@@ -13213,7 +13565,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3079,
@@ -13237,7 +13590,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3080,
@@ -13264,7 +13618,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3085,
@@ -13285,7 +13640,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3086,
@@ -13309,7 +13665,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3087,
@@ -13333,7 +13690,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3088,
@@ -13356,7 +13714,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3088,
@@ -13378,7 +13737,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3089,
@@ -13401,7 +13761,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3090,
@@ -13437,7 +13798,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3092,
@@ -13452,7 +13814,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3094,
@@ -13467,7 +13830,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3095,
@@ -13515,7 +13879,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3097,
@@ -13560,7 +13925,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3100,
@@ -13584,7 +13950,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3101,
@@ -13599,7 +13966,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3102,
@@ -13717,7 +14085,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3108,
@@ -13740,7 +14109,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3109,
@@ -13755,7 +14125,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3111,
@@ -13779,7 +14150,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3112,
@@ -13804,7 +14176,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3113,
@@ -13827,7 +14200,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3114,
@@ -13849,7 +14223,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3115,
@@ -13873,7 +14248,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3116,
@@ -13984,7 +14360,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3125,
@@ -14006,7 +14383,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3126,
@@ -14028,7 +14406,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3127,
@@ -14075,7 +14454,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3130,
@@ -14120,7 +14500,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3134,
@@ -14133,7 +14514,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3135,
@@ -14175,7 +14557,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3138,
@@ -14198,7 +14581,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3142,
@@ -14241,7 +14625,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3145,
@@ -14262,7 +14647,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3146,
@@ -14284,7 +14670,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3147,
@@ -14340,7 +14727,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3150,
@@ -14354,7 +14742,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3151,
@@ -14376,7 +14765,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3152,
@@ -14420,7 +14810,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3156,
@@ -14472,7 +14863,8 @@
           "default": 1.6,
           "downDefault": 1.6
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3158,
@@ -14515,7 +14907,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3160,
@@ -14615,7 +15008,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3165,
@@ -14682,7 +15076,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3167,
@@ -14705,7 +15100,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3169,
@@ -14719,7 +15115,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3170,
@@ -14733,7 +15130,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3171,
@@ -14754,7 +15152,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3172,
@@ -14768,7 +15167,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3173,
@@ -14781,7 +15181,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 1000
     },
     {
       "id": 3174,
@@ -14903,7 +15304,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3182,
@@ -14917,7 +15319,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3184,
@@ -14930,7 +15333,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3186,
@@ -14988,7 +15392,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3189,
@@ -15032,7 +15437,8 @@
           "max": 1,
           "step": 0.1
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3190,
@@ -15045,7 +15451,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3191,
@@ -15058,7 +15465,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3193,
@@ -15081,7 +15489,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3194,
@@ -15103,7 +15512,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3195,
@@ -15147,7 +15557,8 @@
           "step": 0.1,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3196,
@@ -15170,7 +15581,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3197,
@@ -15184,7 +15596,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3198,
@@ -15207,7 +15620,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3200,
@@ -15253,7 +15667,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3202,
@@ -15267,7 +15682,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3203,
@@ -15310,7 +15726,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3205,
@@ -15432,7 +15849,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3215,
@@ -15454,7 +15872,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3217,
@@ -15520,7 +15939,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3219,
@@ -15542,7 +15962,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3220,
@@ -15555,7 +15976,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3221,
@@ -15578,7 +16000,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3222,
@@ -15643,7 +16066,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3225,
@@ -15686,7 +16110,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3227,
@@ -15721,7 +16146,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3235,
@@ -15735,7 +16161,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3236,
@@ -15758,7 +16185,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3237,
@@ -15781,7 +16209,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3239,
@@ -15853,7 +16282,8 @@
           "max": 3.3,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3243,
@@ -15875,7 +16305,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3244,
@@ -15897,7 +16328,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3245,
@@ -15940,7 +16372,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3247,
@@ -15962,7 +16395,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3248,
@@ -15984,7 +16418,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3250,
@@ -16006,7 +16441,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3253,
@@ -16020,7 +16456,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3257,
@@ -16043,7 +16480,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3258,
@@ -16057,7 +16495,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3262,
@@ -16072,7 +16511,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 3263,
@@ -16095,7 +16535,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3264,
@@ -16117,7 +16558,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3265,
@@ -16140,7 +16582,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3267,
@@ -16162,7 +16605,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3268,
@@ -16206,7 +16650,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3270,
@@ -16229,7 +16674,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3271,
@@ -16251,7 +16697,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3272,
@@ -16265,7 +16712,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3273,
@@ -16332,7 +16780,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3277,
@@ -16355,7 +16804,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3278,
@@ -16377,7 +16827,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3280,
@@ -16400,7 +16851,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3282,
@@ -16421,7 +16873,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3284,
@@ -16465,7 +16918,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3285,
@@ -16509,7 +16963,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3290,
@@ -16532,7 +16987,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3291,
@@ -16576,7 +17032,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3292,
@@ -16620,7 +17077,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3293,
@@ -16663,7 +17121,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3296,
@@ -16753,7 +17212,8 @@
           "step": 0.01,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3300,
@@ -16811,7 +17271,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3304,
@@ -16825,7 +17286,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3305,
@@ -16882,7 +17344,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3310,
@@ -16896,7 +17359,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3311,
@@ -16938,7 +17402,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3318,
@@ -17063,7 +17528,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 3325,
@@ -17078,7 +17544,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 3330,
@@ -17143,7 +17610,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3333,
@@ -17165,7 +17633,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3334,
@@ -17187,7 +17656,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3335,
@@ -17209,7 +17679,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3336,
@@ -17232,7 +17703,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3337,
@@ -17296,7 +17768,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3341,
@@ -17340,7 +17813,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3343,
@@ -17362,7 +17836,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3344,
@@ -17384,7 +17859,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3345,
@@ -17407,7 +17883,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3346,
@@ -17420,7 +17897,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 3
+      "layer": 3,
+      "reportRate": 1000
     },
     {
       "id": 3347,
@@ -17433,7 +17911,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3349,
@@ -17456,7 +17935,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3350,
@@ -17477,7 +17957,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3351,
@@ -17499,7 +17980,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3352,
@@ -17513,7 +17995,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3354,
@@ -17558,7 +18041,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3356,
@@ -17580,7 +18064,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3357,
@@ -17691,7 +18176,8 @@
           "max": 2,
           "step": 0.02
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3363,
@@ -17756,7 +18242,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3366,
@@ -17821,7 +18308,8 @@
           "max": 2,
           "step": 0.02
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3368,
@@ -17886,7 +18374,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3376,
@@ -17909,7 +18398,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3378,
@@ -17952,7 +18442,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3380,
@@ -17974,7 +18465,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3383,
@@ -17996,7 +18488,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3384,
@@ -18040,7 +18533,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3388,
@@ -18063,7 +18557,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3389,
@@ -18085,7 +18580,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3390,
@@ -18107,7 +18603,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3395,
@@ -18121,7 +18618,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3396,
@@ -18134,7 +18632,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3397,
@@ -18222,7 +18721,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3404,
@@ -18244,7 +18744,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3405,
@@ -18266,7 +18767,8 @@
         "mac": 2
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3407,
@@ -18280,7 +18782,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3408,
@@ -18293,7 +18796,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 1000
     },
     {
       "id": 3409,
@@ -18315,7 +18819,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3411,
@@ -18359,7 +18864,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3413,
@@ -18401,7 +18907,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3415,
@@ -18444,7 +18951,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3419,
@@ -18488,7 +18996,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3422,
@@ -18554,7 +19063,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3426,
@@ -18567,7 +19077,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3427,
@@ -18589,7 +19100,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3429,
@@ -18611,7 +19123,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3430,
@@ -18655,7 +19168,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3436,
@@ -18678,7 +19192,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3437,
@@ -18700,7 +19215,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3438,
@@ -18723,7 +19239,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3439,
@@ -18767,7 +19284,8 @@
           "max": 2,
           "step": 0.08
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3441,
@@ -18780,7 +19298,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3442,
@@ -18793,7 +19312,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 1000
     },
     {
       "id": 3444,
@@ -18815,7 +19335,8 @@
         "mac": 2
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3445,
@@ -18838,7 +19359,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3447,
@@ -18882,7 +19404,8 @@
         "mac": 2
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3449,
@@ -18905,7 +19428,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3450,
@@ -18983,7 +19507,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3455,
@@ -19053,7 +19578,8 @@
           "min": 0,
           "max": 2.8
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3458,
@@ -19087,7 +19613,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3460,
@@ -19110,7 +19637,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3461,
@@ -19155,7 +19683,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3464,
@@ -19178,7 +19707,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3465,
@@ -19201,7 +19731,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3466,
@@ -19223,7 +19754,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3467,
@@ -19245,7 +19777,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3468,
@@ -19267,7 +19800,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3469,
@@ -19310,7 +19844,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3474,
@@ -19332,7 +19867,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3475,
@@ -19377,7 +19913,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3476,
@@ -19422,7 +19959,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3478,
@@ -19456,7 +19994,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3481,
@@ -19478,7 +20017,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3482,
@@ -19501,7 +20041,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3485,
@@ -19515,7 +20056,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3486,
@@ -19538,7 +20080,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3487,
@@ -19561,7 +20104,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3492,
@@ -19583,7 +20127,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3493,
@@ -19619,7 +20164,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3495,
@@ -19676,7 +20222,8 @@
           "default": 0.3,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3497,
@@ -19690,7 +20237,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3498,
@@ -19776,7 +20324,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3503,
@@ -19798,7 +20347,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3504,
@@ -19862,7 +20412,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3511,
@@ -19905,7 +20456,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3513,
@@ -19927,7 +20479,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3516,
@@ -19962,7 +20515,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3518,
@@ -19985,7 +20539,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3520,
@@ -20007,7 +20562,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3521,
@@ -20029,7 +20585,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3522,
@@ -20052,7 +20609,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3524,
@@ -20096,7 +20654,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3526,
@@ -20140,7 +20699,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3529,
@@ -20162,7 +20722,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3530,
@@ -20184,7 +20745,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3531,
@@ -20207,7 +20769,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3532,
@@ -20274,7 +20837,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3537,
@@ -20297,7 +20861,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3539,
@@ -20331,7 +20896,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3541,
@@ -20344,7 +20910,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3542,
@@ -20400,7 +20967,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3547,
@@ -20498,7 +21066,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3554,
@@ -20576,7 +21145,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3561,
@@ -20674,7 +21244,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3566,
@@ -20697,7 +21268,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3567,
@@ -20719,7 +21291,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hasSideLight": true
+      "hasSideLight": true,
+      "reportRate": 8000
     },
     {
       "id": 3568,
@@ -20806,7 +21379,8 @@
           "max": 2,
           "step": 0.08
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3571,
@@ -20913,7 +21487,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3578,
@@ -20934,7 +21509,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3579,
@@ -20978,7 +21554,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3582,
@@ -21021,7 +21598,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3586,
@@ -21035,7 +21613,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3587,
@@ -21057,7 +21636,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3588,
@@ -21101,7 +21681,8 @@
           "max": 2,
           "step": 0.08
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3589,
@@ -21145,7 +21726,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3591,
@@ -21168,7 +21750,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3595,
@@ -21191,7 +21774,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3598,
@@ -21214,7 +21798,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3608,
@@ -21258,7 +21843,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3611,
@@ -21280,7 +21866,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3612,
@@ -21324,7 +21911,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3615,
@@ -21442,7 +22030,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3622,
@@ -21455,7 +22044,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3623,
@@ -21468,7 +22058,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 1000
     },
     {
       "id": 3624,
@@ -21490,7 +22081,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3626,
@@ -21588,7 +22180,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3644,
@@ -21602,7 +22195,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3645,
@@ -21646,7 +22240,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3648,
@@ -21711,7 +22306,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3652,
@@ -21725,7 +22321,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3653,
@@ -21739,7 +22336,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3654,
@@ -21785,7 +22383,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3658,
@@ -21821,7 +22420,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3662,
@@ -21842,7 +22442,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3663,
@@ -21864,7 +22465,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3664,
@@ -21886,7 +22488,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3665,
@@ -21899,7 +22502,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3667,
@@ -21912,7 +22516,8 @@
       "sources": [
         "webapp",
         "womier"
-      ]
+      ],
+      "reportRate": 8000
     },
     {
       "id": 3669,
@@ -21933,7 +22538,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3670,
@@ -21954,7 +22560,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3671,
@@ -22000,7 +22607,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3673,
@@ -22068,7 +22676,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3676,
@@ -22090,7 +22699,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3677,
@@ -22134,7 +22744,8 @@
           "max": 1,
           "step": 0.1
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3678,
@@ -22156,7 +22767,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3679,
@@ -22179,7 +22791,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3682,
@@ -22202,7 +22815,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3683,
@@ -22225,7 +22839,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3686,
@@ -22240,7 +22855,8 @@
         "womier"
       ],
       "layer": 8,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 1000
     },
     {
       "id": 3687,
@@ -22263,7 +22879,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3688,
@@ -22286,7 +22903,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3689,
@@ -22300,7 +22918,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3691,
@@ -22322,7 +22941,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3692,
@@ -22344,7 +22964,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3694,
@@ -22367,7 +22988,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3697,
@@ -22388,7 +23010,8 @@
         "mac": 1
       },
       "magnetism": true,
-      "hasLightLayout": true
+      "hasLightLayout": true,
+      "reportRate": 8000
     },
     {
       "id": 3698,
@@ -22402,7 +23025,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3699,
@@ -22437,7 +23061,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3702,
@@ -22481,7 +23106,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3705,
@@ -22525,7 +23151,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3706,
@@ -22569,7 +23196,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3710,
@@ -22636,7 +23264,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3714,
@@ -22680,7 +23309,8 @@
           "max": 1,
           "step": 0.1
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3715,
@@ -22694,7 +23324,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3716,
@@ -22717,7 +23348,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3718,
@@ -22762,7 +23394,8 @@
       "magnetism": true,
       "hasLightLayout": true,
       "hasSideLight": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3720,
@@ -22806,7 +23439,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3722,
@@ -22850,7 +23484,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3723,
@@ -22885,7 +23520,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3725,
@@ -22907,7 +23543,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3726,
@@ -22930,7 +23567,8 @@
       },
       "hasLightLayout": true,
       "hasSideLight": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3727,
@@ -22995,7 +23633,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3732,
@@ -23084,7 +23723,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3735,
@@ -23106,7 +23746,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3736,
@@ -23128,7 +23769,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3739,
@@ -23149,7 +23791,8 @@
         "mac": 2
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3740,
@@ -23262,7 +23905,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3750,
@@ -23306,7 +23950,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3757,
@@ -23352,7 +23997,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3759,
@@ -23430,7 +24076,8 @@
         "webapp",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3763,
@@ -23509,7 +24156,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3767,
@@ -23522,7 +24170,8 @@
       "sources": [
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 3773,
@@ -23544,7 +24193,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3775,
@@ -23565,7 +24215,8 @@
         "win": 1,
         "mac": 1
       },
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3779,
@@ -23587,7 +24238,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3780,
@@ -23631,7 +24283,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3784,
@@ -23644,7 +24297,8 @@
       "sources": [
         "webapp"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 8000
     },
     {
       "id": 3785,
@@ -23692,7 +24346,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3787,
@@ -23714,7 +24369,8 @@
         "mac": 1
       },
       "hasLightLayout": true,
-      "noMagneticSwitch": true
+      "noMagneticSwitch": true,
+      "reportRate": 8000
     },
     {
       "id": 3791,
@@ -23759,7 +24415,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3800,
@@ -23806,7 +24463,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3804,
@@ -23828,7 +24486,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3813,
@@ -23876,7 +24535,8 @@
           "step": 0.005,
           "default": 0.3
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3815,
@@ -23906,7 +24566,8 @@
           "step": 0.001,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3820,
@@ -23936,7 +24597,8 @@
           "step": 0.001,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3825,
@@ -24002,7 +24664,8 @@
           "max": 2,
           "step": 0.01
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3853,
@@ -24032,7 +24695,8 @@
           "step": 0.005,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3869,
@@ -24062,7 +24726,8 @@
           "step": 0.001,
           "default": 2
         }
-      }
+      },
+      "reportRate": 8000
     },
     {
       "id": 3900,
@@ -24084,7 +24749,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 3906,
@@ -24106,7 +24772,8 @@
       },
       "magnetism": true,
       "hasLightLayout": true,
-      "hotSwap": true
+      "hotSwap": true,
+      "reportRate": 8000
     },
     {
       "id": 9997,
@@ -24121,7 +24788,8 @@
         "akko",
         "womier"
       ],
-      "layer": 8
+      "layer": 8,
+      "reportRate": 1000
     },
     {
       "id": 9998,
@@ -24136,7 +24804,8 @@
         "akko",
         "womier"
       ],
-      "layer": 4
+      "layer": 4,
+      "reportRate": 8000
     },
     {
       "id": 9999,
@@ -24172,7 +24841,8 @@
           "step": 0.01,
           "default": 0
         }
-      }
+      },
+      "reportRate": 8000
     }
   ],
   "keyLayouts": {

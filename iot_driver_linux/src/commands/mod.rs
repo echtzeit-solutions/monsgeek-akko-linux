@@ -204,6 +204,12 @@ pub fn open_keyboard(
     let mut kb =
         monsgeek_keyboard::KeyboardInterface::new(flow, key_count, has_magnetism, protocol);
 
+    // Cap settable polling rates at what this model supports.
+    if let Some(def) = device_id.and_then(|id| registry.get_device_info_by_id_and_usb(id, vid, pid))
+    {
+        kb.set_polling_rates(def.polling_rates().to_vec());
+    }
+
     // Resolve key names: prefer builtin profile, fall back to matrix database.
     let profile = device_id
         .and_then(|id| registry.find_by_id(id as u32))

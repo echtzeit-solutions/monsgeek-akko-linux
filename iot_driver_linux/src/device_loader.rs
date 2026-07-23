@@ -73,6 +73,9 @@ pub struct JsonDeviceDefinition {
     pub hot_swap: Option<bool>,
     #[serde(default)]
     pub travel_setting: Option<JsonTravelSetting>,
+    /// Maximum polling rate in Hz. Recorded per USB product by the vendor, not per model.
+    #[serde(default)]
+    pub report_rate: Option<u16>,
     /// LED matrix mapping position index to HID keycode
     /// Used for LED effects and depth report key identification
     #[serde(default)]
@@ -128,7 +131,121 @@ impl JsonDeviceDefinition {
             self.key_index("D")?,
         ))
     }
+
+    /// Polling rates this model accepts, fastest first.
+    ///
+    /// The vendor caps the offered rates at the model's maximum, so the list is always a
+    /// suffix of [`crate::protocol::polling_rate::RATES`]. Empty when the maximum is
+    /// unknown. Check [`Self::polling_rate_support`] too — a model can have a known
+    /// maximum and still expose no control.
+    pub fn polling_rates(&self) -> &'static [u16] {
+        use crate::protocol::polling_rate::RATES;
+        let Some(max) = self.report_rate else {
+            return &[];
+        };
+        match RATES.iter().position(|&hz| hz == max) {
+            Some(i) => &RATES[i..],
+            None => &[],
+        }
+    }
+
+    /// Whether the polling rate can be read and changed on this device.
+    ///
+    /// Mirrors the vendor app's `isSupportReportRate`: never over Bluetooth, always for
+    /// mice, and for keyboards only above 1 kHz and either on an explicit exception list
+    /// or running new enough firmware. Devices that fail this have nothing useful to say
+    /// to GET_REPORT, which is why the SK75 TMR (v3.00) shows no control in the vendor
+    /// app either.
+    ///
+    /// Returns the requirement rather than a verdict because the firmware version only
+    /// becomes known once the device answers GET_USB_VERSION.
+    pub fn polling_rate_support(&self, over_bluetooth: bool) -> PollingRateSupport {
+        if over_bluetooth {
+            return PollingRateSupport::Unsupported;
+        }
+        if self.device_type == "mouse" {
+            return PollingRateSupport::Always;
+        }
+        // A keyboard with no known maximum, or one capped at 1 kHz, has no control.
+        if self.report_rate.is_none_or(|hz| hz <= 1000) {
+            return PollingRateSupport::Unsupported;
+        }
+        let company = self.company.as_deref().unwrap_or("");
+        if POLLING_RATE_NO_CONTROL.contains(&(company, self.id)) {
+            return PollingRateSupport::Unsupported;
+        }
+        if company == "XinMengK65Keyboard"
+            || (company == "cherry" && self.device_type == "keyboard")
+            || POLLING_RATE_NO_VERSION_GATE.contains(&(company, self.id))
+        {
+            return PollingRateSupport::Always;
+        }
+        PollingRateSupport::FromFirmware(POLLING_RATE_MIN_FW_VERSION)
+    }
 }
+
+/// Whether a device exposes a polling rate control, and from which firmware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PollingRateSupport {
+    /// No control at all — the model, or this transport, does not implement it.
+    #[default]
+    Unsupported,
+    Always,
+    /// Implemented from this GET_USB_VERSION value onwards.
+    FromFirmware(u16),
+}
+
+impl PollingRateSupport {
+    pub fn is_available(self, fw_version: u16) -> bool {
+        match self {
+            Self::Unsupported => false,
+            Self::Always => true,
+            Self::FromFirmware(min) => fw_version >= min,
+        }
+    }
+}
+
+/// Firmware version (as reported by GET_USB_VERSION) from which the polling rate command
+/// is implemented. 0x0400 = v4.00.
+pub const POLLING_RATE_MIN_FW_VERSION: u16 = 0x0400;
+
+/// Models that report a >1 kHz maximum but expose no polling rate control regardless.
+const POLLING_RATE_NO_CONTROL: &[(&str, i32)] = &[("HawkGamingHK610S", 3677)];
+
+/// Models exempt from the firmware version gate — they implement the command on older
+/// firmware. Transcribed from the vendor app; extend as new exceptions appear there.
+const POLLING_RATE_NO_VERSION_GATE: &[(&str, i32)] = &[
+    ("rongyuan", 3195),
+    ("rongyuan", 2342),
+    ("PIIFOXDRIVER", 2499),
+    ("ZENITHPROSoftware", 2310),
+    ("XinMengK65Keyboard", 3198),
+    ("SARU", 3243),
+    ("腹灵", 3085),
+    ("EWEADNV", 2652),
+    ("EWEADNV", 2574),
+    ("EWEADNV", 2578),
+    ("EWEADNV", 2653),
+    ("EWEADNV", 2710),
+    ("EWEADNV", 2711),
+    ("AJAZZMOUSE", 2255),
+    ("AJAZZMOUSE", 2336),
+    ("AJAZZMOUSE", 2343),
+    ("AJAZZMOUSE", 2371),
+    ("AttackShark", 2472),
+    ("AttackShark", 2370),
+    ("gamakay2", 2501),
+    ("gamakay2", 2334),
+    ("GVSTONE", 2727),
+    ("GVSTONE", 2801),
+    ("蚂蚁电竞", 2651),
+    ("蚂蚁电竞", 2629),
+    ("蚂蚁电竞", 2425),
+    ("蚂蚁电竞", 2642),
+    ("蚂蚁电竞", 2281),
+    ("蚂蚁电竞", 2516),
+    ("蚂蚁电竞", 1846),
+];
 
 /// Wrapper for the versioned devices.json format
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -668,6 +785,81 @@ mod tests {
             }
         }
     }"#;
+
+    fn keyboard_with(company: &str, id: i32, report_rate: Option<u16>) -> JsonDeviceDefinition {
+        let rate = report_rate
+            .map(|r| format!(r#","reportRate":{r}"#))
+            .unwrap_or_default();
+        let json = format!(
+            r#"[{{"id": {id}, "vid": 12625, "pid": 20528, "name": "kb", "displayName": "KB",
+                  "type": "keyboard", "company": "{company}"{rate}}}]"#
+        );
+        DeviceDatabase::load_from_json(&json)
+            .unwrap()
+            .all_devices()
+            .next()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn polling_rates_are_capped_at_the_model_maximum() {
+        assert_eq!(
+            keyboard_with("MonsGeek", 1, Some(8000)).polling_rates(),
+            &[8000, 4000, 2000, 1000, 500, 250, 125]
+        );
+        // A 1kHz board must never be offered 2kHz and up.
+        assert_eq!(
+            keyboard_with("MonsGeek", 1, Some(1000)).polling_rates(),
+            &[1000, 500, 250, 125]
+        );
+        // Unknown maximum, or one that is not a real rate: offer nothing rather than guess.
+        assert!(keyboard_with("MonsGeek", 1, None)
+            .polling_rates()
+            .is_empty());
+        assert!(keyboard_with("MonsGeek", 1, Some(3000))
+            .polling_rates()
+            .is_empty());
+    }
+
+    #[test]
+    fn polling_rate_control_is_gated_like_the_vendor_app() {
+        use PollingRateSupport::*;
+
+        // The SK75 TMR case from issue #20: 8kHz-capable USB product, but v3.00 firmware
+        // predates the command, so the vendor app shows no control either.
+        let sk75 = keyboard_with("WOMIER", 3804, Some(8000));
+        assert_eq!(sk75.polling_rate_support(false), FromFirmware(0x0400));
+        assert!(!sk75.polling_rate_support(false).is_available(0x0300));
+        assert!(sk75.polling_rate_support(false).is_available(0x0407));
+
+        // Never over Bluetooth, whatever the firmware.
+        assert_eq!(sk75.polling_rate_support(true), Unsupported);
+
+        // Capped at 1kHz, or no known maximum: no control at all.
+        assert_eq!(
+            keyboard_with("MonsGeek", 1, Some(1000)).polling_rate_support(false),
+            Unsupported
+        );
+        assert_eq!(
+            keyboard_with("MonsGeek", 1, None).polling_rate_support(false),
+            Unsupported
+        );
+
+        // Exceptions bypass the version gate; one model is excluded outright.
+        assert_eq!(
+            keyboard_with("AttackShark", 2472, Some(8000)).polling_rate_support(false),
+            Always
+        );
+        assert_eq!(
+            keyboard_with("cherry", 1234, Some(8000)).polling_rate_support(false),
+            Always
+        );
+        assert_eq!(
+            keyboard_with("HawkGamingHK610S", 3677, Some(8000)).polling_rate_support(false),
+            Unsupported
+        );
+    }
 
     #[test]
     fn device_lookup_keeps_every_claimant_of_a_shared_id() {
