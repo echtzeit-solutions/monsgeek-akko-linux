@@ -141,7 +141,7 @@ impl App {
             tokio::spawn(async move {
                 let result = kb
                     .get_polling_rate()
-                    .map(|r| r as u16)
+                    .map(|r| r.to_hz())
                     .map_err(|e| e.to_string());
                 tx.send(AsyncResult::PollingRate(result));
             });

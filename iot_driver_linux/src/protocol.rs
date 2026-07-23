@@ -426,38 +426,10 @@ pub const LED_SPEED_MAX: u8 = 4;
 /// Protocol: SET_REPORT (0x03) / GET_REPORT (0x83)
 /// Format: [cmd, 0, rate_code, 0, 0, 0, 0, checksum]
 pub mod polling_rate {
-    /// Available polling rates in Hz
+    /// Available polling rates in Hz, ordered by wire code (index == protocol value).
+    /// Hz <-> wire code conversion belongs to `monsgeek_keyboard::PollingRate`; keeping a
+    /// second copy here is what let the two drift apart.
     pub const RATES: &[u16] = &[8000, 4000, 2000, 1000, 500, 250, 125];
-
-    /// Encode polling rate (Hz) to protocol value (0-6)
-    /// Returns None if rate is not supported
-    pub fn encode(hz: u16) -> Option<u8> {
-        match hz {
-            8000 => Some(0),
-            4000 => Some(1),
-            2000 => Some(2),
-            1000 => Some(3),
-            500 => Some(4),
-            250 => Some(5),
-            125 => Some(6),
-            _ => None,
-        }
-    }
-
-    /// Decode protocol value (0-6) to polling rate in Hz
-    /// Returns None if value is invalid
-    pub fn decode(code: u8) -> Option<u16> {
-        match code {
-            0 => Some(8000),
-            1 => Some(4000),
-            2 => Some(2000),
-            3 => Some(1000),
-            4 => Some(500),
-            5 => Some(250),
-            6 => Some(125),
-            _ => None,
-        }
-    }
 
     /// Get polling rate name for display
     pub fn name(hz: u16) -> String {
@@ -498,6 +470,28 @@ pub mod polling_rate {
             Some(hz)
         } else {
             None
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use monsgeek_keyboard::PollingRate;
+
+        /// The UI treats `RATES` as Hz and looks values up by equality, so anything that
+        /// reaches it must be Hz — not the 0..6 wire code. Casting `PollingRate as u16`
+        /// instead of calling `to_hz()` yielded 0 for 8kHz, which the TUI rendered "N/A".
+        #[test]
+        fn rates_are_hz_indexed_by_wire_code() {
+            for (code, &hz) in RATES.iter().enumerate() {
+                let rate = PollingRate::from_protocol(code as u8).expect("code in range");
+                assert_eq!(rate.to_hz(), hz, "wire code {code}");
+                assert_eq!(PollingRate::from_hz(hz), Some(rate));
+                // No Hz value may collide with a wire code, or a missed conversion
+                // silently looks like a valid rate instead of failing the lookup.
+                assert!(!RATES.contains(&(code as u16)));
+            }
+            assert_eq!(PollingRate::from_protocol(RATES.len() as u8), None);
         }
     }
 }

@@ -198,7 +198,7 @@ pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
 
     match keyboard.get_polling_rate() {
         Ok(rate) => {
-            let hz = rate as u16;
+            let hz = rate.to_hz();
             println!("Polling rate: {hz} ({})", polling_rate::name(hz));
         }
         Err(e) => eprintln!("Failed to get polling rate: {e}"),
