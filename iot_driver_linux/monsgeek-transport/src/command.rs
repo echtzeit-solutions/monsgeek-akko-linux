@@ -546,7 +546,8 @@ impl HidCommand for SetPollingRate {
     const CHECKSUM: ChecksumType = ChecksumType::Bit7;
 
     fn to_data(&self) -> Vec<u8> {
-        vec![self.rate as u8]
+        // Frame is [cmd, 0, code, ...]; `to_data` starts after the command byte.
+        vec![0, self.rate as u8]
     }
 }
 
@@ -558,12 +559,13 @@ pub struct PollingRateResponse {
 
 impl HidResponse for PollingRateResponse {
     const CMD_ECHO: u8 = cmd::GET_REPORT;
-    const MIN_LEN: usize = 2;
+    // [cmd, 0, code] — the byte after the command is reserved.
+    const MIN_LEN: usize = 3;
 
     fn from_data(data: &[u8]) -> Result<Self, ParseError> {
-        let rate = PollingRate::from_protocol(data[1]).ok_or(ParseError::InvalidValue {
+        let rate = PollingRate::from_protocol(data[2]).ok_or(ParseError::InvalidValue {
             field: "polling_rate",
-            value: data[1],
+            value: data[2],
         })?;
         Ok(Self { rate })
     }
@@ -2032,8 +2034,8 @@ pub fn try_parse_command(data: &[u8]) -> ParsedCommand {
             }
         }
         cmd::SET_REPORT => {
-            if data.len() >= 2 {
-                PollingRate::from_protocol(data[1])
+            if data.len() >= 3 {
+                PollingRate::from_protocol(data[2])
                     .map(|rate| ParsedCommand::SetPollingRate(PollingRateResponse { rate }))
                     .unwrap_or_else(|| ParsedCommand::Unknown {
                         cmd,
@@ -2525,13 +2527,18 @@ mod tests {
 
     #[test]
     fn test_polling_rate() {
+        // Frame is [cmd, 0, code, ...] — the code sits two bytes after the command,
+        // not one. Writing it at offset 1 leaves offset 2 zero, which the firmware
+        // reads as code 0 (8 kHz), so every rate change silently became 8 kHz.
         let cmd = SetPollingRate::from_hz(1000).unwrap();
-        let data = cmd.to_data();
-        assert_eq!(data[0], 3); // 1000Hz = protocol value 3
+        assert_eq!(cmd.to_data(), vec![0, 3]); // 1000Hz = protocol value 3
 
-        let resp_data = [0x83, 3];
+        let resp_data = [0x83, 0, 3];
         let resp = PollingRateResponse::parse(&resp_data).unwrap();
         assert_eq!(resp.rate.to_hz(), 1000);
+
+        // A frame truncated before the code must fail rather than decode as 8 kHz.
+        assert!(PollingRateResponse::parse(&[0x83, 0]).is_err());
     }
 
     #[test]
@@ -2623,7 +2630,7 @@ mod tests {
 
     #[test]
     fn test_try_parse_command_polling_rate() {
-        let data = [0x03, 0x03]; // SET_REPORT, rate=3 (1000Hz)
+        let data = [0x03, 0x00, 0x03]; // SET_REPORT, rate=3 (1000Hz) at frame offset 2
         let parsed = try_parse_command(&data);
         match parsed {
             ParsedCommand::SetPollingRate(r) => {

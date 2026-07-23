@@ -97,6 +97,11 @@ use zerocopy::IntoBytes;
 /// single byte, so times are quantized to 10 ms (0–2550 ms).
 const MODTAP_TIME_STEP_MS: u16 = 10;
 
+/// Frame offset of the polling-rate code in SET_REPORT/GET_REPORT: `[cmd, 0, code, ...]`.
+/// The byte directly after the command is reserved and stays zero — reading or writing
+/// there instead makes every rate look like the 8 kHz code 0.
+const POLLING_RATE_FRAME_OFFSET: usize = 2;
+
 /// Sentinel partner index meaning "this key has no Snap-Tap pair".
 ///
 /// NOTE: pending firmware confirmation on v407 — `0xFF` is the conventional
@@ -333,13 +338,14 @@ impl KeyboardInterface {
         let resp = self
             .transport
             .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
-        if resp.is_empty() || resp[0] != cmd_byte {
+        if resp.len() < POLLING_RATE_FRAME_OFFSET + 1 || resp[0] != cmd_byte {
             return Err(KeyboardError::UnexpectedResponse(
                 "Invalid polling rate response".into(),
             ));
         }
-        PollingRate::from_protocol(resp[1]).ok_or_else(|| {
-            KeyboardError::UnexpectedResponse(format!("Unknown polling rate: 0x{:02X}", resp[1]))
+        let code = resp[POLLING_RATE_FRAME_OFFSET];
+        PollingRate::from_protocol(code).ok_or_else(|| {
+            KeyboardError::UnexpectedResponse(format!("Unknown polling rate: 0x{code:02X}"))
         })
     }
 
@@ -348,8 +354,9 @@ impl KeyboardInterface {
         let cmd_byte = self.commands.set_report.ok_or_else(|| {
             KeyboardError::NotSupported("Polling rate not available on this device".into())
         })?;
+        // Payload starts one byte after the command, so pad to reach the code's slot.
         self.transport
-            .send_command(cmd_byte, &[rate as u8], ChecksumType::Bit7)?;
+            .send_command(cmd_byte, &[0, rate as u8], ChecksumType::Bit7)?;
         Ok(())
     }
 
