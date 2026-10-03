@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "monsgeek_m1_v5_tmr",
+  "project_id": "bb5e5a16-ec57-4690-979b-0eff156372ec"
+}

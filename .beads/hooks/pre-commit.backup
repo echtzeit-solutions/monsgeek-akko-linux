@@ -1,0 +1,34 @@
+#!/bin/bash
+# Pre-commit hook: runs exactly what CI runs, so a passing commit means a passing CI.
+#
+# Install with:  git config core.hooksPath scripts/githooks
+# That makes this the tracked, shared hook — .git/hooks is not version controlled,
+# which is how the old copy drifted from CI unnoticed.
+#
+# This delegates to the same Makefile targets CI invokes rather than repeating
+# the flags. The previous version repeated them and had drifted: it ran
+#
+#     cargo clippy --features firmware-api -- -D warnings
+#
+# without `--workspace`, so only the root crate was linted. Lints in
+# monsgeek-keyboard and monsgeek-transport were never checked, and two commits
+# that broke CI passed this hook cleanly.
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+echo "=== make fmt-check  (CI job: Format Check) ==="
+if ! make fmt-check; then
+    echo
+    echo "ERROR: code is not formatted. Run 'cargo fmt --all' to fix."
+    exit 1
+fi
+
+echo "=== make check  (CI job: Clippy) ==="
+if ! make check; then
+    echo
+    echo "ERROR: clippy found issues. Fix them before committing."
+    exit 1
+fi
+
+echo "=== Pre-commit checks passed (same commands as CI) ==="

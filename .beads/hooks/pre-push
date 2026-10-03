@@ -1,0 +1,114 @@
+#!/bin/bash
+# Pre-push hook: verify BPF through kernel verifier before pushing
+# This catches verifier errors locally before CI runs
+
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Check if BPF files changed
+BPF_CHANGED=$(git diff --name-only HEAD@{push}..HEAD 2>/dev/null | grep -E "^akko-hid-bpf/" || true)
+
+if [ -z "$BPF_CHANGED" ]; then
+    echo "=== No BPF changes, skipping verification ==="
+    exit 0
+fi
+
+echo "=== BPF files changed, running kernel verification ==="
+
+# Build BPF if needed
+LOADER="$ROOT/akko-hid-bpf/target/release/akko-loader"
+BPF_OBJ="$ROOT/akko-hid-bpf/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf"
+WRAPPER="$ROOT/scripts/bpf-dev-wrapper.sh"
+
+if [ ! -f "$BPF_OBJ" ] || [ ! -f "$LOADER" ]; then
+    echo "=== Building BPF components ==="
+    make bpf-ebpf bpf 2>&1 | tail -5
+fi
+
+if [ ! -f "$LOADER" ]; then
+    echo "ERROR: akko-loader not found at $LOADER"
+    echo "Run 'make bpf' to build"
+    exit 1
+fi
+
+if [ ! -f "$BPF_OBJ" ]; then
+    echo "ERROR: BPF object not found at $BPF_OBJ"
+    echo "Run 'make bpf-ebpf' to build"
+    exit 1
+fi
+
+# Run verification using wrapper script (for sudo-rs compatibility)
+echo "=== Running kernel verifier ==="
+if [ -x "$WRAPPER" ] && sudo -n "$WRAPPER" verify 2>/dev/null; then
+    echo "=== BPF verification passed ==="
+elif sudo "$WRAPPER" verify; then
+    echo "=== BPF verification passed ==="
+else
+    echo ""
+    echo "ERROR: BPF verification failed!"
+    echo "Fix the verifier errors before pushing."
+    echo ""
+    echo "If sudo prompts for password, run: sudo make install-dev-sudoers"
+    exit 1
+fi
+
+# --- BEGIN BEADS INTEGRATION v1.3.1 ---
+# This section is managed by beads. Do not remove these markers.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  _bd_timeout=${BEADS_HOOK_TIMEOUT:-300}
+  case "$_bd_timeout" in
+    *[!0-9]*|'') _bd_timeout_invalid=1 ;;
+    *[1-9]*) _bd_timeout_invalid=0 ;;
+    *) _bd_timeout_invalid=1 ;;
+  esac
+  if [ "$_bd_timeout_invalid" -eq 1 ]; then
+    echo >&2 "beads: invalid BEADS_HOOK_TIMEOUT; using 300 seconds"
+    _bd_timeout=300
+  fi
+  _bd_timeout_backend=none
+  _bd_timeout_command=
+  for _bd_timeout_candidate in timeout gtimeout; do
+    if command -v "$_bd_timeout_candidate" >/dev/null 2>&1; then
+      if _bd_timeout_version="$("$_bd_timeout_candidate" --version 2>/dev/null)"; then
+        case "$_bd_timeout_version" in
+          "timeout (GNU coreutils) "*) _bd_timeout_command=$_bd_timeout_candidate; break ;;
+        esac
+      fi
+    fi
+  done
+  if [ -n "$_bd_timeout_command" ]; then
+    _bd_timeout_backend=coreutils
+    if "$_bd_timeout_command" -- "$_bd_timeout" bd hooks run pre-push "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  elif command -v perl >/dev/null 2>&1; then
+    _bd_timeout_backend=perl
+    if perl -e 'alarm shift; exec @ARGV' -- "$_bd_timeout" bd hooks run pre-push "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  else
+    echo >&2 "beads: hook 'pre-push' running without timeout; install coreutils or perl to enable BEADS_HOOK_TIMEOUT"
+    if bd hooks run pre-push "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  fi
+  if { [ "$_bd_timeout_backend" = coreutils ] && [ "$_bd_exit" -eq 124 ]; } || { [ "$_bd_timeout_backend" = perl ] && [ "$_bd_exit" -eq 142 ]; }; then
+    echo >&2 "beads: hook 'pre-push' timed out after ${_bd_timeout}s — continuing without beads"
+    _bd_exit=0
+  fi
+  if [ "$_bd_exit" -eq 3 ]; then
+    echo >&2 "beads: database not initialized — skipping hook 'pre-push'"
+    _bd_exit=0
+  fi
+  if [ "$_bd_exit" -ne 0 ]; then exit "$_bd_exit"; fi
+fi
+# --- END BEADS INTEGRATION v1.3.1 ---

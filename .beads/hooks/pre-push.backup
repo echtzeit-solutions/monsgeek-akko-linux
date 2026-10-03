@@ -1,0 +1,55 @@
+#!/bin/bash
+# Pre-push hook: verify BPF through kernel verifier before pushing
+# This catches verifier errors locally before CI runs
+
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Check if BPF files changed
+BPF_CHANGED=$(git diff --name-only HEAD@{push}..HEAD 2>/dev/null | grep -E "^akko-hid-bpf/" || true)
+
+if [ -z "$BPF_CHANGED" ]; then
+    echo "=== No BPF changes, skipping verification ==="
+    exit 0
+fi
+
+echo "=== BPF files changed, running kernel verification ==="
+
+# Build BPF if needed
+LOADER="$ROOT/akko-hid-bpf/target/release/akko-loader"
+BPF_OBJ="$ROOT/akko-hid-bpf/akko-ebpf/target/bpfel-unknown-none/release/akko-ebpf"
+WRAPPER="$ROOT/scripts/bpf-dev-wrapper.sh"
+
+if [ ! -f "$BPF_OBJ" ] || [ ! -f "$LOADER" ]; then
+    echo "=== Building BPF components ==="
+    make bpf-ebpf bpf 2>&1 | tail -5
+fi
+
+if [ ! -f "$LOADER" ]; then
+    echo "ERROR: akko-loader not found at $LOADER"
+    echo "Run 'make bpf' to build"
+    exit 1
+fi
+
+if [ ! -f "$BPF_OBJ" ]; then
+    echo "ERROR: BPF object not found at $BPF_OBJ"
+    echo "Run 'make bpf-ebpf' to build"
+    exit 1
+fi
+
+# Run verification using wrapper script (for sudo-rs compatibility)
+echo "=== Running kernel verifier ==="
+if [ -x "$WRAPPER" ] && sudo -n "$WRAPPER" verify 2>/dev/null; then
+    echo "=== BPF verification passed ==="
+elif sudo "$WRAPPER" verify; then
+    echo "=== BPF verification passed ==="
+else
+    echo ""
+    echo "ERROR: BPF verification failed!"
+    echo "Fix the verifier errors before pushing."
+    echo ""
+    echo "If sudo prompts for password, run: sudo make install-dev-sudoers"
+    exit 1
+fi
