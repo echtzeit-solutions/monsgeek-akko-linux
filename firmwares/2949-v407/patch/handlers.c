@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include "fw_v407.h"
 #include "hid_desc.h"
+#include "memaccess.h"   /* mem_handle_peek / mem_handle_poke */
 
 /* ── Linker-provided BSS boundaries (from patch.ld) ──────────────────── */
 
@@ -759,7 +760,7 @@ static void fill_patch_info_response(volatile uint8_t *buf) {
     buf[3]  = 0xCA;           /* magic hi */
     buf[4]  = 0xFE;           /* magic lo */
     buf[5]  = 1;              /* patch version */
-    buf[6]  = 0x4F;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) + consumer_fix(3) + anim_engine(6) */
+    buf[6]  = 0xCF;           /* capabilities: battery(0) + led_stream(1) + debug_log(2) + consumer_fix(3) + anim_engine(6) + peek_poke(7) */
     buf[7]  = 0x00;           /* capabilities hi */
     buf[8]  = 'M';
     buf[9]  = 'O';
@@ -1428,8 +1429,9 @@ int handle_vendor_cmd(void) {
     }
 
     /* Log vendor command entry (skip 0xE9 to avoid contaminating the log
-     * when reading it — each log read would otherwise add 3 bytes) */
-    if (cmd_buf[2] != 0xE9) {
+     * when reading it — each log read would otherwise add 3 bytes; skip 0xEB
+     * for the same reason, a watch loop would flood the ring) */
+    if (cmd_buf[2] != 0xE9 && cmd_buf[2] != 0xEB) {
         uint8_t log_payload[2] = { cmd_buf[0], cmd_buf[2] };
         log_entry(LOG_VENDOR_CMD_ENTRY, log_payload, 2);
     }
@@ -1445,6 +1447,10 @@ int handle_vendor_cmd(void) {
         return handle_log_read(cmd_buf);
     case 0xEA:
         return handle_anim_cmd(cmd_buf);
+    case 0xEB:
+        return mem_handle_peek(cmd_buf);
+    case 0xEC:
+        return mem_handle_poke(cmd_buf);
     default:
         return 0;   /* passthrough to original firmware */
     }

@@ -7,6 +7,7 @@ pub mod error;
 pub mod hid_codes;
 pub mod led;
 pub mod magnetism;
+pub mod memory;
 pub mod settings;
 pub mod sync;
 
@@ -39,6 +40,10 @@ impl PatchInfo {
 
     pub fn has_anim_engine(&self) -> bool {
         self.capabilities & 0x40 != 0
+    }
+
+    pub fn has_peek_poke(&self) -> bool {
+        self.capabilities & 0x80 != 0
     }
 }
 

@@ -75,6 +75,12 @@ pub mod cmd {
     /// Sub-commands: 0x00-0x07 = ASSIGN, 0x08-0x0F = DEF, 0x10-0x17 = DEF_EXT,
     /// 0xFE = CANCEL, 0xFF = CLEAR.
     pub const ANIM_CMD: u8 = 0xEA;
+    /// Peek device memory (patched firmware, capability bit 7). Request:
+    /// addr LE32, len, width, checksum slot, nonce. See `patch/memaccess.h`.
+    pub const PEEK: u8 = 0xEB;
+    /// Poke device memory (patched firmware, capability bit 7). Request:
+    /// addr LE32, width, nonce, checksum slot, value LE32, tag "POKE".
+    pub const POKE: u8 = 0xEC;
     /// Get RF info: returns {rf_addr[4], fw_ver_minor, fw_ver_major, 0, 0}.
     /// Handled locally by dongle — NOT forwarded to keyboard.
     pub const GET_RF_INFO: u8 = 0xFB;
@@ -144,6 +150,8 @@ pub mod cmd {
             GET_PATCH_INFO => "GET_PATCH_INFO",
             LED_STREAM => "LED_STREAM",
             ANIM_CMD => "ANIM_CMD",
+            PEEK => "PEEK",
+            POKE => "POKE",
             GET_RF_INFO => "GET_RF_INFO",
             GET_CACHED_RESPONSE => "GET_CACHED_RESPONSE",
             GET_DONGLE_ID => "GET_DONGLE_ID",

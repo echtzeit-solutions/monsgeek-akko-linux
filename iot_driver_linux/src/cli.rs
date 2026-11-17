@@ -576,6 +576,41 @@ pub enum Commands {
         verbose: bool,
     },
 
+    /// Read device memory as a hex dump (patched firmware only)
+    ///
+    /// Reads flash, SRAM, the ARM system control block and the known register
+    /// blocks; anything else is refused. Reading a register can have side
+    /// effects. Examples: `peek 0x2000045c 80` (SRAM), `peek 0x40020410`
+    /// (a GPIO register), `peek 0xe000ed28` (fault status).
+    Peek {
+        /// Address, decimal or 0x… hex
+        addr: String,
+        /// Number of bytes to read
+        #[arg(default_value = "64")]
+        len: String,
+        /// Access width in bytes: 1, 2 or 4 (default: 4 for registers, 1 for memory)
+        #[arg(short, long)]
+        width: Option<u8>,
+    },
+
+    /// Write one value to device memory (patched firmware only; SRAM and registers)
+    ///
+    /// Flash and the system control block are refused. A wrong write to a
+    /// register can crash the keyboard until it is unplugged. Example:
+    /// `poke 0x40020418 0x2000 --yes` sets GPIOB pin 13.
+    Poke {
+        /// Address, decimal or 0x… hex
+        addr: String,
+        /// Value, decimal or 0x… hex
+        value: String,
+        /// Access width in bytes: 1, 2 or 4 (default: 4 for registers, 1 for memory)
+        #[arg(short, long)]
+        width: Option<u8>,
+        /// Confirm the write
+        #[arg(long)]
+        yes: bool,
+    },
+
     // === Firmware Commands ===
     /// Firmware update tools
     #[command(subcommand, visible_alias = "fw")]

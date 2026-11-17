@@ -848,6 +848,8 @@ pub mod patch_info {
     pub const CAP_SPEED_GATE_NOP: u16 = 1 << 5;
     /// Capability: On-device animation engine (0xEA)
     pub const CAP_ANIM_ENGINE: u16 = 1 << 6;
+    /// Capability: peek / poke device memory (0xEB / 0xEC)
+    pub const CAP_PEEK_POKE: u16 = 1 << 7;
 
     pub fn capability_names(caps: u16) -> Vec<&'static str> {
         let mut names = Vec::new();
@@ -871,6 +873,9 @@ pub mod patch_info {
         }
         if caps & CAP_ANIM_ENGINE != 0 {
             names.push("anim_engine");
+        }
+        if caps & CAP_PEEK_POKE != 0 {
+            names.push("peek_poke");
         }
         names
     }

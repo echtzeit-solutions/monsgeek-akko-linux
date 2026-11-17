@@ -346,6 +346,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Depth { raw, zero, verbose }) => {
             commands::with_keyboard(&ctx, |kb| commands::debug::depth(kb, raw, zero, verbose))?;
         }
+        Some(Commands::Peek { addr, len, width }) => {
+            commands::memory::peek(&ctx, &addr, &len, width)?;
+        }
+        Some(Commands::Poke {
+            addr,
+            value,
+            width,
+            yes,
+        }) => {
+            commands::memory::poke(&ctx, &addr, &value, width, yes)?;
+        }
         Some(Commands::TestTransport) => {
             commands::debug::test_transport(&ctx)?;
         }

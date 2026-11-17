@@ -581,6 +581,32 @@ iot_driver depth -v         # Verbose status
 
 **Aliases:** `keydepth`
 
+### peek
+
+Read device memory as a hex dump. Needs a patched firmware with the `peek_poke` capability (check `iot_driver info`); on any other firmware the command says so and sends nothing.
+
+```bash
+iot_driver peek 0x2000045c 80       # SRAM: the keyboard state struct, as bytes
+iot_driver peek 0x40020410          # a register (GPIOB input data), read as one 32-bit word
+iot_driver peek 0xe000ed28          # system control block: fault status registers
+iot_driver peek 0x08005200 64 -w 4  # flash, shown as 32-bit words
+```
+
+The address is decimal or `0x…` hex. The length defaults to 64 bytes. The width (`-w 1|2|4`) defaults to 4 for registers and 1 for memory. Byte dumps show the printable characters; wider dumps show little-endian values.
+
+The firmware only reads flash, SRAM, the ARM system control block and the register blocks listed in the AT32F405 SDK, and refuses anything else (including the USB FIFO window). Reading a register can have side effects, such as a data register that clears a flag. See [PROTOCOL.md](PROTOCOL.md#peek-0xeb--poke-0xec) for the wire format.
+
+### poke
+
+Write one value to device memory. Same requirements as `peek`; SRAM and registers only, never flash or the system control block.
+
+```bash
+iot_driver poke 0x20000100 0x42 --yes          # SRAM byte; the value read back is printed
+iot_driver poke 0x40020418 0x2000 --yes        # GPIOB set/reset register: sets pin 13
+```
+
+`--yes` is required, because a wrong write to a register can crash the keyboard until it is unplugged. Registers are not read back (reading some has side effects); `peek` the address to check.
+
 ## Firmware Commands
 
 Firmware tools (dry-run only, no actual flashing).

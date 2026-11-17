@@ -281,6 +281,7 @@ The firmware patch extends the stock v407 firmware with additional capabilities 
 | `0xE7` | Patch Discovery | Returns patch magic (0xCAFE), version, capabilities, name |
 | `0xE8` | LED Streaming | Per-key RGB data to WS2812 frame buffer (7 pages, commit/release) |
 | `0xE9` | Debug Log | Ring buffer in SRAM, 10-page read, 5 entry types |
+| `0xEB` / `0xEC` | Peek / Poke | Read and write memory for debugging (`iot_driver peek` / `poke`) |
 | Battery HID | USB descriptor | Adds battery level + charging status to HID report descriptor |
 
 ### Building the Patch

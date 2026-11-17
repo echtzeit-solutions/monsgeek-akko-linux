@@ -568,11 +568,52 @@ to the keyboard via SPI (not handled locally), so they work over both wired USB 
 | 0xE8 | LED_STREAM | SET | Per-key RGB streaming: page 0–6 = 18 keys, 0xFF = commit, 0xFE = release |
 | 0xE9 | DEBUG_LOG | GET | Ring buffer read: page 0–9, 56 bytes/page |
 | 0xEA | ANIM_CMD | SET/GET | Animation engine: DEF/ASSIGN/CANCEL/CLEAR/QUERY (sub-command in byte 1) |
+| 0xEB | PEEK | GET | Read up to 48 bytes of memory (capability bit 7) |
+| 0xEC | POKE | SET | Write one value to SRAM or a register (capability bit 7) |
 
-**Why 0xE7–0xEA?** The previous command bytes (0xFB/0xFC/0xFD) collided with dongle-local
+**Why 0xE7–0xEC?** The previous command bytes (0xFB/0xFC/0xFD) collided with dongle-local
 commands GET_RF_INFO, GET_CACHED_RESPONSE, and GET_DONGLE_ID respectively. The dongle
 intercepts those locally and never forwards them to the keyboard, making patch detection
 impossible over the wireless path.
+
+#### PEEK (0xEB) / POKE (0xEC)
+
+Memory access for debugging without an SWD probe. The firmware handlers and the address whitelist are in `patch/memaccess.h`; the layout below is pinned on both sides by shared test vectors (`patch/test_memaccess.c`, `monsgeek-keyboard/src/memory.rs`).
+
+Offsets below are in the report the host sends and reads, byte 0 being the command.
+
+**Checksum slot.** Payload byte 6 (frame byte 8 after the command) is where the host transport writes its Bit7 checksum, over whatever is there. No field may live in it. The first version of this protocol kept the nonce there and read the checksum back as the nonce, and a poke value spanning it would have been corrupted the same way; both are pinned by tests on each side.
+
+**PEEK request:** `[0xEB, addr LE32, len, width, <checksum slot>, nonce]` — `len` 1–48, `width` 1, 2 or 4 and `len` a multiple of it, `addr` aligned to `width`.
+
+**POKE request:** `[0xEC, addr LE32, width, nonce, <checksum slot>, value LE32, 'P','O','K','E']` — the tag is required, so a stray or stale command can never write.
+
+**Reply (both):**
+
+| Byte | Meaning |
+|------|---------|
+| 0 | command echo |
+| 1 | status |
+| 2 | bytes returned (peek) or access width (poke); 0 on error |
+| 3 | nonce, echoed from the request |
+| 4–7 | address, echoed, LE32 |
+| 8… | peek: the data; poke: the value read back from SRAM as LE32, or 0 for a register |
+
+The nonce is the host's own byte. A reply whose nonce or address does not match the request is a stale answer to an earlier command and must be discarded; repeated peeks of one address would otherwise be indistinguishable from each other.
+
+**Status:** 0 ok, 1 address not allowed, 2 bad length or width, 3 unaligned, 4 poke tag missing, 5 flash or system control block (poke only).
+
+**Allowed addresses** (a read of an unmapped peripheral address can bus-fault, and a fault in this firmware hangs the keyboard until unplugged):
+
+| Region | Peek | Poke |
+|--------|------|------|
+| Flash `0x08000000`–`0x0803FFFF` | yes | no |
+| SRAM `0x20000000`–`0x20017FFF` | yes | yes |
+| Register blocks listed in the AT32F405 SDK (21 merged windows over `0x40000000`–`0x400267FF`) | yes | yes |
+| System control block `0xE000E000`–`0xE000EFFF` (SysTick, NVIC, SCB) | yes | no |
+| Everything else, including USB OTG `0x50000000` (its FIFO window consumes data) | no | no |
+
+A request must lie wholly inside one region. Peek reads into a local buffer before writing the reply, so peeking the command buffer shows the request as it was sent.
 
 #### ANIM_CMD (0xEA) Sub-Commands
 

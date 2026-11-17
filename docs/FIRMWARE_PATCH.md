@@ -241,7 +241,7 @@ Hook modes:
 
 | Hook | Target | Mode | Purpose |
 |------|--------|------|---------|
-| `vendor_dispatch` | `vendor_command_dispatch` (0x08013304) | filter | Intercepts 0xE7/0xE8/0xE9/0xEA vendor commands |
+| `vendor_dispatch` | `vendor_command_dispatch` (0x08013304) | filter | Intercepts 0xE7/0xE8/0xE9/0xEA/0xEB/0xEC vendor commands |
 | `hid_class_setup` | `hid_class_setup_handler` (0x0801474C) | filter | Intercepts GET_REPORT for battery Feature report (ID 7) |
 | `usb_connect` | `usb_otg_device_connect` (0x08018690) | filter | Patches descriptors + inits RTT before USB enumeration |
 | `battery_monitor` | `battery_level_monitor` (0x0801695C) | before | Emits RTT telemetry for ADC/battery debugging |
@@ -341,8 +341,21 @@ The dongle uses a HID Feature report instead of a vendor command because 0xE7 is
 | 4 | `consumer_redirect` | — | Sub=3 consumer → EP2 (native path) |
 | 5 | `speed_gate_nop` | — | USB speed check NOPd |
 | 6 | `anim_engine` | On-device animation engine (0xEA) | — |
+| 7 | `peek_poke` | Memory read/write for debugging (0xEB/0xEC) | — |
 
-Current values: MONSMOD = 0x004F, MONSDON = 0x0031.
+Current values: MONSMOD = 0x00CF, MONSDON = 0x0031.
+
+### Peek / poke
+
+`iot_driver peek` and `poke` read and write memory over the vendor channel, so state can be inspected on a running keyboard without an SWD probe. The firmware side is `patch/memaccess.h` (shared by the v407 and v408 builds, which share `handlers.c`); the wire format and the address whitelist are in [PROTOCOL.md](PROTOCOL.md#peek-0xeb--poke-0xec).
+
+The handlers are plain C with a swappable memory backend, so they are tested on the host without hardware:
+
+```bash
+make -C patch test     # address whitelist, reply layout, every refusal, request vectors shared with the Rust driver
+```
+
+Firmware that predates this has no `peek_poke` capability; the CLI checks and says so rather than sending a command the old firmware would ignore.
 
 ### Symbol export pipeline
 
