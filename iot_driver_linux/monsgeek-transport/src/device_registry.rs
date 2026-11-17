@@ -1,11 +1,32 @@
-//! Device registry - transport type detection by PID
+//! Device registry - which USB devices to talk to, and their transport type by PID
 //!
-//! This module provides centralized dongle PID detection for determining
-//! transport type. Device identity comes from firmware query (`get_device_id`),
-//! not from USB PID.
+//! Device identity comes from firmware query (`get_device_id`), not from USB PID.
 
-/// MonsGeek/Akko vendor ID
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
+/// MonsGeek vendor ID. Every PID under it is treated as a candidate.
 pub const VENDOR_ID: u16 = 0x3151;
+
+/// USB IDs from the device database. Rebranded boards (Akko 0x38EE and others)
+/// speak the same protocol under their own VIDs, but those VIDs also cover
+/// unrelated products, so only listed VID:PID pairs are accepted there.
+static KNOWN_USB_IDS: OnceLock<HashSet<(u16, u16)>> = OnceLock::new();
+
+/// Register the database's USB IDs for discovery. Only the first call takes
+/// effect; returns whether this one did.
+pub fn register_known_usb_ids(ids: impl IntoIterator<Item = (u16, u16)>) -> bool {
+    KNOWN_USB_IDS.set(ids.into_iter().collect()).is_ok()
+}
+
+/// Is this a device discovery should look at: any [`VENDOR_ID`] product, or a
+/// VID:PID registered from the device database.
+pub fn is_candidate_device(vid: u16, pid: u16) -> bool {
+    vid == VENDOR_ID
+        || KNOWN_USB_IDS
+            .get()
+            .is_some_and(|ids| ids.contains(&(vid, pid)))
+}
 
 /// Known dongle PIDs (2.4GHz wireless receivers)
 ///
@@ -89,6 +110,19 @@ mod tests {
     fn test_wired_pids_not_bluetooth() {
         assert!(!is_bluetooth_pid(0x5030)); // M1 V5 wired
         assert!(!is_bluetooth_pid(0x5038)); // M1 V5 dongle
+    }
+
+    #[test]
+    fn candidates_are_any_monsgeek_pid_or_a_registered_pair() {
+        assert!(register_known_usb_ids([(0x38EE, 0x0016)]));
+        assert!(!register_known_usb_ids([(0x1234, 0x5678)]));
+
+        assert!(is_candidate_device(VENDOR_ID, 0x5030));
+        assert!(is_candidate_device(VENDOR_ID, 0xFFFF));
+        assert!(is_candidate_device(0x38EE, 0x0016));
+        // another product under a registered VID is not a candidate
+        assert!(!is_candidate_device(0x38EE, 0x0017));
+        assert!(!is_candidate_device(0x1234, 0x5678));
     }
 
     #[test]

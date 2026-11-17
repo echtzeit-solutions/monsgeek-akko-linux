@@ -81,7 +81,8 @@ pub use command::{
     try_parse_response,
 };
 pub use device_registry::{
-    BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID, is_bluetooth_pid, is_dongle_pid,
+    BLUETOOTH_PIDS, DONGLE_PIDS, VENDOR_ID, is_bluetooth_pid, is_candidate_device, is_dongle_pid,
+    register_known_usb_ids,
 };
 pub use error::TransportError;
 pub use printer::{

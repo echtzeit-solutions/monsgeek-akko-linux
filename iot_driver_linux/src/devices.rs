@@ -2,13 +2,7 @@
 // Provides integration with the device database (devices.json) for feature lookup.
 // No hardcoded device entries — all metadata comes from the JSON database.
 
-use crate::hal;
 use crate::profile::registry::profile_registry;
-
-/// Check if a VID/PID combination is supported (VID-based: any 0x3151 device)
-pub fn is_supported(vid: u16, _pid: u16) -> bool {
-    vid == hal::VENDOR_ID
-}
 
 /// Resolve device info using the best available identifier.
 ///
@@ -106,16 +100,6 @@ impl DeviceInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_supported() {
-        assert!(is_supported(0x3151, 0x5030)); // Wired
-        assert!(is_supported(0x3151, 0x5038)); // 2.4GHz dongle
-        assert!(is_supported(0x3151, 0x5027)); // Bluetooth
-        assert!(is_supported(0x3151, 0x502D)); // FUN 60 Pro (unknown PID still supported)
-        assert!(is_supported(0x3151, 0xFFFF)); // Any VID=0x3151 device
-        assert!(!is_supported(0x1234, 0x5678));
-    }
 
     #[test]
     fn test_device_id_lookup() {

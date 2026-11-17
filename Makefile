@@ -111,6 +111,7 @@ install-driver:
 install-udev:
 	@echo "Installing udev rules..."
 	$(INSTALL) -D -m 644 udev/99-monsgeek.rules $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek.rules
+	$(INSTALL) -D -m 644 udev/99-monsgeek-rebrands.rules $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek-rebrands.rules
 	@if [ -z "$(DESTDIR)" ]; then \
 		udevadm control --reload-rules; \
 		udevadm trigger --subsystem-match=hidraw --subsystem-match=input; \
@@ -179,6 +180,7 @@ uninstall-driver:
 	rm -f $(DESTDIR)$(BIN_DIR)/$(DRIVER_BIN)
 	rm -f $(DESTDIR)$(BIN_DIR)/$(JOYSTICK_BIN)
 	rm -f $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek.rules
+	rm -f $(DESTDIR)$(UDEV_RULES_DIR)/99-monsgeek-rebrands.rules
 	rm -f $(DESTDIR)$(APP_DIR)/solutions.echtzeit.akko_keyboard_driver.desktop
 	@if [ -z "$(DESTDIR)" ]; then \
 		update-desktop-database $(APP_DIR) 2>/dev/null || true; \

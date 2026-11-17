@@ -11,7 +11,11 @@ use iot_driver::protocol::patch_info;
 use monsgeek_keyboard::settings::FirmwareVersion;
 use monsgeek_transport::protocol::ProtocolFamily;
 use monsgeek_transport::protocol::cmd;
-use monsgeek_transport::{ChecksumType, FlowControlTransport, HidDiscovery, Transport};
+use monsgeek_transport::{
+    ChecksumType, DeviceDiscovery, FlowControlTransport, HidDiscovery, Transport,
+    is_candidate_device,
+};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,11 +94,64 @@ fn section_devices(out: &mut String) {
             }
         }
         Ok(_) => {
-            let _ = writeln!(out, "_No supported (VID 0x3151) devices found._");
+            let _ = writeln!(out, "_No supported devices found._");
         }
         Err(e) => {
             let _ = writeln!(out, "_Device enumeration failed: {e}_");
         }
+    }
+    let _ = writeln!(out);
+    section_unmatched_interfaces(out);
+}
+
+/// Candidate devices (any VID 0x3151 product, or a VID:PID from the device
+/// database) that expose no interface discovery accepts: the vendor protocol may
+/// sit on a usage page we do not look at yet. Lists each HID interface from
+/// enumeration alone; nothing is opened.
+fn section_unmatched_interfaces(out: &mut String) {
+    let Ok(api) = hidapi::HidApi::new() else {
+        return;
+    };
+    let discovered: HashSet<(u16, u16)> = HidDiscovery::new()
+        .list_devices()
+        .map(|devs| devs.iter().map(|d| (d.info.vid, d.info.pid)).collect())
+        .unwrap_or_default();
+    let mut unmatched: Vec<_> = api
+        .device_list()
+        .filter(|d| {
+            let id = (d.vendor_id(), d.product_id());
+            is_candidate_device(id.0, id.1) && !discovered.contains(&id)
+        })
+        .collect();
+    if unmatched.is_empty() {
+        return;
+    }
+    unmatched.sort_by_key(|d| (d.vendor_id(), d.product_id(), d.interface_number()));
+
+    let _ = writeln!(out, "## Known devices without a supported interface");
+    let _ = writeln!(
+        out,
+        "These devices are MonsGeek (VID 0x3151) products or listed in the device \
+         database, but none of their HID interfaces has the vendor usage page and \
+         usage the driver talks to."
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "| vid:pid | interface | usage page | usage | product |"
+    );
+    let _ = writeln!(out, "|---|---|---|---|---|");
+    for d in unmatched {
+        let _ = writeln!(
+            out,
+            "| {:04X}:{:04X} | {} | 0x{:04X} | 0x{:04X} | {} |",
+            d.vendor_id(),
+            d.product_id(),
+            d.interface_number(),
+            d.usage_page(),
+            d.usage(),
+            d.product_string().unwrap_or("-"),
+        );
     }
     let _ = writeln!(out);
 }

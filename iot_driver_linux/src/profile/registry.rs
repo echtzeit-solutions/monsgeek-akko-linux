@@ -60,6 +60,7 @@ impl ProfileRegistry {
     pub fn load_device_database(&mut self) {
         match DeviceDatabase::load_default() {
             Ok(db) => {
+                monsgeek_transport::register_known_usb_ids(keyboard_usb_ids(&db));
                 self.device_db = Some(db);
             }
             Err(e) => {
@@ -304,6 +305,14 @@ impl ProfileRegistry {
     }
 }
 
+/// USB IDs of the database's keyboards, for discovery. The database also lists
+/// mice and their receivers, and negative ids are placeholder "help" entries.
+fn keyboard_usb_ids(db: &DeviceDatabase) -> impl Iterator<Item = (u16, u16)> + '_ {
+    db.all_devices()
+        .filter(|d| d.id >= 0 && matches!(d.device_type.as_str(), "keyboard" | "hitBoxKeyboard"))
+        .map(|d| (d.vid, d.pid))
+}
+
 impl Default for ProfileRegistry {
     fn default() -> Self {
         Self::with_builtins()
@@ -323,6 +332,22 @@ pub fn profile_registry() -> &'static ProfileRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_ids_are_the_databases_keyboards() {
+        let Ok(db) = DeviceDatabase::load_from_file("../data/devices.json") else {
+            eprintln!("data/devices.json not found, skipping");
+            return;
+        };
+        let ids: std::collections::HashSet<_> = keyboard_usb_ids(&db).collect();
+        assert!(ids.contains(&(0x38EE, 0x0016)), "Akko RAID 75 HE");
+        assert!(ids.contains(&(0x3151, 0x5030)), "M1 V5 HE wired");
+        assert!(!ids.contains(&(0x374A, 0xA321)), "a mouse");
+        assert!(
+            !ids.contains(&(0x046A, 0x012E)),
+            "a negative-id placeholder"
+        );
+    }
 
     #[test]
     fn test_registry_with_builtins() {

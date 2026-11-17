@@ -10,6 +10,9 @@ A Linux userspace driver for MonsGeek, Akko, and other magnetic keyboards using 
 - MonsGeek M1 V5 HE (Wired) - VID:3151 PID:5030
 - MonsGeek M1 V5 HE (Wireless/2.4GHz) - VID:3151 PID:503A
 - Akko MOD007B-HE and other Akko HE keyboards (same protocol)
+- Rebranded boards under other vendor IDs (Akko 0x38EE and others), when their
+  VID:PID is in the device database (`make update-device-db` refreshes it). Any
+  VID 0x3151 product is tried even when it is not listed.
 
 ## Features
 
@@ -359,7 +362,8 @@ Make sure udev rules are installed and you've re-plugged the keyboard.
 ### Device Not Found
 ```bash
 iot_driver list  # Check if device is visible
-lsusb | grep 3151  # Verify USB connection
+lsusb              # Verify the USB connection and note its VID:PID
+iot_driver probe   # Report; lists known boards whose HID interfaces the driver does not use
 ```
 
 ### TUI Not Starting

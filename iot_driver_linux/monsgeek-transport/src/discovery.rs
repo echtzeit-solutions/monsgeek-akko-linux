@@ -1,4 +1,4 @@
-//! Device discovery for MonsGeek/Akko keyboards
+//! Device discovery for MonsGeek/Akko keyboards and their rebrands
 
 use std::sync::Arc;
 
@@ -196,8 +196,7 @@ impl DeviceDiscovery for HidDiscovery {
             let vid = device_info.vendor_id();
             let pid = device_info.product_id();
 
-            // Match any device with our vendor ID
-            if vid != device::VENDOR_ID {
+            if !device_registry::is_candidate_device(vid, pid) {
                 continue;
             }
 

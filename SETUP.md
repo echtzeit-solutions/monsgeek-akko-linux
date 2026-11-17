@@ -14,19 +14,15 @@ We developed two approaches to get it working on Linux:
 ### 1. Set up udev rules for HID access
 
 ```bash
-# Copy the udev rules file
-sudo cp 99-monsgeek.rules /etc/udev/rules.d/
-
-# Reload rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
+# Installs udev/99-monsgeek.rules and udev/99-monsgeek-rebrands.rules, then reloads
+sudo make install-udev
 ```
 
-The rules file (`99-monsgeek.rules`) contains:
-```
-# MonsGeek/Akko keyboards - allow user access to HID interfaces
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="3151", MODE="0666"
-```
+`99-monsgeek.rules` opens every hidraw node under the MonsGeek VID 0x3151.
+`99-monsgeek-rebrands.rules` is generated from the device database
+(`scripts/generate-udev-rules.py`, run by `make update-device-db`) and opens
+only the listed VID:PID pairs of rebranded boards (Akko 0x38EE and others),
+since those vendor IDs also cover unrelated products.
 
 ### 2. Build and run the native Linux driver
 
@@ -238,7 +234,7 @@ monsgeek-m1-v5-tmr/
 ├── extracted_protocol.md       # Full protocol documentation
 ├── FEATURE_MAP.md             # Feature comparison with official app
 │
-├── 99-monsgeek.rules          # udev rules for HID access
+├── udev/                      # udev rules for HID access
 ├── iot_driver.exe             # Original Windows driver (for reference)
 ├── run_wine_iot.sh            # Helper script for Wine approach
 │
@@ -273,8 +269,7 @@ monsgeek-m1-v5-tmr/
 
 Make sure udev rules are installed and reloaded:
 ```bash
-sudo cp 99-monsgeek.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo make install-udev
 # Unplug and replug the keyboard
 ```
 

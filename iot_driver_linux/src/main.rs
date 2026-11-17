@@ -37,6 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Loads the device database, whose USB IDs tell discovery which non-MonsGeek
+    // VIDs (Akko and other rebrands) to look at.
+    iot_driver::profile::registry::profile_registry();
+
     // Create command context from CLI flags
     let printer_config = commands::create_printer_config(
         cli.monitor,
