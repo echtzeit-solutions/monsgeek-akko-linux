@@ -349,16 +349,19 @@ Current values: MONSMOD = 0x004F, MONSDON = 0x0031.
 Firmware symbols (function addresses, globals, struct types) are extracted from Ghidra and used at compile time:
 
 ```
-Ghidra project
-  → ExportSymbols.java (headless script)
-    → symbols.json
-      → generate_patch_files.py
-        → fw_v407.h (C header with externs + struct typedefs)
-        → fw_symbols.ld (linker symbols for firmware functions/globals)
-        → patch.ld (memory regions + sections)
+Ghidra Server repository "monsgeek" (latest checked-in version)
+  → scripts/ghidra_export_symbols.sh (analyzeHeadless, read-only)
+    → ExportSymbols.java
+      → symbols.json
+        → generate_patch_files.py
+          → fw_v407.h (C header with externs + struct typedefs)
+          → fw_symbols.ld (linker symbols for firmware functions/globals)
+          → patch.ld (memory regions + sections)
 ```
 
-**Important**: Never edit `fw_v407.h` or `fw_symbols.ld` manually. Always update labels/types in Ghidra first, then re-export via `make symbols && make generate`.
+The Ghidra Server repository is the source of truth; the old local `ghidra_v407` project is no longer read. The export uses the credentials in `~/.config/ghidra-mcp/server.env` (`GHIDRA_SERVER_HOST`/`_PORT`/`_USER`/`_PASSWORD`, the file the `ghidra-headless@` services use; override with `GHIDRA_SERVER_ENV`). It opens the program read-only, so it cannot modify the repository.
+
+**Important**: Never edit `fw_v407.h` or `fw_symbols.ld` manually. Update labels/types in Ghidra first and **check the program in** (the export reads the checked-in version, not your working copy), then run `make generate` in `patch/` (it re-exports every time).
 
 ### Recovery
 

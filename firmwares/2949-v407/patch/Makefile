@@ -18,13 +18,15 @@ ASFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
 LDSCRIPT := patch.ld
 FIRMWARE := ../firmware_reconstructed.bin
 
-# Ghidra symbol export / code generation
+# Ghidra symbol export / code generation. Names live in the Ghidra Server
+# repository: rename there, check in, then `make generate`.
+export GHIDRA
 GHIDRA      ?= /opt/ghidra/support/analyzeHeadless
-PROJECT_DIR := ..
-PROJECT     := ghidra_v407
+REPO        := monsgeek
 PROGRAM     := firmware_reconstructed.bin
 SYMBOLS     := symbols.json
 SCRIPTS     := ../../../ghidra_scripts
+EXPORT      := ../../../scripts/ghidra_export_symbols.sh
 GENERATE    := ../../../scripts/generate_patch_files.py
 
 # ── Framework-based build (hooks_gen.S + handlers.S + handlers.c) ────────
@@ -58,13 +60,11 @@ disasm: hook.elf
 patch: hook.bin $(FIRMWARE)
 	python3 hooks.py patch
 
-symbols: $(SYMBOLS)
-$(SYMBOLS): $(PROJECT_DIR)/$(PROJECT).rep
-	$(GHIDRA) $(PROJECT_DIR) $(PROJECT) -process $(PROGRAM) \
-	  -noanalysis -scriptPath $(abspath $(SCRIPTS)) \
-	  -postScript ExportSymbols.java $(abspath $@)
+# The repository can change without touching any local file, so always re-export.
+symbols:
+	$(EXPORT) $(REPO) $(PROGRAM) $(abspath $(SCRIPTS)) $(abspath $(SYMBOLS))
 
-generate: $(SYMBOLS)
+generate: symbols
 	python3 $(GENERATE) $(SYMBOLS) -o . --header-name fw_v407.h
 
 # ── SRAM shellcode (for userpic overflow PoC) ────────────────────────────
