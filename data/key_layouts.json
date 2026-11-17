@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-23T22:16:36.702Z",
+  "generatedAt": "2026-11-17T21:33:03.754Z",
   "source": "merged",
-  "count": 370,
+  "count": 386,
   "layouts": {
     "CommonHitBox": "HitBox17键",
     "CommonHitBoxAkko": "HitBox17键 akko",
@@ -176,6 +176,7 @@
     "Common82_SG9000": "常规82键(SG9000 del 旋钮 home pgup pgdn end)",
     "Common82_SG9000_v3": "常规82键(SG9000_v2 del 旋钮 home pgup pgdn end)",
     "Common82_M1_V5_TMR": "常规82键(M1 V5 TMR 旋钮 AudioVolumeDown VolumeBrightnessToggle3 AudioVolumeUp)",
+    "Common82_M1_V5_ISO": "常规82键(M1 V5 ISO UK 旋钮 AudioVolumeDown VolumeBrightnessToggle3 AudioVolumeUp)",
     "Common82_SG9000_v2": "常规82键(SG9000 旋钮 home pgup pgdn end) 机械轴",
     "Common82_MOD007BHE": "常规82键(MOD007BHE) 只与sg9000旋钮不同,音量减,Volume_Brightness,音量加",
     "Common82_PC75S": "常规82键(MOD007BHE) 音量减,Volume_Brightness1,音量加 us 机械轴",
@@ -373,6 +374,21 @@
     "Common69_HE986UK": "常规69键(HE986UK) (AudioVolumeDown,mute,AudioVolumeUp)",
     "Common83_HK440": "常规83键(HK440)",
     "Common108_5108V5HE": "常规108键(5108V5HE) 计算器 u- u+ mute",
-    "Unknown": "未知/还没加"
+    "Unknown": "未知/还没加",
+    "Common88_akko_fun87_he": "Common88_akko_fun87_he",
+    "Common87_MonsGeek_TMR_C": "Common87_MonsGeek_TMR_C",
+    "CommonHitBoxAkkoMec": "HitBox17键 akko 机械轴",
+    "Common67_KF106_tmr": "常规67键(KF106_tmr 旋钮 del pgup pgdn) 图标",
+    "Common67_KF105_tmr": "常规67键(KF105_tmr 旋钮 del pgup pgdn) 图标",
+    "Common83_MOD007V5HE_TMR": "常规83键(MOD007V5HE_TMR) alt fn 旋钮  Del Home PgUp PgDn",
+    "Common98_5098": "常规98键(AKKO_5098_V5_3M_8K) del ins pgup pgdn 旋钮",
+    "Common98_5098_UK": "常规98键(AKKO_5098_V5_ISO_3M_8K) del ins pgup pgdn 旋钮 UK",
+    "Common68_K0061": "常规68键(K0061)",
+    "Common67_4030": "Common67_4030",
+    "Common67_4031": "Common67_4031",
+    "Common82_5075_v5": "Common82_5075_v5",
+    "Common87_5087V5": "Common87_5087V5",
+    "Common108_MG108BV2": "Common108_MG108BV2",
+    "Common82_5075_v5_de": "Common82_5075_v5_de"
   }
 }

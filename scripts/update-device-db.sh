@@ -4,7 +4,7 @@
 # Mines device definitions, key matrices and key layouts from any number of sources and
 # merges them into data/devices.json + data/device_matrices.json:
 #
-#   webapp   app.monsgeek.com bundle (always, unless --no-webapp)
+#   webapp   app.monsgeek.com and web.akkogear.com bundles (always, unless --no-webapp)
 #   vendor   an Electron driver unpacked by driver_extract/download-and-extract.sh into
 #            driver_extract/vendors/<tag>/ — repeatable
 #
@@ -27,7 +27,6 @@ DRIVER_EXTRACT="$PROJECT_ROOT/driver_extract"
 DATA_DIR="$PROJECT_ROOT/data"
 CACHE_DIR="$PROJECT_ROOT/.cache/device-db"
 
-WEBAPP_URL="https://app.monsgeek.com"
 INCLUDE_WEBAPP=true
 CLEAN_CACHE=false
 VENDORS=()
@@ -56,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --vendor <tag>  Include driver_extract/vendors/<tag> (repeatable)"
             echo "  --electron      Shorthand for --vendor akko"
-            echo "  --no-webapp     Skip the app.monsgeek.com bundle"
+            echo "  --no-webapp     Skip the app.monsgeek.com and web.akkogear.com bundles"
             echo "  --clean         Clean cached intermediates before extracting"
             echo "  --help          Show this help"
             echo ""
@@ -98,42 +97,42 @@ MATRIX_ARGS=()
 SVG_ARGS=()
 
 # =============================================================================
-# Step 1: webapp bundle
+# Step 1: webapp bundles
 # =============================================================================
 
+# Fetch a webapp's current bundle and extract its devices. The bundle hash changes with
+# every deploy, so the page is always asked which one is current; a local copy is used
+# only when the site cannot be reached. Older bundles are kept for diffing.
+#   $1  site URL      $2  source tag      $3  local directory for bundles
 extract_webapp() {
-    echo "=== Step 1: Fetching webapp bundle ==="
+    local url="$1" tag="$2" webapp_dir="$3"
+    echo "=== Webapp '$tag' ($url) ==="
 
-    local webapp_dir="$PROJECT_ROOT/app.monsgeek.com"
-    local bundle=""
+    local html name bundle=""
+    html=$(curl -sfL "$url" || true)
+    # e.g. src="./js/index.1e076e39.js" or the older src="/index.cd092454.js"
+    name=$(echo "$html" | grep -oP 'src="\.?/?\K[^"]*index\.[a-f0-9]+\.js' | head -1)
 
-    if [ -d "$webapp_dir" ]; then
-        bundle=$(find "$webapp_dir" -maxdepth 1 -name "index.*.js" -type f 2>/dev/null | head -1)
-    fi
-
-    if [ -z "$bundle" ] || [ ! -f "$bundle" ]; then
-        echo "Fetching from $WEBAPP_URL..."
-        local html name
-        html=$(curl -sL "$WEBAPP_URL")
-        name=$(echo "$html" | grep -oP 'src="/\K[^"]+\.js' | head -1)
-        [ -z "$name" ] && name=$(echo "$html" | grep -oP 'index\.[a-f0-9]+\.js' | head -1)
-
-        if [ -z "$name" ]; then
-            echo "Warning: could not find the bundle name in the webapp HTML — skipping webapp"
+    if [ -n "$name" ]; then
+        bundle="$webapp_dir/$(basename "$name")"
+        if [ ! -f "$bundle" ]; then
+            mkdir -p "$webapp_dir"
+            echo "Downloading: $url/$name"
+            curl -sfL "$url/$name" -o "$bundle"
+        fi
+    else
+        bundle=$(ls -t "$webapp_dir"/index.*.js 2>/dev/null | head -1)
+        if [ -z "$bundle" ]; then
+            echo "Warning: no bundle name in the page and no local copy — skipping '$tag'"
+            echo ""
             return
         fi
-
-        mkdir -p "$webapp_dir"
-        bundle="$webapp_dir/$name"
-        if [ ! -f "$bundle" ]; then
-            echo "Downloading: $WEBAPP_URL/$name"
-            curl -sL "$WEBAPP_URL/$name" -o "$bundle"
-        fi
+        echo "Warning: could not reach $url — using the newest local copy"
     fi
     echo "Bundle: $bundle ($(du -h "$bundle" | cut -f1))"
 
-    local out="$CACHE_DIR/webapp_devices.json"
-    node "$DRIVER_EXTRACT/extract-devices.js" "$bundle" --source webapp --output "$out"
+    local out="$CACHE_DIR/${tag}_devices.json"
+    node "$DRIVER_EXTRACT/extract-devices.js" "$bundle" --source "$tag" --output "$out"
     DEVICE_JSONS+=("$out")
     echo ""
 }
@@ -190,7 +189,11 @@ extract_vendor() {
     echo ""
 }
 
-[ "$INCLUDE_WEBAPP" = true ] && extract_webapp
+if [ "$INCLUDE_WEBAPP" = true ]; then
+    extract_webapp https://app.monsgeek.com webapp "$PROJECT_ROOT/app.monsgeek.com"
+    # Akko's own webapp lists Akko-branded models (e.g. RAID 75 HE) the MonsGeek one lacks
+    extract_webapp https://web.akkogear.com akkogear "$PROJECT_ROOT/web.akkogear.com"
+fi
 for tag in "${VENDORS[@]}"; do
     extract_vendor "$tag"
 done
