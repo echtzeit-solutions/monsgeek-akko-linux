@@ -12,7 +12,9 @@ use tracing::{info, warn};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JsonRangeConfig {
     pub min: f32,
-    pub max: f32,
+    /// Some upstream entries give only `min` and `step` (FUN87 HE's `firePress`).
+    #[serde(default)]
+    pub max: Option<f32>,
     #[serde(default)]
     pub step: Option<f32>,
     #[serde(default)]
@@ -520,18 +522,22 @@ impl DeviceDatabase {
     /// Supports both the new versioned format and the old array format
     pub fn load_from_json(json: &str) -> Result<Self, String> {
         // Try versioned format first
-        if let Ok(file) = serde_json::from_str::<JsonDeviceFile>(json) {
-            let mut db = Self::new();
-            db.version = file.version;
-            for device in file.devices {
-                db.add_device(device);
+        let versioned_err = match serde_json::from_str::<JsonDeviceFile>(json) {
+            Ok(file) => {
+                let mut db = Self::new();
+                db.version = file.version;
+                for device in file.devices {
+                    db.add_device(device);
+                }
+                return Ok(db);
             }
-            return Ok(db);
-        }
+            Err(e) => e,
+        };
 
-        // Fall back to old array format
-        let devices: Vec<JsonDeviceDefinition> =
-            serde_json::from_str(json).map_err(|e| format!("Failed to parse JSON: {e}"))?;
+        // Fall back to the old array format. If that fails too, the versioned
+        // error is the useful one: every database we ship is versioned.
+        let devices: Vec<JsonDeviceDefinition> = serde_json::from_str(json)
+            .map_err(|_| format!("Failed to parse device database: {versioned_err}"))?;
 
         let mut db = Self::new();
         for device in devices {
@@ -1091,7 +1097,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Run manually with: cargo test test_load_actual_db -- --ignored
     fn test_load_actual_db() {
         // This test loads the actual devices.json file
         // Path is relative to crate root (iot_driver_linux/)
@@ -1233,7 +1238,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Run manually with: cargo test test_device_matrices -- --ignored --nocapture
     fn test_device_matrices() {
         let mut db = DeviceDatabase::load_from_file("../data/devices.json")
             .or_else(|_| DeviceDatabase::load_from_file("data/devices.json"))

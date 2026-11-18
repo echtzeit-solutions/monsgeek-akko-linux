@@ -335,10 +335,8 @@ mod tests {
 
     #[test]
     fn discovery_ids_are_the_databases_keyboards() {
-        let Ok(db) = DeviceDatabase::load_from_file("../data/devices.json") else {
-            eprintln!("data/devices.json not found, skipping");
-            return;
-        };
+        let db = DeviceDatabase::load_from_file("../data/devices.json")
+            .expect("data/devices.json is tracked and must parse");
         let ids: std::collections::HashSet<_> = keyboard_usb_ids(&db).collect();
         assert!(ids.contains(&(0x38EE, 0x0016)), "Akko RAID 75 HE");
         assert!(ids.contains(&(0x3151, 0x5030)), "M1 V5 HE wired");
