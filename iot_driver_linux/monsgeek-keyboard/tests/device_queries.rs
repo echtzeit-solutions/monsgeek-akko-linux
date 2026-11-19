@@ -6,15 +6,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use monsgeek_keyboard::{KeyTriggerSettings, KeyboardInterface, PollingRate, Precision};
+use monsgeek_keyboard::{KeyTriggerSettings, PollingRate, Precision, RyKeyboard};
 use monsgeek_transport::protocol::{DefId, MacroSlot};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, HidDiscovery, Transport};
 
-/// Open the preferred keyboard and create a KeyboardInterface.
+/// Open the preferred keyboard and create a RyKeyboard.
 ///
 /// Mirrors the TUI's `connect()` flow:
-/// HidDiscovery → open_preferred → FlowControlTransport → KeyboardInterface
-fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
+/// HidDiscovery → open_preferred → FlowControlTransport → RyKeyboard
+fn open_keyboard() -> (Arc<dyn Transport>, RyKeyboard) {
     let discovery = HidDiscovery::new();
     let transport = discovery
         .open_preferred()
@@ -27,7 +27,7 @@ fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
     };
 
     let flow = Arc::new(FlowControlTransport::new(Arc::clone(&transport)));
-    let kb = KeyboardInterface::new(
+    let kb = RyKeyboard::new(
         flow,
         key_count,
         has_magnetism,

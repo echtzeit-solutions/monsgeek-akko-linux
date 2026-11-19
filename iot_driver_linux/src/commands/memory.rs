@@ -5,7 +5,7 @@
 //! control block and the known register blocks.
 
 use super::{CmdCtx, CommandResult, with_keyboard};
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_keyboard::memory::Width;
 use std::fmt::Write as _;
 
@@ -29,7 +29,7 @@ fn resolve_width(addr: u32, requested: Option<u8>) -> Result<Width, String> {
     }
 }
 
-fn require_peek_poke(kb: &KeyboardInterface) -> CommandResult {
+fn require_peek_poke(kb: &RyKeyboard) -> CommandResult {
     if kb.supports_peek_poke()? {
         return Ok(());
     }

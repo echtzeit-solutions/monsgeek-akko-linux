@@ -50,8 +50,7 @@ use crate::{FirmwareSettings, TriggerSettings, cmd, devices};
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    KeyboardInterface, Precision, SleepTimeSettings, TimestampedEvent, VendorEvent,
-    led::speed_to_wire,
+    Precision, RyKeyboard, SleepTimeSettings, TimestampedEvent, VendorEvent, led::speed_to_wire,
 };
 use monsgeek_transport::protocol::Profile;
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};
@@ -142,7 +141,7 @@ struct App {
     )>,
     device_picker_selected: usize,
     // Keyboard interface (async, wrapped in Arc for spawning tasks)
-    keyboard: Option<Arc<KeyboardInterface>>,
+    keyboard: Option<Arc<RyKeyboard>>,
     // Event receiver for low-latency EP2 notifications (with timestamps)
     event_rx: Option<broadcast::Receiver<TimestampedEvent>>,
     loading: LoadingStates,
@@ -401,7 +400,7 @@ impl App {
         let key_count = crate::device_loader::scan_extent(db_key_count, matrix_db);
         let display_key_count = crate::device_loader::display_key_count(db_key_count, matrix_db);
 
-        let mut kb = KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
+        let mut kb = RyKeyboard::new(flow_transport, key_count, has_magnetism, protocol);
         let (polling_rate_support, polling_rates) =
             resolve_polling_rate(device_id, vid, pid, transport_info.transport_type);
         kb.set_polling_rates(polling_rates.to_vec());
@@ -577,8 +576,7 @@ impl App {
                 let display_key_count =
                     crate::device_loader::display_key_count(db_key_count, matrix_db);
 
-                let mut kb =
-                    KeyboardInterface::new(flow_transport, key_count, has_magnetism, protocol);
+                let mut kb = RyKeyboard::new(flow_transport, key_count, has_magnetism, protocol);
                 let (polling_rate_support, polling_rates) =
                     resolve_polling_rate(device_id, vid, pid, transport_info.transport_type);
                 kb.set_polling_rates(polling_rates.to_vec());

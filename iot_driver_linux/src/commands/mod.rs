@@ -185,7 +185,7 @@ pub(crate) fn query_device_id(flow: &FlowControlTransport) -> Option<i32> {
 /// Open a keyboard with device selection support.
 pub fn open_keyboard(
     ctx: &CmdCtx,
-) -> Result<monsgeek_keyboard::KeyboardInterface, Box<dyn std::error::Error>> {
+) -> Result<monsgeek_keyboard::RyKeyboard, Box<dyn std::error::Error>> {
     let flow = open_preferred_transport(ctx)?;
 
     let info = flow.device_info();
@@ -206,8 +206,7 @@ pub fn open_keyboard(
     let matrix_db = device_id.and_then(|id| registry.get_device_matrix(vid, pid, id));
     let key_count = iot_driver::device_loader::scan_extent(db_key_count, matrix_db);
 
-    let mut kb =
-        monsgeek_keyboard::KeyboardInterface::new(flow, key_count, has_magnetism, protocol);
+    let mut kb = monsgeek_keyboard::RyKeyboard::new(flow, key_count, has_magnetism, protocol);
 
     // Cap settable polling rates at what this model supports.
     if let Some(def) = device_id.and_then(|id| registry.get_device_info_by_id_and_usb(id, vid, pid))
@@ -250,12 +249,12 @@ pub fn open_keyboard(
 /// Open a keyboard and run a closure with it.
 /// Restores the board's profile when dropped, on every exit path.
 struct ProfileGuard<'a> {
-    keyboard: &'a monsgeek_keyboard::KeyboardInterface,
+    keyboard: &'a monsgeek_keyboard::RyKeyboard,
     restore_to: Profile,
 }
 
 impl<'a> ProfileGuard<'a> {
-    fn new(keyboard: &'a monsgeek_keyboard::KeyboardInterface, restore_to: Profile) -> Self {
+    fn new(keyboard: &'a monsgeek_keyboard::RyKeyboard, restore_to: Profile) -> Self {
         *PENDING_PROFILE_RESTORE.lock().unwrap() = Some(restore_to);
         Self {
             keyboard,
@@ -306,7 +305,7 @@ const MAGNETISM_FLUSH_MS: u64 = 400;
 /// is restored through a guard that also runs on error and panic.
 pub fn with_keyboard_on_profile<F>(ctx: &CmdCtx, f: F) -> CommandResult
 where
-    F: FnOnce(&monsgeek_keyboard::KeyboardInterface) -> CommandResult,
+    F: FnOnce(&monsgeek_keyboard::RyKeyboard) -> CommandResult,
 {
     let keyboard = match open_keyboard(ctx) {
         Ok(kb) => kb,
@@ -342,7 +341,7 @@ where
 
 pub fn with_keyboard<F>(ctx: &CmdCtx, f: F) -> CommandResult
 where
-    F: FnOnce(&monsgeek_keyboard::KeyboardInterface) -> CommandResult,
+    F: FnOnce(&monsgeek_keyboard::RyKeyboard) -> CommandResult,
 {
     match open_keyboard(ctx) {
         Ok(keyboard) => f(&keyboard),

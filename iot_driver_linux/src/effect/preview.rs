@@ -187,7 +187,7 @@ pub fn build_labels() -> Vec<String> {
 /// Sends RGB frames at ~30 FPS using the 0xFC patch protocol.
 /// The caller is responsible for Ctrl-C handling and LED release.
 pub fn play_on_hardware(
-    kb: &monsgeek_keyboard::KeyboardInterface,
+    kb: &monsgeek_keyboard::RyKeyboard,
     resolved: &ResolvedEffect,
     key_positions: &[LedPos],
     running: &std::sync::atomic::AtomicBool,

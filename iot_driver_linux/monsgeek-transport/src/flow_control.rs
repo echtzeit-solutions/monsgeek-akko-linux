@@ -9,7 +9,7 @@
 //!                |
 //!       [FlowControlTransport]            ← adds retries, echo matching, polling
 //!                |
-//!      [KeyboardInterface / TUI]
+//!      [RyKeyboard / TUI]
 //! ```
 
 use std::collections::VecDeque;

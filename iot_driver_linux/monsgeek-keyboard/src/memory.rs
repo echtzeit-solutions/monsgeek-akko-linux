@@ -2,7 +2,7 @@
 //!
 //! The wire format and the list of addresses the firmware will touch live next
 //! to its handlers, in `patch/memaccess.h`. One peek request returns at most
-//! [`PEEK_MAX_LEN`] bytes; [`KeyboardInterface::peek`] splits longer reads.
+//! [`PEEK_MAX_LEN`] bytes; [`RyKeyboard::peek`] splits longer reads.
 //!
 //! Every request carries a nonce that the firmware echoes. A debugging tool
 //! that silently shows the previous command's answer is worse than one that
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use monsgeek_transport::ChecksumType;
 use monsgeek_transport::protocol::cmd;
 
-use crate::{KeyboardError, KeyboardInterface};
+use crate::{KeyboardError, RyKeyboard};
 
 /// Most bytes one peek request can return.
 pub const PEEK_MAX_LEN: usize = 48;
@@ -242,7 +242,7 @@ fn refusal(what: &str, addr: u32, err: ReplyError) -> KeyboardError {
     }
 }
 
-impl KeyboardInterface {
+impl RyKeyboard {
     /// Whether this firmware answers peek and poke (patch capability bit 7).
     pub fn supports_peek_poke(&self) -> Result<bool, KeyboardError> {
         Ok(self

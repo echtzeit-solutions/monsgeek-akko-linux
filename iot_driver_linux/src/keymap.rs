@@ -10,9 +10,7 @@ use crate::key_action::KeyAction;
 use crate::protocol::hid;
 use monsgeek_transport::protocol::{HidUsage, KeymatrixLayer, MatrixPos, matrix};
 
-use monsgeek_keyboard::{
-    DksConfig, KeyMode, KeyboardError, KeyboardInterface, ModeByte, SNAPTAP_UNBOUND,
-};
+use monsgeek_keyboard::{DksConfig, KeyMode, KeyboardError, ModeByte, RyKeyboard, SNAPTAP_UNBOUND};
 
 // Re-export from monsgeek-transport so existing `use crate::keymap::{Layer, KeyRef}` still works.
 pub use monsgeek_transport::protocol::{KeyRef, Layer};
@@ -55,9 +53,9 @@ const MATRIX_POSITIONS: usize = 126;
 // I/O: writing
 // ---------------------------------------------------------------------------
 
-/// Write a key config via KeyboardInterface.
+/// Write a key config via RyKeyboard.
 pub fn set_key(
-    kb: &KeyboardInterface,
+    kb: &RyKeyboard,
     index: MatrixPos,
     layer: Layer,
     action: &KeyAction,
@@ -84,7 +82,7 @@ pub fn default_keycode(pos: MatrixPos) -> HidUsage {
 /// layout differs from the generic one has every differing key read as customised
 /// (the Womier SK75 has LMeta where the generic table has LAlt, and End where it
 /// has Home).
-pub fn device_default_keycode(kb: &KeyboardInterface, pos: MatrixPos) -> HidUsage {
+pub fn device_default_keycode(kb: &RyKeyboard, pos: MatrixPos) -> HidUsage {
     kb.matrix_default(pos.into())
         .map(HidUsage::new)
         .unwrap_or_else(|| default_keycode(pos))
@@ -97,11 +95,7 @@ pub fn device_default_keycode(kb: &KeyboardInterface, pos: MatrixPos) -> HidUsag
 /// reset by writing the position's factory-default keycode, not zeros. The overlay
 /// layers (Layer1 / Fn) treat a zero entry as a transparent fall-through to the
 /// base, so zeros are the correct "default" there.
-pub fn reset_key(
-    kb: &KeyboardInterface,
-    index: MatrixPos,
-    layer: Layer,
-) -> Result<(), KeyboardError> {
+pub fn reset_key(kb: &RyKeyboard, index: MatrixPos, layer: Layer) -> Result<(), KeyboardError> {
     match layer {
         // The active profile, not 0: every other write in this module targets the
         // profile the board is running, and a base-layer reset must match.
@@ -180,7 +174,7 @@ impl KeyRow {
 ///
 /// `done`/`total` count the loader's steps, not device pages — the point is a bar
 /// that moves and a label that says which of the seven tables is on the wire. For
-/// motion inside a step, sample [`KeyboardInterface::queries_completed`], which
+/// motion inside a step, sample [`RyKeyboard::queries_completed`], which
 /// ticks once per page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadStage {
@@ -207,7 +201,7 @@ const LOAD_STAGES: [&str; 7] = [
 ];
 
 pub fn load_key_rows(
-    kb: &KeyboardInterface,
+    kb: &RyKeyboard,
     sys: u8,
     on_stage: &dyn Fn(LoadStage),
 ) -> Result<Vec<KeyRow>, KeyboardError> {

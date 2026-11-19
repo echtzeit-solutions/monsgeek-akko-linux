@@ -48,7 +48,7 @@ pub fn apply_power_budget(leds: &mut [(u8, u8, u8); MATRIX_LEN], budget_ma: u32)
 /// `leds` has `MATRIX_LEN` entries (row-major: index = row*16 + col).
 /// Packs into pages of 18 entries each and sends via stream_led_page + commit.
 pub fn send_full_frame(
-    kb: &monsgeek_keyboard::KeyboardInterface,
+    kb: &monsgeek_keyboard::RyKeyboard,
     leds: &[(u8, u8, u8); MATRIX_LEN],
 ) -> Result<(), Box<dyn std::error::Error>> {
     for page in 0..PAGE_COUNT {

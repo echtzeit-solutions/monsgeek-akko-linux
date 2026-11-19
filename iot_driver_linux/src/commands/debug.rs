@@ -4,7 +4,7 @@ use super::{
     CmdCtx, CommandResult, open_preferred_transport, setup_interrupt_handler, with_keyboard,
 };
 use iot_driver::protocol::cmd;
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{ChecksumType, Transport, list_devices_sync};
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ pub fn test_transport(ctx: &CmdCtx) -> CommandResult {
 
 /// Monitor real-time key depth (magnetism) from keyboard
 pub fn depth(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     show_raw: bool,
     show_zero: bool,
     verbose: bool,

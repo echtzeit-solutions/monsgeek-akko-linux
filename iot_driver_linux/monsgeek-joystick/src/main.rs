@@ -26,7 +26,7 @@ use monsgeek_joystick::mapper::AxisMapper;
 use monsgeek_joystick::tui::app::{App, AppMode, JoystickStatus, KeyboardStatus};
 use monsgeek_joystick::tui::render;
 
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_transport::{
     TimestampedEvent, Transport, VendorEvent, list_devices_sync, open_device_sync,
 };
@@ -50,7 +50,7 @@ struct Cli {
 
 /// Encapsulates a live keyboard connection with event subscription.
 struct KeyboardConnection {
-    keyboard: KeyboardInterface,
+    keyboard: RyKeyboard,
     precision_factor: f64,
     event_rx: broadcast::Receiver<TimestampedEvent>,
 }
@@ -93,7 +93,7 @@ async fn connect_keyboard() -> Option<KeyboardConnection> {
 
     // Joystick only needs magnetism depth reports — key_count/has_magnetism don't affect
     // axis mapping (that comes from the config file). Use safe defaults.
-    let keyboard = KeyboardInterface::new(transport, 0, false, protocol);
+    let keyboard = RyKeyboard::new(transport, 0, false, protocol);
 
     let precision_factor = match keyboard.get_precision() {
         Ok(precision) => {

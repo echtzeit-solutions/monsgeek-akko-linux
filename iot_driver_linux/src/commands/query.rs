@@ -173,7 +173,7 @@ pub fn profile(ctx: &CmdCtx) -> CommandResult {
 /// Parsed rather than hand-indexed: the wire stores speed inverted (4 = slow), and
 /// printing the raw byte contradicted both `set-led`, which takes the user-facing
 /// value, and the TUI.
-pub fn led(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn led(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     let params = keyboard.get_led_params()?;
     let (r, g, b) = (params.color.r, params.color.g, params.color.b);
     println!("LED:");
@@ -200,7 +200,7 @@ pub fn debounce(ctx: &CmdCtx) -> CommandResult {
 }
 
 /// Get polling rate
-pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn rate(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     use iot_driver::protocol::polling_rate;
 
     match keyboard.get_polling_rate() {
@@ -214,7 +214,7 @@ pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
 }
 
 /// Get keyboard options
-pub fn options(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn options(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     let opts = keyboard.get_kb_options()?;
     println!("Keyboard Options:");
     println!(
@@ -247,7 +247,7 @@ pub fn features(ctx: &CmdCtx) -> CommandResult {
 }
 
 /// Get sleep time settings
-pub fn sleep(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn sleep(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     match keyboard.get_sleep_time() {
         Ok(settings) => {
             println!("Sleep Time Settings:");

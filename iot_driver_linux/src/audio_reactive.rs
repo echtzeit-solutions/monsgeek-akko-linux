@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{audio_viz, cmd};
 use crate::pulse;
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_transport::{ChecksumType, Transport};
 
 /// Number of frequency bands to analyze. Matches the device's 16 audio-viz
@@ -368,7 +368,7 @@ pub fn list_audio_devices() -> Vec<String> {
 /// levels over `SET_AUDIO_VIZ` (0x0D) — the firmware renders the bars on-device.
 /// No per-key SET_USERPIC streaming (no flash wear).
 pub fn run_audio_reactive(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     config: AudioConfig,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -410,7 +410,7 @@ pub fn run_audio_reactive(
 /// Visualizer loop — reads spectrum bands from [`AudioState`] and streams them to
 /// the keyboard's on-device music visualizer via `SET_AUDIO_VIZ`.
 pub fn run_viz_loop(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     audio_state: &Arc<AudioState>,
     running: Arc<AtomicBool>,
 ) {

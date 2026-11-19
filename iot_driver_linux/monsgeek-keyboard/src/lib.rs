@@ -77,7 +77,7 @@ pub struct AnimStatus {
 }
 
 // Macro parsing
-// (MacroEvent struct and parse_macro_events fn are defined after KeyboardInterface impl)
+// (MacroEvent struct and parse_macro_events fn are defined after RyKeyboard impl)
 
 // Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
 pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
@@ -119,11 +119,12 @@ pub const SNAPTAP_UNBOUND: u8 = 0xFF;
 /// the written key. Measured floor is ~200 ms; this carries margin.
 const MAGNETISM_SETTLE_MS: u64 = 250;
 
-/// High-level keyboard interface using any transport
+/// Keyboard speaking the RongYuan (RY5088 / YiChip) vendor protocol over any of
+/// its transports (wired, dongle, Bluetooth).
 ///
 /// Provides convenient methods for keyboard features like LED control,
 /// key mapping, trigger settings, etc.
-pub struct KeyboardInterface {
+pub struct RyKeyboard {
     transport: Arc<FlowControlTransport>,
     key_count: u8,
     has_magnetism: bool,
@@ -181,7 +182,7 @@ fn resolve_slot0(requested: [u8; 4], current: [u8; 4]) -> [u8; 4] {
     }
 }
 
-impl KeyboardInterface {
+impl RyKeyboard {
     /// Create a new keyboard interface
     ///
     /// # Arguments

@@ -3,8 +3,8 @@
 use super::CommandResult;
 use iot_driver::key_action::KeyAction;
 use monsgeek_keyboard::{
-    DksAction, DksBinding, DksConfig, DksPhase, KeyMode, KeyTriggerSettings, KeyboardInterface,
-    ModeByte, TravelDepth,
+    DksAction, DksBinding, DksConfig, DksPhase, KeyMode, KeyTriggerSettings, ModeByte, RyKeyboard,
+    TravelDepth,
 };
 use monsgeek_transport::protocol::KeymatrixLayer;
 use std::collections::{BTreeSet, HashSet};
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// Stop calibration with retry (keyboard can be sluggish in cal mode).
 /// Sends both min and max stop commands to ensure clean exit.
-fn stop_calibration(keyboard: &KeyboardInterface) {
+fn stop_calibration(keyboard: &RyKeyboard) {
     // Stop max calibration (the active phase)
     for attempt in 0..5 {
         match keyboard.calibrate_max(false) {
@@ -35,7 +35,7 @@ fn stop_calibration(keyboard: &KeyboardInterface) {
 }
 
 /// Run calibration (min + max) with per-key progress display
-pub fn calibrate(keyboard: &KeyboardInterface) -> CommandResult {
+pub fn calibrate(keyboard: &RyKeyboard) -> CommandResult {
     let positions = keyboard.matrix_positions() as usize;
 
     // Determine which matrix indices have real analog (magnetic) keys.
@@ -414,7 +414,7 @@ fn check_input(_monitor: &InputMonitor) -> bool {
 fn restore_input(_monitor: &InputMonitor) {}
 
 /// Show current trigger settings
-pub fn triggers(keyboard: &KeyboardInterface) -> CommandResult {
+pub fn triggers(keyboard: &RyKeyboard) -> CommandResult {
     let version = keyboard.get_version().unwrap_or_default();
     let precision = keyboard.get_precision().unwrap_or_default();
     println!(
@@ -490,7 +490,7 @@ pub fn triggers(keyboard: &KeyboardInterface) -> CommandResult {
 }
 
 /// Set actuation point for all keys
-pub fn set_actuation(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
+pub fn set_actuation(keyboard: &RyKeyboard, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     // `from_mm` rounds; `(mm * factor) as u16` truncated, so 1.05mm stored as 104.
     let travel = TravelDepth::from_mm(mm, precision);
@@ -505,7 +505,7 @@ pub fn set_actuation(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
 }
 
 /// Enable/disable Rapid Trigger or set sensitivity
-pub fn set_rt(keyboard: &KeyboardInterface, value: &str) -> CommandResult {
+pub fn set_rt(keyboard: &RyKeyboard, value: &str) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
 
     match value.to_lowercase().as_str() {
@@ -533,7 +533,7 @@ pub fn set_rt(keyboard: &KeyboardInterface, value: &str) -> CommandResult {
 }
 
 /// Set release point for all keys
-pub fn set_release(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
+pub fn set_release(keyboard: &RyKeyboard, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     // `from_mm` rounds; `(mm * factor) as u16` truncated, so 1.05mm stored as 104.
     let travel = TravelDepth::from_mm(mm, precision);
@@ -548,7 +548,7 @@ pub fn set_release(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
 }
 
 /// Set bottom deadzone for all keys
-pub fn set_bottom_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
+pub fn set_bottom_deadzone(keyboard: &RyKeyboard, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     // `from_mm` rounds; `(mm * factor) as u16` truncated, so 1.05mm stored as 104.
     let travel = TravelDepth::from_mm(mm, precision);
@@ -563,7 +563,7 @@ pub fn set_bottom_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResu
 }
 
 /// Set top deadzone for all keys
-pub fn set_top_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResult {
+pub fn set_top_deadzone(keyboard: &RyKeyboard, mm: f32) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
     // `from_mm` rounds; `(mm * factor) as u16` truncated, so 1.05mm stored as 104.
     let travel = TravelDepth::from_mm(mm, precision);
@@ -579,7 +579,7 @@ pub fn set_top_deadzone(keyboard: &KeyboardInterface, mm: f32) -> CommandResult 
 
 /// Set trigger settings for a specific key
 pub fn set_key_trigger(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     key: u8,
     actuation: Option<f32>,
     release: Option<f32>,
@@ -629,7 +629,7 @@ pub fn set_key_trigger(
 }
 
 /// Set the base mode (and optionally the RT flag) for all keys at once.
-pub fn set_mode_all(keyboard: &KeyboardInterface, mode: KeyMode, rt: bool) -> CommandResult {
+pub fn set_mode_all(keyboard: &RyKeyboard, mode: KeyMode, rt: bool) -> CommandResult {
     let mode_byte = ModeByte::new(mode, rt);
     match keyboard.set_mode_all(mode_byte) {
         Ok(_) => println!("Set all keys to {mode_byte}"),
@@ -639,12 +639,7 @@ pub fn set_mode_all(keyboard: &KeyboardInterface, mode: KeyMode, rt: bool) -> Co
 }
 
 /// Bind, clear, or show a key's Snap-Tap (SOCD) pairing.
-pub fn set_snaptap(
-    keyboard: &KeyboardInterface,
-    key: u8,
-    with: Option<u8>,
-    clear: bool,
-) -> CommandResult {
+pub fn set_snaptap(keyboard: &RyKeyboard, key: u8, with: Option<u8>, clear: bool) -> CommandResult {
     if clear {
         match keyboard.clear_snaptap(key) {
             Ok(_) => println!("Cleared Snap-Tap binding for key {key}"),
@@ -675,7 +670,7 @@ pub fn set_snaptap(
 }
 
 /// Set a key's Mod-Tap tap-vs-hold decision time (ms, quantized to 10 ms).
-pub fn set_modtap_time(keyboard: &KeyboardInterface, key: u8, ms: u16) -> CommandResult {
+pub fn set_modtap_time(keyboard: &RyKeyboard, key: u8, ms: u16) -> CommandResult {
     match keyboard.set_modtap_time(key, ms) {
         Ok(_) => println!("Key {key} Mod-Tap decision time set to {}ms", ms / 10 * 10),
         Err(e) => eprintln!("Failed to set Mod-Tap time: {e}"),
@@ -722,7 +717,7 @@ fn parse_dks_actions(spec: &str) -> Result<[DksAction; 4], String> {
 
 /// Show or configure DKS (Dynamic Keystroke) for a key.
 pub fn dks(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     key: u8,
     travel_mm: Option<f32>,
     modes: Option<String>,
@@ -796,7 +791,7 @@ pub fn dks(
     Ok(())
 }
 
-fn show_dks(keyboard: &KeyboardInterface, key: u8) -> CommandResult {
+fn show_dks(keyboard: &RyKeyboard, key: u8) -> CommandResult {
     let precision = keyboard.get_precision().unwrap_or_default();
 
     match keyboard.get_dks_config(key) {
@@ -837,7 +832,7 @@ fn show_dks(keyboard: &KeyboardInterface, key: u8) -> CommandResult {
 /// keys' trigger state. Snapshots all keys, does a read-stability check (two
 /// reads, no writes), sets `key` to DKS, snapshots again, diffs, then restores
 /// the key's original mode/travel and snapshots once more.
-pub fn dks_roundtrip(keyboard: &KeyboardInterface, key: u8, op: &str) -> CommandResult {
+pub fn dks_roundtrip(keyboard: &RyKeyboard, key: u8, op: &str) -> CommandResult {
     let snap = |label: &str| match keyboard.get_all_triggers() {
         Ok(t) => Some(t),
         Err(e) => {
@@ -921,7 +916,7 @@ fn diff_triggers(
     label: &str,
     before: &monsgeek_keyboard::TriggerSettings,
     after: &monsgeek_keyboard::TriggerSettings,
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
 ) -> usize {
     let n = before
         .key_modes

@@ -8,7 +8,7 @@
 use super::{CmdCtx, CommandResult, open_keyboard};
 use image::imageops::FilterType;
 use image::{GenericImageView, Rgb, RgbImage};
-use monsgeek_keyboard::{KeyboardInterface, USERPIC_BYTES};
+use monsgeek_keyboard::{RyKeyboard, USERPIC_BYTES};
 use monsgeek_transport::protocol::{MatrixPos, matrix};
 
 const ROWS: usize = matrix::ROWS as usize;
@@ -36,7 +36,7 @@ fn grid_cols(lit_positions: impl Iterator<Item = usize>) -> usize {
         .map_or(MAX_COLS, |last| last / ROWS + 1)
 }
 
-fn board_grid_cols(kb: &KeyboardInterface) -> usize {
+fn board_grid_cols(kb: &RyKeyboard) -> usize {
     grid_cols(
         (0..MAX_COLS * ROWS).filter(|&pos| is_lit(kb.matrix_default(pos), kb.is_non_analog(pos))),
     )

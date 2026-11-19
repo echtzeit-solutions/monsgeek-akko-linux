@@ -7,7 +7,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use monsgeek_keyboard::{AnimDefStatus, AnimStatus, KeyboardInterface};
+use monsgeek_keyboard::{AnimDefStatus, AnimStatus, RyKeyboard};
 use monsgeek_transport::protocol::{DefId, LedPos, StripIdx};
 
 use crate::effect::{CompiledAnim, ResolvedEffect};
@@ -66,11 +66,11 @@ pub type SharedSlotInfo = Arc<std::sync::Mutex<SlotInfo>>;
 /// Wraps the keyboard interface with convenience methods for programming
 /// and querying animations. Shared across CLI, TUI, and daemon.
 ///
-/// Accepts either `Arc<KeyboardInterface>` (for TUI/daemon) or constructs
+/// Accepts either `Arc<RyKeyboard>` (for TUI/daemon) or constructs
 /// from a reference (for CLI one-shot commands).
 #[derive(Clone)]
 pub struct AnimEngine {
-    kb: Arc<KeyboardInterface>,
+    kb: Arc<RyKeyboard>,
 }
 
 /// Key assignment: strip index + phase offset.
@@ -139,12 +139,12 @@ pub struct ProgrammedAnim {
 }
 
 impl AnimEngine {
-    pub fn new(kb: Arc<KeyboardInterface>) -> Self {
+    pub fn new(kb: Arc<RyKeyboard>) -> Self {
         Self { kb }
     }
 
     /// Access the underlying keyboard interface.
-    pub fn kb(&self) -> &KeyboardInterface {
+    pub fn kb(&self) -> &RyKeyboard {
         &self.kb
     }
 
@@ -158,7 +158,7 @@ impl AnimEngine {
     }
 
     /// Get the Arc-wrapped keyboard interface (for spawning async tasks).
-    pub fn kb_arc(&self) -> Arc<KeyboardInterface> {
+    pub fn kb_arc(&self) -> Arc<RyKeyboard> {
         Arc::clone(&self.kb)
     }
 
@@ -250,7 +250,7 @@ impl AnimEngine {
 }
 
 /// Query animation status directly from a keyboard reference (for CLI one-shots).
-pub fn query_status(kb: &KeyboardInterface) -> Result<EngineSnapshot, String> {
+pub fn query_status(kb: &RyKeyboard) -> Result<EngineSnapshot, String> {
     kb.anim_query()
         .map_err(|e| format!("anim_query: {e}"))?
         .map(|raw| EngineSnapshot {

@@ -5,14 +5,14 @@ use iot_driver::key_action::KeyAction;
 use iot_driver::keymap::{self, KeyRef, Layer};
 use iot_driver::keymatrix_view::{self, ListOptions};
 use iot_driver::protocol::hid;
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_transport::protocol::{KeymatrixLayer, Profile};
 
 /// Remap a key.
 ///
 /// `from` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`, `"42"`.
 /// When a layer prefix is present, it takes precedence over the `--layer` flag.
-pub fn remap(keyboard: &KeyboardInterface, from: &str, to: &str, layer: Layer) -> CommandResult {
+pub fn remap(keyboard: &RyKeyboard, from: &str, to: &str, layer: Layer) -> CommandResult {
     let key_ref: KeyRef = match from.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -54,7 +54,7 @@ pub fn remap(keyboard: &KeyboardInterface, from: &str, to: &str, layer: Layer) -
 /// Reset a key to default.
 ///
 /// `key` can include a layer prefix: `"Fn+Caps"`, `"L1+A"`.
-pub fn reset_key(keyboard: &KeyboardInterface, key: &str, layer: Layer) -> CommandResult {
+pub fn reset_key(keyboard: &RyKeyboard, key: &str, layer: Layer) -> CommandResult {
     let key_ref: KeyRef = match key.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -87,12 +87,7 @@ pub fn reset_key(keyboard: &KeyboardInterface, key: &str, layer: Layer) -> Comma
 ///
 /// Only ever touches keymatrix layer 0: `swap_keys` writes through
 /// `set_keymatrix(profile, .., layer: 0)`, so the read must match.
-pub fn swap(
-    keyboard: &KeyboardInterface,
-    key1: &str,
-    key2: &str,
-    profile: Profile,
-) -> CommandResult {
+pub fn swap(keyboard: &RyKeyboard, key1: &str, key2: &str, profile: Profile) -> CommandResult {
     let kr_a: KeyRef = match key1.parse() {
         Ok(kr) => kr,
         Err(msg) => {
@@ -144,7 +139,7 @@ pub fn swap(
 
 /// Show per-key bindings across layers.
 pub fn keymatrix(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     layers: &[crate::cli::LayerArg],
     unset: bool,
     keys: &[iot_driver::keyclass::KeySelector],
