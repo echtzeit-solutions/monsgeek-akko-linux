@@ -2,6 +2,14 @@ IMPORTANT avoid reading from hidraw devices as it will lock the claude process
 IMPORTANT avoid printing the full device path in printf to avoid claude from speculatively reading from it
 Use `tmux send-keys -t 3.2 'command' Enter` to run commands as root in dev pane (already sudo bash)
 
+## Adding a keyboard protocol (backend)
+
+Read `docs/BACKENDS.md` before changing discovery, `monsgeek-keyboard`, or adding
+support for a keyboard that does not speak the RongYuan protocol. It defines the
+`Keyboard` trait seam, the phase order, and the rules every backend PR follows
+(no hooks on the RY transport, no fabricated replies, cite a capture or binary
+address for every protocol fact).
+
 ## ry_upgrade.exe stdout
 - "CONTENT []" and "split err" are from netstat/competing process checking, NOT device enumeration
 - "开启vendor监听!!!!!!" = "Starting vendor monitoring!" = app found & paired IF1+IF2

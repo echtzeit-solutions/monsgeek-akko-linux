@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Adding a keyboard protocol (backend)
+
+Read `docs/BACKENDS.md` before changing discovery, `monsgeek-keyboard`, or adding
+support for a keyboard that does not speak the RongYuan protocol. It defines the
+`Keyboard` trait seam, the phase order, and the rules every backend PR follows
+(no hooks on the RY transport, no fabricated replies, cite a capture or binary
+address for every protocol fact).
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database
