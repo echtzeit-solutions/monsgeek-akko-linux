@@ -34,6 +34,7 @@ pub mod utility;
 
 use iot_driver::protocol::{self, cmd};
 use monsgeek_keyboard::settings::FirmwareVersion;
+use monsgeek_keyboard::{Keyboard, RyKeyboard};
 use monsgeek_transport::protocol::Profile;
 use monsgeek_transport::{
     DeviceDiscovery, FlowControlTransport, HidDiscovery, HidResponse, PacketFilter, PrinterConfig,
@@ -182,12 +183,48 @@ pub(crate) fn query_device_id(flow: &FlowControlTransport) -> Option<i32> {
     .map(|r| u32::from_le_bytes([r[1], r[2], r[3], r[4]]) as i32)
 }
 
-/// Open a keyboard with device selection support.
-pub fn open_keyboard(
-    ctx: &CmdCtx,
-) -> Result<monsgeek_keyboard::RyKeyboard, Box<dyn std::error::Error>> {
-    let flow = open_preferred_transport(ctx)?;
+/// Open the selected keyboard with whichever backend speaks its protocol.
+///
+/// This is where the CLI chooses a backend: discovery selects the device, then
+/// the branch on how discovery classified it opens the matching backend. Every
+/// board discovery finds today speaks the RongYuan protocol, so there is one arm.
+pub fn open_keyboard(ctx: &CmdCtx) -> Result<Box<dyn Keyboard>, Box<dyn std::error::Error>> {
+    let discovery = hid_discovery(ctx);
+    let device = resolve_device(&discovery, ctx.device_selector())?;
+    let flow = Arc::new(FlowControlTransport::new(discovery.open_device(&device)?));
+    Ok(Box::new(build_ry_keyboard(flow)?))
+}
 
+/// Open the selected keyboard for a feature only the RongYuan protocol has.
+pub fn open_ry_keyboard(ctx: &CmdCtx) -> Result<RyKeyboard, Box<dyn std::error::Error>> {
+    let kb = open_keyboard(ctx)?.downcast::<RyKeyboard>().map_err(|kb| {
+        format!(
+            "{} does not support this command (RongYuan-protocol keyboards only)",
+            kb.device_name()
+        )
+    })?;
+
+    // Keymatrix and Fn operations target the board's active profile unless the
+    // caller overrides it, so a read and the write that follows always agree.
+    //
+    // If the query fails there is no safe default: assuming profile 0 would send
+    // every subsequent write to profile 0's storage while the board is running
+    // some other profile — the user's edit lands somewhere they are not looking,
+    // and the profile they *were* editing is left untouched. Say so instead.
+    let profile = match ctx.profile {
+        Some(p) => p,
+        None => kb.get_profile().map_err(|e| {
+            format!("could not determine the active profile ({e}); pass --profile to choose one")
+        })?,
+    };
+    kb.set_active_profile(profile);
+    Ok(*kb)
+}
+
+/// Set up a [`RyKeyboard`] on an opened transport from the device database.
+fn build_ry_keyboard(
+    flow: Arc<FlowControlTransport>,
+) -> Result<RyKeyboard, Box<dyn std::error::Error>> {
     let info = flow.device_info();
     let (vid, pid) = (info.vid, info.pid);
     let device_id = query_device_id(&flow);
@@ -206,7 +243,7 @@ pub fn open_keyboard(
     let matrix_db = device_id.and_then(|id| registry.get_device_matrix(vid, pid, id));
     let key_count = iot_driver::device_loader::scan_extent(db_key_count, matrix_db);
 
-    let mut kb = monsgeek_keyboard::RyKeyboard::new(flow, key_count, has_magnetism, protocol);
+    let mut kb = RyKeyboard::new(flow, key_count, has_magnetism, protocol);
 
     // Cap settable polling rates at what this model supports.
     if let Some(def) = device_id.and_then(|id| registry.get_device_info_by_id_and_usb(id, vid, pid))
@@ -221,21 +258,6 @@ pub fn open_keyboard(
         kb.set_matrix_defaults(m.matrix.clone());
     }
 
-    // Keymatrix and Fn operations target the board's active profile unless the
-    // caller overrides it, so a read and the write that follows always agree.
-    //
-    // If the query fails there is no safe default: assuming profile 0 would send
-    // every subsequent write to profile 0's storage while the board is running
-    // some other profile — the user's edit lands somewhere they are not looking,
-    // and the profile they *were* editing is left untouched. Say so instead.
-    let profile = match ctx.profile {
-        Some(p) => p,
-        None => kb.get_profile().map_err(|e| {
-            format!("could not determine the active profile ({e}); pass --profile to choose one")
-        })?,
-    };
-    kb.set_active_profile(profile);
-
     // Set non-analog positions from matrix database (encoder/GPIO keys).
     if let Some(matrix) = matrix_db
         && let Some(positions) = &matrix.non_analog_positions
@@ -249,12 +271,12 @@ pub fn open_keyboard(
 /// Open a keyboard and run a closure with it.
 /// Restores the board's profile when dropped, on every exit path.
 struct ProfileGuard<'a> {
-    keyboard: &'a monsgeek_keyboard::RyKeyboard,
+    keyboard: &'a RyKeyboard,
     restore_to: Profile,
 }
 
 impl<'a> ProfileGuard<'a> {
-    fn new(keyboard: &'a monsgeek_keyboard::RyKeyboard, restore_to: Profile) -> Self {
+    fn new(keyboard: &'a RyKeyboard, restore_to: Profile) -> Self {
         *PENDING_PROFILE_RESTORE.lock().unwrap() = Some(restore_to);
         Self {
             keyboard,
@@ -295,7 +317,7 @@ impl Drop for ProfileGuard<'_> {
 /// The per-write settle is 250ms; this is the same order, applied once at the end.
 const MAGNETISM_FLUSH_MS: u64 = 400;
 
-/// Like [`with_keyboard`], but for commands whose settings carry no profile on the
+/// Like [`with_ry_keyboard`], but for commands whose settings carry no profile on the
 /// wire — triggers, deadzones, DKS, Snap-Tap, Mod-Tap, calibration.
 ///
 /// The firmware keys those tables off the *active* profile
@@ -303,14 +325,14 @@ const MAGNETISM_FLUSH_MS: u64 = 400;
 /// editing another profile means making it active first. That is visible on the
 /// keyboard, so it is announced rather than done quietly, and the original profile
 /// is restored through a guard that also runs on error and panic.
-pub fn with_keyboard_on_profile<F>(ctx: &CmdCtx, f: F) -> CommandResult
+pub fn with_ry_keyboard_on_profile<F>(ctx: &CmdCtx, f: F) -> CommandResult
 where
-    F: FnOnce(&monsgeek_keyboard::RyKeyboard) -> CommandResult,
+    F: FnOnce(&RyKeyboard) -> CommandResult,
 {
-    let keyboard = match open_keyboard(ctx) {
+    let keyboard = match open_ry_keyboard(ctx) {
         Ok(kb) => kb,
         Err(e) => {
-            eprintln!("No device found: {e}");
+            eprintln!("{e}");
             return Ok(());
         }
     };
@@ -339,16 +361,38 @@ where
     f(&keyboard)
 }
 
+/// Open the selected keyboard and run a command that works on every backend.
 pub fn with_keyboard<F>(ctx: &CmdCtx, f: F) -> CommandResult
 where
-    F: FnOnce(&monsgeek_keyboard::RyKeyboard) -> CommandResult,
+    F: FnOnce(&dyn Keyboard) -> CommandResult,
 {
     match open_keyboard(ctx) {
-        Ok(keyboard) => f(&keyboard),
+        Ok(keyboard) => f(keyboard.as_ref()),
         Err(e) => {
             eprintln!("No device found: {e}");
             Ok(())
         }
+    }
+}
+
+/// Open the selected keyboard and run a RongYuan-only command.
+pub fn with_ry_keyboard<F>(ctx: &CmdCtx, f: F) -> CommandResult
+where
+    F: FnOnce(&RyKeyboard) -> CommandResult,
+{
+    match open_ry_keyboard(ctx) {
+        Ok(keyboard) => f(&keyboard),
+        Err(e) => {
+            eprintln!("{e}");
+            Ok(())
+        }
+    }
+}
+
+fn hid_discovery(ctx: &CmdCtx) -> HidDiscovery {
+    match &ctx.printer_config {
+        Some(config) => HidDiscovery::with_printer_config(config.clone()),
+        None => HidDiscovery::new(),
     }
 }
 
@@ -357,11 +401,7 @@ where
 pub fn open_preferred_transport(
     ctx: &CmdCtx,
 ) -> Result<Arc<FlowControlTransport>, Box<dyn std::error::Error>> {
-    let discovery = match &ctx.printer_config {
-        Some(config) => HidDiscovery::with_printer_config(config.clone()),
-        None => HidDiscovery::new(),
-    };
-
+    let discovery = hid_discovery(ctx);
     let device = resolve_device(&discovery, ctx.device_selector())?;
     let transport = discovery.open_device(&device)?;
     Ok(Arc::new(FlowControlTransport::new(transport)))
@@ -511,4 +551,151 @@ pub fn create_printer_config(
     }
 
     Ok(Some(config))
+}
+
+#[cfg(test)]
+mod tests {
+    //! The generic commands run against a backend that has no RongYuan transport
+    //! at all. If one of them reached past the [`Keyboard`] trait, this would not
+    //! compile or would fail.
+
+    use super::*;
+    use monsgeek_keyboard::{KeyboardError, SleepTimeSettings};
+    use monsgeek_transport::{TransportDeviceInfo, TransportType};
+
+    /// In-memory backend: every setting is a plain field.
+    struct FakeKeyboard {
+        info: TransportDeviceInfo,
+        state: Mutex<FakeState>,
+    }
+
+    struct FakeState {
+        profile: Profile,
+        polling_hz: u16,
+        debounce_ms: u8,
+        sleep: SleepTimeSettings,
+        resets: u32,
+    }
+
+    impl FakeKeyboard {
+        fn new() -> Self {
+            Self {
+                info: TransportDeviceInfo {
+                    vid: 0x1234,
+                    pid: 0x5678,
+                    is_dongle: false,
+                    transport_type: TransportType::HidWired,
+                    device_path: String::new(),
+                    serial: None,
+                    product_name: Some("Fake board".into()),
+                },
+                state: Mutex::new(FakeState {
+                    profile: Profile::ALL[0],
+                    polling_hz: 1000,
+                    debounce_ms: 5,
+                    sleep: SleepTimeSettings::default(),
+                    resets: 0,
+                }),
+            }
+        }
+
+        fn state(&self) -> std::sync::MutexGuard<'_, FakeState> {
+            self.state.lock().unwrap()
+        }
+    }
+
+    impl Keyboard for FakeKeyboard {
+        fn device_info(&self) -> &TransportDeviceInfo {
+            &self.info
+        }
+        fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
+            Ok(FirmwareVersion::new(0x0407))
+        }
+        fn get_profile(&self) -> Result<Profile, KeyboardError> {
+            Ok(self.state().profile)
+        }
+        fn set_profile(&self, profile: Profile) -> Result<(), KeyboardError> {
+            self.state().profile = profile;
+            Ok(())
+        }
+        fn get_polling_rate(&self) -> Result<u16, KeyboardError> {
+            Ok(self.state().polling_hz)
+        }
+        fn set_polling_rate(&self, hz: u16) -> Result<(), KeyboardError> {
+            if hz > 1000 {
+                return Err(KeyboardError::NotSupported(format!("{hz} Hz")));
+            }
+            self.state().polling_hz = hz;
+            Ok(())
+        }
+        fn get_debounce(&self) -> Result<u8, KeyboardError> {
+            Ok(self.state().debounce_ms)
+        }
+        fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
+            self.state().debounce_ms = ms;
+            Ok(())
+        }
+        fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
+            Ok(self.state().sleep)
+        }
+        fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
+            self.state().sleep = *settings;
+            Ok(())
+        }
+        fn reset(&self) -> Result<(), KeyboardError> {
+            self.state().resets += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn generic_commands_run_on_a_non_ry_backend() {
+        let kb = FakeKeyboard::new();
+        let dyn_kb: &dyn Keyboard = &kb;
+
+        query::info(dyn_kb).unwrap();
+        query::profile(dyn_kb).unwrap();
+        query::debounce(dyn_kb).unwrap();
+        query::rate(dyn_kb).unwrap();
+        query::sleep(dyn_kb).unwrap();
+
+        set::set_profile(dyn_kb, Profile::ALL[2]).unwrap();
+        set::set_debounce(dyn_kb, 8).unwrap();
+        set::set_rate(dyn_kb, "500").unwrap();
+        set::set_sleep(
+            dyn_kb,
+            Some("5m".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let state = kb.state();
+        assert_eq!(state.profile, Profile::ALL[2]);
+        assert_eq!(state.debounce_ms, 8);
+        assert_eq!(state.polling_hz, 500);
+        assert_eq!(state.sleep.idle_bt, 300);
+    }
+
+    #[test]
+    fn a_rate_the_backend_refuses_is_not_recorded() {
+        let kb = FakeKeyboard::new();
+        set::set_rate(&kb, "8000").unwrap();
+        assert_eq!(kb.state().polling_hz, 1000);
+    }
+
+    #[test]
+    fn ry_only_paths_see_a_different_backend_as_unsupported() {
+        let kb: Box<dyn Keyboard> = Box::new(FakeKeyboard::new());
+        assert!(kb.downcast_ref::<RyKeyboard>().is_none());
+        assert!(kb.downcast_ref::<FakeKeyboard>().is_some());
+        let Err(kb) = kb.downcast::<RyKeyboard>() else {
+            panic!("a fake board must not downcast to RyKeyboard");
+        };
+        assert_eq!(kb.device_name(), "Fake board");
+    }
 }

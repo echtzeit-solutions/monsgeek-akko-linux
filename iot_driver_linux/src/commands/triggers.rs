@@ -3,8 +3,8 @@
 use super::CommandResult;
 use iot_driver::key_action::KeyAction;
 use monsgeek_keyboard::{
-    DksAction, DksBinding, DksConfig, DksPhase, KeyMode, KeyTriggerSettings, ModeByte, RyKeyboard,
-    TravelDepth,
+    DksAction, DksBinding, DksConfig, DksPhase, KeyMode, KeyTriggerSettings, Keyboard, ModeByte,
+    RyKeyboard, TravelDepth,
 };
 use monsgeek_transport::protocol::KeymatrixLayer;
 use std::collections::{BTreeSet, HashSet};
@@ -108,7 +108,7 @@ pub fn calibrate(keyboard: &RyKeyboard) -> CommandResult {
     let pages = positions.div_ceil(32);
 
     // Set up input monitoring: stdin + mouse clicks + encoder knob (evdev)
-    let input = setup_input_monitor(keyboard.vid(), keyboard.pid());
+    let input = setup_input_monitor(keyboard.device_info().vid, keyboard.device_info().pid);
 
     // Idle timeout: auto-stop if no new key calibrates in 10 seconds
     let mut last_progress_time = std::time::Instant::now();

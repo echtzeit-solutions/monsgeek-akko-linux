@@ -3,13 +3,13 @@
 use super::CommandResult;
 use iot_driver::protocol::{cmd, polling_rate};
 use monsgeek_keyboard::{
-    PollingRate, RT_STABILITY_MAX, RT_STABILITY_STEP_MS, RyKeyboard, SleepTimeSettings,
+    Keyboard, RT_STABILITY_MAX, RT_STABILITY_STEP_MS, RyKeyboard, SleepTimeSettings,
 };
 use monsgeek_transport::protocol::Profile;
 use std::io::{self, Write};
 
 /// Set active profile
-pub fn set_profile(keyboard: &RyKeyboard, profile: Profile) -> CommandResult {
+pub fn set_profile(keyboard: &dyn Keyboard, profile: Profile) -> CommandResult {
     match keyboard.set_profile(profile) {
         Ok(_) => println!("Profile set to {profile}"),
         Err(e) => eprintln!("Failed to set profile: {e}"),
@@ -18,7 +18,7 @@ pub fn set_profile(keyboard: &RyKeyboard, profile: Profile) -> CommandResult {
 }
 
 /// Set debounce time
-pub fn set_debounce(keyboard: &RyKeyboard, ms: u8) -> CommandResult {
+pub fn set_debounce(keyboard: &dyn Keyboard, ms: u8) -> CommandResult {
     match keyboard.set_debounce(ms) {
         Ok(_) => println!("Debounce set to {ms} ms"),
         Err(e) => eprintln!("Failed to set debounce: {e}"),
@@ -27,17 +27,11 @@ pub fn set_debounce(keyboard: &RyKeyboard, ms: u8) -> CommandResult {
 }
 
 /// Set polling rate
-pub fn set_rate(keyboard: &RyKeyboard, rate: &str) -> CommandResult {
+pub fn set_rate(keyboard: &dyn Keyboard, rate: &str) -> CommandResult {
     if let Some(hz) = polling_rate::parse(rate) {
-        if let Some(rate_enum) = PollingRate::from_hz(hz) {
-            match keyboard.set_polling_rate(rate_enum) {
-                Ok(_) => println!("Polling rate set to {hz} ({})", polling_rate::name(hz)),
-                Err(e) => eprintln!("Failed to set polling rate: {e}"),
-            }
-        } else {
-            eprintln!(
-                "Invalid polling rate '{hz}'. Valid rates: 125, 250, 500, 1000, 2000, 4000, 8000"
-            );
+        match keyboard.set_polling_rate(hz) {
+            Ok(_) => println!("Polling rate set to {hz} ({})", polling_rate::name(hz)),
+            Err(e) => eprintln!("Failed to set polling rate: {e}"),
         }
     } else {
         eprintln!(
@@ -153,7 +147,7 @@ pub fn set_led(
 /// Set sleep time settings
 #[allow(clippy::too_many_arguments)]
 pub fn set_sleep(
-    keyboard: &RyKeyboard,
+    keyboard: &dyn Keyboard,
     idle: Option<String>,
     deep: Option<String>,
     idle_bt: Option<String>,
@@ -311,7 +305,7 @@ pub fn set_sleep(
 }
 
 /// Factory reset keyboard
-pub fn reset(keyboard: &RyKeyboard) -> CommandResult {
+pub fn reset(keyboard: &dyn Keyboard) -> CommandResult {
     print!("This will factory reset the keyboard. Are you sure? (y/N) ");
     io::stdout().flush().unwrap();
     let mut input = String::new();

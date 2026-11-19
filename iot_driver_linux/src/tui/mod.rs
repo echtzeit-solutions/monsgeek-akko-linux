@@ -50,7 +50,8 @@ use crate::{FirmwareSettings, TriggerSettings, cmd, devices};
 
 // Keyboard abstraction layer - using async interface directly
 use monsgeek_keyboard::{
-    Precision, RyKeyboard, SleepTimeSettings, TimestampedEvent, VendorEvent, led::speed_to_wire,
+    Keyboard, Precision, RyKeyboard, SleepTimeSettings, TimestampedEvent, VendorEvent,
+    led::speed_to_wire,
 };
 use monsgeek_transport::protocol::Profile;
 use monsgeek_transport::{FlowControlTransport, HidDiscovery, Transport};

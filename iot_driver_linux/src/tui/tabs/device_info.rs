@@ -9,7 +9,7 @@ use crate::hid::BatteryInfo;
 use crate::power_supply::{find_dongle_battery_power_supply, read_kernel_battery};
 use monsgeek_keyboard::KeyboardOptions as KbOptions;
 use monsgeek_keyboard::{
-    LedMode, LedParams, RgbColor, SleepTimeSettings,
+    Keyboard, LedMode, LedParams, RgbColor, SleepTimeSettings,
     led::{speed_from_wire, speed_to_wire},
 };
 use monsgeek_transport::Transport;
@@ -146,10 +146,7 @@ impl App {
             let kb = keyboard.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let result = kb
-                    .get_polling_rate()
-                    .map(|r| r.to_hz())
-                    .map_err(|e| e.to_string());
+                let result = kb.get_polling_rate().map_err(|e| e.to_string());
                 tx.send(AsyncResult::PollingRate(result));
             });
         }
@@ -407,10 +404,8 @@ impl App {
             .unwrap_or(rates.len() - 1);
         let new_idx = (current_idx as i32 + delta).clamp(0, rates.len() as i32 - 1) as usize;
         let new_hz = rates[new_idx];
-        if let Some(rate_enum) = monsgeek_keyboard::PollingRate::from_hz(new_hz)
-            && let Some(ref keyboard) = self.keyboard
-        {
-            if keyboard.set_polling_rate(rate_enum).is_ok() {
+        if let Some(ref keyboard) = self.keyboard {
+            if keyboard.set_polling_rate(new_hz).is_ok() {
                 self.info.polling_rate = new_hz;
                 self.status_msg = format!("Polling rate: {}", polling_rate::name(new_hz));
             } else {

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use monsgeek_keyboard::{KeyTriggerSettings, PollingRate, Precision, RyKeyboard};
+use monsgeek_keyboard::{KeyTriggerSettings, Keyboard, PollingRate, Precision, RyKeyboard};
 use monsgeek_transport::protocol::{DefId, MacroSlot};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, HidDiscovery, Transport};
 
@@ -138,16 +138,7 @@ async fn tui_first_tab_queries_resolve() {
     assert!(version.raw > 0, "firmware version raw should be non-zero");
     assert!(debounce <= 50, "debounce should be 0-50ms, got {debounce}");
     assert!(
-        matches!(
-            polling_rate,
-            PollingRate::Hz125
-                | PollingRate::Hz250
-                | PollingRate::Hz500
-                | PollingRate::Hz1000
-                | PollingRate::Hz2000
-                | PollingRate::Hz4000
-                | PollingRate::Hz8000
-        ),
+        PollingRate::from_hz(polling_rate).is_some(),
         "polling_rate should be a known rate"
     );
     assert!(

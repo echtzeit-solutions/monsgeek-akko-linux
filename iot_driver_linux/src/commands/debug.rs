@@ -1,10 +1,10 @@
 //! Debug command handlers.
 
 use super::{
-    CmdCtx, CommandResult, open_preferred_transport, setup_interrupt_handler, with_keyboard,
+    CmdCtx, CommandResult, open_preferred_transport, setup_interrupt_handler, with_ry_keyboard,
 };
 use iot_driver::protocol::cmd;
-use monsgeek_keyboard::RyKeyboard;
+use monsgeek_keyboard::{Keyboard, RyKeyboard};
 use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{ChecksumType, Transport, list_devices_sync};
 use std::collections::HashMap;
@@ -86,7 +86,7 @@ pub fn test_transport(ctx: &CmdCtx) -> CommandResult {
 
     // Test keyboard interface (includes trigger settings)
     println!("\n--- Testing Keyboard Interface ---");
-    with_keyboard(ctx, |keyboard| {
+    with_ry_keyboard(ctx, |keyboard| {
         println!(
             "  Opened keyboard: {} matrix positions, magnetism={}",
             keyboard.matrix_positions(),

@@ -54,27 +54,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         None => {
             // Default: show device info
-            commands::query::info(&ctx)?;
+            commands::with_keyboard(&ctx, commands::query::info)?;
         }
 
         // === Query Commands ===
         Some(Commands::Info) => {
-            commands::query::info(&ctx)?;
+            commands::with_keyboard(&ctx, commands::query::info)?;
         }
         Some(Commands::Profile) => {
-            commands::query::profile(&ctx)?;
+            commands::with_keyboard(&ctx, commands::query::profile)?;
         }
         Some(Commands::Led) => {
-            commands::with_keyboard(&ctx, commands::query::led)?;
+            commands::with_ry_keyboard(&ctx, commands::query::led)?;
         }
         Some(Commands::Debounce) => {
-            commands::query::debounce(&ctx)?;
+            commands::with_keyboard(&ctx, commands::query::debounce)?;
         }
         Some(Commands::Rate) => {
             commands::with_keyboard(&ctx, commands::query::rate)?;
         }
         Some(Commands::Options) => {
-            commands::with_keyboard(&ctx, commands::query::options)?;
+            commands::with_ry_keyboard(&ctx, commands::query::options)?;
         }
         Some(Commands::Features) => {
             commands::query::features(&ctx)?;
@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             g,
             b,
         }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::set::set_led(kb, &mode, brightness, speed, r, g, b)
             })?;
         }
@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rt_stability,
             wasd_swap,
         }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::set::set_options(
                     kb,
                     os.map(cli::OsModeArg::as_u8),
@@ -154,36 +154,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::with_keyboard(&ctx, commands::set::reset)?;
         }
         Some(Commands::SetColorAll { r, g, b, led_layer }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::set::set_color_all(kb, r, g, b, led_layer)
             })?;
         }
 
         // === Trigger Commands ===
         Some(Commands::Calibrate) => {
-            commands::with_keyboard_on_profile(&ctx, commands::triggers::calibrate)?;
+            commands::with_ry_keyboard_on_profile(&ctx, commands::triggers::calibrate)?;
         }
         Some(Commands::Triggers) => {
-            commands::with_keyboard_on_profile(&ctx, commands::triggers::triggers)?;
+            commands::with_ry_keyboard_on_profile(&ctx, commands::triggers::triggers)?;
         }
         Some(Commands::SetActuation { mm }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_actuation(kb, mm)
             })?;
         }
         Some(Commands::SetRt { value }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| commands::triggers::set_rt(kb, &value))?;
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
+                commands::triggers::set_rt(kb, &value)
+            })?;
         }
         Some(Commands::SetRelease { mm }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| commands::triggers::set_release(kb, mm))?;
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
+                commands::triggers::set_release(kb, mm)
+            })?;
         }
         Some(Commands::SetBottomDeadzone { mm }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_bottom_deadzone(kb, mm)
             })?;
         }
         Some(Commands::SetTopDeadzone { mm }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_top_deadzone(kb, mm)
             })?;
         }
@@ -195,23 +199,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rt,
         }) => {
             let mode = mode.map(Into::into);
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_key_trigger(kb, key, actuation, release, mode, rt)
             })?;
         }
         Some(Commands::SetModeAll { mode, rt }) => {
             let mode = mode.into();
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_mode_all(kb, mode, rt)
             })?;
         }
         Some(Commands::SetSnaptap { key, with, clear }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_snaptap(kb, key, with, clear)
             })?;
         }
         Some(Commands::SetModtapTime { key, ms }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::set_modtap_time(kb, key, ms)
             })?;
         }
@@ -222,29 +226,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             slots,
             rt,
         }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::dks(kb, key, travel_mm, modes, slots, rt)
             })?;
         }
         Some(Commands::DksRoundtrip { key, op }) => {
-            commands::with_keyboard_on_profile(&ctx, |kb| {
+            commands::with_ry_keyboard_on_profile(&ctx, |kb| {
                 commands::triggers::dks_roundtrip(kb, key, &op)
             })?;
         }
 
         // === Keymap Commands ===
         Some(Commands::Remap { from, to, layer }) => {
-            commands::with_keyboard(&ctx, |kb| commands::keymap::remap(kb, &from, &to, layer))?;
+            commands::with_ry_keyboard(&ctx, |kb| commands::keymap::remap(kb, &from, &to, layer))?;
         }
         Some(Commands::ResetKey { key, layer }) => {
-            commands::with_keyboard(&ctx, |kb| commands::keymap::reset_key(kb, &key, layer))?;
+            commands::with_ry_keyboard(&ctx, |kb| commands::keymap::reset_key(kb, &key, layer))?;
         }
         Some(Commands::Swap {
             key1,
             key2,
             profile,
         }) => {
-            commands::with_keyboard(&ctx, |kb| commands::keymap::swap(kb, &key1, &key2, profile))?;
+            commands::with_ry_keyboard(&ctx, |kb| {
+                commands::keymap::swap(kb, &key1, &key2, profile)
+            })?;
         }
         Some(Commands::Keymatrix {
             layer,
@@ -253,14 +259,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sys,
             raw,
         }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::keymap::keymatrix(kb, &layer, unset, &keys, sys, raw)
             })?;
         }
 
         // === Macro Commands ===
         Some(Commands::Macro { key }) => {
-            commands::with_keyboard(&ctx, |kb| commands::macros::get_macro(kb, &key))?;
+            commands::with_ry_keyboard(&ctx, |kb| commands::macros::get_macro(kb, &key))?;
         }
         Some(Commands::SetMacro {
             key,
@@ -269,19 +275,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             repeat,
             seq,
         }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::macros::set_macro(kb, &key, &text, delay, repeat, seq)
             })?;
         }
         Some(Commands::ClearMacro { key }) => {
-            commands::with_keyboard(&ctx, |kb| commands::macros::clear_macro(kb, &key))?;
+            commands::with_ry_keyboard(&ctx, |kb| commands::macros::clear_macro(kb, &key))?;
         }
         Some(Commands::AssignMacro {
             key,
             macro_index,
             r#fn,
         }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::macros::assign_macro(kb, &key, &macro_index, r#fn)
             })?;
         }
@@ -307,7 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::led_stream::stream_gif(&ctx, &file, fps, r#loop, power_budget)?;
         }
         Some(Commands::Mode { mode, userpic_slot }) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 commands::animations::mode(kb, &mode, userpic_slot)
             })?;
         }
@@ -348,7 +354,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Debug Commands ===
         Some(Commands::Depth { raw, zero, verbose }) => {
-            commands::with_keyboard(&ctx, |kb| commands::debug::depth(kb, raw, zero, verbose))?;
+            commands::with_ry_keyboard(&ctx, |kb| commands::debug::depth(kb, raw, zero, verbose))?;
         }
         Some(Commands::Peek { addr, len, width }) => {
             commands::memory::peek(&ctx, &addr, &len, width)?;
@@ -466,7 +472,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::notify::clear().await?;
         }
         Some(Commands::AnimStatus) => {
-            commands::with_keyboard(&ctx, |kb| {
+            commands::with_ry_keyboard(&ctx, |kb| {
                 match iot_driver::anim::query_status(kb) {
                     Ok(snap) => println!("{snap}"),
                     Err(e) => eprintln!("Error: {e}"),

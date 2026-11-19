@@ -2,6 +2,7 @@
 
 use super::{CmdCtx, CommandResult};
 use iot_driver::firmware::FirmwareFile;
+use monsgeek_keyboard::Keyboard;
 use std::path::PathBuf;
 
 /// Validate a firmware file
@@ -47,7 +48,7 @@ pub fn dry_run(ctx: &CmdCtx, file: &PathBuf, verbose: bool) -> CommandResult {
     println!("=== DRY RUN - NO CHANGES WILL BE MADE ===\n");
 
     // Try to get current device info
-    let (current_version, device_id) = match super::open_keyboard(ctx) {
+    let (current_version, device_id) = match super::open_ry_keyboard(ctx) {
         Ok(keyboard) => {
             let version = keyboard.get_version().unwrap_or_default();
             let device_id = keyboard.get_device_id().unwrap_or(0);
@@ -86,10 +87,12 @@ pub fn check(ctx: &CmdCtx, device_id: Option<u32>) -> CommandResult {
     let (api_device_id, keyboard) = if let Some(id) = device_id {
         (Some(id), None)
     } else {
-        match super::open_keyboard(ctx) {
+        match super::open_ry_keyboard(ctx) {
             Ok(kb) => {
                 let id = kb.get_device_id().ok().filter(|&id| id != 0);
-                let id = id.or_else(|| device_ids::from_vid_pid(kb.vid(), kb.pid()));
+                let id = id.or_else(|| {
+                    device_ids::from_vid_pid(kb.device_info().vid, kb.device_info().pid)
+                });
                 (id, Some(kb))
             }
             Err(_) => (None, None),
@@ -123,7 +126,7 @@ pub fn check(ctx: &CmdCtx, device_id: Option<u32>) -> CommandResult {
             }
 
             // Compare with current device if connected
-            let kb = keyboard.or_else(|| super::open_keyboard(ctx).ok());
+            let kb = keyboard.or_else(|| super::open_ry_keyboard(ctx).ok());
             if let Some(kb) = kb
                 && let Ok(version) = kb.get_version()
             {
@@ -166,11 +169,11 @@ pub fn download(ctx: &CmdCtx, device_id: Option<u32>, output: &PathBuf) -> Comma
 
     // Try to get device ID from connected device or argument
     let api_device_id = device_id.or_else(|| {
-        if let Ok(kb) = super::open_keyboard(ctx) {
+        if let Ok(kb) = super::open_ry_keyboard(ctx) {
             kb.get_device_id()
                 .ok()
                 .filter(|&id| id != 0)
-                .or_else(|| device_ids::from_vid_pid(kb.vid(), kb.pid()))
+                .or_else(|| device_ids::from_vid_pid(kb.device_info().vid, kb.device_info().pid))
         } else {
             None
         }

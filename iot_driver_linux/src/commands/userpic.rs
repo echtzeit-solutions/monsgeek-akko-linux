@@ -5,7 +5,7 @@
 //! board, so a userpic is a picture 6 pixels tall; its width is however many
 //! columns this board's keys occupy (15 on the M1 V5, up to 21 on full-size).
 
-use super::{CmdCtx, CommandResult, open_keyboard};
+use super::{CmdCtx, CommandResult, open_ry_keyboard};
 use image::imageops::FilterType;
 use image::{GenericImageView, Rgb, RgbImage};
 use monsgeek_keyboard::{RyKeyboard, USERPIC_BYTES};
@@ -82,7 +82,7 @@ pub fn userpic(
     output: Option<String>,
     nearest: bool,
 ) -> CommandResult {
-    let kb = open_keyboard(ctx)?;
+    let kb = open_ry_keyboard(ctx)?;
     let cols = board_grid_cols(&kb);
 
     if let Some(path) = file {
