@@ -3,6 +3,7 @@
 //! This crate provides a convenient API for interacting with keyboard features
 //! on top of any transport layer (HID wired, dongle, Bluetooth, etc.)
 
+pub mod backend;
 pub mod error;
 pub mod hid_codes;
 pub mod led;
@@ -11,6 +12,7 @@ pub mod memory;
 pub mod settings;
 pub mod sync;
 
+pub use backend::Keyboard;
 pub use error::KeyboardError;
 pub use led::{LedMode, LedParams, RgbColor};
 pub use magnetism::{
@@ -77,7 +79,7 @@ pub struct AnimStatus {
 }
 
 // Macro parsing
-// (MacroEvent struct and parse_macro_events fn are defined after KeyboardInterface impl)
+// (MacroEvent struct and parse_macro_events fn are defined after RyKeyboard impl)
 
 // Re-export VendorEvent and TimestampedEvent for use by consumers (TUI notification handling)
 pub use monsgeek_transport::{TimestampedEvent, VendorEvent};
@@ -89,7 +91,7 @@ use monsgeek_transport::protocol::{
     CommandTable, DefId, INPUT_REPORT_SIZE, KeymatrixLayer, Layer, LedPos, MacroSlot, Profile,
     StripIdx, cmd, magnetism as mag_cmd,
 };
-use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport};
+use monsgeek_transport::{ChecksumType, FlowControlTransport, Transport, TransportDeviceInfo};
 // Typed commands
 use monsgeek_transport::command::{
     GetFnData, GetKeyMatrixData, GetMacroData, GetMultiMagnetismData, HidCommand,
@@ -119,11 +121,12 @@ pub const SNAPTAP_UNBOUND: u8 = 0xFF;
 /// the written key. Measured floor is ~200 ms; this carries margin.
 const MAGNETISM_SETTLE_MS: u64 = 250;
 
-/// High-level keyboard interface using any transport
+/// Keyboard speaking the RongYuan (RY5088 / YiChip) vendor protocol over any of
+/// its transports (wired, dongle, Bluetooth).
 ///
 /// Provides convenient methods for keyboard features like LED control,
 /// key mapping, trigger settings, etc.
-pub struct KeyboardInterface {
+pub struct RyKeyboard {
     transport: Arc<FlowControlTransport>,
     key_count: u8,
     has_magnetism: bool,
@@ -181,7 +184,7 @@ fn resolve_slot0(requested: [u8; 4], current: [u8; 4]) -> [u8; 4] {
     }
 }
 
-impl KeyboardInterface {
+impl RyKeyboard {
     /// Create a new keyboard interface
     ///
     /// # Arguments
@@ -349,25 +352,6 @@ impl KeyboardInterface {
         Ok(device_id)
     }
 
-    /// Get firmware version
-    pub fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
-        // Use GET_USB_VERSION which returns device_id and version
-        let resp = self
-            .transport
-            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
-
-        if resp.len() < 9 || resp[0] != cmd::GET_USB_VERSION {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid version response".into(),
-            ));
-        }
-
-        // GET_USB_VERSION response (after report ID stripped):
-        // [0] = cmd echo, [1..5] = device_id, [7..9] = version
-        let raw = u16::from_le_bytes([resp[7], resp[8]]);
-        Ok(FirmwareVersion::new(raw))
-    }
-
     /// Get battery info (dongle/wireless only)
     ///
     /// For dongle connections, this sends F7 to refresh and reads the cached
@@ -400,140 +384,6 @@ impl KeyboardInterface {
     /// Set LED parameters
     pub fn set_led_params(&self, params: &LedParams) -> Result<(), KeyboardError> {
         self.transport.send(&params.to_transport_cmd())?;
-        Ok(())
-    }
-
-    // === Settings ===
-
-    /// Get the profile the keyboard is currently switched to.
-    pub fn get_profile(&self) -> Result<Profile, KeyboardError> {
-        let cmd = self.commands.get_profile;
-        let resp = self.transport.query_command(cmd, &[], ChecksumType::Bit7)?;
-        if resp.is_empty() || resp[0] != cmd {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid profile response".into(),
-            ));
-        }
-        Profile::try_from(resp[1]).map_err(KeyboardError::InvalidParameter)
-    }
-
-    /// Switch the keyboard to a profile.
-    pub fn set_profile(&self, profile: Profile) -> Result<(), KeyboardError> {
-        self.transport.send_command(
-            self.commands.set_profile,
-            &[profile.get()],
-            ChecksumType::Bit7,
-        )?;
-        Ok(())
-    }
-
-    /// Get polling rate (RY5088-only, uses GET_REPORT)
-    pub fn get_polling_rate(&self) -> Result<PollingRate, KeyboardError> {
-        let cmd_byte = self.commands.get_report.ok_or_else(|| {
-            KeyboardError::NotSupported("Polling rate not available on this device".into())
-        })?;
-        let resp = self
-            .transport
-            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
-        if resp.len() < POLLING_RATE_FRAME_OFFSET + 1 || resp[0] != cmd_byte {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid polling rate response".into(),
-            ));
-        }
-        let code = resp[POLLING_RATE_FRAME_OFFSET];
-        PollingRate::from_protocol(code).ok_or_else(|| {
-            KeyboardError::UnexpectedResponse(format!("Unknown polling rate: 0x{code:02X}"))
-        })
-    }
-
-    /// Set polling rate (RY5088-only, uses SET_REPORT)
-    pub fn set_polling_rate(&self, rate: PollingRate) -> Result<(), KeyboardError> {
-        let cmd_byte = self.commands.set_report.ok_or_else(|| {
-            KeyboardError::NotSupported("Polling rate not available on this device".into())
-        })?;
-        let hz = rate.to_hz();
-        if !self.polling_rates.is_empty() && !self.polling_rates.contains(&hz) {
-            let max = self.polling_rates.iter().max().copied().unwrap_or(0);
-            return Err(KeyboardError::NotSupported(format!(
-                "{hz} Hz is above this device's maximum of {max} Hz"
-            )));
-        }
-        // Payload starts one byte after the command, so pad to reach the code's slot.
-        self.transport
-            .send_command(cmd_byte, &[0, rate as u8], ChecksumType::Bit7)?;
-        Ok(())
-    }
-
-    // === Debounce ===
-
-    /// Get debounce time in milliseconds
-    pub fn get_debounce(&self) -> Result<u8, KeyboardError> {
-        let cmd_byte = self.commands.get_debounce;
-        let resp = self
-            .transport
-            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
-        if resp.is_empty() || resp[0] != cmd_byte {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid debounce response".into(),
-            ));
-        }
-        Ok(resp[1])
-    }
-
-    /// Set debounce time in milliseconds (0-50)
-    pub fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
-        if ms > 50 {
-            return Err(KeyboardError::InvalidParameter(
-                "Debounce must be 0-50ms".into(),
-            ));
-        }
-        self.transport
-            .send_command(self.commands.set_debounce, &[ms], ChecksumType::Bit7)?;
-        Ok(())
-    }
-
-    // === Sleep ===
-
-    /// Get sleep time settings for all wireless modes (RY5088-only)
-    ///
-    /// Returns idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
-    /// All values are in seconds.
-    pub fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
-        let cmd_byte = self.commands.get_sleeptime.ok_or_else(|| {
-            KeyboardError::NotSupported("Sleep time not available on this device".into())
-        })?;
-        let resp = self
-            .transport
-            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
-        if resp.len() < 16 || resp[0] != cmd_byte {
-            return Err(KeyboardError::UnexpectedResponse(
-                "Invalid sleep time response".into(),
-            ));
-        }
-        Ok(SleepTimeSettings {
-            idle_bt: u16::from_le_bytes([resp[8], resp[9]]),
-            idle_24g: u16::from_le_bytes([resp[10], resp[11]]),
-            deep_bt: u16::from_le_bytes([resp[12], resp[13]]),
-            deep_24g: u16::from_le_bytes([resp[14], resp[15]]),
-        })
-    }
-
-    /// Set sleep time settings for all wireless modes (RY5088-only)
-    ///
-    /// Sets idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
-    /// All values are in seconds. Set to 0 to disable a particular timeout.
-    pub fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
-        let cmd_byte = self.commands.set_sleeptime.ok_or_else(|| {
-            KeyboardError::NotSupported("Sleep time not available on this device".into())
-        })?;
-        // Build data with same layout as SetSleepTime::to_data()
-        let mut data = vec![0u8; 15];
-        data[7..9].copy_from_slice(&settings.idle_bt.to_le_bytes());
-        data[9..11].copy_from_slice(&settings.idle_24g.to_le_bytes());
-        data[11..13].copy_from_slice(&settings.deep_bt.to_le_bytes());
-        data[13..15].copy_from_slice(&settings.deep_24g.to_le_bytes());
-        self.transport
-            .send_command(cmd_byte, &data, ChecksumType::Bit7)?;
         Ok(())
     }
 
@@ -1446,15 +1296,6 @@ impl KeyboardInterface {
         Ok(values)
     }
 
-    // === Factory Reset ===
-
-    /// Factory reset the keyboard
-    pub fn reset(&self) -> Result<(), KeyboardError> {
-        self.transport
-            .send_command(self.commands.set_reset, &[], ChecksumType::Bit7)?;
-        Ok(())
-    }
-
     // === Raw Commands (for CLI compatibility) ===
 
     /// Send a raw command and get response
@@ -1866,27 +1707,6 @@ impl KeyboardInterface {
         self.reset_key(layer, key_index)
     }
 
-    // === Device Info ===
-
-    /// Get device VID
-    pub fn vid(&self) -> u16 {
-        self.transport.device_info().vid
-    }
-
-    /// Get device PID
-    pub fn pid(&self) -> u16 {
-        self.transport.device_info().pid
-    }
-
-    /// Get device name
-    pub fn device_name(&self) -> String {
-        self.transport
-            .device_info()
-            .product_name
-            .clone()
-            .unwrap_or_else(|| format!("{:04X}:{:04X}", self.vid(), self.pid()))
-    }
-
     // === Connection ===
 
     /// Check if the keyboard is still connected
@@ -2181,6 +2001,172 @@ impl KeyboardInterface {
     /// Returns None if event subscriptions are not supported (no input endpoint).
     pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<TimestampedEvent>> {
         self.transport.subscribe_events()
+    }
+}
+
+impl Keyboard for RyKeyboard {
+    fn device_info(&self) -> &TransportDeviceInfo {
+        self.transport.device_info()
+    }
+
+    /// Get firmware version
+    fn get_version(&self) -> Result<FirmwareVersion, KeyboardError> {
+        // Use GET_USB_VERSION which returns device_id and version
+        let resp = self
+            .transport
+            .query_command(cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
+
+        if resp.len() < 9 || resp[0] != cmd::GET_USB_VERSION {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid version response".into(),
+            ));
+        }
+
+        // GET_USB_VERSION response (after report ID stripped):
+        // [0] = cmd echo, [1..5] = device_id, [7..9] = version
+        let raw = u16::from_le_bytes([resp[7], resp[8]]);
+        Ok(FirmwareVersion::new(raw))
+    }
+
+    /// Get the profile the keyboard is currently switched to.
+    fn get_profile(&self) -> Result<Profile, KeyboardError> {
+        let cmd = self.commands.get_profile;
+        let resp = self.transport.query_command(cmd, &[], ChecksumType::Bit7)?;
+        if resp.is_empty() || resp[0] != cmd {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid profile response".into(),
+            ));
+        }
+        Profile::try_from(resp[1]).map_err(KeyboardError::InvalidParameter)
+    }
+
+    /// Switch the keyboard to a profile.
+    fn set_profile(&self, profile: Profile) -> Result<(), KeyboardError> {
+        self.transport.send_command(
+            self.commands.set_profile,
+            &[profile.get()],
+            ChecksumType::Bit7,
+        )?;
+        Ok(())
+    }
+
+    /// RY5088-only, uses GET_REPORT.
+    fn get_polling_rate(&self) -> Result<u16, KeyboardError> {
+        let cmd_byte = self.commands.get_report.ok_or_else(|| {
+            KeyboardError::NotSupported("Polling rate not available on this device".into())
+        })?;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.len() < POLLING_RATE_FRAME_OFFSET + 1 || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid polling rate response".into(),
+            ));
+        }
+        let code = resp[POLLING_RATE_FRAME_OFFSET];
+        PollingRate::from_protocol(code)
+            .map(PollingRate::to_hz)
+            .ok_or_else(|| {
+                KeyboardError::UnexpectedResponse(format!("Unknown polling rate: 0x{code:02X}"))
+            })
+    }
+
+    /// RY5088-only, uses SET_REPORT.
+    fn set_polling_rate(&self, hz: u16) -> Result<(), KeyboardError> {
+        let cmd_byte = self.commands.set_report.ok_or_else(|| {
+            KeyboardError::NotSupported("Polling rate not available on this device".into())
+        })?;
+        let rate = PollingRate::from_hz(hz).ok_or_else(|| {
+            KeyboardError::InvalidParameter(format!(
+                "{hz} Hz is not a polling rate; valid rates are 125, 250, 500, 1000, 2000, 4000, 8000"
+            ))
+        })?;
+        if !self.polling_rates.is_empty() && !self.polling_rates.contains(&hz) {
+            let max = self.polling_rates.iter().max().copied().unwrap_or(0);
+            return Err(KeyboardError::NotSupported(format!(
+                "{hz} Hz is above this device's maximum of {max} Hz"
+            )));
+        }
+        // Payload starts one byte after the command, so pad to reach the code's slot.
+        self.transport
+            .send_command(cmd_byte, &[0, rate as u8], ChecksumType::Bit7)?;
+        Ok(())
+    }
+
+    /// Get debounce time in milliseconds
+    fn get_debounce(&self) -> Result<u8, KeyboardError> {
+        let cmd_byte = self.commands.get_debounce;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.is_empty() || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid debounce response".into(),
+            ));
+        }
+        Ok(resp[1])
+    }
+
+    /// Set debounce time in milliseconds (0-50)
+    fn set_debounce(&self, ms: u8) -> Result<(), KeyboardError> {
+        if ms > 50 {
+            return Err(KeyboardError::InvalidParameter(
+                "Debounce must be 0-50ms".into(),
+            ));
+        }
+        self.transport
+            .send_command(self.commands.set_debounce, &[ms], ChecksumType::Bit7)?;
+        Ok(())
+    }
+
+    /// Get sleep time settings for all wireless modes (RY5088-only)
+    ///
+    /// Returns idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
+    /// All values are in seconds.
+    fn get_sleep_time(&self) -> Result<SleepTimeSettings, KeyboardError> {
+        let cmd_byte = self.commands.get_sleeptime.ok_or_else(|| {
+            KeyboardError::NotSupported("Sleep time not available on this device".into())
+        })?;
+        let resp = self
+            .transport
+            .query_command(cmd_byte, &[], ChecksumType::Bit7)?;
+        if resp.len() < 16 || resp[0] != cmd_byte {
+            return Err(KeyboardError::UnexpectedResponse(
+                "Invalid sleep time response".into(),
+            ));
+        }
+        Ok(SleepTimeSettings {
+            idle_bt: u16::from_le_bytes([resp[8], resp[9]]),
+            idle_24g: u16::from_le_bytes([resp[10], resp[11]]),
+            deep_bt: u16::from_le_bytes([resp[12], resp[13]]),
+            deep_24g: u16::from_le_bytes([resp[14], resp[15]]),
+        })
+    }
+
+    /// Set sleep time settings for all wireless modes (RY5088-only)
+    ///
+    /// Sets idle and deep sleep timeouts for both Bluetooth and 2.4GHz.
+    /// All values are in seconds. Set to 0 to disable a particular timeout.
+    fn set_sleep_time(&self, settings: &SleepTimeSettings) -> Result<(), KeyboardError> {
+        let cmd_byte = self.commands.set_sleeptime.ok_or_else(|| {
+            KeyboardError::NotSupported("Sleep time not available on this device".into())
+        })?;
+        // Build data with same layout as SetSleepTime::to_data()
+        let mut data = vec![0u8; 15];
+        data[7..9].copy_from_slice(&settings.idle_bt.to_le_bytes());
+        data[9..11].copy_from_slice(&settings.idle_24g.to_le_bytes());
+        data[11..13].copy_from_slice(&settings.deep_bt.to_le_bytes());
+        data[13..15].copy_from_slice(&settings.deep_24g.to_le_bytes());
+        self.transport
+            .send_command(cmd_byte, &data, ChecksumType::Bit7)?;
+        Ok(())
+    }
+
+    /// Factory reset the keyboard
+    fn reset(&self) -> Result<(), KeyboardError> {
+        self.transport
+            .send_command(self.commands.set_reset, &[], ChecksumType::Bit7)?;
+        Ok(())
     }
 }
 

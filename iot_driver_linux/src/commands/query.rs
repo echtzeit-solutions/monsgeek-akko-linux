@@ -4,34 +4,37 @@ use super::{CmdCtx, CommandResult, format_command_response, open_preferred_trans
 use hidapi::HidApi;
 use iot_driver::hal;
 use iot_driver::protocol::{self, cmd};
-use monsgeek_keyboard::settings::FirmwareVersion;
-use monsgeek_keyboard::{RT_STABILITY_MAX, SleepTimeSettings};
+use monsgeek_keyboard::{Keyboard, RT_STABILITY_MAX, RyKeyboard, SleepTimeSettings};
 use monsgeek_transport::protocol::cmd as transport_cmd;
 use monsgeek_transport::{ChecksumType, Transport};
 use std::time::Duration;
 
-/// Get device info (firmware version, device ID, patch, boot mode, API ID)
-pub fn info(ctx: &CmdCtx) -> CommandResult {
-    let transport = open_preferred_transport(ctx)?;
-    let dev = transport.device_info();
-
-    // Device identity
-    if let Some(ref name) = dev.product_name {
-        println!("Device:    {name}");
-    }
+/// Get device info: identity and firmware from any backend, then the details
+/// only the RongYuan protocol reports (device ID, patch, boot mode, API ID).
+pub fn info(keyboard: &dyn Keyboard) -> CommandResult {
+    let dev = keyboard.device_info();
+    println!("Device:    {}", keyboard.device_name());
     println!(
         "  VID/PID:  {:04X}:{:04X}  type={:?}",
         dev.vid, dev.pid, dev.transport_type
     );
-
-    let resp = transport.query_command(transport_cmd::GET_USB_VERSION, &[], ChecksumType::Bit7)?;
-    let device_id = u32::from_le_bytes([resp[1], resp[2], resp[3], resp[4]]);
-    let version = u16::from_le_bytes([resp[7], resp[8]]);
-
+    let version = keyboard.get_version()?;
     println!(
-        "Firmware:  {} (raw 0x{version:04X}, dec {version})",
-        FirmwareVersion::new(version).format()
+        "Firmware:  {} (raw 0x{raw:04X}, dec {raw})",
+        version.format(),
+        raw = version.raw
     );
+
+    if let Some(ry) = keyboard.downcast_ref::<RyKeyboard>() {
+        ry_info(ry)?;
+    }
+    Ok(())
+}
+
+fn ry_info(keyboard: &RyKeyboard) -> CommandResult {
+    let transport = keyboard.transport();
+    let dev = transport.device_info();
+    let device_id = keyboard.get_device_id()?;
     println!("Device ID: {device_id} (0x{device_id:08X})");
 
     // Protocol family
@@ -161,10 +164,8 @@ pub fn info(ctx: &CmdCtx) -> CommandResult {
 }
 
 /// Get current profile
-pub fn profile(ctx: &CmdCtx) -> CommandResult {
-    let transport = open_preferred_transport(ctx)?;
-    let resp = transport.query_command(transport_cmd::GET_PROFILE, &[], ChecksumType::Bit7)?;
-    println!("Profile: {}", resp[1]);
+pub fn profile(keyboard: &dyn Keyboard) -> CommandResult {
+    println!("Profile: {}", keyboard.get_profile()?.get());
     Ok(())
 }
 
@@ -173,7 +174,7 @@ pub fn profile(ctx: &CmdCtx) -> CommandResult {
 /// Parsed rather than hand-indexed: the wire stores speed inverted (4 = slow), and
 /// printing the raw byte contradicted both `set-led`, which takes the user-facing
 /// value, and the TUI.
-pub fn led(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn led(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     let params = keyboard.get_led_params()?;
     let (r, g, b) = (params.color.r, params.color.g, params.color.b);
     println!("LED:");
@@ -192,20 +193,17 @@ pub fn led(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
 }
 
 /// Get debounce time
-pub fn debounce(ctx: &CmdCtx) -> CommandResult {
-    let transport = open_preferred_transport(ctx)?;
-    let resp = transport.query_command(transport_cmd::GET_DEBOUNCE, &[], ChecksumType::Bit7)?;
-    println!("Debounce: {} ms", resp[1]);
+pub fn debounce(keyboard: &dyn Keyboard) -> CommandResult {
+    println!("Debounce: {} ms", keyboard.get_debounce()?);
     Ok(())
 }
 
 /// Get polling rate
-pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn rate(keyboard: &dyn Keyboard) -> CommandResult {
     use iot_driver::protocol::polling_rate;
 
     match keyboard.get_polling_rate() {
-        Ok(rate) => {
-            let hz = rate.to_hz();
+        Ok(hz) => {
             println!("Polling rate: {hz} ({})", polling_rate::name(hz));
         }
         Err(e) => eprintln!("Failed to get polling rate: {e}"),
@@ -214,7 +212,7 @@ pub fn rate(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
 }
 
 /// Get keyboard options
-pub fn options(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn options(keyboard: &monsgeek_keyboard::RyKeyboard) -> CommandResult {
     let opts = keyboard.get_kb_options()?;
     println!("Keyboard Options:");
     println!(
@@ -247,7 +245,7 @@ pub fn features(ctx: &CmdCtx) -> CommandResult {
 }
 
 /// Get sleep time settings
-pub fn sleep(keyboard: &monsgeek_keyboard::KeyboardInterface) -> CommandResult {
+pub fn sleep(keyboard: &dyn Keyboard) -> CommandResult {
     match keyboard.get_sleep_time() {
         Ok(settings) => {
             println!("Sleep Time Settings:");

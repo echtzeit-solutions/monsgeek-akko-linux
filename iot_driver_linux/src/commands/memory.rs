@@ -4,8 +4,8 @@
 //! `docs/FIRMWARE_PATCH.md`). The firmware only touches flash, SRAM, the system
 //! control block and the known register blocks.
 
-use super::{CmdCtx, CommandResult, with_keyboard};
-use monsgeek_keyboard::KeyboardInterface;
+use super::{CmdCtx, CommandResult, with_ry_keyboard};
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_keyboard::memory::Width;
 use std::fmt::Write as _;
 
@@ -29,7 +29,7 @@ fn resolve_width(addr: u32, requested: Option<u8>) -> Result<Width, String> {
     }
 }
 
-fn require_peek_poke(kb: &KeyboardInterface) -> CommandResult {
+fn require_peek_poke(kb: &RyKeyboard) -> CommandResult {
     if kb.supports_peek_poke()? {
         return Ok(());
     }
@@ -83,7 +83,7 @@ pub fn peek(ctx: &CmdCtx, addr: &str, len: &str, width: Option<u8>) -> CommandRe
     let len = parse_u32(len)? as usize;
     let width = resolve_width(addr, width)?;
 
-    with_keyboard(ctx, |kb| {
+    with_ry_keyboard(ctx, |kb| {
         require_peek_poke(kb)?;
         let bytes = kb.peek(addr, len, width)?;
         print!("{}", format_dump(addr, &bytes, width));
@@ -106,7 +106,7 @@ pub fn poke(ctx: &CmdCtx, addr: &str, value: &str, width: Option<u8>, yes: bool)
         .into());
     }
 
-    with_keyboard(ctx, |kb| {
+    with_ry_keyboard(ctx, |kb| {
         require_peek_poke(kb)?;
         let readback = kb.poke(addr, width, value)?;
         println!(

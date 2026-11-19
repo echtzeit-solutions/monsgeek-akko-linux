@@ -19,7 +19,7 @@ use tracing::{debug, error, info, warn};
 use crate::commands::led_stream::{MATRIX_LEN, apply_power_budget, send_full_frame};
 use iot_driver::effect::{self, EffectLibrary};
 use iot_driver::hal::HidInterface;
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 use monsgeek_transport::{
     ChecksumType, DeviceDiscovery, HidDiscovery, PrinterConfig, TimestampedEvent, Transport,
     TransportType, VendorEvent,
@@ -192,7 +192,7 @@ pub struct DriverService {
     /// In-memory key-value store for webapp DB RPCs
     db: Arc<AsyncMutex<HashMap<DbKey, Vec<u8>>>>,
     /// Lazily-opened keyboard for LED streaming RPCs
-    led_kb: Arc<AsyncMutex<Option<KeyboardInterface>>>,
+    led_kb: Arc<AsyncMutex<Option<RyKeyboard>>>,
     /// Running effect render tasks (effect_id -> JoinHandle)
     led_effects: Arc<AsyncMutex<HashMap<u64, tokio::task::JoinHandle<()>>>>,
     /// Next effect ID counter
@@ -800,7 +800,7 @@ impl DriverService {
             return Ok(());
         }
 
-        let kb = crate::commands::open_keyboard(&crate::commands::CmdCtx::default())
+        let kb = crate::commands::open_ry_keyboard(&crate::commands::CmdCtx::default())
             .map_err(|e| Status::unavailable(format!("No keyboard found: {e}")))?;
 
         let patch = kb

@@ -21,7 +21,7 @@ use monsgeek_transport::protocol::{DefId, LedPos, led_grid};
 ///
 /// Opens its own Ctrl-C handler. For TUI integration, use `run_with_cancel` instead.
 pub async fn run(
-    kb: monsgeek_keyboard::KeyboardInterface,
+    kb: monsgeek_keyboard::RyKeyboard,
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let running = Arc::new(AtomicBool::new(true));
@@ -137,7 +137,7 @@ fn program_notification(engine: &AnimEngine, notif: &state::Notification, def_id
 ///
 /// Returns when `running` is set to `false`.
 pub async fn run_with_cancel(
-    kb: Arc<monsgeek_keyboard::KeyboardInterface>,
+    kb: Arc<monsgeek_keyboard::RyKeyboard>,
     running: Arc<AtomicBool>,
     slot_info: SharedSlotInfo,
     log: super::log::DaemonLog,

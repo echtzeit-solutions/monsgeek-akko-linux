@@ -1,7 +1,7 @@
 //! Macro sequence parser and display.
 //!
 //! Parses a comma-separated macro sequence syntax into steps, expands
-//! them into wire-format events for [`monsgeek_keyboard::KeyboardInterface::set_macro`],
+//! them into wire-format events for [`monsgeek_keyboard::RyKeyboard::set_macro`],
 //! and reconstructs the syntax from raw events for display.
 //!
 //! # Syntax

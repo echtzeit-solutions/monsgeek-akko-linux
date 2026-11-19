@@ -6,15 +6,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use monsgeek_keyboard::{KeyTriggerSettings, KeyboardInterface, PollingRate, Precision};
+use monsgeek_keyboard::{KeyTriggerSettings, Keyboard, PollingRate, Precision, RyKeyboard};
 use monsgeek_transport::protocol::{DefId, MacroSlot};
 use monsgeek_transport::{ChecksumType, FlowControlTransport, HidDiscovery, Transport};
 
-/// Open the preferred keyboard and create a KeyboardInterface.
+/// Open the preferred keyboard and create a RyKeyboard.
 ///
 /// Mirrors the TUI's `connect()` flow:
-/// HidDiscovery → open_preferred → FlowControlTransport → KeyboardInterface
-fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
+/// HidDiscovery → open_preferred → FlowControlTransport → RyKeyboard
+fn open_keyboard() -> (Arc<dyn Transport>, RyKeyboard) {
     let discovery = HidDiscovery::new();
     let transport = discovery
         .open_preferred()
@@ -27,7 +27,7 @@ fn open_keyboard() -> (Arc<dyn Transport>, KeyboardInterface) {
     };
 
     let flow = Arc::new(FlowControlTransport::new(Arc::clone(&transport)));
-    let kb = KeyboardInterface::new(
+    let kb = RyKeyboard::new(
         flow,
         key_count,
         has_magnetism,
@@ -138,16 +138,7 @@ async fn tui_first_tab_queries_resolve() {
     assert!(version.raw > 0, "firmware version raw should be non-zero");
     assert!(debounce <= 50, "debounce should be 0-50ms, got {debounce}");
     assert!(
-        matches!(
-            polling_rate,
-            PollingRate::Hz125
-                | PollingRate::Hz250
-                | PollingRate::Hz500
-                | PollingRate::Hz1000
-                | PollingRate::Hz2000
-                | PollingRate::Hz4000
-                | PollingRate::Hz8000
-        ),
+        PollingRate::from_hz(polling_rate).is_some(),
         "polling_rate should be a known rate"
     );
     assert!(

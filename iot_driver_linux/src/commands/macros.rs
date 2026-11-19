@@ -3,11 +3,11 @@
 use super::CommandResult;
 use iot_driver::macro_seq::MacroSeq;
 use iot_driver::protocol::hid;
-use monsgeek_keyboard::{KeyboardInterface, parse_macro_events};
+use monsgeek_keyboard::{RyKeyboard, parse_macro_events};
 use monsgeek_transport::protocol::{HidUsage, Layer, MacroSlot, MatrixPos, matrix};
 
 /// Get macro for a key
-pub fn get_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
+pub fn get_macro(keyboard: &RyKeyboard, key: &str) -> CommandResult {
     let macro_index: MacroSlot = match key.parse() {
         Ok(m) => m,
         Err(e) => {
@@ -69,7 +69,7 @@ pub fn get_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
 
 /// Set a text macro or key sequence for a macro slot
 pub fn set_macro(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     key: &str,
     text: &str,
     delay: u16,
@@ -123,7 +123,7 @@ pub fn set_macro(
 }
 
 /// Clear macro from a key
-pub fn clear_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
+pub fn clear_macro(keyboard: &RyKeyboard, key: &str) -> CommandResult {
     let macro_index: MacroSlot = match key.parse() {
         Ok(m) => m,
         Err(e) => {
@@ -143,7 +143,7 @@ pub fn clear_macro(keyboard: &KeyboardInterface, key: &str) -> CommandResult {
 
 /// Assign a macro to a key (base layer or Fn layer)
 pub fn assign_macro(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     key: &str,
     macro_index_str: &str,
     fn_layer: bool,

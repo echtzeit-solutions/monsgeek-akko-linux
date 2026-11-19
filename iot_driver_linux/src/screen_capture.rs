@@ -10,7 +10,7 @@ use tracing::trace;
 use crate::protocol::{cmd, screen_color};
 use crate::screen_calib::{ColorCalibration, Region};
 use crate::settings::Settings;
-use monsgeek_keyboard::KeyboardInterface;
+use monsgeek_keyboard::RyKeyboard;
 
 /// Screen color state shared between capture and main loop. Calibration/region/
 /// test-swatch are live-adjustable (the loop and PipeWire callback read them each
@@ -163,7 +163,7 @@ pub fn compute_average_color(
 /// `show_readout` draws the live in-place truecolor swatch on stdout (CLI only);
 /// the TUI passes `false` to keep its alternate screen uncorrupted.
 fn run_screen_color_loop(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     state: &Arc<ScreenColorState>,
     running: Arc<AtomicBool>,
     show_readout: bool,
@@ -607,7 +607,7 @@ pub mod pipewire_capture {
 
 /// Run screen color reactive mode (async entry point)
 pub async fn run_screen_color_mode(
-    keyboard: &KeyboardInterface,
+    keyboard: &RyKeyboard,
     running: Arc<AtomicBool>,
     fps: u32,
 ) -> Result<(), String> {
@@ -688,7 +688,7 @@ impl TuiScreenCapture {
 /// the portal negotiation + PipeWire capture + the keyboard streaming loop, all
 /// silently (no stdout). The LED mode is assumed to already be ScreenSync
 /// (set by the caller).
-pub fn spawn_for_tui(keyboard: Arc<KeyboardInterface>, fps: u32) -> TuiScreenCapture {
+pub fn spawn_for_tui(keyboard: Arc<RyKeyboard>, fps: u32) -> TuiScreenCapture {
     let state = Arc::new(ScreenColorState::from_settings(&Settings::load()));
     let running = Arc::new(AtomicBool::new(true));
     let error = Arc::new(Mutex::new(None));

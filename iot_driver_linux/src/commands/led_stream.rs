@@ -15,8 +15,8 @@
 //! - Sweep test:     iterates all 96 positions; gaps produce no visible LED
 //!   (the sweep "disappears" at gap positions, which is expected)
 
-use super::{CmdCtx, CommandResult, open_keyboard, setup_interrupt_handler};
-use monsgeek_keyboard::KeyboardInterface;
+use super::{CmdCtx, CommandResult, open_ry_keyboard, setup_interrupt_handler};
+use monsgeek_keyboard::RyKeyboard;
 use std::sync::atomic::Ordering;
 
 // Re-export shared LED utilities so binary-crate callers (grpc.rs) can keep
@@ -43,10 +43,8 @@ const TEST_COLORS: [(u8, u8, u8); 7] = [
 ///
 /// Retries `get_patch_info()` up to 3 times for dongle connections where
 /// the keyboard may be asleep and needs a wake-up cycle.
-pub fn open_with_patch_check(
-    ctx: &CmdCtx,
-) -> Result<KeyboardInterface, Box<dyn std::error::Error>> {
-    let kb = open_keyboard(ctx).map_err(|e| format!("No device found: {e}"))?;
+pub fn open_with_patch_check(ctx: &CmdCtx) -> Result<RyKeyboard, Box<dyn std::error::Error>> {
+    let kb = open_ry_keyboard(ctx).map_err(|e| format!("No device found: {e}"))?;
 
     let max_attempts = if kb.is_wireless() { 3 } else { 1 };
     let mut last_err = None;

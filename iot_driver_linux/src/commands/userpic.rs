@@ -5,10 +5,10 @@
 //! board, so a userpic is a picture 6 pixels tall; its width is however many
 //! columns this board's keys occupy (15 on the M1 V5, up to 21 on full-size).
 
-use super::{CmdCtx, CommandResult, open_keyboard};
+use super::{CmdCtx, CommandResult, open_ry_keyboard};
 use image::imageops::FilterType;
 use image::{GenericImageView, Rgb, RgbImage};
-use monsgeek_keyboard::{KeyboardInterface, USERPIC_BYTES};
+use monsgeek_keyboard::{RyKeyboard, USERPIC_BYTES};
 use monsgeek_transport::protocol::{MatrixPos, matrix};
 
 const ROWS: usize = matrix::ROWS as usize;
@@ -36,7 +36,7 @@ fn grid_cols(lit_positions: impl Iterator<Item = usize>) -> usize {
         .map_or(MAX_COLS, |last| last / ROWS + 1)
 }
 
-fn board_grid_cols(kb: &KeyboardInterface) -> usize {
+fn board_grid_cols(kb: &RyKeyboard) -> usize {
     grid_cols(
         (0..MAX_COLS * ROWS).filter(|&pos| is_lit(kb.matrix_default(pos), kb.is_non_analog(pos))),
     )
@@ -82,7 +82,7 @@ pub fn userpic(
     output: Option<String>,
     nearest: bool,
 ) -> CommandResult {
-    let kb = open_keyboard(ctx)?;
+    let kb = open_ry_keyboard(ctx)?;
     let cols = board_grid_cols(&kb);
 
     if let Some(path) = file {
