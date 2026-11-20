@@ -252,6 +252,17 @@ pub struct RfInfo {
 pub struct DiscoveredDevice {
     /// Device information
     pub info: TransportDeviceInfo,
+    /// Keyboard protocol identified during HID discovery.
+    pub protocol: KeyboardProtocol,
+}
+
+/// Keyboard wire protocol identified during HID discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardProtocol {
+    /// RongYuan RY5088 / YiChip protocol.
+    RongYuan,
+    /// Shenzhen Beiying / BYTech Report ID 0x09 protocol.
+    Beiying,
 }
 
 /// Human-readable device label for multi-device selection

@@ -1,0 +1,3395 @@
+Frame 1: Packet, 82 bytes on wire (656 bits), 82 bytes captured (656 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:50.011364000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:50.011364000 UTC
+    Epoch Arrival Time: 1795112450.011364000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time since reference or first frame: 0.000000000 seconds]
+    Frame Number: 1
+    Frame Length: 82 bytes (656 bits)
+    Capture Length: 82 bytes (656 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.0]
+    [Destination: host]
+    URB id: 0xffff8df9d8a71600
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_CONTROL (0x02)
+    Endpoint: 0x80, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0000 = Endpoint number: 0
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112450
+    URB usec: 11364
+    URB status: Success (0)
+    URB length [bytes]: 18
+    Data length [bytes]: 18
+    Unused Setup Header
+    Interval: 0
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000200, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+CONTROL response data: 1201000200000040ee381600080101020301
+
+0000  00 16 a7 d8 f9 8d ff ff 43 02 80 05 01 00 2d 00   ........C.....-.
+0010  02 3e ff 6a 00 00 00 00 64 2c 00 00 00 00 00 00   .>.j....d,......
+0020  12 00 00 00 12 00 00 00 00 00 00 00 00 00 00 00   ................
+0030  00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00   ................
+0040  12 01 00 02 00 00 00 40 ee 38 16 00 08 01 01 02   .......@.8......
+0050  03 01                                             ..
+
+Frame 2: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:50.011434000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:50.011434000 UTC
+    Epoch Arrival Time: 1795112450.011434000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 70.000 microseconds]
+    [Time delta from previous displayed frame: 70.000 microseconds]
+    [Time since reference or first frame: 70.000 microseconds]
+    Frame Number: 2
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.0]
+    URB id: 0xffff8df9d8a71600
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_CONTROL (0x02)
+    Endpoint: 0x80, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0000 = Endpoint number: 0
+    Device: 5
+    URB bus id: 1
+    Device setup request: relevant ('\0')
+    Data: not present ('<')
+    URB sec: 1795112450
+    URB usec: 11434
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 9
+    Data length [bytes]: 0
+    Interval: 0
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000200, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+Setup Data
+    bmRequestType: 0x80
+        1... .... = Direction: Device-to-host
+        .00. .... = Type: Standard (0x0)
+        ...0 0000 = Recipient: Device (0x00)
+    bRequest: GET DESCRIPTOR (6)
+    Descriptor Index: 0x00
+    bDescriptorType: CONFIGURATION (0x02)
+    Language Id: no language specified (0x0000)
+    wLength: 9
+
+0000  00 16 a7 d8 f9 8d ff ff 53 02 80 05 01 00 00 3c   ........S......<
+0010  02 3e ff 6a 00 00 00 00 aa 2c 00 00 8d ff ff ff   .>.j.....,......
+0020  09 00 00 00 00 00 00 00 80 06 00 02 00 00 09 00   ................
+0030  00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00   ................
+
+Frame 3: Packet, 73 bytes on wire (584 bits), 73 bytes captured (584 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:50.011523000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:50.011523000 UTC
+    Epoch Arrival Time: 1795112450.011523000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 89.000 microseconds]
+    [Time delta from previous displayed frame: 89.000 microseconds]
+    [Time since reference or first frame: 159.000 microseconds]
+    Frame Number: 3
+    Frame Length: 73 bytes (584 bits)
+    Capture Length: 73 bytes (584 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.0]
+    [Destination: host]
+    URB id: 0xffff8df9d8a71600
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_CONTROL (0x02)
+    Endpoint: 0x80, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0000 = Endpoint number: 0
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112450
+    URB usec: 11523
+    URB status: Success (0)
+    URB length [bytes]: 9
+    Data length [bytes]: 9
+    [Request in: 2]
+    [Time from request: 89.000 microseconds]
+    Unused Setup Header
+    Interval: 0
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000200, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+CONFIGURATION DESCRIPTOR
+    bLength: 9
+    bDescriptorType: 0x02 (CONFIGURATION)
+    wTotalLength: 91
+    bNumInterfaces: 3
+    bConfigurationValue: 1
+    iConfiguration: 0
+    Configuration bmAttributes: 0xe0  SELF-POWERED  REMOTE-WAKEUP
+        1... .... = Must be 1: Must be 1 for USB 1.1 and higher
+        .1.. .... = Self-Powered: This device is SELF-POWERED
+        ..1. .... = Remote Wakeup: This device supports REMOTE WAKEUP
+    bMaxPower: 50  (100mA)
+
+0000  00 16 a7 d8 f9 8d ff ff 43 02 80 05 01 00 2d 00   ........C.....-.
+0010  02 3e ff 6a 00 00 00 00 03 2d 00 00 00 00 00 00   .>.j.....-......
+0020  09 00 00 00 09 00 00 00 00 00 00 00 00 00 00 00   ................
+0030  00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00   ................
+0040  09 02 5b 00 03 01 00 e0 32                        ..[.....2
+
+Frame 4: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:50.011588000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:50.011588000 UTC
+    Epoch Arrival Time: 1795112450.011588000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 65.000 microseconds]
+    [Time delta from previous displayed frame: 65.000 microseconds]
+    [Time since reference or first frame: 224.000 microseconds]
+    Frame Number: 4
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.0]
+    URB id: 0xffff8df9d8a71600
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_CONTROL (0x02)
+    Endpoint: 0x80, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0000 = Endpoint number: 0
+    Device: 5
+    URB bus id: 1
+    Device setup request: relevant ('\0')
+    Data: not present ('<')
+    URB sec: 1795112450
+    URB usec: 11588
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 91
+    Data length [bytes]: 0
+    Interval: 0
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000200, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+Setup Data
+    bmRequestType: 0x80
+        1... .... = Direction: Device-to-host
+        .00. .... = Type: Standard (0x0)
+        ...0 0000 = Recipient: Device (0x00)
+    bRequest: GET DESCRIPTOR (6)
+    Descriptor Index: 0x00
+    bDescriptorType: CONFIGURATION (0x02)
+    Language Id: no language specified (0x0000)
+    wLength: 91
+
+0000  00 16 a7 d8 f9 8d ff ff 53 02 80 05 01 00 00 3c   ........S......<
+0010  02 3e ff 6a 00 00 00 00 44 2d 00 00 8d ff ff ff   .>.j....D-......
+0020  5b 00 00 00 00 00 00 00 80 06 00 02 00 00 5b 00   [.............[.
+0030  00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00   ................
+
+Frame 5: Packet, 155 bytes on wire (1240 bits), 155 bytes captured (1240 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:50.011708000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:50.011708000 UTC
+    Epoch Arrival Time: 1795112450.011708000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 120.000 microseconds]
+    [Time delta from previous displayed frame: 120.000 microseconds]
+    [Time since reference or first frame: 344.000 microseconds]
+    Frame Number: 5
+    Frame Length: 155 bytes (1240 bits)
+    Capture Length: 155 bytes (1240 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid:usbhid:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.0]
+    [Destination: host]
+    URB id: 0xffff8df9d8a71600
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_CONTROL (0x02)
+    Endpoint: 0x80, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0000 = Endpoint number: 0
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112450
+    URB usec: 11708
+    URB status: Success (0)
+    URB length [bytes]: 91
+    Data length [bytes]: 91
+    [Request in: 4]
+    [Time from request: 120.000 microseconds]
+    Unused Setup Header
+    Interval: 0
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000200, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+CONFIGURATION DESCRIPTOR
+    bLength: 9
+    bDescriptorType: 0x02 (CONFIGURATION)
+    wTotalLength: 91
+    bNumInterfaces: 3
+    bConfigurationValue: 1
+    iConfiguration: 0
+    Configuration bmAttributes: 0xe0  SELF-POWERED  REMOTE-WAKEUP
+        1... .... = Must be 1: Must be 1 for USB 1.1 and higher
+        .1.. .... = Self-Powered: This device is SELF-POWERED
+        ..1. .... = Remote Wakeup: This device supports REMOTE WAKEUP
+    bMaxPower: 50  (100mA)
+INTERFACE DESCRIPTOR (0.0): class HID
+    bLength: 9
+    bDescriptorType: 0x04 (INTERFACE)
+    bInterfaceNumber: 0
+    bAlternateSetting: 0
+    bNumEndpoints: 1
+    bInterfaceClass: HID (0x03)
+    bInterfaceSubClass: Boot Interface (0x01)
+    bInterfaceProtocol: Keyboard (0x01)
+    iInterface: 0
+HID DESCRIPTOR
+    bLength: 9
+    bDescriptorType: 0x21 (HID)
+    bcdHID: 0x0111
+    bCountryCode: Not Supported (0x00)
+    bNumDescriptors: 1
+    bDescriptorType: HID Report (0x22)
+    wDescriptorLength: 65
+ENDPOINT DESCRIPTOR
+    bLength: 7
+    bDescriptorType: 0x05 (ENDPOINT)
+    bEndpointAddress: 0x81  IN  Endpoint:1
+        1... .... = Direction: IN Endpoint
+        .... 0001 = Endpoint Number: 0x1
+    bmAttributes: 0x03
+        .... ..11 = Transfertype: Interrupt-Transfer (0x3)
+    wMaxPacketSize: 64
+        ...0 0... .... .... = Transactions per microframe: 1 (0)
+        .... .000 0100 0000 = Maximum Packet Size: 64
+    bInterval: 1
+INTERFACE DESCRIPTOR (1.0): class HID
+    bLength: 9
+    bDescriptorType: 0x04 (INTERFACE)
+    bInterfaceNumber: 1
+    bAlternateSetting: 0
+    bNumEndpoints: 1
+    bInterfaceClass: HID (0x03)
+    bInterfaceSubClass: Boot Interface (0x01)
+    bInterfaceProtocol: Keyboard (0x01)
+    iInterface: 0
+HID DESCRIPTOR
+    bLength: 9
+    bDescriptorType: 0x21 (HID)
+    bcdHID: 0x0111
+    bCountryCode: Not Supported (0x00)
+    bNumDescriptors: 1
+    bDescriptorType: HID Report (0x22)
+    wDescriptorLength: 153
+ENDPOINT DESCRIPTOR
+    bLength: 7
+    bDescriptorType: 0x05 (ENDPOINT)
+    bEndpointAddress: 0x82  IN  Endpoint:2
+        1... .... = Direction: IN Endpoint
+        .... 0010 = Endpoint Number: 0x2
+    bmAttributes: 0x03
+        .... ..11 = Transfertype: Interrupt-Transfer (0x3)
+    wMaxPacketSize: 64
+        ...0 0... .... .... = Transactions per microframe: 1 (0)
+        .... .000 0100 0000 = Maximum Packet Size: 64
+    bInterval: 1
+INTERFACE DESCRIPTOR (2.0): class HID
+    bLength: 9
+    bDescriptorType: 0x04 (INTERFACE)
+    bInterfaceNumber: 2
+    bAlternateSetting: 0
+    bNumEndpoints: 2
+    bInterfaceClass: HID (0x03)
+    bInterfaceSubClass: No Subclass (0x00)
+    bInterfaceProtocol: 0x00
+    iInterface: 0
+HID DESCRIPTOR
+    bLength: 9
+    bDescriptorType: 0x21 (HID)
+    bcdHID: 0x0111
+    bCountryCode: Not Supported (0x00)
+    bNumDescriptors: 1
+    bDescriptorType: HID Report (0x22)
+    wDescriptorLength: 61
+ENDPOINT DESCRIPTOR
+    bLength: 7
+    bDescriptorType: 0x05 (ENDPOINT)
+    bEndpointAddress: 0x83  IN  Endpoint:3
+        1... .... = Direction: IN Endpoint
+        .... 0011 = Endpoint Number: 0x3
+    bmAttributes: 0x03
+        .... ..11 = Transfertype: Interrupt-Transfer (0x3)
+    wMaxPacketSize: 64
+        ...0 0... .... .... = Transactions per microframe: 1 (0)
+        .... .000 0100 0000 = Maximum Packet Size: 64
+    bInterval: 1
+ENDPOINT DESCRIPTOR
+    bLength: 7
+    bDescriptorType: 0x05 (ENDPOINT)
+    bEndpointAddress: 0x02  OUT  Endpoint:2
+        0... .... = Direction: OUT Endpoint
+        .... 0010 = Endpoint Number: 0x2
+    bmAttributes: 0x03
+        .... ..11 = Transfertype: Interrupt-Transfer (0x3)
+    wMaxPacketSize: 64
+        ...0 0... .... .... = Transactions per microframe: 1 (0)
+        .... .000 0100 0000 = Maximum Packet Size: 64
+    bInterval: 1
+
+0000  00 16 a7 d8 f9 8d ff ff 43 02 80 05 01 00 2d 00   ........C.....-.
+0010  02 3e ff 6a 00 00 00 00 bc 2d 00 00 00 00 00 00   .>.j.....-......
+0020  5b 00 00 00 5b 00 00 00 00 00 00 00 00 00 00 00   [...[...........
+0030  00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00   ................
+0040  09 02 5b 00 03 01 00 e0 32 09 04 00 00 01 03 01   ..[.....2.......
+0050  01 00 09 21 11 01 00 01 22 41 00 07 05 81 03 40   ...!...."A.....@
+0060  00 01 09 04 01 00 01 03 01 01 00 09 21 11 01 00   ............!...
+0070  01 22 99 00 07 05 82 03 40 00 01 09 04 02 00 02   ."......@.......
+0080  03 00 00 00 09 21 11 01 00 01 22 3d 00 07 05 83   .....!...."=....
+0090  03 40 00 01 07 05 02 03 40 00 01                  .@......@..
+
+Frame 6: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.469825000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.469825000 UTC
+    Epoch Arrival Time: 1795112451.469825000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.458117000 seconds]
+    [Time delta from previous displayed frame: 1.458117000 seconds]
+    [Time since reference or first frame: 1.458461000 seconds]
+    Frame Number: 6
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 469825
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 41 2b 07 00 8d ff ff ff   .>.j....A+......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 7: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.522499000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.522499000 UTC
+    Epoch Arrival Time: 1795112451.522499000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 52.674000 milliseconds]
+    [Time delta from previous displayed frame: 52.674000 milliseconds]
+    [Time since reference or first frame: 1.511135000 seconds]
+    Frame Number: 7
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 522499
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000072
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 03 f9 07 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 01 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 72   ...............r
+
+Frame 8: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.522735000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.522735000 UTC
+    Epoch Arrival Time: 1795112451.522735000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 236.000 microseconds]
+    [Time delta from previous displayed frame: 236.000 microseconds]
+    [Time since reference or first frame: 1.511371000 seconds]
+    Frame Number: 8
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 522735
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 7]
+    [Time from request: 236.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 ef f9 07 00 00 00 00 00   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 9: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.523147000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.523147000 UTC
+    Epoch Arrival Time: 1795112451.523147000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 412.000 microseconds]
+    [Time delta from previous displayed frame: 412.000 microseconds]
+    [Time since reference or first frame: 1.511783000 seconds]
+    Frame Number: 9
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 523147
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 6]
+    [Time from request: 53.322000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820100010006110000000059000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 8b fb 07 00 00 00 00 00   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 01 00 01 00 06 11 00 00 00 00 59 00 00 00   ............Y...
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02   ................
+
+Frame 10: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.523169000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.523169000 UTC
+    Epoch Arrival Time: 1795112451.523169000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 22.000 microseconds]
+    [Time delta from previous displayed frame: 22.000 microseconds]
+    [Time since reference or first frame: 1.511805000 seconds]
+    Frame Number: 10
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 523169
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 a1 fb 07 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 11: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.524344000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.524344000 UTC
+    Epoch Arrival Time: 1795112451.524344000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.175000 milliseconds]
+    [Time delta from previous displayed frame: 1.175000 milliseconds]
+    [Time since reference or first frame: 1.512980000 seconds]
+    Frame Number: 11
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 524344
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820200010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000071
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 38 00 08 00 8d ff ff ff   .>.j....8.......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 02 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 71   ...............q
+
+Frame 12: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.524657000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.524657000 UTC
+    Epoch Arrival Time: 1795112451.524657000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 313.000 microseconds]
+    [Time delta from previous displayed frame: 313.000 microseconds]
+    [Time since reference or first frame: 1.513293000 seconds]
+    Frame Number: 12
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 524657
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 11]
+    [Time from request: 313.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 71 01 08 00 00 00 00 00   .>.j....q.......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 13: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.525400000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.525400000 UTC
+    Epoch Arrival Time: 1795112451.525400000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 743.000 microseconds]
+    [Time delta from previous displayed frame: 743.000 microseconds]
+    [Time since reference or first frame: 1.514036000 seconds]
+    Frame Number: 13
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 525400
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 10]
+    [Time from request: 2.231000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820200010000080100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000068
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 58 04 08 00 00 00 00 00   .>.j....X.......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 02 00 01 00 00 08 01 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 68   ...............h
+
+Frame 14: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.525421000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.525421000 UTC
+    Epoch Arrival Time: 1795112451.525421000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 21.000 microseconds]
+    [Time delta from previous displayed frame: 21.000 microseconds]
+    [Time since reference or first frame: 1.514057000 seconds]
+    Frame Number: 14
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 525421
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 6d 04 08 00 8d ff ff ff   .>.j....m.......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 15: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.526580000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.526580000 UTC
+    Epoch Arrival Time: 1795112451.526580000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.159000 milliseconds]
+    [Time delta from previous displayed frame: 1.159000 milliseconds]
+    [Time since reference or first frame: 1.515216000 seconds]
+    Frame Number: 15
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 526580
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820300010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000070
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 f4 08 08 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 03 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 70   ...............p
+
+Frame 16: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.526864000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.526864000 UTC
+    Epoch Arrival Time: 1795112451.526864000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 284.000 microseconds]
+    [Time delta from previous displayed frame: 284.000 microseconds]
+    [Time since reference or first frame: 1.515500000 seconds]
+    Frame Number: 16
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 526864
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 15]
+    [Time from request: 284.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 10 0a 08 00 00 00 00 00   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 17: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.527489000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.527489000 UTC
+    Epoch Arrival Time: 1795112451.527489000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 625.000 microseconds]
+    [Time delta from previous displayed frame: 625.000 microseconds]
+    [Time since reference or first frame: 1.516125000 seconds]
+    Frame Number: 17
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 527489
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 14]
+    [Time from request: 2.068000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820300010000000000808000000038000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000038
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 81 0c 08 00 00 00 00 00   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 03 00 01 00 00 00 00 00 80 80 00 00 00 38   ...............8
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 38   ...............8
+
+Frame 18: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.527519000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.527519000 UTC
+    Epoch Arrival Time: 1795112451.527519000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 30.000 microseconds]
+    [Time delta from previous displayed frame: 30.000 microseconds]
+    [Time since reference or first frame: 1.516155000 seconds]
+    Frame Number: 18
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 527519
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 9f 0c 08 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 19: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.528690000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.528690000 UTC
+    Epoch Arrival Time: 1795112451.528690000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.171000 milliseconds]
+    [Time delta from previous displayed frame: 1.171000 milliseconds]
+    [Time since reference or first frame: 1.517326000 seconds]
+    Frame Number: 19
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 528690
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 0982040001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006f
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 32 11 08 00 8d ff ff ff   .>.j....2.......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 04 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 6f   ...............o
+
+Frame 20: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.528892000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.528892000 UTC
+    Epoch Arrival Time: 1795112451.528892000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 202.000 microseconds]
+    [Time delta from previous displayed frame: 202.000 microseconds]
+    [Time since reference or first frame: 1.517528000 seconds]
+    Frame Number: 20
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 528892
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 19]
+    [Time from request: 202.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 fc 11 08 00 00 00 00 00   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 21: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.529165000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.529165000 UTC
+    Epoch Arrival Time: 1795112451.529165000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 273.000 microseconds]
+    [Time delta from previous displayed frame: 273.000 microseconds]
+    [Time since reference or first frame: 1.517801000 seconds]
+    Frame Number: 21
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 529165
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 18]
+    [Time from request: 1.646000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820400010000013f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002f
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 0d 13 08 00 00 00 00 00   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 04 00 01 00 00 01 3f 00 00 00 00 00 00 00   ........?.......
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 2f   .............../
+
+Frame 22: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.529186000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.529186000 UTC
+    Epoch Arrival Time: 1795112451.529186000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 21.000 microseconds]
+    [Time delta from previous displayed frame: 21.000 microseconds]
+    [Time since reference or first frame: 1.517822000 seconds]
+    Frame Number: 22
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 529186
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 22 13 08 00 8d ff ff ff   .>.j....".......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 23: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.530508000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.530508000 UTC
+    Epoch Arrival Time: 1795112451.530508000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.322000 milliseconds]
+    [Time delta from previous displayed frame: 1.322000 milliseconds]
+    [Time since reference or first frame: 1.519144000 seconds]
+    Frame Number: 23
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 530508
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 0982060001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006d
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 4c 18 08 00 8d ff ff ff   .>.j....L.......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 06 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 6d   ...............m
+
+Frame 24: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.530772000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.530772000 UTC
+    Epoch Arrival Time: 1795112451.530772000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 264.000 microseconds]
+    [Time delta from previous displayed frame: 264.000 microseconds]
+    [Time since reference or first frame: 1.519408000 seconds]
+    Frame Number: 24
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 530772
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 23]
+    [Time from request: 264.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 54 19 08 00 00 00 00 00   .>.j....T.......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 25: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.531400000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.531400000 UTC
+    Epoch Arrival Time: 1795112451.531400000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 628.000 microseconds]
+    [Time delta from previous displayed frame: 628.000 microseconds]
+    [Time since reference or first frame: 1.520036000 seconds]
+    Frame Number: 25
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 531400
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 22]
+    [Time from request: 2.214000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820600010000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000068
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 c8 1b 08 00 00 00 00 00   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 06 00 01 00 00 05 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 68   ...............h
+
+Frame 26: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.531421000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.531421000 UTC
+    Epoch Arrival Time: 1795112451.531421000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 21.000 microseconds]
+    [Time delta from previous displayed frame: 21.000 microseconds]
+    [Time since reference or first frame: 1.520057000 seconds]
+    Frame Number: 26
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 531421
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 dd 1b 08 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 27: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.532598000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.532598000 UTC
+    Epoch Arrival Time: 1795112451.532598000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.177000 milliseconds]
+    [Time delta from previous displayed frame: 1.177000 milliseconds]
+    [Time since reference or first frame: 1.521234000 seconds]
+    Frame Number: 27
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 532598
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 0982080001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006b
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 76 20 08 00 8d ff ff ff   .>.j....v ......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 08 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 6b   ...............k
+
+Frame 28: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.532892000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.532892000 UTC
+    Epoch Arrival Time: 1795112451.532892000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 294.000 microseconds]
+    [Time delta from previous displayed frame: 294.000 microseconds]
+    [Time since reference or first frame: 1.521528000 seconds]
+    Frame Number: 28
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 532892
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 27]
+    [Time from request: 294.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 9c 21 08 00 00 00 00 00   .>.j.....!......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 29: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.533529000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.533529000 UTC
+    Epoch Arrival Time: 1795112451.533529000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 637.000 microseconds]
+    [Time delta from previous displayed frame: 637.000 microseconds]
+    [Time since reference or first frame: 1.522165000 seconds]
+    Frame Number: 29
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 533529
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 26]
+    [Time from request: 2.108000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820800010000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000066
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 19 24 08 00 00 00 00 00   .>.j.....$......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 08 00 01 00 00 05 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 66   ...............f
+
+Frame 30: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.533567000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.533567000 UTC
+    Epoch Arrival Time: 1795112451.533567000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 38.000 microseconds]
+    [Time delta from previous displayed frame: 38.000 microseconds]
+    [Time since reference or first frame: 1.522203000 seconds]
+    Frame Number: 30
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 533567
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 3f 24 08 00 8d ff ff ff   .>.j....?$......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 31: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.534700000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.534700000 UTC
+    Epoch Arrival Time: 1795112451.534700000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.133000 milliseconds]
+    [Time delta from previous displayed frame: 1.133000 milliseconds]
+    [Time since reference or first frame: 1.523336000 seconds]
+    Frame Number: 31
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 534700
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 0982090001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 ac 28 08 00 8d ff ff ff   .>.j.....(......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 09 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 6a   ...............j
+
+Frame 32: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.534896000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.534896000 UTC
+    Epoch Arrival Time: 1795112451.534896000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 196.000 microseconds]
+    [Time delta from previous displayed frame: 196.000 microseconds]
+    [Time since reference or first frame: 1.523532000 seconds]
+    Frame Number: 32
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 534896
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 31]
+    [Time from request: 196.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 70 29 08 00 00 00 00 00   .>.j....p)......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 33: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.535121000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.535121000 UTC
+    Epoch Arrival Time: 1795112451.535121000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 225.000 microseconds]
+    [Time delta from previous displayed frame: 225.000 microseconds]
+    [Time since reference or first frame: 1.523757000 seconds]
+    Frame Number: 33
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 535121
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 30]
+    [Time from request: 1.554000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820900010015ffff07000000000000000000000000000101000005000000000000000000000000000000000000000000000000000000000000000000000049
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 51 2a 08 00 00 00 00 00   .>.j....Q*......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 09 00 01 00 15 ff ff 07 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 01 01 00 00 05 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 49   ...............I
+
+Frame 34: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.535155000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.535155000 UTC
+    Epoch Arrival Time: 1795112451.535155000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 34.000 microseconds]
+    [Time delta from previous displayed frame: 34.000 microseconds]
+    [Time since reference or first frame: 1.523791000 seconds]
+    Frame Number: 34
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 535155
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 73 2a 08 00 8d ff ff ff   .>.j....s*......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 35: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.536272000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.536272000 UTC
+    Epoch Arrival Time: 1795112451.536272000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.117000 milliseconds]
+    [Time delta from previous displayed frame: 1.117000 milliseconds]
+    [Time since reference or first frame: 1.524908000 seconds]
+    Frame Number: 35
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 536272
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820f00013400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 d0 2e 08 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 0f 00 01 34 00 00 00 00 00 00 00 00 00 00   .....4..........
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30   ...............0
+
+Frame 36: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.536522000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.536522000 UTC
+    Epoch Arrival Time: 1795112451.536522000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 250.000 microseconds]
+    [Time delta from previous displayed frame: 250.000 microseconds]
+    [Time since reference or first frame: 1.525158000 seconds]
+    Frame Number: 36
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 536522
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 35]
+    [Time from request: 250.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 ca 2f 08 00 00 00 00 00   .>.j...../......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 37: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.536772000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.536772000 UTC
+    Epoch Arrival Time: 1795112451.536772000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 250.000 microseconds]
+    [Time delta from previous displayed frame: 250.000 microseconds]
+    [Time since reference or first frame: 1.525408000 seconds]
+    Frame Number: 37
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 536772
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 34]
+    [Time from request: 1.617000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820f0001340a0001010300000004001f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000fe
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 c4 30 08 00 00 00 00 00   .>.j.....0......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 0f 00 01 34 0a 00 01 01 03 00 00 00 04 00   .....4..........
+0050  1f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 fe   ................
+
+Frame 38: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.536803000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.536803000 UTC
+    Epoch Arrival Time: 1795112451.536803000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 31.000 microseconds]
+    [Time delta from previous displayed frame: 31.000 microseconds]
+    [Time since reference or first frame: 1.525439000 seconds]
+    Frame Number: 38
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 536803
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 e3 30 08 00 8d ff ff ff   .>.j.....0......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 39: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.537962000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.537962000 UTC
+    Epoch Arrival Time: 1795112451.537962000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.159000 milliseconds]
+    [Time delta from previous displayed frame: 1.159000 milliseconds]
+    [Time since reference or first frame: 1.526598000 seconds]
+    Frame Number: 39
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 537962
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09841100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 6a 35 08 00 8d ff ff ff   .>.j....j5......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 84 11 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 60   ...............`
+
+Frame 40: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.538266000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.538266000 UTC
+    Epoch Arrival Time: 1795112451.538266000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 304.000 microseconds]
+    [Time delta from previous displayed frame: 304.000 microseconds]
+    [Time since reference or first frame: 1.526902000 seconds]
+    Frame Number: 40
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 538266
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 39]
+    [Time from request: 304.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 9a 36 08 00 00 00 00 00   .>.j.....6......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 41: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.539022000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.539022000 UTC
+    Epoch Arrival Time: 1795112451.539022000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 756.000 microseconds]
+    [Time delta from previous displayed frame: 756.000 microseconds]
+    [Time since reference or first frame: 1.527658000 seconds]
+    Frame Number: 41
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 539022
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 38]
+    [Time from request: 2.219000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 0984110001000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005f
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 8e 39 08 00 00 00 00 00   .>.j.....9......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 84 11 00 01 00 01 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 5f   ..............._
+
+Frame 42: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.539055000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.539055000 UTC
+    Epoch Arrival Time: 1795112451.539055000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 33.000 microseconds]
+    [Time delta from previous displayed frame: 33.000 microseconds]
+    [Time since reference or first frame: 1.527691000 seconds]
+    Frame Number: 42
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 539055
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 af 39 08 00 8d ff ff ff   .>.j.....9......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 43: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.564684000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.564684000 UTC
+    Epoch Arrival Time: 1795112451.564684000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 25.629000 milliseconds]
+    [Time delta from previous displayed frame: 25.629000 milliseconds]
+    [Time since reference or first frame: 1.553320000 seconds]
+    Frame Number: 43
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 564684
+    URB status: No such file or directory (-ENOENT) (-2)
+    URB length [bytes]: 0
+    Data length [bytes]: 0
+    [Request in: 42]
+    [Time from request: 25.629000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 cc 9d 08 00 fe ff ff ff   .>.j............
+0020  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 44: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.624342000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.624342000 UTC
+    Epoch Arrival Time: 1795112451.624342000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 59.658000 milliseconds]
+    [Time delta from previous displayed frame: 59.658000 milliseconds]
+    [Time since reference or first frame: 1.612978000 seconds]
+    Frame Number: 44
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.3]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('<')
+    URB sec: 1795112451
+    URB usec: 624342
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 92 ce d0 f8 8d ff ff 53 01 83 05 01 00 2d 3c   @.......S.....-<
+0010  03 3e ff 6a 00 00 00 00 d6 86 09 00 8d ff ff ff   .>.j............
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+
+Frame 45: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.677532000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.677532000 UTC
+    Epoch Arrival Time: 1795112451.677532000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 53.190000 milliseconds]
+    [Time delta from previous displayed frame: 53.190000 milliseconds]
+    [Time since reference or first frame: 1.666168000 seconds]
+    Frame Number: 45
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: host]
+    [Destination: 1.5.2]
+    URB id: 0xffff8df977de2240
+    URB type: URB_SUBMIT ('S')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 677532
+    URB status: Operation now in progress (-EINPROGRESS) (-115)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000072
+
+0000  40 22 de 77 f9 8d ff ff 53 01 02 05 01 00 2d 00   @".w....S.....-.
+0010  03 3e ff 6a 00 00 00 00 9c 56 0a 00 8d ff ff ff   .>.j.....V......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0040  09 82 01 00 01 00 00 00 00 00 00 00 00 00 00 00   ................
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 72   ...............r
+
+Frame 46: Packet, 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.677761000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.677761000 UTC
+    Epoch Arrival Time: 1795112451.677761000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 229.000 microseconds]
+    [Time delta from previous displayed frame: 229.000 microseconds]
+    [Time since reference or first frame: 1.666397000 seconds]
+    Frame Number: 46
+    Frame Length: 64 bytes (512 bits)
+    Capture Length: 64 bytes (512 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.2]
+    [Destination: host]
+    URB id: 0xffff8df977de2240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x02, Direction: OUT
+        0... .... = Direction: OUT (0)
+        .... 0010 = Endpoint number: 2
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: not present ('>')
+    URB sec: 1795112451
+    URB usec: 677761
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 0
+    [Request in: 45]
+    [Time from request: 229.000 microseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000000
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .0.. = No transfer DMA map: False
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..0. .... .... = Dir IN: False
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+
+0000  40 22 de 77 f9 8d ff ff 43 01 02 05 01 00 2d 3e   @".w....C.....->
+0010  03 3e ff 6a 00 00 00 00 81 57 0a 00 00 00 00 00   .>.j.....W......
+0020  40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   @...............
+0030  01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+
+Frame 47: Packet, 128 bytes on wire (1024 bits), 128 bytes captured (1024 bits) on interface usbmon1, id 0
+    Section number: 1
+    Interface id: 0 (usbmon1)
+        Interface name: usbmon1
+        Interface description: USB monitor
+    Encapsulation type: USB packets with Linux header and padding (115)
+    Arrival Time: Nov 19, 2026 15:20:51.678388000 -03
+    UTC Arrival Time: Nov 19, 2026 18:20:51.678388000 UTC
+    Epoch Arrival Time: 1795112451.678388000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 627.000 microseconds]
+    [Time delta from previous displayed frame: 627.000 microseconds]
+    [Time since reference or first frame: 1.667024000 seconds]
+    Frame Number: 47
+    Frame Length: 128 bytes (1024 bits)
+    Capture Length: 128 bytes (1024 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: usb:usbhid]
+    Character encoding: ASCII (0)
+USB URB
+    [Source: 1.5.3]
+    [Destination: host]
+    URB id: 0xffff8df8d0ce9240
+    URB type: URB_COMPLETE ('C')
+    URB transfer type: URB_INTERRUPT (0x01)
+    Endpoint: 0x83, Direction: IN
+        1... .... = Direction: IN (1)
+        .... 0011 = Endpoint number: 3
+    Device: 5
+    URB bus id: 1
+    Device setup request: not relevant ('-')
+    Data: present ('\0')
+    URB sec: 1795112451
+    URB usec: 678388
+    URB status: Success (0)
+    URB length [bytes]: 64
+    Data length [bytes]: 64
+    [Request in: 44]
+    [Time from request: 54.046000 milliseconds]
+    [bInterfaceClass: HID (0x03)]
+    Unused Setup Header
+    Interval: 1
+    Start frame: 0
+    Copy of Transfer Flags: 0x00000204, No transfer DMA map, Dir IN
+        .... .... .... .... .... .... .... ...0 = Short not OK: False
+        .... .... .... .... .... .... .... ..0. = ISO ASAP: False
+        .... .... .... .... .... .... .... .1.. = No transfer DMA map: True
+        .... .... .... .... .... .... ..0. .... = No FSBR: False
+        .... .... .... .... .... .... .0.. .... = Zero Packet: False
+        .... .... .... .... .... .... 0... .... = No Interrupt: False
+        .... .... .... .... .... ...0 .... .... = Free Buffer: False
+        .... .... .... .... .... ..1. .... .... = Dir IN: True
+        .... .... .... ...0 .... .... .... .... = DMA Map Single: False
+        .... .... .... ..0. .... .... .... .... = DMA Map Page: False
+        .... .... .... .0.. .... .... .... .... = DMA Map SG: False
+        .... .... .... 0... .... .... .... .... = Map Local: False
+        .... .... ...0 .... .... .... .... .... = Setup Map Single: False
+        .... .... ..0. .... .... .... .... .... = Setup Map Local: False
+        .... .... .0.. .... .... .... .... .... = DMA S-G Combined: False
+        .... .... 0... .... .... .... .... .... = Aligned Temp Buffer: False
+    Number of ISO descriptors: 0
+HID Data: 09820100010006110000000059000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002
+
+0000  40 92 ce d0 f8 8d ff ff 43 01 83 05 01 00 2d 00   @.......C.....-.
+0010  03 3e ff 6a 00 00 00 00 f4 59 0a 00 00 00 00 00   .>.j.....Y......
+0020  40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00   @...@...........
+0030  01 00 00 00 00 00 00 00 04 02 00 00 00 00 00 00   ................
+0040  09 82 01 00 01 00 06 11 00 00 00 00 59 00 00 00   ............Y...
+0050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0060  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+0070  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02   ................
+

@@ -1,0 +1,11 @@
+[package]
+name = "monsgeek-beiying"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Shenzhen Beiying / BYTech (Report ID 0x09) keyboard backend"
+
+[dependencies]
+hidapi = "2.6"
+monsgeek-keyboard = { path = "../monsgeek-keyboard" }
+monsgeek-transport = { path = "../monsgeek-transport" }

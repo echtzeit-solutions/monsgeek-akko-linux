@@ -1691,6 +1691,7 @@ dependencies = [
  "libpulse-binding",
  "libpulse-simple-binding",
  "log",
+ "monsgeek-beiying",
  "monsgeek-keyboard",
  "monsgeek-transport",
  "pcap-parser",
@@ -2089,6 +2090,15 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "monsgeek-beiying"
+version = "0.1.0"
+dependencies = [
+ "hidapi",
+ "monsgeek-keyboard",
+ "monsgeek-transport",
 ]
 
 [[package]]

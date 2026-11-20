@@ -186,11 +186,18 @@ pub(crate) fn query_device_id(flow: &FlowControlTransport) -> Option<i32> {
 /// Open the selected keyboard with whichever backend speaks its protocol.
 ///
 /// This is where the CLI chooses a backend: discovery selects the device, then
-/// the branch on how discovery classified it opens the matching backend. Every
-/// board discovery finds today speaks the RongYuan protocol, so there is one arm.
+/// the branch on how discovery classified it opens the matching backend.
 pub fn open_keyboard(ctx: &CmdCtx) -> Result<Box<dyn Keyboard>, Box<dyn std::error::Error>> {
     let discovery = hid_discovery(ctx);
     let device = resolve_device(&discovery, ctx.device_selector())?;
+    match device.protocol {
+        monsgeek_transport::KeyboardProtocol::Beiying => {
+            return Ok(Box::new(monsgeek_beiying::BeiyingKeyboard::open(
+                device.info,
+            )?));
+        }
+        monsgeek_transport::KeyboardProtocol::RongYuan => {}
+    }
     let flow = Arc::new(FlowControlTransport::new(discovery.open_device(&device)?));
     Ok(Box::new(build_ry_keyboard(flow)?))
 }
@@ -697,5 +704,75 @@ mod tests {
             panic!("a fake board must not downcast to RyKeyboard");
         };
         assert_eq!(kb.device_name(), "Fake board");
+    }
+
+    #[test]
+    fn beiying_backend_runs_phase1_queries_and_rejects_ry_downcast() {
+        let uuid_reply = vec![
+            0x09, 0x82, 0x01, 0x00, 0x01, 0x00, 0x06, 0x11, 0x00, 0x00, 0x00, 0x00, 0x59, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
+        let fw_reply = vec![
+            0x09, 0x82, 0x02, 0x00, 0x01, 0x00, 0x00, 0x08, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x68,
+        ];
+        // Profile 2 reply from monsgeek-beiying/tests/fixtures/get-profile-p2.txt Frame 11.
+        let profile_reply = vec![
+            0x09, 0x90, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64,
+        ];
+        // 8000 Hz reply from monsgeek-beiying/tests/fixtures/get-polling-rate-codes.txt Frame 83.
+        let rate_reply = vec![
+            0x09, 0x84, 0x17, 0x00, 0x01, 0x00, 0x01, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x55,
+        ];
+        let io = monsgeek_beiying::ReplayIo::new(vec![
+            uuid_reply,
+            fw_reply,
+            profile_reply,
+            rate_reply.clone(),
+            rate_reply,
+        ]);
+        let info = TransportDeviceInfo {
+            vid: 0x38EE,
+            pid: 0x0016,
+            is_dongle: false,
+            transport_type: TransportType::HidWired,
+            device_path: String::new(),
+            serial: None,
+            product_name: Some("TAC75 HE".into()),
+        };
+        let kb: Box<dyn Keyboard> = Box::new(
+            monsgeek_beiying::BeiyingKeyboard::connect(info, io).expect("connect replay succeeds"),
+        );
+
+        query::info(kb.as_ref()).expect("info query succeeds");
+        query::profile(kb.as_ref()).expect("profile query succeeds");
+        query::rate(kb.as_ref()).expect("polling rate query succeeds");
+        assert_eq!(
+            kb.get_polling_rate().expect("polling rate returns 8000 Hz"),
+            8000
+        );
+        assert!(query::debounce(kb.as_ref()).is_err());
+        assert!(matches!(
+            kb.get_sleep_time(),
+            Err(monsgeek_keyboard::KeyboardError::NotSupported(_))
+        ));
+
+        let Err(kb) = kb.downcast::<RyKeyboard>() else {
+            panic!("Beiying backend must not downcast to RyKeyboard");
+        };
+        let msg = format!(
+            "{} does not support this command (RongYuan-protocol keyboards only)",
+            kb.device_name()
+        );
+        assert_eq!(
+            msg,
+            "TAC75 HE does not support this command (RongYuan-protocol keyboards only)"
+        );
     }
 }
