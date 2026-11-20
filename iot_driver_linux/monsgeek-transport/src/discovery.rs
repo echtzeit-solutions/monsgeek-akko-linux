@@ -20,7 +20,129 @@ use crate::hid_dongle::HidDongleTransport;
 use crate::hid_wired::HidWiredTransport;
 use crate::printer::{Printer, PrinterConfig};
 use crate::protocol::device;
-use crate::types::{DiscoveredDevice, DiscoveryEvent, TransportDeviceInfo, TransportType};
+use crate::types::{
+    DiscoveredDevice, DiscoveryEvent, KeyboardProtocol, TransportDeviceInfo, TransportType,
+};
+
+/// HID collection and report layout captured from Beiying and RongYuan devices.
+/// Descriptor parsing is deliberately passive: callers supply bytes read from
+/// sysfs, never from an opened hidraw device.
+fn is_beiying_report09_descriptor(bytes: &[u8]) -> bool {
+    #[derive(Clone, Copy, Default)]
+    struct Global {
+        usage_page: u16,
+        report_size: u32,
+        report_count: u32,
+        report_id: Option<u8>,
+    }
+
+    let mut global = Global::default();
+    let mut global_stack = Vec::new();
+    let mut collections = Vec::new();
+    let mut usage = None;
+    let mut found_input = false;
+    let mut found_output = false;
+    let mut offset = 0;
+
+    while offset < bytes.len() {
+        let prefix = bytes[offset];
+        if prefix == 0xFE {
+            let Some(&length) = bytes.get(offset + 1) else {
+                break;
+            };
+            offset = offset.saturating_add(3 + usize::from(length));
+            continue;
+        }
+
+        let data_len = match prefix & 0x03 {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            _ => 4,
+        };
+        let end = offset.saturating_add(1 + data_len);
+        let Some(data) = bytes.get(offset + 1..end) else {
+            break;
+        };
+        offset = end;
+
+        let value = data.iter().enumerate().fold(0u32, |value, (index, byte)| {
+            value | (u32::from(*byte) << (index * 8))
+        });
+        let item_type = (prefix >> 2) & 0x03;
+        let tag = (prefix >> 4) & 0x0F;
+
+        match item_type {
+            0 => match tag {
+                // Input, Output, Feature main items.
+                8 | 9 | 11 => {
+                    let collection = collections.last().copied();
+                    let matching_collection = collection == Some((0xFF60, 0x0061));
+                    let matching_report = global.report_id == Some(0x09)
+                        && global.report_size == 8
+                        && global.report_count == 63;
+                    if matching_collection && matching_report {
+                        found_input |= tag == 8;
+                        found_output |= tag == 9;
+                    }
+                    usage = None;
+                }
+                // Collection.
+                10 => {
+                    let current = if value == 1 || collections.is_empty() {
+                        usage
+                            .map(|u| (global.usage_page, u))
+                            .unwrap_or((global.usage_page, 0))
+                    } else {
+                        *collections.last().expect("non-empty collection stack")
+                    };
+                    collections.push(current);
+                    usage = None;
+                }
+                // End Collection.
+                12 => {
+                    collections.pop();
+                    usage = None;
+                }
+                _ => usage = None,
+            },
+            1 => match tag {
+                0 => global.usage_page = value as u16,
+                7 => global.report_size = value,
+                8 => global.report_id = u8::try_from(value).ok().filter(|id| *id != 0),
+                9 => global.report_count = value,
+                10 => global_stack.push(global),
+                11 => {
+                    if let Some(previous) = global_stack.pop() {
+                        global = previous;
+                    }
+                }
+                _ => {}
+            },
+            2 if tag == 0 => usage = Some(value as u16),
+            _ => {}
+        }
+    }
+
+    found_input && found_output
+}
+
+fn is_beiying_interface(usage_page: u16, usage: u16, descriptor: &[u8]) -> bool {
+    usage_page == 0xFF60 && usage == 0x0061 && is_beiying_report09_descriptor(descriptor)
+}
+
+/// Read the kernel-cached report descriptor for a HID device through sysfs.
+/// This does not open the hidraw character device or send a USB request.
+fn read_sysfs_report_descriptor(hidraw_path: &str) -> Option<Vec<u8>> {
+    let devname = std::path::Path::new(hidraw_path).file_name()?.to_str()?;
+    if !devname.starts_with("hidraw") || devname.contains('/') || devname.contains("..") {
+        return None;
+    }
+    std::fs::read(format!(
+        "/sys/class/hidraw/{devname}/device/report_descriptor"
+    ))
+    .ok()
+}
 
 /// Device discovery abstraction
 pub trait DeviceDiscovery: Send + Sync {
@@ -203,17 +325,29 @@ impl DeviceDiscovery for HidDiscovery {
             // Determine transport type based on bus type and PID
             let is_bluetooth = is_bluetooth_bus(device_info);
 
-            // For Bluetooth: look for vendor interface (usage 0x0202, page 0xFF55)
-            // For USB: look for feature interface (vendor usage page, usage 0x02)
-            let is_target_interface = if is_bluetooth {
-                Self::is_bluetooth_vendor_interface(device_info)
+            // Bluetooth and existing RongYuan USB recognition retain their
+            // usage checks. Beiying USB interfaces need descriptor confirmation
+            // because VID:PID can also identify a RongYuan board.
+            let protocol = if is_bluetooth {
+                if !Self::is_bluetooth_vendor_interface(device_info) {
+                    continue;
+                }
+                KeyboardProtocol::RongYuan
+            } else if Self::is_usb_feature_interface(device_info) {
+                KeyboardProtocol::RongYuan
+            } else if device_info.usage_page() == 0xFF60 && device_info.usage() == 0x0061 {
+                let path = device_info.path().to_string_lossy();
+                let Some(descriptor) = read_sysfs_report_descriptor(&path) else {
+                    continue;
+                };
+                if !is_beiying_interface(device_info.usage_page(), device_info.usage(), &descriptor)
+                {
+                    continue;
+                }
+                KeyboardProtocol::Beiying
             } else {
-                Self::is_usb_feature_interface(device_info)
-            };
-
-            if !is_target_interface {
                 continue;
-            }
+            };
 
             // Authoritative PID list first; fall back to a product-string
             // heuristic so dongles with an unrecognized PID are still treated
@@ -249,6 +383,7 @@ impl DeviceDiscovery for HidDiscovery {
                     serial,
                     product_name,
                 },
+                protocol,
             });
         }
 
@@ -257,6 +392,11 @@ impl DeviceDiscovery for HidDiscovery {
     }
 
     fn open_device(&self, device: &DiscoveredDevice) -> Result<Arc<dyn Transport>, TransportError> {
+        if device.protocol != KeyboardProtocol::RongYuan {
+            return Err(TransportError::Internal(
+                "Beiying devices cannot be opened as RongYuan transports".into(),
+            ));
+        }
         let api = HidApi::new().map_err(|e| TransportError::HidError(e.to_string()))?;
 
         // Create appropriate transport based on type
@@ -629,4 +769,67 @@ pub fn format_device_list(labels: &[crate::types::DeviceLabel]) -> String {
         out.push_str(&format!("{label}\n"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(hex: &str) -> Vec<u8> {
+        hex.split_ascii_whitespace()
+            .map(|byte| u8::from_str_radix(byte, 16).expect("valid hex fixture"))
+            .collect()
+    }
+
+    #[test]
+    fn captured_descriptors_classify_beiying_without_changing_ry_recognition() {
+        let beiying = fixture(include_str!("../tests/fixtures/beiying_tac75_if2.hex"));
+        let rongyuan = fixture(include_str!("../tests/fixtures/rongyuan_m1_v5_if2.hex"));
+
+        assert!(is_beiying_interface(0xFF60, 0x0061, &beiying));
+        assert!(!is_beiying_interface(0xFF60, 0x0061, &rongyuan));
+        assert!(!is_beiying_interface(0xFF60, 0x0062, &beiying));
+        assert!(!is_beiying_interface(0xFFFF, 0x0002, &beiying));
+
+        // Existing RongYuan acceptance is still based on its usage page/usage
+        // check; this captured report descriptor is not required for it.
+        assert!(device::is_vendor_usage_page(0xFFFF));
+        assert_eq!(device::USAGE_FEATURE, 0x0002);
+        assert!(!is_beiying_report09_descriptor(&rongyuan));
+    }
+
+    #[test]
+    fn beiying_report09_match_requires_both_report_directions() {
+        let mut descriptor = fixture(include_str!("../tests/fixtures/beiying_tac75_if2.hex"));
+        let output_item = descriptor
+            .windows(2)
+            .position(|bytes| bytes == [0x91, 0x02])
+            .expect("captured output report item");
+        descriptor.drain(output_item..output_item + 2);
+
+        assert!(!is_beiying_report09_descriptor(&descriptor));
+    }
+
+    #[test]
+    fn beiying_device_is_never_opened_as_a_rongyuan_transport() {
+        let device = DiscoveredDevice {
+            info: TransportDeviceInfo {
+                vid: 0x38EE,
+                pid: 0x0016,
+                is_dongle: false,
+                transport_type: TransportType::HidWired,
+                device_path: String::new(),
+                serial: None,
+                product_name: Some("TAC75 HE".into()),
+            },
+            protocol: KeyboardProtocol::Beiying,
+        };
+
+        let result = HidDiscovery::new().open_device(&device);
+        assert!(matches!(
+            result,
+            Err(TransportError::Internal(message))
+                if message == "Beiying devices cannot be opened as RongYuan transports"
+        ));
+    }
 }

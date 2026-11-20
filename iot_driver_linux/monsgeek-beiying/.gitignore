@@ -1,0 +1,2 @@
+!tests/fixtures/*.pcapng
+!tests/fixtures/*.pcap

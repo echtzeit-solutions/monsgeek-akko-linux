@@ -90,8 +90,8 @@ pub use printer::{
 };
 pub use protocol::{KeyRef, Layer};
 pub use types::{
-    ChecksumType, DeviceLabel, DiscoveredDevice, DiscoveryEvent, DongleInfo, DongleStatus, RfInfo,
-    TimestampedEvent, TransportDeviceInfo, TransportType, VendorEvent,
+    ChecksumType, DeviceLabel, DiscoveredDevice, DiscoveryEvent, DongleInfo, DongleStatus,
+    KeyboardProtocol, RfInfo, TimestampedEvent, TransportDeviceInfo, TransportType, VendorEvent,
 };
 
 pub use discovery::{DeviceDiscovery, HidDiscovery, ProbedDevice, format_device_list};
